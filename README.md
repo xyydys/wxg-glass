@@ -7,3 +7,5 @@
 - 私钥不在仓库里，在 Cloudflare 的 Settings → Variables and Secrets 里，名字 `SIGN_PRIV`（Secret）。
 
 改名单或换着色器：改 `worker.js` 并提交，Cloudflare 会自动重新部署。
+
+部署：Cloudflare Worker `xyylwc` 已连接本仓库 main 分支，每次推送自动部署。
