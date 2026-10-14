@@ -1,0 +1,7 @@
+{
+  // Cloudflare 读这个文件来部署。name 必须和 Cloudflare 里的 Worker 名字一致。
+  "name": "wxg-glass",
+  "main": "worker.js",
+  "compatibility_date": "2025-09-01",
+  "workers_dev": true
+}
