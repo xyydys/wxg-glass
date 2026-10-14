@@ -16,7 +16,11 @@ const VER = "1";
 export default {
   async fetch(req, env) {
     if (req.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
-    if (req.method === "GET") return json({ ok: true, service: "wxg-unlock", ver: VER, signKey: env.SIGN_PRIV ? "set" : "missing" });
+    if (req.method === "GET") {   // 自检：私钥在不在、对应的公钥是哪把（公钥本来就是公开的）
+      let pub = null;
+      if (env.SIGN_PRIV) { try { pub = await publicFromPriv(env.SIGN_PRIV.trim()); } catch { pub = "invalid"; } }
+      return json({ ok: true, service: "wxg-unlock", ver: VER, signKey: env.SIGN_PRIV ? "set" : "missing", pub });
+    }
     if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
     const url = new URL(req.url);
@@ -66,6 +70,13 @@ async function signP256(privB64, message) {
   const key = await crypto.subtle.importKey("pkcs8", fromB64(privB64), { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
   const raw = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, message));
   return b64(rawToDer(raw));
+}
+// 从私钥推出公钥（未压缩 04||X||Y 十六进制），用来核对和插件内置的是不是同一把
+async function publicFromPriv(privB64) {
+  const key = await crypto.subtle.importKey("pkcs8", fromB64(privB64), { name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
+  const jwk = await crypto.subtle.exportKey("jwk", key);
+  const b = s => toHex(fromB64(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4)));
+  return "04" + b(jwk.x) + b(jwk.y);
 }
 function rawToDer(raw) {
   const der = i => {
