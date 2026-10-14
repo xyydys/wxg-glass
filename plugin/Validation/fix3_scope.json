@@ -1,0 +1,52 @@
+{
+  "baseline": "0.4.2-test4fix2",
+  "release": "0.4.3-test4fix3",
+  "exactFileSHA256": {
+    "WXGBackdrop.m": "26743270499c9c7fadad07c62d9e227f774de45da24119b4879f7a98735a43ca",
+    "WXGCommon.h": "fe2309fee6bcc5e1d1b4a9955b64cc4b0ffe538511aececccf22090a7a6e64dd",
+    "WXGConfig.m": "32875b09519d589f8c3e5def7a36cbf47613247c84db067ff8f8af1c5227a671",
+    "WXGDemoBar.m": "595282fa5fb5e6c8d23585a82d34799120ef6e7028ad2391f9db4ce0cd923d61",
+    "WXGDistanceField.h": "4fae3a3111aaecd248782800879cc757db33ba04f92a74ce28db6428907e5f34",
+    "WXGElasticMotion.h": "7c63c2d87ee6083ec09079cdb70c6c5ba6486de4525de929b4045e16ed23706c",
+    "WXGGeometry.h": "ed9fd3fda246ddccafa3c0c089eefb17f6c286efb038bbf2d4a88710c83232f4",
+    "WXGGlass.metal": "892ae64f8e961e20b08e925a7d1c7abcb24d96adec5c36ce734b7f32a34b8bd3",
+    "WXGGlassView.m": "e8487e382df092d7d4b8d591cd1d75e1933c38d91f1600e34a17350923d52a6a",
+    "WXGIconAlignment.h": "bf4650602ec4798bcbf2603f581179e04491d3c10a92ada15a5e17e75f474ac7",
+    "WXGIntegration.h": "044c35e8cd99c4dca16da164a6ea975bd1cb7e4ee617edd84e7e46434f669547",
+    "WXGLensOptics.h": "3cf31a9f522abdab663b29fb0ae6782d82e69d53dee1c6d2a9488403d75ff86b",
+    "WXGMonochrome.h": "e0a2200a30c77b2ed5867d001f25e9bfc599f111474f9de4a8fb89a0a97714a8",
+    "WXGMotion.h": "7221af92f125968f3382e8af529a4d23658c1659fe8b6920efbf787679aebb1b",
+    "WXGNative.m": "7eaa61b54007d3029aa3c84958efa7dbee50b97fd8efa165d5540feb01eaa0d6",
+    "WXGNativeIcons.h": "baf11fe1f5d3c5cbf6a423b9c9d53db9c6bbcfbfb8902645904fe151291b364d",
+    "WXGNativeIcons.m": "c5cad052af4670d792ab9b346b5b1bf89493f48b40fe5adf5a1fe6541ef16c64",
+    "WXGNativeInput.m": "57a8d66fd41a6a923368e5efb99d3a64842e64cd3a4a403cb0d1cba853402fdf",
+    "WXGNativeInputGeometry.h": "b0f1a87763793df4788d513b2c1e6d3fc310b6b0c9ea0386bd12518884aac810",
+    "WXGOpticalSettings.m": "7d113506b60424f432bdae43d7005d2d9f60b556396eb4e57734840cedf9f620",
+    "WXGOptics.h": "f6009395808ead01030eac515261192d3562afc3841119113261b7d2693147bf",
+    "WXGPresentationMath.h": "99a3e22c4ac673fae4af780cedffafce969bdbb2fb319bc2a940d5e80e1727c7",
+    "WXGRenderPolicy.h": "e07693e601b46d382b7f0bb1eab075055095f90dc8a257edd891fe61fb57e825",
+    "WXGShaderSource.h": "adb689c31d60e29896bc669f8b6da96c7aa612eacf723929d1f010e26a22ad18",
+    "WXGSurface.m": "76a456cb4bd8adfd2553f505f234bc616716b189d0b574f59e5930f4502eb5da"
+  },
+  "changedSourceSHA256": {
+    "WXGHost.m": {
+      "before": "9ec5594492b56b40a3658e3df0ee00fa28ea36564b4ad2074ad772be661b978b",
+      "after": "f4198a4073889b84d3686c11fcd95d65296250f7242092914e1808dd74291f69"
+    },
+    "WXGInput.m": {
+      "before": "57b36f201cfe31cddaf99b5cd4c9aff3fdc3ff0ab95327b4604a35828a4049cc",
+      "after": "5e17dd4a905c2a001676ec2d8f7bf33bc4b8a1a617fe6bbbfda28971f678a43f"
+    },
+    "WXGSettings.m": {
+      "before": "4a01ca511792f4319f271d92f58924c0af34c3f3aae752d6cf28c80299a38bc5",
+      "after": "2a1bd0f5ab835edf0231e074d537d41377fce0190af9531cbbb0090e7a9c1f88"
+    }
+  },
+  "addedSource": [
+    "WXGInputPolicy.h"
+  ],
+  "scope": "two-segment input action/host width; Host and Settings version strings only",
+  "nativeThreeSegmentByteExact": true,
+  "nativeRecordGestureUntouched": true,
+  "deviceTested": false
+}

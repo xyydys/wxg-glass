@@ -1,0 +1,176 @@
+{
+  "method": "libclang 18.1.1 full Objective-C semantic parse with real Apple SDK, no private-header stubs; not codegen/link/Metal validation",
+  "sdkVersion": "16.4",
+  "sdkDirectory": "iPhoneOS16.5.sdk",
+  "deploymentTarget": "13.0",
+  "units": [
+    {
+      "arch": "arm64",
+      "file": "WXGBackdrop.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGConfig.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGDecorations.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGDemoBar.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGDockInteraction.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGGlassView.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGHost.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGInput.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGNative.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGNativeIcons.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGNativeInput.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGOpticalSettings.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGSettings.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64",
+      "file": "WXGSurface.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGBackdrop.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGConfig.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGDecorations.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGDemoBar.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGDockInteraction.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGGlassView.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGHost.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGInput.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGNative.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGNativeIcons.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGNativeInput.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGOpticalSettings.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGSettings.m",
+      "errors": [],
+      "warnings": []
+    },
+    {
+      "arch": "arm64e",
+      "file": "WXGSurface.m",
+      "errors": [],
+      "warnings": []
+    }
+  ]
+}

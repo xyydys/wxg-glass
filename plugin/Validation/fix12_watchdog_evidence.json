@@ -1,0 +1,77 @@
+{
+  "release": "0.4.12-test4fix12",
+  "deviceTested": false,
+  "reportFilename": "WeChat-2026-10-04-201646.ips",
+  "reportedVersion": "FIX11",
+  "binaryUUIDMatches": true,
+  "reportedBinaryUUID": "4c4c44e8-5555-3144-a13d-b0393acddffd",
+  "reportedBinarySHA256": "22bfb2fd7f2ddac9a60d29f19e7244d028a6b0de095523db108c4feb0440b9ba",
+  "device": "iPhone11,6",
+  "os": "iPhone OS 15.7",
+  "wechat": "8.0.73",
+  "termination": {
+    "namespace": "FRONTBOARD",
+    "code": "0x8BADF00D",
+    "event": "scene-update",
+    "allowanceSeconds": 10,
+    "signal": "SIGKILL",
+    "visibility": "Background"
+  },
+  "verifiedCallsites": [
+    {
+      "symbol": "-[WXGStateBag reapply]",
+      "imageOffset": 52172,
+      "hex": "0xcbcc",
+      "symbolOffset": 172,
+      "preceding_instruction": "0xcbc8 bl objc_msgSend countByEnumeratingWithState:objects:count:",
+      "source": "Sources/WXGNative.m:504",
+      "meaning": "Return PC from second/subsequent fast-enumeration batch, not first; first batch call is 0xcb98."
+    },
+    {
+      "symbol": "-[WXGInputAdapter layout]",
+      "imageOffset": 198100,
+      "hex": "0x305d4",
+      "symbolOffset": 3280,
+      "preceding_instruction": "0x305d0 bl objc_msgSend reapply",
+      "source": "Sources/WXGInput.m:186"
+    },
+    {
+      "symbol": "-[WXGIntegrationHost layoutInput]",
+      "imageOffset": 324088,
+      "hex": "0x4f1f8",
+      "symbolOffset": 516,
+      "preceding_instruction": "0x4f1f4 bl objc_msgSend layout",
+      "source": "Sources/WXGHost.m:1039"
+    },
+    {
+      "symbol": "__WXGHookInputLayout_block_invoke",
+      "imageOffset": 348068,
+      "hex": "0x54fa4",
+      "symbolOffset": 108,
+      "preceding_instruction": "0x54fa0 bl objc_msgSend layoutInput",
+      "source": "Sources/WXGHost.m:1161"
+    }
+  ],
+  "concreteSourceDefects": [
+    {
+      "source": "Sources/WXGInput.m:192-217",
+      "finding": "When emoji exists, the previous pass ends with emoji as last panel subview. The next pass brings mic to front, then unconditionally brings emoji to front; every stable pass changes sibling ordering twice."
+    },
+    {
+      "source": "Sources/WXGHost.m:1030-1042 and 1152-1164",
+      "finding": "Hook calls full adapter layout synchronously after native layout. Guards prevent same-stack recursion but reset before the next CA layout pass; no per-runloop coalescing exists."
+    },
+    {
+      "source": "Sources/WXGHost.m:179-181,930-931,1030-1042",
+      "finding": "Resign-active pauses display link and refresh skips background/inactive, but direct layoutInput callback has no lifecycle gate and can still mutate input during background scene update."
+    }
+  ],
+  "limits": [
+    "EXC_BAD_ACCESS/use-after-free from objc_msgSend PC",
+    "NSMapTable deadlock",
+    "unbounded view retention from VM virtual size",
+    "GPU/Metal as sampled main-thread cause",
+    "device crash resolved without runtime retest"
+  ],
+  "newDeviceReportRequiredToConfirmResolution": true
+}

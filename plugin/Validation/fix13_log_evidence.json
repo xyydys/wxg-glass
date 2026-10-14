@@ -1,0 +1,1290 @@
+{
+  "schema": "FIX13_log_analysis_v1",
+  "session": {
+    "session": "WGP4_20261004_203402_379_flight",
+    "probe": "WGP4.3 1.3.3-test4fix3",
+    "runtime_revision": "FIX12",
+    "system": "15.7",
+    "wechat_version": "8.0.73",
+    "screen_points": [
+      0,
+      0,
+      414,
+      896
+    ],
+    "screen_maximum_hz": 60,
+    "hardware_model": "not recorded; do not infer model from dimensions",
+    "loaded_images": [
+      {
+        "file": "WeChatLiquidGlass.dylib",
+        "uuid": "4C4C44AA-5555-3144-A139-6BDB28EFB899"
+      },
+      {
+        "file": "WeChatGlassProbe.dylib",
+        "uuid": "4C4C4471-5555-3144-A1EB-150C541A4929"
+      }
+    ],
+    "events": 223,
+    "sequence_range": [
+      1,
+      223
+    ],
+    "event_counts": {
+      "environment": 1,
+      "method_stats": 21,
+      "flight_health": 20,
+      "flight_frame": 155,
+      "tab_request": 2,
+      "touch": 22,
+      "flight_end": 1,
+      "stop": 1
+    },
+    "volumes": [
+      {
+        "path": "2-part-001-3/events.jsonl",
+        "sequences": [
+          1,
+          109
+        ]
+      },
+      {
+        "path": "3-part-002-3/events.jsonl",
+        "sequences": [
+          110,
+          198
+        ]
+      },
+      {
+        "path": "1-part-003/events.jsonl",
+        "sequences": [
+          199,
+          223
+        ]
+      }
+    ],
+    "dropped_main_events": 2,
+    "stall_reports": 0
+  },
+  "methodology": {
+    "rates": "Counter deltas / elapsed flight_frame.observedAt between identified stable window endpoints. Presentation uses addPresentedHandler counters, not display link or GPU completions.",
+    "cpu": "Main-thread elapsed method/sample cost, not process CPU utilization. Costs are inclusive and cannot be summed across nested methods. No task/thread CPU utilization counters in this probe.",
+    "clock": "flight_frame.observedAt is observation monotonic time; t can be delayed by writer backlog. seq118..121 emitted at t11.450..11.474 but observed at10.790..11.123; maximum delay659.4ms. All observation_seconds use median(observedAt-t) session origin.",
+    "short_windows": "Settings steady sample is only113.4ms; second chat subwindows223.6–332.5ms. Treat their rates as short observations, not sustained benchmarks.",
+    "counter_caveat": "Glass copies and draws counters can reset on rebinding; actual presented/completed counters remain the chosen evidence. measuredCaptureFPS is inverse latest capture interval, not a whole-window average.",
+    "gpu": "GPU command-buffer execution duration is per-surface timing, not device GPU utilization; do not sum timing snapshots as utilization."
+  },
+  "requested_vs_actual": {
+    "configured_request_hz": 120,
+    "device_clamped_cap_hz": 60,
+    "measured_whole_observation_source_hz": 35.232,
+    "source_capture_count_at_last_frame": 699,
+    "last_frame_sequence": 219,
+    "observation_span_seconds": 19.8116,
+    "source_atlas_points": [
+      494,
+      976
+    ],
+    "source_scale_values": [
+      1
+    ],
+    "reported_backend": "FIX11_live_scene_compositor_shared_Metal",
+    "meaning": "Shared atlas source capture still runs synchronously on main thread using drawViewHierarchyInRect into CGContext; GPU label identifies consumer texture copies and Metal rendering.",
+    "transition_sampling_skips": 0,
+    "navigation_setup_deferrals": 0,
+    "max_gpu_busy_skips": 0,
+    "max_consumer_buffer_busy_skips": 0,
+    "max_source_busy_skips": 0,
+    "source_failures": 0,
+    "maximum_source_batch_ms": 90.8175
+  },
+  "per_page_windows": [
+    {
+      "name": "cold_start_home",
+      "sequences": [
+        4,
+        17
+      ],
+      "observation_seconds": [
+        0.5259,
+        2.3935
+      ],
+      "duration_seconds": 1.8676,
+      "samples": 12,
+      "source_capture_delta": 26,
+      "source_capture_hz": 13.922,
+      "main_thread_tick_ms": {
+        "median": 17.5562,
+        "mean": 21.0889,
+        "p95": 44.6135,
+        "max": 44.6135
+      },
+      "source_capture_ms": {
+        "median": 16.5632,
+        "mean": 17.7142,
+        "p95": 27.2505,
+        "max": 27.2505
+      },
+      "source_branch_draws": [
+        1
+      ],
+      "surfaces": {
+        "navigation_right": {
+          "id": "0x1274bb0e0",
+          "actual_present_hz": 12.851,
+          "fresh_backdrop_present_hz": 12.851,
+          "gpu_completion_hz": 13.386,
+          "gpu_ms_median": 1.176,
+          "gpu_ms_p95": 2.209,
+          "drawable_acquire_ms_median": 0.0056,
+          "presented_backdrop_age_ms_median": 48.0728
+        },
+        "dock": {
+          "id": "0x1311c8930",
+          "actual_present_hz": 12.851,
+          "fresh_backdrop_present_hz": 12.851,
+          "gpu_completion_hz": 13.922,
+          "gpu_ms_median": 5.3635,
+          "gpu_ms_p95": 7.8174,
+          "drawable_acquire_ms_median": 0.0068,
+          "presented_backdrop_age_ms_median": 48.0728
+        },
+        "navigation_left": {
+          "id": "0x164e1eff0",
+          "actual_present_hz": 12.851,
+          "fresh_backdrop_present_hz": 12.851,
+          "gpu_completion_hz": 13.386,
+          "gpu_ms_median": 0.6487,
+          "gpu_ms_p95": 3.8369,
+          "drawable_acquire_ms_median": 0.0136,
+          "presented_backdrop_age_ms_median": 44.8117
+        }
+      }
+    },
+    {
+      "name": "home_before_chat",
+      "sequences": [
+        22,
+        90
+      ],
+      "observation_seconds": [
+        2.6092,
+        8.098
+      ],
+      "duration_seconds": 5.4888,
+      "samples": 49,
+      "source_capture_delta": 244,
+      "source_capture_hz": 44.454,
+      "main_thread_tick_ms": {
+        "median": 18.7249,
+        "mean": 19.3747,
+        "p95": 24.1378,
+        "max": 28.3212
+      },
+      "source_capture_ms": {
+        "median": 17.4715,
+        "mean": 18.1752,
+        "p95": 23.0838,
+        "max": 27.2104
+      },
+      "source_branch_draws": [
+        1
+      ],
+      "surfaces": {
+        "navigation_right": {
+          "id": "0x1274bb0e0",
+          "actual_present_hz": 40.264,
+          "fresh_backdrop_present_hz": 40.264,
+          "gpu_completion_hz": 44.454,
+          "gpu_ms_median": 1.1844,
+          "gpu_ms_p95": 2.254,
+          "drawable_acquire_ms_median": 0.0047,
+          "presented_backdrop_age_ms_median": 33.0684
+        },
+        "dock": {
+          "id": "0x1311c8930",
+          "actual_present_hz": 38.806,
+          "fresh_backdrop_present_hz": 38.806,
+          "gpu_completion_hz": 45.365,
+          "gpu_ms_median": 7.3154,
+          "gpu_ms_p95": 9.1783,
+          "drawable_acquire_ms_median": 0.0065,
+          "presented_backdrop_age_ms_median": 47.9935
+        },
+        "navigation_left": {
+          "id": "0x164e1eff0",
+          "actual_present_hz": 40.446,
+          "fresh_backdrop_present_hz": 40.446,
+          "gpu_completion_hz": 44.636,
+          "gpu_ms_median": 0.641,
+          "gpu_ms_p95": 1.6768,
+          "drawable_acquire_ms_median": 0.0137,
+          "presented_backdrop_age_ms_median": 33.0684
+        }
+      }
+    },
+    {
+      "name": "chat_first_stable",
+      "sequences": [
+        95,
+        104
+      ],
+      "observation_seconds": [
+        8.5955,
+        9.5352
+      ],
+      "duration_seconds": 0.9397,
+      "samples": 9,
+      "source_capture_delta": 24,
+      "source_capture_hz": 25.54,
+      "main_thread_tick_ms": {
+        "median": 33.3535,
+        "mean": 33.5255,
+        "p95": 35.519,
+        "max": 35.519
+      },
+      "source_capture_ms": {
+        "median": 32.1116,
+        "mean": 32.1665,
+        "p95": 34.3827,
+        "max": 34.3827
+      },
+      "source_branch_draws": [
+        3
+      ],
+      "surfaces": {
+        "navigation_left": {
+          "id": "0x164e244c0",
+          "actual_present_hz": 25.54,
+          "fresh_backdrop_present_hz": 25.54,
+          "gpu_completion_hz": 25.54,
+          "gpu_ms_median": 1.5065,
+          "gpu_ms_p95": 2.6164,
+          "drawable_acquire_ms_median": 0.0041,
+          "presented_backdrop_age_ms_median": 57.2513
+        },
+        "input_wide": {
+          "id": "0x2a362b6c0",
+          "actual_present_hz": 25.54,
+          "fresh_backdrop_present_hz": 25.54,
+          "gpu_completion_hz": 26.604,
+          "gpu_ms_median": 4.0641,
+          "gpu_ms_p95": 5.4856,
+          "drawable_acquire_ms_median": 0.004,
+          "presented_backdrop_age_ms_median": 57.4649
+        },
+        "input_left": {
+          "id": "0x17cd320e0",
+          "actual_present_hz": 25.54,
+          "fresh_backdrop_present_hz": 25.54,
+          "gpu_completion_hz": 25.54,
+          "gpu_ms_median": 2.3826,
+          "gpu_ms_p95": 3.8486,
+          "drawable_acquire_ms_median": 0.0054,
+          "presented_backdrop_age_ms_median": 57.4649
+        },
+        "navigation_center": {
+          "id": "0x2a117dfc0",
+          "actual_present_hz": 25.54,
+          "fresh_backdrop_present_hz": 25.54,
+          "gpu_completion_hz": 25.54,
+          "gpu_ms_median": 0.8057,
+          "gpu_ms_p95": 1.9078,
+          "drawable_acquire_ms_median": 0.0105,
+          "presented_backdrop_age_ms_median": 57.2513
+        },
+        "navigation_right": {
+          "id": "0x17e1d03e0",
+          "actual_present_hz": 25.54,
+          "fresh_backdrop_present_hz": 25.54,
+          "gpu_completion_hz": 25.54,
+          "gpu_ms_median": 1.9986,
+          "gpu_ms_p95": 3.6063,
+          "drawable_acquire_ms_median": 0.0036,
+          "presented_backdrop_age_ms_median": 57.4649
+        }
+      }
+    },
+    {
+      "name": "chat_second_stable_before_settings",
+      "sequences": [
+        118,
+        121
+      ],
+      "observation_seconds": [
+        10.7903,
+        11.1228
+      ],
+      "duration_seconds": 0.3325,
+      "samples": 4,
+      "source_capture_delta": 9,
+      "source_capture_hz": 27.068,
+      "main_thread_tick_ms": {
+        "median": 31.7065,
+        "mean": 32.9575,
+        "p95": 37.5885,
+        "max": 37.5885
+      },
+      "source_capture_ms": {
+        "median": 30.5016,
+        "mean": 31.7295,
+        "p95": 36.3339,
+        "max": 36.3339
+      },
+      "source_branch_draws": [
+        3
+      ],
+      "surfaces": {
+        "input_left": {
+          "id": "0x17e1e1230",
+          "actual_present_hz": 24.06,
+          "fresh_backdrop_present_hz": 24.06,
+          "gpu_completion_hz": 27.068,
+          "gpu_ms_median": 3.3175,
+          "gpu_ms_p95": 3.4406,
+          "drawable_acquire_ms_median": 0.0051,
+          "presented_backdrop_age_ms_median": 59.1875
+        },
+        "navigation_right": {
+          "id": "0x2a123c900",
+          "actual_present_hz": 24.06,
+          "fresh_backdrop_present_hz": 24.06,
+          "gpu_completion_hz": 30.075,
+          "gpu_ms_median": 2.9245,
+          "gpu_ms_p95": 3.0327,
+          "drawable_acquire_ms_median": 0.0042,
+          "presented_backdrop_age_ms_median": 59.1875
+        },
+        "navigation_left": {
+          "id": "0x16364f8f0",
+          "actual_present_hz": 24.06,
+          "fresh_backdrop_present_hz": 24.06,
+          "gpu_completion_hz": 30.075,
+          "gpu_ms_median": 1.5173,
+          "gpu_ms_p95": 2.6835,
+          "drawable_acquire_ms_median": 0.0043,
+          "presented_backdrop_age_ms_median": 59.1875
+        },
+        "navigation_center": {
+          "id": "0x2a12d8e10",
+          "actual_present_hz": 27.068,
+          "fresh_backdrop_present_hz": 27.068,
+          "gpu_completion_hz": 30.075,
+          "gpu_ms_median": 0.7933,
+          "gpu_ms_p95": 0.809,
+          "drawable_acquire_ms_median": 0.0096,
+          "presented_backdrop_age_ms_median": 48.8021
+        },
+        "input_wide": {
+          "id": "0x2a122b7f0",
+          "actual_present_hz": 24.06,
+          "fresh_backdrop_present_hz": 24.06,
+          "gpu_completion_hz": 27.068,
+          "gpu_ms_median": 4.648,
+          "gpu_ms_p95": 4.9814,
+          "drawable_acquire_ms_median": 0.004,
+          "presented_backdrop_age_ms_median": 59.1875
+        }
+      }
+    },
+    {
+      "name": "chat_second_stable_after_settings",
+      "sequences": [
+        134,
+        138
+      ],
+      "observation_seconds": [
+        12.6458,
+        12.8694
+      ],
+      "duration_seconds": 0.2236,
+      "samples": 3,
+      "source_capture_delta": 6,
+      "source_capture_hz": 26.834,
+      "main_thread_tick_ms": {
+        "median": 31.6428,
+        "mean": 28.4296,
+        "p95": 31.7535,
+        "max": 31.7535
+      },
+      "source_capture_ms": {
+        "median": 30.4374,
+        "mean": 27.2824,
+        "p95": 30.6548,
+        "max": 30.6548
+      },
+      "source_branch_draws": [
+        3
+      ],
+      "surfaces": {
+        "input_left": {
+          "id": "0x17e1e1230",
+          "actual_present_hz": 26.834,
+          "fresh_backdrop_present_hz": 26.834,
+          "gpu_completion_hz": 26.834,
+          "gpu_ms_median": 2.4251,
+          "gpu_ms_p95": 3.9767,
+          "drawable_acquire_ms_median": 0.0031,
+          "presented_backdrop_age_ms_median": 70.0085
+        },
+        "navigation_right": {
+          "id": "0x2a123c900",
+          "actual_present_hz": 26.834,
+          "fresh_backdrop_present_hz": 26.834,
+          "gpu_completion_hz": 26.834,
+          "gpu_ms_median": 2.022,
+          "gpu_ms_p95": 3.4927,
+          "drawable_acquire_ms_median": 0.0032,
+          "presented_backdrop_age_ms_median": 70.0085
+        },
+        "navigation_left": {
+          "id": "0x16364f8f0",
+          "actual_present_hz": 26.834,
+          "fresh_backdrop_present_hz": 26.834,
+          "gpu_completion_hz": 22.361,
+          "gpu_ms_median": 1.5037,
+          "gpu_ms_p95": 1.5065,
+          "drawable_acquire_ms_median": 0.0045,
+          "presented_backdrop_age_ms_median": 53.3399
+        },
+        "navigation_center": {
+          "id": "0x2a12d8e10",
+          "actual_present_hz": 26.834,
+          "fresh_backdrop_present_hz": 26.834,
+          "gpu_completion_hz": 26.834,
+          "gpu_ms_median": 0.8038,
+          "gpu_ms_p95": 0.8072,
+          "drawable_acquire_ms_median": 0.0095,
+          "presented_backdrop_age_ms_median": 53.3399
+        },
+        "input_wide": {
+          "id": "0x2a122b7f0",
+          "actual_present_hz": 26.834,
+          "fresh_backdrop_present_hz": 26.834,
+          "gpu_completion_hz": 26.834,
+          "gpu_ms_median": 4.213,
+          "gpu_ms_p95": 5.4453,
+          "drawable_acquire_ms_median": 0.0029,
+          "presented_backdrop_age_ms_median": 70.0085
+        }
+      }
+    },
+    {
+      "name": "settings_stable_short_sample",
+      "sequences": [
+        127,
+        129
+      ],
+      "observation_seconds": [
+        11.9201,
+        12.0335
+      ],
+      "duration_seconds": 0.1134,
+      "samples": 2,
+      "source_capture_delta": 6,
+      "source_capture_hz": 52.91,
+      "main_thread_tick_ms": {
+        "median": 14.6006,
+        "mean": 14.6006,
+        "p95": 14.6786,
+        "max": 14.6786
+      },
+      "source_capture_ms": {
+        "median": 13.9452,
+        "mean": 13.9452,
+        "p95": 13.9856,
+        "max": 13.9856
+      },
+      "source_branch_draws": [
+        1
+      ],
+      "surfaces": {
+        "navigation_left": {
+          "id": "0x2a3651270",
+          "actual_present_hz": 52.91,
+          "fresh_backdrop_present_hz": 52.91,
+          "gpu_completion_hz": 52.91,
+          "gpu_ms_median": 0.6034,
+          "gpu_ms_p95": 0.6068,
+          "drawable_acquire_ms_median": 0.0121,
+          "presented_backdrop_age_ms_median": 24.9714
+        }
+      }
+    },
+    {
+      "name": "home_after_return",
+      "sequences": [
+        145,
+        210
+      ],
+      "observation_seconds": [
+        13.5555,
+        19.3011
+      ],
+      "duration_seconds": 5.7456,
+      "samples": 52,
+      "source_capture_delta": 272,
+      "source_capture_hz": 47.341,
+      "main_thread_tick_ms": {
+        "median": 18.4044,
+        "mean": 18.2975,
+        "p95": 21.963,
+        "max": 23.9848
+      },
+      "source_capture_ms": {
+        "median": 16.7751,
+        "mean": 17.3026,
+        "p95": 20.5711,
+        "max": 23.109
+      },
+      "source_branch_draws": [
+        1
+      ],
+      "surfaces": {
+        "navigation_right": {
+          "id": "0x1274bb0e0",
+          "actual_present_hz": 42.293,
+          "fresh_backdrop_present_hz": 42.293,
+          "gpu_completion_hz": 47.341,
+          "gpu_ms_median": 1.1793,
+          "gpu_ms_p95": 2.1017,
+          "drawable_acquire_ms_median": 0.0049,
+          "presented_backdrop_age_ms_median": 33.4789
+        },
+        "dock": {
+          "id": "0x1311c8930",
+          "actual_present_hz": 41.945,
+          "fresh_backdrop_present_hz": 41.771,
+          "gpu_completion_hz": 47.863,
+          "gpu_ms_median": 8.1984,
+          "gpu_ms_p95": 9.531,
+          "drawable_acquire_ms_median": 0.0075,
+          "presented_backdrop_age_ms_median": 46.4191
+        },
+        "navigation_left": {
+          "id": "0x164e1eff0",
+          "actual_present_hz": 42.815,
+          "fresh_backdrop_present_hz": 42.815,
+          "gpu_completion_hz": 47.341,
+          "gpu_ms_median": 0.6392,
+          "gpu_ms_p95": 1.5678,
+          "drawable_acquire_ms_median": 0.0129,
+          "presented_backdrop_age_ms_median": 32.9401
+        }
+      }
+    },
+    {
+      "name": "home_end_scroll",
+      "sequences": [
+        213,
+        219
+      ],
+      "observation_seconds": [
+        19.7512,
+        20.3375
+      ],
+      "duration_seconds": 0.5863,
+      "samples": 5,
+      "source_capture_delta": 8,
+      "source_capture_hz": 13.645,
+      "main_thread_tick_ms": {
+        "median": 63.6762,
+        "mean": 63.3995,
+        "p95": 87.3363,
+        "max": 87.3363
+      },
+      "source_capture_ms": {
+        "median": 62.721,
+        "mean": 62.4246,
+        "p95": 86.4775,
+        "max": 86.4775
+      },
+      "source_branch_draws": [
+        1,
+        22
+      ],
+      "surfaces": {
+        "navigation_right": {
+          "id": "0x1274bb0e0",
+          "actual_present_hz": 11.939,
+          "fresh_backdrop_present_hz": 11.939,
+          "gpu_completion_hz": 11.939,
+          "gpu_ms_median": 1.1663,
+          "gpu_ms_p95": 1.229,
+          "drawable_acquire_ms_median": 0.0052,
+          "presented_backdrop_age_ms_median": 32.3866
+        },
+        "dock": {
+          "id": "0x1311c8930",
+          "actual_present_hz": 15.351,
+          "fresh_backdrop_present_hz": 15.351,
+          "gpu_completion_hz": 13.645,
+          "gpu_ms_median": 5.6345,
+          "gpu_ms_p95": 8.419,
+          "drawable_acquire_ms_median": 0.0075,
+          "presented_backdrop_age_ms_median": 102.9103
+        },
+        "navigation_left": {
+          "id": "0x164e1eff0",
+          "actual_present_hz": 13.645,
+          "fresh_backdrop_present_hz": 13.645,
+          "gpu_completion_hz": 13.645,
+          "gpu_ms_median": 0.6252,
+          "gpu_ms_p95": 0.6431,
+          "drawable_acquire_ms_median": 0.0095,
+          "presented_backdrop_age_ms_median": 76.5486
+        }
+      }
+    }
+  ],
+  "cumulative_main_thread_methods": {
+    "sequence": 221,
+    "interval_seconds": 20.0068,
+    "metrics": [
+      {
+        "method": "WXGIntegrationHost.refresh",
+        "calls": 73,
+        "mean_ms": 5.5787,
+        "total_ms": 407.2438,
+        "max_ms": 182.2687,
+        "calls_per_s": 3.649,
+        "inclusive_main_thread_wall_fraction": 0.0204
+      },
+      {
+        "method": "WXGIntegrationHost.tick:",
+        "calls": 734,
+        "mean_ms": 20.8798,
+        "total_ms": 15325.8014,
+        "max_ms": 92.1874,
+        "calls_per_s": 36.688,
+        "inclusive_main_thread_wall_fraction": 0.766
+      },
+      {
+        "method": "WXGIntegrationHost.layoutInput",
+        "calls": 272,
+        "mean_ms": 0.1054,
+        "total_ms": 28.6668,
+        "max_ms": 0.6753,
+        "calls_per_s": 13.595,
+        "inclusive_main_thread_wall_fraction": 0.0014
+      },
+      {
+        "method": "WXGInputAdapter.layout",
+        "calls": 223,
+        "mean_ms": 0.2001,
+        "total_ms": 44.6297,
+        "max_ms": 4.602,
+        "calls_per_s": 11.146,
+        "inclusive_main_thread_wall_fraction": 0.0022
+      },
+      {
+        "method": "WXGGlassView.capture",
+        "calls": 2203,
+        "mean_ms": 0.0192,
+        "total_ms": 42.2594,
+        "max_ms": 0.148,
+        "calls_per_s": 110.113,
+        "inclusive_main_thread_wall_fraction": 0.0021
+      },
+      {
+        "method": "WXGGlassView.drawMetalFrame",
+        "calls": 2222,
+        "mean_ms": 0.2246,
+        "total_ms": 498.992,
+        "max_ms": 13.5998,
+        "calls_per_s": 111.062,
+        "inclusive_main_thread_wall_fraction": 0.0249
+      }
+    ],
+    "interpretation": "tick occupies15.326s inclusive in20.007s (76.6% elapsed main-thread wall time), overwhelmingly source capture. Consumer capture averages0.019ms; draw submission0.225ms. Input layout is not the dominant cost."
+  },
+  "tab_failure": {
+    "all_observed_selected_tabs": [
+      0
+    ],
+    "native_tab_requests": [
+      {
+        "sequence": 18,
+        "t": 2.4158,
+        "from": 0,
+        "to": 0
+      },
+      {
+        "sequence": 27,
+        "t": 3.1436,
+        "from": 0,
+        "to": 0
+      }
+    ],
+    "dock_tap_count": 5,
+    "requested_other_tab_count": 0,
+    "evidence": "All five complete touch pairs hit WXGDemoBar, move lens/select local index1/2/3, remain targetPress=1 AFTER ended event, then reset local index0 without native tab_request. Begin path and hit-testing function; release/commit is missing or bypassed. Source only sends ValueChanged from endTracking if fingerDown and inside.",
+    "dock_touches": [
+      {
+        "begin_sequence": 37,
+        "end_sequence": 38,
+        "begin_t": 3.8442,
+        "end_t": 3.909,
+        "target": "WXGDemoBar",
+        "begin_point": [
+          268,
+          838
+        ],
+        "end_point": [
+          268,
+          838
+        ],
+        "event_duration_ms": 73.9,
+        "first_frame_after_end": {
+          "sequence": 39,
+          "t": 3.9326,
+          "targetPress": 1,
+          "selectedIndex": 2
+        },
+        "reset_to_tab0": {
+          "sequence": 43,
+          "t": 4.3727
+        }
+      },
+      {
+        "begin_sequence": 50,
+        "end_sequence": 52,
+        "begin_t": 4.8548,
+        "end_t": 4.9517,
+        "target": "WXGDemoBar",
+        "begin_point": [
+          255,
+          837.6667
+        ],
+        "end_point": [
+          255,
+          837.6667
+        ],
+        "event_duration_ms": 87.9,
+        "first_frame_after_end": {
+          "sequence": 53,
+          "t": 5.0087,
+          "targetPress": 1,
+          "selectedIndex": 2
+        },
+        "reset_to_tab0": {
+          "sequence": 56,
+          "t": 5.3874
+        }
+      },
+      {
+        "begin_sequence": 62,
+        "end_sequence": 64,
+        "begin_t": 5.7692,
+        "end_t": 5.8469,
+        "target": "WXGDemoBar",
+        "begin_point": [
+          169.3333,
+          854.3333
+        ],
+        "end_point": [
+          169.3333,
+          854.3333
+        ],
+        "event_duration_ms": 65.4,
+        "first_frame_after_end": {
+          "sequence": 65,
+          "t": 5.9421,
+          "targetPress": 1,
+          "selectedIndex": 1
+        },
+        "reset_to_tab0": {
+          "sequence": 68,
+          "t": 6.3855
+        }
+      },
+      {
+        "begin_sequence": 74,
+        "end_sequence": 75,
+        "begin_t": 6.7529,
+        "end_t": 6.7918,
+        "target": "WXGDemoBar",
+        "begin_point": [
+          344.3333,
+          836.3333
+        ],
+        "end_point": [
+          344.3333,
+          836.3333
+        ],
+        "event_duration_ms": 49.5,
+        "first_frame_after_end": {
+          "sequence": 76,
+          "t": 6.8571,
+          "targetPress": 1,
+          "selectedIndex": 3
+        },
+        "reset_to_tab0": {
+          "sequence": 79,
+          "t": 7.1871
+        }
+      },
+      {
+        "begin_sequence": 156,
+        "end_sequence": 158,
+        "begin_t": 14.6197,
+        "end_t": 14.6513,
+        "target": "WXGDemoBar",
+        "begin_point": [
+          327,
+          852
+        ],
+        "end_point": [
+          323.6667,
+          860.6667
+        ],
+        "event_duration_ms": 88.9,
+        "first_frame_after_end": {
+          "sequence": 159,
+          "t": 14.7527,
+          "targetPress": 1,
+          "selectedIndex": 3
+        },
+        "reset_to_tab0": {
+          "sequence": 164,
+          "t": 15.0922
+        }
+      }
+    ]
+  },
+  "navigation": {
+    "requests": [
+      {
+        "first_seen_sequence": 92,
+        "observation_seconds": 8.1313,
+        "method": "pushViewController:animated:",
+        "source": "NewMainFrameViewController",
+        "navigation_depth": 1,
+        "animated": true,
+        "animations_enabled": true,
+        "transaction_disable_actions": false
+      },
+      {
+        "first_seen_sequence": 107,
+        "observation_seconds": 9.5391,
+        "method": "popViewControllerAnimated:",
+        "source": "BaseMsgContentViewController",
+        "navigation_depth": 2,
+        "animated": true,
+        "animations_enabled": true,
+        "transaction_disable_actions": false
+      },
+      {
+        "first_seen_sequence": 115,
+        "observation_seconds": 10.4111,
+        "method": "pushViewController:animated:",
+        "source": "NewMainFrameViewController",
+        "navigation_depth": 1,
+        "animated": true,
+        "animations_enabled": true,
+        "transaction_disable_actions": false
+      },
+      {
+        "first_seen_sequence": 122,
+        "observation_seconds": 11.2088,
+        "method": "pushViewController:animated:",
+        "source": "BaseMsgContentViewController",
+        "navigation_depth": 2,
+        "animated": true,
+        "animations_enabled": true,
+        "transaction_disable_actions": false
+      },
+      {
+        "first_seen_sequence": 130,
+        "observation_seconds": 12.0379,
+        "method": "popViewControllerAnimated:",
+        "source": "AddContactToChatRoomViewController",
+        "navigation_depth": 3,
+        "animated": true,
+        "animations_enabled": true,
+        "transaction_disable_actions": false
+      },
+      {
+        "first_seen_sequence": 140,
+        "observation_seconds": 12.9218,
+        "method": "popViewControllerAnimated:",
+        "source": "BaseMsgContentViewController",
+        "navigation_depth": 2,
+        "animated": true,
+        "animations_enabled": true,
+        "transaction_disable_actions": false
+      }
+    ],
+    "transitions": [
+      {
+        "serial": 1,
+        "source": "NewMainFrameViewController",
+        "destination": "BaseMsgContentViewController",
+        "interactive": false,
+        "declared_duration_ms": 350.0,
+        "begin_seconds": 8.1333,
+        "phases": [
+          {
+            "phase": "begin",
+            "elapsed_ms": 0.013,
+            "first_seen_sequence": 92
+          },
+          {
+            "phase": "view_did_appear",
+            "elapsed_ms": 250.029,
+            "first_seen_sequence": 92
+          },
+          {
+            "phase": "coordinator_completion",
+            "elapsed_ms": 294.366,
+            "first_seen_sequence": 92
+          },
+          {
+            "phase": "complete",
+            "elapsed_ms": 294.374,
+            "first_seen_sequence": 92
+          }
+        ]
+      },
+      {
+        "serial": 2,
+        "source": "BaseMsgContentViewController",
+        "destination": "NewMainFrameViewController",
+        "interactive": true,
+        "declared_duration_ms": 250.0,
+        "begin_seconds": 9.54,
+        "phases": [
+          {
+            "phase": "begin",
+            "elapsed_ms": 0.006,
+            "first_seen_sequence": 107
+          },
+          {
+            "phase": "interaction_end",
+            "elapsed_ms": 195.075,
+            "first_seen_sequence": 109
+          },
+          {
+            "phase": "view_did_appear",
+            "elapsed_ms": 415.191,
+            "first_seen_sequence": 109
+          },
+          {
+            "phase": "coordinator_completion",
+            "elapsed_ms": 419.486,
+            "first_seen_sequence": 109
+          },
+          {
+            "phase": "complete",
+            "elapsed_ms": 419.494,
+            "first_seen_sequence": 109
+          }
+        ]
+      },
+      {
+        "serial": 3,
+        "source": "NewMainFrameViewController",
+        "destination": "BaseMsgContentViewController",
+        "interactive": false,
+        "declared_duration_ms": 350.0,
+        "begin_seconds": 10.4121,
+        "phases": [
+          {
+            "phase": "begin",
+            "elapsed_ms": 0.007,
+            "first_seen_sequence": 115
+          },
+          {
+            "phase": "view_did_appear",
+            "elapsed_ms": 177.562,
+            "first_seen_sequence": 118
+          },
+          {
+            "phase": "coordinator_completion",
+            "elapsed_ms": 188.098,
+            "first_seen_sequence": 118
+          },
+          {
+            "phase": "complete",
+            "elapsed_ms": 188.105,
+            "first_seen_sequence": 118
+          }
+        ]
+      },
+      {
+        "serial": 4,
+        "source": "BaseMsgContentViewController",
+        "destination": "AddContactToChatRoomViewController",
+        "interactive": false,
+        "declared_duration_ms": 350.0,
+        "begin_seconds": 11.2092,
+        "phases": [
+          {
+            "phase": "begin",
+            "elapsed_ms": 0.007,
+            "first_seen_sequence": 122
+          },
+          {
+            "phase": "view_did_appear",
+            "elapsed_ms": 602.798,
+            "first_seen_sequence": 127
+          },
+          {
+            "phase": "coordinator_completion",
+            "elapsed_ms": 604.278,
+            "first_seen_sequence": 127
+          },
+          {
+            "phase": "complete",
+            "elapsed_ms": 604.283,
+            "first_seen_sequence": 127
+          }
+        ]
+      },
+      {
+        "serial": 5,
+        "source": "AddContactToChatRoomViewController",
+        "destination": "BaseMsgContentViewController",
+        "interactive": true,
+        "declared_duration_ms": 350.0,
+        "begin_seconds": 12.0383,
+        "phases": [
+          {
+            "phase": "begin",
+            "elapsed_ms": 0.005,
+            "first_seen_sequence": 130
+          },
+          {
+            "phase": "interaction_end",
+            "elapsed_ms": 202.123,
+            "first_seen_sequence": 132
+          },
+          {
+            "phase": "view_did_appear",
+            "elapsed_ms": 571.274,
+            "first_seen_sequence": 134
+          },
+          {
+            "phase": "coordinator_completion",
+            "elapsed_ms": 576.955,
+            "first_seen_sequence": 134
+          },
+          {
+            "phase": "complete",
+            "elapsed_ms": 576.962,
+            "first_seen_sequence": 134
+          }
+        ]
+      },
+      {
+        "serial": 6,
+        "source": "BaseMsgContentViewController",
+        "destination": "NewMainFrameViewController",
+        "interactive": true,
+        "declared_duration_ms": 250.0,
+        "begin_seconds": 12.9224,
+        "phases": [
+          {
+            "phase": "begin",
+            "elapsed_ms": 0.006,
+            "first_seen_sequence": 140
+          },
+          {
+            "phase": "interaction_end",
+            "elapsed_ms": 155.288,
+            "first_seen_sequence": 142
+          },
+          {
+            "phase": "view_did_appear",
+            "elapsed_ms": 365.777,
+            "first_seen_sequence": 143
+          },
+          {
+            "phase": "coordinator_completion",
+            "elapsed_ms": 370.434,
+            "first_seen_sequence": 143
+          },
+          {
+            "phase": "complete",
+            "elapsed_ms": 370.442,
+            "first_seen_sequence": 143
+          }
+        ]
+      }
+    ],
+    "geometry_evidence": [
+      {
+        "sequence": 115,
+        "direction": "home_to_chat",
+        "from_presentation_x": -124,
+        "to_presentation_x": 0,
+        "description": "Coordinator still active, but destination already at endpoint in the one captured push sample"
+      },
+      {
+        "sequence": 122,
+        "direction": "chat_to_settings",
+        "from_presentation_x": -91.1294,
+        "to_presentation_x": 109.7454
+      },
+      {
+        "sequence": 123,
+        "direction": "chat_to_settings",
+        "from_presentation_x": -120.7345,
+        "to_presentation_x": 10.9025
+      },
+      {
+        "sequence": 126,
+        "direction": "chat_to_settings",
+        "from_presentation_x": -123.7571,
+        "to_presentation_x": 0.8111
+      }
+    ],
+    "conclusion": "Native chat push was requested animated=true with animations enabled and transaction actions allowed. Logged completion is294.4ms and188.1ms vs declared350ms; first entry has no in-flight geometry sample, second is already at endpoint. Settings push has observed intermediate presentation geometry and completes604.3ms. Logs support differing visible execution but do not alone prove which source mutation interrupts animation."
+  },
+  "other_touches": [
+    {
+      "begin_sequence": 89,
+      "end_sequence": 91,
+      "begin_t": 8.0552,
+      "end_t": 8.1186,
+      "target": "MainFrameItemView",
+      "begin_point": [
+        312.3333,
+        192
+      ],
+      "end_point": [
+        312.3333,
+        192
+      ],
+      "event_duration_ms": 66.7
+    },
+    {
+      "begin_sequence": 103,
+      "end_sequence": 108,
+      "begin_t": 9.4943,
+      "end_t": 9.7407,
+      "target": "ChatTimeCellView",
+      "begin_point": [
+        3.3333,
+        372.3333
+      ],
+      "end_point": [
+        118,
+        451
+      ],
+      "event_duration_ms": 166.2
+    },
+    {
+      "begin_sequence": 112,
+      "end_sequence": 114,
+      "begin_t": 10.3209,
+      "end_t": 10.383,
+      "target": "MainFrameItemView",
+      "begin_point": [
+        330.3333,
+        192.3333
+      ],
+      "end_point": [
+        330.3333,
+        192.3333
+      ],
+      "event_duration_ms": 65.5
+    },
+    {
+      "begin_sequence": 128,
+      "end_sequence": 131,
+      "begin_t": 11.975,
+      "end_t": 12.2391,
+      "target": "UITableViewCellContentView",
+      "begin_point": [
+        7.3333,
+        360.3333
+      ],
+      "end_point": [
+        140,
+        456.6667
+      ],
+      "event_duration_ms": 233.1
+    },
+    {
+      "begin_sequence": 139,
+      "end_sequence": 141,
+      "begin_t": 12.8772,
+      "end_t": 13.0836,
+      "target": "TextMessageCellView",
+      "begin_point": [
+        7,
+        346.6667
+      ],
+      "end_point": [
+        109,
+        420.6667
+      ],
+      "event_duration_ms": 175.9
+    },
+    {
+      "begin_sequence": 212,
+      "end_sequence": 220,
+      "begin_t": 19.7294,
+      "end_t": 20.3419,
+      "target": "MainFrameItemView",
+      "begin_point": [
+        298.6667,
+        351.3333
+      ],
+      "end_point": [
+        284.3333,
+        476.6667
+      ],
+      "event_duration_ms": 555.5
+    }
+  ],
+  "cold_top_background": {
+    "status": "not directly attributable from these probe fields",
+    "evidence": "MMUINavigationBar and _UINavigationBarContentView backgroundAlpha=0 from first sample seq4. Probe views omit _UIBarBackground/background child details and screenshots, so opaque native backdrop cannot be located from JSON. First surface present counters0 at seq4(t0.526) andseq5(t0.879), positive byseq6(t1.012); startup frame availability is delayed but does not establish cause of persistent top background."
+  },
+  "source_references": [
+    {
+      "path": "Sources/WXGBackdrop.m",
+      "lines": [
+        176,
+        213,
+        282
+      ],
+      "reason": "Main-thread CGContext/native hierarchy source capture and GPU consumer label"
+    },
+    {
+      "path": "Sources/WXGRenderPolicy.h",
+      "lines": [
+        5,
+        13,
+        16,
+        19
+      ],
+      "reason": "120 request clamps to60; due policy; scale floor1"
+    },
+    {
+      "path": "Sources/WXGGlassView.m",
+      "lines": [
+        575,
+        600
+      ],
+      "reason": "Actual presentation counters versus GPU completion"
+    },
+    {
+      "path": "Sources/WXGDemoBar.m",
+      "lines": [
+        233,
+        250,
+        258
+      ],
+      "reason": "Begin tracking and release ValueChanged"
+    },
+    {
+      "path": "Sources/WXGHost.m",
+      "lines": [
+        1200
+      ],
+      "reason": "Native navigation request evidence"
+    }
+  ]
+}

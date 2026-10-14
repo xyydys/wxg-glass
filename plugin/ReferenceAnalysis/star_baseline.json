@@ -1,0 +1,51 @@
+{
+  "source": "2-WGP_20261002_044238_225_baseline.zip",
+  "SHA256": "98e88fa8f3e476591634aff4bfcc1a3ee641e050fc54d70ea46fc9911a09d9b7",
+  "scope": "native baseline structure; not a TEST4 run",
+  "device": "iPhone11,6",
+  "iOS": "15.7",
+  "wechat": "8.0.73",
+  "host": {
+    "class": "MainFrameLeftBarView",
+    "isControl": false,
+    "gestureCount": 1,
+    "windowRect_pt": [
+      16,
+      46,
+      40,
+      40
+    ]
+  },
+  "image": {
+    "class": "UIImageView",
+    "frame_parent_pt": [
+      0,
+      8,
+      24,
+      24
+    ],
+    "windowRect_pt": [
+      16,
+      54,
+      24,
+      24
+    ],
+    "alphaCanvas_px": [
+      72,
+      72
+    ],
+    "alpha16Bounds_px": [
+      6,
+      7,
+      60,
+      57
+    ],
+    "contentRect_window_pt": [
+      18,
+      56.3333,
+      20,
+      19
+    ]
+  },
+  "correction": "center the visible native artwork in the unchanged gesture host; preserve its image and recognizer"
+}

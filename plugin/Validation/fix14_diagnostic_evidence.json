@@ -1,0 +1,63 @@
+{
+  "fileSHA256": "f6ca1734f0eeb5253b4964686628b892847d4ead3290f2b9e7cab4222be6d089",
+  "fileNameIsLegacy": true,
+  "actualVersion": "0.4.13-test4fix13",
+  "system": "26.6",
+  "reportedGPU": "Apple A18 Pro GPU",
+  "maximumFPS": 120,
+  "requestedFPS": 120,
+  "observedDockSummary": {
+    "backgroundUpdatesPerSecond": 21.8,
+    "submittedFramesPerSecond": 22.1,
+    "scope": "lifetime dock diagnostics averages; not per-present FPS trace"
+  },
+  "snapshots": [
+    {
+      "uptime": 66402.48594937501,
+      "hostCaptureMS": 35.45058333838824,
+      "regionCaptureMS": 35.39095833548345,
+      "hierarchyMS": 35.13462499540765,
+      "roiFraction": 0.18799912549912548,
+      "branches": [
+        {
+          "success": true,
+          "milliseconds": 35.13462499540765,
+          "class": "UINavigationTransitionView",
+          "rect": "{{0, 0}, {440, 956}}"
+        }
+      ]
+    },
+    {
+      "uptime": 66408.45200250001,
+      "hostCaptureMS": 31.21316667238716,
+      "regionCaptureMS": 31.162624989519827,
+      "hierarchyMS": 30.924874998163432,
+      "roiFraction": 0.18799912549912548,
+      "branches": [
+        {
+          "success": true,
+          "milliseconds": 30.924874998163432,
+          "class": "UINavigationTransitionView",
+          "rect": "{{0, 0}, {440, 956}}"
+        }
+      ]
+    },
+    {
+      "uptime": 66424.90243795834,
+      "hostCaptureMS": 35.211708323913626,
+      "regionCaptureMS": 35.15237499959767,
+      "hierarchyMS": 34.92770832963288,
+      "roiFraction": 0.18799912549912548,
+      "branches": [
+        {
+          "success": true,
+          "milliseconds": 34.92770832963288,
+          "class": "UINavigationTransitionView",
+          "rect": "{{0, 0}, {440, 956}}"
+        }
+      ]
+    }
+  ],
+  "layoutRepairMaxMS": 1.2501666642492637,
+  "interpretation": "ROI clipping did not avoid whole UINavigationTransitionView read; native subtree read dominates despite only 18.8% requested pixels. No precise FIX4 comparative timing was supplied."
+}

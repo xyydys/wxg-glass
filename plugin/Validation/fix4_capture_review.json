@@ -1,0 +1,143 @@
+{
+  "capture": "WGP3_20261002_203850_064_plugin",
+  "releaseUnderTest": "0.4.3-test4fix3",
+  "archiveSHA256": "6d0d915b7b6082a38253d047bb2ed4a6f02f7201d24065837e5a36e878b5cfd2",
+  "archiveCRC": "pass",
+  "events": 98,
+  "sequenceContinuous": true,
+  "counts": {
+    "environment": 1,
+    "snapshot": 4,
+    "performance": 90,
+    "tracking_end": 2,
+    "stop": 1
+  },
+  "device": {
+    "deviceModel": "iPhone11,6",
+    "systemVersion": "15.7",
+    "wechatVersion": "8.0.73",
+    "wechatBuild": "8.0.73.33",
+    "screenMaximumFPS": 60,
+    "scale": 3
+  },
+  "recordingScenes": {
+    "首页性能": 2
+  },
+  "performanceMetrics": {
+    "callbackHz": {
+      "n": 90,
+      "median": 49.877,
+      "p95NearestRank": 59.995,
+      "maximum": 59.995
+    },
+    "maxCallbackGapms": {
+      "n": 90,
+      "median": 58.879,
+      "p95NearestRank": 214.351,
+      "maximum": 214.351
+    },
+    "probeReadCPUms": {
+      "n": 90,
+      "median": 0.157,
+      "p95NearestRank": 0.312,
+      "maximum": 0.438
+    }
+  },
+  "pluginMetrics": {
+    "tickCPUms": {
+      "n": 90,
+      "median": 17.654,
+      "p95NearestRank": 29.216,
+      "maximum": 34.733
+    },
+    "sharedCaptureCPUms": {
+      "n": 90,
+      "median": 6.349,
+      "p95NearestRank": 8.61,
+      "maximum": 11.706
+    },
+    "drawAndDockCaptureCPUms": {
+      "n": 90,
+      "median": 17.085,
+      "p95NearestRank": 20.075,
+      "maximum": 26.747
+    },
+    "refreshCPUms": {
+      "n": 90,
+      "median": 1.009,
+      "p95NearestRank": 1.281,
+      "maximum": 29.476
+    },
+    "callbackIntervalms": {
+      "n": 90,
+      "median": 16.668,
+      "p95NearestRank": 49.627,
+      "maximum": 214.351
+    }
+  },
+  "metricLimits": [
+    "Callback Hz is display-link cadence with probe overhead, not presented GPU FPS.",
+    "maxCallbackGapms is a cumulative maximum within a recording, not 90 independent stalls.",
+    "The 4 snapshot events have no selected target or nodes; these cannot verify layouts.",
+    "No FIX4 device data is present."
+  ],
+  "priorNativeEvidence": [
+    {
+      "capture": "WGP3_20261002_191308_529_plugin",
+      "snapshotSequence": [
+        6
+      ],
+      "host": "MainFrameActionFloatView",
+      "items": "RightTopMenuItemBtn",
+      "paint": "UIImageView parent enclosing native menu body; suppress contents while retaining image/children"
+    },
+    {
+      "capture": "WGP3_20261002_191214_298_plugin",
+      "snapshotSequence": [
+        3,
+        5
+      ],
+      "host": "MMMsgCommonTipsView",
+      "expandedHost": "MMMsgTipsMixedListExpandView",
+      "action": "performBgAction",
+      "rowBody": "8pt horizontal inset; 44pt height; expanded rows remain native table cells"
+    },
+    {
+      "capture": "first 16-volume merged capture",
+      "snapshotSequence": [
+        1619,
+        1620,
+        1621,
+        1871
+      ],
+      "host": "MMMenuContentView",
+      "window": "MMMenuWindow",
+      "items": "MMMenuItemView",
+      "action": "onItemButtonClick:"
+    },
+    {
+      "capture": "previous accepted input capture, 75 events",
+      "snapshotSequence": [
+        52,
+        55,
+        60,
+        69
+      ],
+      "host": "MMGrowDictationIconView",
+      "staticPaint": "52x40 wrapper / single 72x72 UIImageView",
+      "retainedAnimation": "24x24 and 32x32 green views; MMLoadingIndicatorView; MMTransparentButton native state images"
+    }
+  ],
+  "fix4DiagnosticsAdded": [
+    "navigationRepairs",
+    "homeReattachments",
+    "bindings.hostFrame",
+    "bindings.hostParent",
+    "decorations",
+    "backdrop.lastVisitedViews",
+    "backdrop.lastPrunedSubtrees",
+    "backdrop.dockIndependentCapture"
+  ],
+  "rawMessageTextIncluded": false,
+  "deviceTestedFIX4": false
+}

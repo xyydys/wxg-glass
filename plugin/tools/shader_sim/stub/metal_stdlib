@@ -1,0 +1,92 @@
+// FIX55: minimal Metal Shading Language stand-in for tools/check_msl.py (a C++ syntax/type check, not a GPU compiler).
+#pragma once
+#include <cmath>
+#define __METAL_VERSION__ 210
+#define constant const
+#define device
+#define thread
+#define kernel
+#define vertex
+#define fragment
+typedef unsigned int uint;
+typedef float float2 __attribute__((ext_vector_type(2)));
+typedef float float3 __attribute__((ext_vector_type(3)));
+typedef float float4 __attribute__((ext_vector_type(4)));
+typedef uint uint2 __attribute__((ext_vector_type(2)));
+typedef int int2 __attribute__((ext_vector_type(2)));
+namespace metal {
+namespace access { enum A { sample, read, write, read_write }; }
+namespace coord { enum C { normalized, pixel }; }
+namespace address { enum D { clamp_to_edge, repeat }; }
+namespace filter { enum F { linear, nearest }; }
+struct sampler { template<class... Args> constexpr sampler(Args...) {} };
+// FIX95 (tools/shader_sim): a texture with pixels (premultiplied RGBA
+// floats), sampled bilinearly with clamp-to-edge like wxgSampler.
+template<typename T, access::A M = access::sample> struct texture2d {
+    const float *data = nullptr; int w = 1, h = 1;
+    float4 texel(int x, int y) const {
+        if (!data) return float4{0,0,0,0};
+        x = x < 0 ? 0 : (x >= w ? w - 1 : x); y = y < 0 ? 0 : (y >= h ? h - 1 : y);
+        const float *p = data + 4 * (y * w + x); return float4{p[0],p[1],p[2],p[3]};
+    }
+    float4 sample(sampler, float2 uv) const {
+        if (!data) return float4{0,0,0,0};
+        float fx = uv.x * w - .5f, fy = uv.y * h - .5f;
+        int x0 = (int)std::floor(fx), y0 = (int)std::floor(fy); float tx = fx - x0, ty = fy - y0;
+        float4 a = texel(x0, y0), b = texel(x0 + 1, y0), c = texel(x0, y0 + 1), d = texel(x0 + 1, y0 + 1);
+        return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty;
+    }
+    void write(float4, uint2) const {}
+    uint get_width() const { return (uint)w; }
+    uint get_height() const { return (uint)h; }
+};
+}
+using namespace metal;
+// constructors (the checker rewrites floatN( / uintN( calls to these)
+inline float2 mk_float2(float a) { return float2{a,a}; }
+inline float2 mk_float2(float a, float b) { return float2{a,b}; }
+inline float2 mk_float2(uint2 v) { return __builtin_convertvector(v, float2); }
+inline float2 mk_float2(float2 v) { return v; }
+inline float3 mk_float3(float a) { return float3{a,a,a}; }
+inline float3 mk_float3(float a, float b, float c) { return float3{a,b,c}; }
+inline float3 mk_float3(float3 v) { return v; }
+inline float4 mk_float4(float a) { return float4{a,a,a,a}; }
+inline float4 mk_float4(float a, float b, float c, float d) { return float4{a,b,c,d}; }
+inline float4 mk_float4(float3 v, float d) { return float4{v.x,v.y,v.z,d}; }
+inline float4 mk_float4(float2 a, float2 b) { return float4{a.x,a.y,b.x,b.y}; }
+inline float4 mk_float4(float4 v) { return v; }
+inline float4 mk_float4(float2 a, float c, float d) { return float4{a.x,a.y,c,d}; }
+inline float4 mk_float4(float a, float b, float2 c) { return float4{a,b,c.x,c.y}; }
+inline float4 mk_float4(float a, float3 v) { return float4{a,v.x,v.y,v.z}; }
+inline float3 mk_float3(float2 a, float c) { return float3{a.x,a.y,c}; }
+inline float3 mk_float3(float a, float2 b) { return float3{a,b.x,b.y}; }
+// scalar math
+inline float min(float a, float b) { return a < b ? a : b; }
+inline float max(float a, float b) { return a > b ? a : b; }
+inline float clamp(float x, float a, float b) { return min(b, max(a, x)); }
+inline float saturate(float x) { return clamp(x, 0.f, 1.f); }
+inline float mix(float a, float b, float t) { return a + (b - a) * t; }
+inline float smoothstep(float e0, float e1, float x) { float t = clamp((x - e0) / (e1 - e0), 0.f, 1.f); return t * t * (3 - 2 * t); }
+extern float wxgSimFwidth, wxgSimRecorded; extern int wxgSimRecording;
+inline float fwidth(float x) { if (wxgSimRecording) { wxgSimRecorded = x; return 0.f; } return wxgSimFwidth; }
+inline float sign(float x) { return x > 0 ? 1.f : x < 0 ? -1.f : 0.f; }
+inline float step(float e, float x) { return x < e ? 0.f : 1.f; }
+using std::sqrt; using std::pow; using std::fabs; using std::abs; using std::exp; using std::log; using std::fmod; using std::floor; using std::ceil;
+inline float rsqrt(float x) { return 1.f / std::sqrt(x); }
+// vector math
+#define WXG_VEC_FUNCS(V) \
+inline V min(V a, V b) { V r = a; for (int i = 0; i < (int)(sizeof(V)/sizeof(float)); i++) r[i] = a[i] < b[i] ? a[i] : b[i]; return r; } \
+inline V max(V a, V b) { V r = a; for (int i = 0; i < (int)(sizeof(V)/sizeof(float)); i++) r[i] = a[i] > b[i] ? a[i] : b[i]; return r; } \
+inline V clamp(V x, V a, V b) { return min(b, max(a, x)); } \
+inline V clamp(V x, float a, float b) { V r = x; for (int i = 0; i < (int)(sizeof(V)/sizeof(float)); i++) r[i] = clamp(x[i], a, b); return r; } \
+inline V saturate(V x) { return clamp(x, 0.f, 1.f); } \
+inline V mix(V a, V b, float t) { return a + (b - a) * t; } \
+inline V mix(V a, V b, V t) { return a + (b - a) * t; } \
+inline float dot(V a, V b) { float s = 0; for (int i = 0; i < (int)(sizeof(V)/sizeof(float)); i++) s += a[i] * b[i]; return s; } \
+inline float length(V a) { return std::sqrt(dot(a, a)); } \
+inline V normalize(V a) { return a / length(a); } \
+inline V fabs(V a) { V r = a; for (int i = 0; i < (int)(sizeof(V)/sizeof(float)); i++) r[i] = std::fabs(a[i]); return r; } \
+inline V abs(V a) { return fabs(a); }
+WXG_VEC_FUNCS(float2)
+WXG_VEC_FUNCS(float3)
+WXG_VEC_FUNCS(float4)

@@ -1,0 +1,876 @@
+{
+  "source": "5-WGP3_20261002_192058_439_plugin.jsonl",
+  "sourceSHA256": "72138ffe524b95ab364ed198d7a4cb3166e163346e57e2ab7016021beddf4696",
+  "nativeClass": "MMUILabel",
+  "scenario": "group-settings → chat; interactive reversal",
+  "scope": "captured native geometry, no screen contents",
+  "frames": [
+    {
+      "sequence": 176,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 177,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 178,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 180,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 181,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 182,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 183,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 184,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 186,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 187,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 188,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 189,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 191,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 192,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 193,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 194,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 195,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 198,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 199,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        199.5861,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 200,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        205.4684,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 201,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        211.1967,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 203,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        215.8401,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 204,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        220.1743,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 205,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        223.7346,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 206,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        225.9018,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 208,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        228.6881,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 209,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        231.6293,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 210,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        234.7253,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 211,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        237.3568,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 212,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        239.3692,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 214,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        241.3816,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 215,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        242.7747,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 216,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        243.0843,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 217,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        243.0843,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 218,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        243.0843,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 220,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        243.0843,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 221,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        243.0843,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 222,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        243.0843,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 223,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        243.0843,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 225,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        243.0843,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 226,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        241.6912,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 227,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        237.0472,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 228,
+      "nativeModel": [
+        392,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        230.5457,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": true,
+      "cancelled": false
+    },
+    {
+      "sequence": 230,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        210.0771,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": true
+    },
+    {
+      "sequence": 231,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        193.4828,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": true
+    },
+    {
+      "sequence": 232,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        188.8921,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": true
+    },
+    {
+      "sequence": 233,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.8436,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": true
+    },
+    {
+      "sequence": 234,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 236,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 237,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    },
+    {
+      "sequence": 238,
+      "nativeModel": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "nativePresented": [
+        187.6667,
+        60.3333,
+        64,
+        36
+      ],
+      "interactive": false,
+      "cancelled": false
+    }
+  ]
+}

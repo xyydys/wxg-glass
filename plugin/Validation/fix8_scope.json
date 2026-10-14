@@ -1,0 +1,37 @@
+{
+  "baseline": "0.4.7-test4fix7",
+  "release": "0.4.8-test4fix8",
+  "unchangedFiles": {
+    "WXGOptics.h": "f6009395808ead01030eac515261192d3562afc3841119113261b7d2693147bf",
+    "WXGLensOptics.h": "3cf31a9f522abdab663b29fb0ae6782d82e69d53dee1c6d2a9488403d75ff86b",
+    "WXGMotion.h": "7221af92f125968f3382e8af529a4d23658c1659fe8b6920efbf787679aebb1b",
+    "WXGElasticMotion.h": "7c63c2d87ee6083ec09079cdb70c6c5ba6486de4525de929b4045e16ed23706c",
+    "WXGDistanceField.h": "4fae3a3111aaecd248782800879cc757db33ba04f92a74ce28db6428907e5f34",
+    "WXGGeometry.h": "ed9fd3fda246ddccafa3c0c089eefb17f6c286efb038bbf2d4a88710c83232f4",
+    "WXGCompactInputGeometry.h": "f15325cd6a24358ce798b11070c287a115ddd244ac227c30eaf68abd4991e345",
+    "WXGNativeInputGeometry.h": "b0f1a87763793df4788d513b2c1e6d3fc310b6b0c9ea0386bd12518884aac810",
+    "WXGInputSettledGeometry.h": "8b4988f8a070fbeb3d8007ba7c242416cce2d12923f6d72d66756567b2bcdcd4",
+    "WXGInputWidthPolicy.h": "cdf0d7e97763721ac20379560d3a4c2a3e30cce0521184f2cfc50ce73d9f5a6d",
+    "WXGInputPolicy.h": "0faa282c5625e18f7c7f006a6e8cbe1a78c148d5985e44ea63afadc2f2b0412d",
+    "WXGPresentationMath.h": "99a3e22c4ac673fae4af780cedffafce969bdbb2fb319bc2a940d5e80e1727c7",
+    "WXGNativeIcons.h": "baf11fe1f5d3c5cbf6a423b9c9d53db9c6bbcfbfb8902645904fe151291b364d",
+    "WXGNativeIcons.m": "c5cad052af4670d792ab9b346b5b1bf89493f48b40fe5adf5a1fe6541ef16c64"
+  },
+  "unchangedMethods": {
+    "WXGHost.m: - (void)dockChanged:": "29df7868df015477c9161e663853a9214032f92ad55ed866ac35253bc92eae92",
+    "WXGHost.m: - (NSString *)backCount:": "8bcce84bb00cb03a35c91d4862500233f8d357d74006b04aec7f19111afeef4c",
+    "WXGHost.m: - (NSString *)fullTitleFromView:": "d58b7972143bd96bec37962decabe390a68a20a27948f42f3030174af841841b",
+    "WXGHost.m: - (BOOL)isBack:": "4b7c2d2acac19e05e666a8d1105dfc450a39f59e493f1bd3e3e30f37f87a4c28",
+    "WXGSurface.m: - (void)bindMotionHost:": "a6d9f65f6e1668d723dd73dbbda38d110034dd0e16473219e7e41bfca521a4ab",
+    "WXGSurface.m: - (void)rememberNativeReference": "99c06398d7bda81386e5f9a52be9400540efdae87f81f55b7d873cd6fde0ebcf",
+    "WXGSurface.m: - (void)beginNativeDeparture": "bee9cf5a85189d27cbb488c121d46eb715ce9c299c89233dc14f506ce7a284a9",
+    "WXGSurface.m: - (void)followNativePresentation": "14b852c6fdbf54995a20103348bcc11f1691bb05cf5dd45392347053bce77700",
+    "WXGSurface.m: - (void)activateOriginal": "9fb3fd5f2de8272b3fb1a4e5e62c1e98d50206208de659ceefc681f817f67941",
+    "WXGInput.m: - (void)clearPaint": "c82d4759f6c562ba089fae49ce3e8a001aca40165baede1e03ea33437ec743d4",
+    "WXGInput.m: - (void)bindOptionalActions": "3a3efa8363fb8809ed78889f35490195e260677d796804721e47cc57a82d1d23"
+  },
+  "threeSegmentLayoutAndActionsUnchanged": true,
+  "samplingDoesNotMutateLiveVisibility": true,
+  "deviceTested": false,
+  "limitations": "Source invariants and numerical tests only; no UIKit/Metal runtime or FPS claim."
+}

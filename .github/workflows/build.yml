@@ -1,0 +1,111 @@
+name: build-deb
+
+# 在 GitHub 云端（Linux runner）出 rootless .deb，和 plugin/tools/build_deb_linux.sh
+# 完全一样的工具链：clang-18 + ld64.lld + theos/sdks 的 iPhoneOS16.5.sdk + ldid。
+# 不需要任何密钥：着色器在服务器，deb 里没有秘密；越狱签名是 ldid -S 假签。
+#
+# monorepo：插件在 plugin/，本工作流以 plugin/ 为工作目录。
+# 触发：推到 main、打 v* 标签、或在 Actions 页面手动点 Run。
+# 产物：Actions 运行页的 Artifacts 里下载 deb（打 tag 时还会建一个 Release）。
+#
+# 混淆（第二步，默认关）：手动 Run 时把 obfuscate 选 true，并且事先把带混淆的
+# clang 做成镜像或装进这一步（见 plugin/README_中文.md 的“云端混淆”一节）。没配好
+# 之前保持 false，就是现在的普通编译。
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      obfuscate:
+        description: '只对授权/联网文件开混淆（需先备好混淆 clang）'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write   # 打 tag 时建 Release 用；只出 artifact 可改回 read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install clang-18, lld, dpkg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 dpkg-dev curl
+          # build_deb_linux.sh 默认用 /usr/lib/llvm-18/bin，apt 装到的正是这里。
+          ls /usr/lib/llvm-18/bin/clang /usr/lib/llvm-18/bin/ld64.lld
+
+      - name: Cache iOS 16.5 SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: plugin/toolchain/sdks/iPhoneOS16.5.sdk
+          key: ios-sdk-16-5-v1
+
+      - name: Fetch iOS 16.5 SDK (sparse)
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p toolchain && cd toolchain
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --filter=blob:none --no-checkout https://github.com/theos/sdks sdks
+          cd sdks
+          git sparse-checkout init --no-cone
+          git sparse-checkout set \
+            '/iPhoneOS16.5.sdk/usr/include/' \
+            '/iPhoneOS16.5.sdk/usr/lib/' \
+            '/iPhoneOS16.5.sdk/System/Library/Frameworks/' \
+            '/iPhoneOS16.5.sdk/SDKSettings.*'
+          git checkout
+          test -d iPhoneOS16.5.sdk/System/Library/Frameworks
+
+      - name: Fetch ldid
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/ldid" \
+            https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64
+          chmod +x "$RUNNER_TEMP/ldid"
+          "$RUNNER_TEMP/ldid" | head -1
+
+      - name: Build .deb
+        env:
+          SDK: ${{ github.workspace }}/plugin/toolchain/sdks/iPhoneOS16.5.sdk
+          # LDID 由下一行指向临时目录；CC/OBF_* 普通编译时留空。
+        run: |
+          export LDID="$RUNNER_TEMP/ldid"
+          # ---- 混淆（默认关）。配好混淆 clang 后把下面几行按需打开 ----
+          if [ "${{ github.event.inputs.obfuscate }}" = "true" ]; then
+            # export CC_DIR=/path/to/obf-clang/bin        # 混淆 clang 所在目录
+            # export CC=clang
+            export OBF_FLAGS="-mllvm -sobf -mllvm -fla -mllvm -sub"
+            export OBF_FILES="Sources/WXGUnlock.m Sources/WXGLicense.m"
+            echo "::warning::obfuscate=true：确认 CC_DIR 指向了混淆 clang，否则普通 clang 不认 -mllvm 会报错"
+          fi
+          # ---------------------------------------------------------------
+          VER=$(sed -n 's/^Version: *//p' control)
+          mkdir -p dist
+          OUT="dist/com.runyu.wechatliquidglass_${VER}_iphoneos-arm64.deb"
+          sh tools/build_deb_linux.sh "$GITHUB_WORKSPACE/plugin" "$OUT"
+          ls -la dist
+          # 确认 dylib 里没有着色器文本（只该有函数名 wxgFragment）
+          if strings "${OUT%.deb}.dylib" | grep -q "__METAL_VERSION__\|METAL_VERSION"; then
+            echo "::error::dylib 里出现了着色器文本，构建中止"; exit 1
+          fi
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeChatLiquidGlass-deb
+          path: plugin/dist/*.deb
+          retention-days: 30
+
+      - name: Release (tag only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: plugin/dist/*.deb

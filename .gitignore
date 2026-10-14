@@ -1,0 +1,16 @@
+# ---- plugin build artifacts (Theos / Linux deb build) ----
+plugin/.theos/
+plugin/packages/
+plugin/dist/
+plugin/obj/
+plugin/toolchain/
+**/*.deb
+**/*.dylib
+
+# ---- server (Cloudflare Worker) ----
+server/node_modules/
+server/.wrangler/
+
+# ---- OS / editor ----
+.DS_Store
+*.swp

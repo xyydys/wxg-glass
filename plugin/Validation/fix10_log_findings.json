@@ -1,0 +1,302 @@
+{
+  "sessions": [
+    {
+      "session": "WGP4_20261004_180944_126_flight",
+      "parts": [
+        {
+          "dir": "1-part-002",
+          "volume": 2,
+          "seq": [
+            94,
+            166
+          ],
+          "t": [
+            8.9892,
+            14.0123
+          ]
+        },
+        {
+          "dir": "2-part-001",
+          "volume": 1,
+          "seq": [
+            1,
+            93
+          ],
+          "t": [
+            0.0109,
+            8.8884
+          ]
+        },
+        {
+          "dir": "3-part-003",
+          "volume": 3,
+          "seq": [
+            167,
+            230
+          ],
+          "t": [
+            14.1701,
+            19.382
+          ]
+        }
+      ],
+      "completedTransitionRecords": [
+        {
+          "serial": 12,
+          "from": "FindFriendEntryViewController",
+          "to": "WCFinderTimelineTabViewController",
+          "elapsedMS": 576.74,
+          "cancelled": false
+        },
+        {
+          "serial": 13,
+          "from": "WCFinderTimelineTabViewController",
+          "to": "FindFriendEntryViewController",
+          "elapsedMS": 1901.355,
+          "cancelled": false
+        },
+        {
+          "serial": 14,
+          "from": "FindFriendEntryViewController",
+          "to": "WCFinderTimelineTabViewController",
+          "elapsedMS": 576.672,
+          "cancelled": false
+        },
+        {
+          "serial": 15,
+          "from": "WCFinderTimelineTabViewController",
+          "to": "FindFriendEntryViewController",
+          "elapsedMS": 2715.792,
+          "cancelled": false
+        },
+        {
+          "serial": 16,
+          "from": "FindFriendEntryViewController",
+          "to": "WCFinderTimelineTabViewController",
+          "elapsedMS": 574.233,
+          "cancelled": false
+        },
+        {
+          "serial": 17,
+          "from": "WCFinderTimelineTabViewController",
+          "to": "FindFriendEntryViewController",
+          "elapsedMS": 1054.807,
+          "cancelled": false
+        },
+        {
+          "serial": 18,
+          "from": "NewMainFrameViewController",
+          "to": "BaseMsgContentViewController",
+          "elapsedMS": 587.136,
+          "cancelled": false
+        },
+        {
+          "serial": 19,
+          "from": "BaseMsgContentViewController",
+          "to": "NewMainFrameViewController",
+          "elapsedMS": 3.178,
+          "cancelled": false
+        },
+        {
+          "serial": 20,
+          "from": "NewMainFrameViewController",
+          "to": "BaseMsgContentViewController",
+          "elapsedMS": 586.292,
+          "cancelled": false
+        },
+        {
+          "serial": 21,
+          "from": "BaseMsgContentViewController",
+          "to": "NewMainFrameViewController",
+          "elapsedMS": 3.012,
+          "cancelled": false
+        },
+        {
+          "serial": 22,
+          "from": "NewMainFrameViewController",
+          "to": "BaseMsgContentViewController",
+          "elapsedMS": 585.6,
+          "cancelled": false
+        },
+        {
+          "serial": 23,
+          "from": "BaseMsgContentViewController",
+          "to": "ChatRoomInfoViewController",
+          "elapsedMS": 11.072,
+          "cancelled": false
+        }
+      ],
+      "samplingSpikesOver20MS": [
+        {
+          "sequence": 100,
+          "t": 9.4118,
+          "page": "NewMainFrameViewController",
+          "backdropMS": 57.6456
+        },
+        {
+          "sequence": 177,
+          "t": 14.9063,
+          "page": "NewMainFrameViewController",
+          "backdropMS": 22.4713
+        },
+        {
+          "sequence": 225,
+          "t": 18.8534,
+          "page": "ChatRoomInfoViewController",
+          "backdropMS": 107.3116
+        }
+      ]
+    },
+    {
+      "session": "WGP4_20261004_181008_625_flight",
+      "parts": [
+        {
+          "dir": "4-part-001",
+          "volume": 1,
+          "seq": [
+            1,
+            54
+          ],
+          "t": [
+            0.0049,
+            4.3746
+          ]
+        },
+        {
+          "dir": "5-part-003",
+          "volume": 3,
+          "seq": [
+            110,
+            180
+          ],
+          "t": [
+            9.7501,
+            15.4632
+          ]
+        },
+        {
+          "dir": "6-part-002",
+          "volume": 2,
+          "seq": [
+            55,
+            109
+          ],
+          "t": [
+            4.475,
+            9.633
+          ]
+        }
+      ],
+      "completedTransitionRecords": [
+        {
+          "serial": 23,
+          "from": "BaseMsgContentViewController",
+          "to": "ChatRoomInfoViewController",
+          "elapsedMS": 11.072,
+          "cancelled": false
+        },
+        {
+          "serial": 24,
+          "from": "ChatRoomInfoViewController",
+          "to": "BaseMsgContentViewController",
+          "elapsedMS": 1016.737,
+          "cancelled": false
+        },
+        {
+          "serial": 25,
+          "from": "BaseMsgContentViewController",
+          "to": "NewMainFrameViewController",
+          "elapsedMS": 3.84,
+          "cancelled": false
+        },
+        {
+          "serial": 26,
+          "from": "NewMainFrameViewController",
+          "to": "BaseMsgContentViewController",
+          "elapsedMS": 588.823,
+          "cancelled": false
+        },
+        {
+          "serial": 27,
+          "from": "BaseMsgContentViewController",
+          "to": "ChatRoomInfoViewController",
+          "elapsedMS": 11.288,
+          "cancelled": false
+        },
+        {
+          "serial": 28,
+          "from": "ChatRoomInfoViewController",
+          "to": "BaseMsgContentViewController",
+          "elapsedMS": 1122.713,
+          "cancelled": false
+        },
+        {
+          "serial": 29,
+          "from": "BaseMsgContentViewController",
+          "to": "NewMainFrameViewController",
+          "elapsedMS": 3.218,
+          "cancelled": false
+        },
+        {
+          "serial": 30,
+          "from": "NewMainFrameViewController",
+          "to": "BaseMsgContentViewController",
+          "elapsedMS": 582.885,
+          "cancelled": false
+        },
+        {
+          "serial": 31,
+          "from": "BaseMsgContentViewController",
+          "to": "ChatRoomInfoViewController",
+          "elapsedMS": 10.425,
+          "cancelled": false
+        },
+        {
+          "serial": 32,
+          "from": "ChatRoomInfoViewController",
+          "to": "BaseMsgContentViewController",
+          "elapsedMS": 665.352,
+          "cancelled": true
+        }
+      ],
+      "samplingSpikesOver20MS": [
+        {
+          "sequence": 31,
+          "t": 2.5996,
+          "page": "NewMainFrameViewController",
+          "backdropMS": 38.6313
+        },
+        {
+          "sequence": 60,
+          "t": 4.8236,
+          "page": "ChatRoomInfoViewController",
+          "backdropMS": 52.6183
+        },
+        {
+          "sequence": 148,
+          "t": 12.6733,
+          "page": "ChatRoomInfoViewController",
+          "backdropMS": 51.6713
+        }
+      ]
+    }
+  ],
+  "deviceEvidence": "iOS 26.6, WeChat 8.0.73, screen maximum 120 Hz. These are NOT low-device recordings.",
+  "interpretation": "Observed transition record durations can include an early host fallback; FIX9 did not record completion origin or coordinator duration. These samples corroborate the reported jump, but do not uniquely prove its root cause. FIX10 records both.",
+  "dockCoordinateReplay": {
+    "session": "WGP4_20261004_180944_126_flight",
+    "sequence": 17,
+    "nativeModelX": -132,
+    "nativePresentedX": -41.432,
+    "dockRestX": -11.4359,
+    "observedDockX": 79.1321,
+    "oldFormulaX": 79.1321,
+    "stableReferenceFormulaX": -52.8679,
+    "deviceVerified": false
+  },
+  "limits": [
+    "No low-device freeze captured.",
+    "No repaired runtime result available.",
+    "Display callbacks are not presented FPS."
+  ]
+}

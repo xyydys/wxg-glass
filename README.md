@@ -1,11 +1,30 @@
-# wxg-glass · WeChat Liquid Glass 解锁服务器
+# wxg-glass
 
-私有仓库。Cloudflare 从这里自动部署（Workers Builds）。
+单仓库（monorepo），两部分：
 
-- `worker.js`：服务器代码 + 授权名单（文件开头的 ALLOWLIST）+ 着色器。
-- `wrangler.jsonc`：部署配置，`name` 要和 Cloudflare 里的 Worker 名字一致（现在是 xyylwc）。
-- 私钥不在仓库里，在 Cloudflare 的 Settings → Variables and Secrets 里，名字 `SIGN_PRIV`（Secret）。
+- **`plugin/`** — WeChat Liquid Glass 插件本体（iOS 越狱 Tweak，Theos 工程）。
+  源码、测试、云端编译脚本都在这里。详见 `plugin/README_中文.md` 与交接说明
+  `plugin/HANDOFF_中文.md`。
+- **`server/`** — Cloudflare Worker 授权检测模块。`/v1/unlock` 收账号码、查
+  `ALLOWLIST`、用 `env.SIGN_PRIV`（Cloudflare Secret）做 ECDSA P-256 签名，把
+  着色器装进签名票据下发。详见 `server/README.md`。
 
-改名单或换着色器：改 `worker.js` 并提交，Cloudflare 会自动重新部署。
+## 对接点
 
-部署：Cloudflare Worker `xyylwc` 已连接本仓库 main 分支，每次推送自动部署。
+插件在 `plugin/Sources/WXGBuildProfile.h` 里配置服务器地址
+（`WXG_UNLOCK_ENDPOINTS`）和验签公钥（`WXG_UNLOCK_PUBLIC_KEY`，公开信息）。
+`plugin/Sources/WXGUnlock.m` 拿票据后用该公钥验签，离线优先缓存。
+
+## 云端编译
+
+CI 在根目录 `.github/workflows/build.yml`，**工作目录为 `plugin/`**。推 `main`、
+打 `v*` 标签或手动 Run 即在 Linux runner 出 rootless `.deb`。混淆开关
+（`obfuscate`）默认关，接好 Arkari / obfuscator-llvm 的 clang 后再手动开启，
+只对 `Sources/WXGUnlock.m`、`Sources/WXGLicense.m` 生效（渲染热路径不混淆）。
+
+## 注意 · Cloudflare 自动部署
+
+Cloudflare Worker `xyylwc` 的 Workers Build 连接本仓库 `main`。worker 已从仓库
+根目录挪到 `server/`，**合并到 `main` 之前，需要在 Cloudflare 控制台把该 Worker
+构建的“根目录 / Root directory”设为 `server/`**，否则自动部署会在仓库根找不到
+`wrangler.jsonc` 而失败。私钥 `SIGN_PRIV` 仍只在 Cloudflare 的 Secret 里，不在仓库。

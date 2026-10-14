@@ -1,0 +1,1095 @@
+{
+  "scope": {
+    "uploadedLogParts": 7,
+    "sessions": 2,
+    "platform": "iOS 26.6",
+    "maximumDisplayFPS": 120,
+    "wechat": "8.0.73",
+    "pluginObservedRevision": "FIX8",
+    "probeObservedRevision": "4.2",
+    "limitations": [
+      "Only two recordings uploaded; sequences are contiguous within each but no flight_end event, so complete 20-second recordings are not proven.",
+      "No low-iOS recording or hang captured.",
+      "Neither recording is a cold launch: backdrop captures already 2183 and 3268 respectively at first sampled frame.",
+      "No pixel payloads by design: gray opacity cannot be proven from geometry logs alone.",
+      "Geometry max 10 Hz; latest-tick metrics may be sampled repeatedly and are not per-callback distributions.",
+      "Cached hidden surfaces are present in the glass list; do not equate child hidden=false to visible."
+    ]
+  },
+  "sessions": [
+    {
+      "id": "WGP4_20261004_171219_852_flight",
+      "parts": [
+        {
+          "dir": "2-part-001",
+          "volume": 1,
+          "seq": [
+            1,
+            74
+          ],
+          "t": [
+            0.004,
+            5.7398
+          ]
+        },
+        {
+          "dir": "3-part-002",
+          "volume": 2,
+          "seq": [
+            75,
+            144
+          ],
+          "t": [
+            5.8425,
+            11.4273
+          ]
+        },
+        {
+          "dir": "1-part-003",
+          "volume": 3,
+          "seq": [
+            145,
+            208
+          ],
+          "t": [
+            11.5435,
+            17.0378
+          ]
+        }
+      ],
+      "events": 208,
+      "frames": 155,
+      "sequenceContiguous": true,
+      "routes": {
+        "FindFriendEntryViewController": 78,
+        "NewMainFrameViewController": 30,
+        "ContactsViewController": 10,
+        "MoreViewController": 19,
+        "WCFinderTimelineTabViewController": 18
+      },
+      "performanceByRoute": {
+        "FindFriendEntryViewController": {
+          "tickCost": {
+            "n": 78,
+            "minimum": 0.0645,
+            "median": 10.523,
+            "p90": 19.5791,
+            "maximum": 53.1445
+          },
+          "backdropCost": {
+            "n": 78,
+            "minimum": 0.0032,
+            "median": 7.9107,
+            "p90": 14.7605,
+            "maximum": 15.8069
+          },
+          "drawCost": {
+            "n": 78,
+            "minimum": 0.0235,
+            "median": 2.5505,
+            "p90": 4.4075,
+            "maximum": 42.3217
+          },
+          "refreshCost": {
+            "n": 78,
+            "minimum": 0.1963,
+            "median": 0.3738,
+            "p90": 0.8393,
+            "maximum": 0.925
+          },
+          "observerReadMS": {
+            "n": 78,
+            "minimum": 1.6258,
+            "median": 2.2166,
+            "p90": 3.4155,
+            "maximum": 3.7546
+          }
+        },
+        "NewMainFrameViewController": {
+          "tickCost": {
+            "n": 30,
+            "minimum": 0.1195,
+            "median": 24.5852,
+            "p90": 60.7509,
+            "maximum": 61.4013
+          },
+          "backdropCost": {
+            "n": 30,
+            "minimum": 0.0062,
+            "median": 20.2236,
+            "p90": 57.1345,
+            "maximum": 57.7746
+          },
+          "drawCost": {
+            "n": 30,
+            "minimum": 0.021,
+            "median": 3.4111,
+            "p90": 3.554,
+            "maximum": 39.505
+          },
+          "refreshCost": {
+            "n": 30,
+            "minimum": 0.2179,
+            "median": 0.2404,
+            "p90": 0.4045,
+            "maximum": 4.5974
+          },
+          "observerReadMS": {
+            "n": 30,
+            "minimum": 1.909,
+            "median": 2.0679,
+            "p90": 2.2687,
+            "maximum": 2.4313
+          }
+        },
+        "ContactsViewController": {
+          "tickCost": {
+            "n": 10,
+            "minimum": 0.0946,
+            "median": 23.5207,
+            "p90": 61.839,
+            "maximum": 61.839
+          },
+          "backdropCost": {
+            "n": 10,
+            "minimum": 0.0043,
+            "median": 20.3484,
+            "p90": 22.9723,
+            "maximum": 22.9723
+          },
+          "drawCost": {
+            "n": 10,
+            "minimum": 0.0267,
+            "median": 3.0759,
+            "p90": 38.7652,
+            "maximum": 38.7652
+          },
+          "refreshCost": {
+            "n": 10,
+            "minimum": 0.1953,
+            "median": 0.2564,
+            "p90": 3.2272,
+            "maximum": 3.2272
+          },
+          "observerReadMS": {
+            "n": 10,
+            "minimum": 1.7457,
+            "median": 1.8434,
+            "p90": 2.0379,
+            "maximum": 2.0379
+          }
+        },
+        "MoreViewController": {
+          "tickCost": {
+            "n": 19,
+            "minimum": 0.0453,
+            "median": 13.3849,
+            "p90": 19.4172,
+            "maximum": 19.9127
+          },
+          "backdropCost": {
+            "n": 19,
+            "minimum": 0.0031,
+            "median": 10.6534,
+            "p90": 15.389,
+            "maximum": 16.0945
+          },
+          "drawCost": {
+            "n": 19,
+            "minimum": 0.0209,
+            "median": 2.4886,
+            "p90": 3.8027,
+            "maximum": 3.998
+          },
+          "refreshCost": {
+            "n": 19,
+            "minimum": 0.309,
+            "median": 0.3467,
+            "p90": 1.2405,
+            "maximum": 1.2405
+          },
+          "observerReadMS": {
+            "n": 19,
+            "minimum": 1.6474,
+            "median": 2.1174,
+            "p90": 2.7987,
+            "maximum": 2.8509
+          }
+        },
+        "WCFinderTimelineTabViewController": {
+          "tickCost": {
+            "n": 18,
+            "minimum": 0.087,
+            "median": 0.1724,
+            "p90": 25.9367,
+            "maximum": 26.0598
+          },
+          "backdropCost": {
+            "n": 18,
+            "minimum": 0.0088,
+            "median": 0.0209,
+            "p90": 21.5093,
+            "maximum": 21.6013
+          },
+          "drawCost": {
+            "n": 18,
+            "minimum": 0.0026,
+            "median": 0.0047,
+            "p90": 4.225,
+            "maximum": 4.3332
+          },
+          "refreshCost": {
+            "n": 18,
+            "minimum": 0.0388,
+            "median": 0.1249,
+            "p90": 0.257,
+            "maximum": 0.474
+          },
+          "observerReadMS": {
+            "n": 18,
+            "minimum": 1.7858,
+            "median": 2.0094,
+            "p90": 2.3123,
+            "maximum": 2.3945
+          }
+        }
+      },
+      "health": [
+        {
+          "sequence": 3,
+          "t": 0.016,
+          "displayLinkCallbacksPerSecond": 0,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 15,
+          "t": 1.026,
+          "displayLinkCallbacksPerSecond": 93.081,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 26,
+          "t": 2.0261,
+          "displayLinkCallbacksPerSecond": 92.9918,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 40,
+          "t": 3.1214,
+          "displayLinkCallbacksPerSecond": 69.3876,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 53,
+          "t": 4.1218,
+          "displayLinkCallbacksPerSecond": 53.9794,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 66,
+          "t": 5.1259,
+          "displayLinkCallbacksPerSecond": 54.7766,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 80,
+          "t": 6.226,
+          "displayLinkCallbacksPerSecond": 84.5375,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 92,
+          "t": 7.2262,
+          "displayLinkCallbacksPerSecond": 101.98,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 106,
+          "t": 8.319,
+          "displayLinkCallbacksPerSecond": 72.2937,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 119,
+          "t": 9.323,
+          "displayLinkCallbacksPerSecond": 83.6724,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 131,
+          "t": 10.4229,
+          "displayLinkCallbacksPerSecond": 93.6358,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 143,
+          "t": 11.4233,
+          "displayLinkCallbacksPerSecond": 90.955,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 154,
+          "t": 12.4234,
+          "displayLinkCallbacksPerSecond": 59.9957,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 168,
+          "t": 13.5233,
+          "displayLinkCallbacksPerSecond": 88.1939,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 182,
+          "t": 14.6228,
+          "displayLinkCallbacksPerSecond": 90.9519,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 192,
+          "t": 15.6248,
+          "displayLinkCallbacksPerSecond": 71.8584,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 205,
+          "t": 16.7197,
+          "displayLinkCallbacksPerSecond": 30.139,
+          "droppedMainEvents": 0
+        }
+      ],
+      "lastMethodStats": {
+        "sequence": 204,
+        "t": 16.7195,
+        "methods": [
+          {
+            "method": "tick:",
+            "calls": 1287,
+            "inclusiveTotalMS": 9034.2729,
+            "maximumDepth": 1,
+            "class": "WXGIntegrationHost",
+            "maximumCompletedMS": 61.8394,
+            "sameMethodReentries": 0,
+            "activeDepth": 1
+          },
+          {
+            "method": "tick:",
+            "calls": 1126,
+            "inclusiveTotalMS": 1703.3809,
+            "maximumDepth": 1,
+            "class": "WXGDemoBar",
+            "maximumCompletedMS": 43.0923,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "capture",
+            "calls": 846,
+            "inclusiveTotalMS": 1495.0185,
+            "maximumDepth": 1,
+            "class": "WXGGlassView",
+            "maximumCompletedMS": 4.7912,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "drawMetalFrame",
+            "calls": 867,
+            "inclusiveTotalMS": 87.1703,
+            "maximumDepth": 1,
+            "class": "WXGGlassView",
+            "maximumCompletedMS": 8.707,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "layoutSubviews",
+            "calls": 63,
+            "inclusiveTotalMS": 65.4736,
+            "maximumDepth": 1,
+            "class": "MMUINavigationBar",
+            "maximumCompletedMS": 5.3487,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "refresh",
+            "calls": 87,
+            "inclusiveTotalMS": 63.1587,
+            "maximumDepth": 1,
+            "class": "WXGIntegrationHost",
+            "maximumCompletedMS": 5.1703,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "nativeNavigationLaidOut",
+            "calls": 78,
+            "inclusiveTotalMS": 58.988,
+            "maximumDepth": 1,
+            "class": "WXGIntegrationHost",
+            "maximumCompletedMS": 5.1897,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "updateGeometry",
+            "calls": 1452,
+            "inclusiveTotalMS": 47.1584,
+            "maximumDepth": 1,
+            "class": "WXGDemoBar",
+            "maximumCompletedMS": 0.4954,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          }
+        ]
+      }
+    },
+    {
+      "id": "WGP4_20261004_171250_382_flight",
+      "parts": [
+        {
+          "dir": "6-part-001",
+          "volume": 1,
+          "seq": [
+            1,
+            55
+          ],
+          "t": [
+            0.004,
+            4.9264
+          ]
+        },
+        {
+          "dir": "5-part-002",
+          "volume": 2,
+          "seq": [
+            56,
+            107
+          ],
+          "t": [
+            5.0267,
+            9.6089
+          ]
+        },
+        {
+          "dir": "7-part-003",
+          "volume": 3,
+          "seq": [
+            108,
+            155
+          ],
+          "t": [
+            9.6448,
+            13.8616
+          ]
+        },
+        {
+          "dir": "4-part-004",
+          "volume": 4,
+          "seq": [
+            156,
+            208
+          ],
+          "t": [
+            13.9837,
+            18.5016
+          ]
+        }
+      ],
+      "events": 208,
+      "frames": 147,
+      "sequenceContiguous": true,
+      "routes": {
+        "NewMainFrameViewController": 36,
+        "BaseMsgContentViewController": 92,
+        "ChatRoomInfoViewController": 19
+      },
+      "performanceByRoute": {
+        "NewMainFrameViewController": {
+          "tickCost": {
+            "n": 36,
+            "minimum": 0.1128,
+            "median": 22.2073,
+            "p90": 25.6336,
+            "maximum": 41.3606
+          },
+          "backdropCost": {
+            "n": 36,
+            "minimum": 0.006,
+            "median": 18.5923,
+            "p90": 21.8587,
+            "maximum": 37.0945
+          },
+          "drawCost": {
+            "n": 36,
+            "minimum": 0.0203,
+            "median": 3.3712,
+            "p90": 3.7572,
+            "maximum": 4.7427
+          },
+          "refreshCost": {
+            "n": 36,
+            "minimum": 0.2565,
+            "median": 0.4138,
+            "p90": 0.5111,
+            "maximum": 0.5111
+          },
+          "observerReadMS": {
+            "n": 36,
+            "minimum": 1.8882,
+            "median": 2.124,
+            "p90": 2.5103,
+            "maximum": 2.671
+          }
+        },
+        "BaseMsgContentViewController": {
+          "tickCost": {
+            "n": 92,
+            "minimum": 31.7897,
+            "median": 53.5675,
+            "p90": 59.4705,
+            "maximum": 67.3704
+          },
+          "backdropCost": {
+            "n": 92,
+            "minimum": 27.8988,
+            "median": 49.992,
+            "p90": 55.9438,
+            "maximum": 63.8465
+          },
+          "drawCost": {
+            "n": 92,
+            "minimum": 3.2883,
+            "median": 3.4121,
+            "p90": 3.5967,
+            "maximum": 7.7373
+          },
+          "refreshCost": {
+            "n": 92,
+            "minimum": 0.1292,
+            "median": 0.5357,
+            "p90": 0.7792,
+            "maximum": 3.7712
+          },
+          "observerReadMS": {
+            "n": 92,
+            "minimum": 2.1318,
+            "median": 2.3082,
+            "p90": 2.509,
+            "maximum": 2.8051
+          }
+        },
+        "ChatRoomInfoViewController": {
+          "tickCost": {
+            "n": 19,
+            "minimum": 0.0778,
+            "median": 22.183,
+            "p90": 43.0031,
+            "maximum": 44.1968
+          },
+          "backdropCost": {
+            "n": 19,
+            "minimum": 0.0058,
+            "median": 20.3759,
+            "p90": 40.9435,
+            "maximum": 41.7401
+          },
+          "drawCost": {
+            "n": 19,
+            "minimum": 0.0016,
+            "median": 1.6582,
+            "p90": 2.3187,
+            "maximum": 2.327
+          },
+          "refreshCost": {
+            "n": 19,
+            "minimum": 0.1006,
+            "median": 0.2253,
+            "p90": 0.3704,
+            "maximum": 0.6543
+          },
+          "observerReadMS": {
+            "n": 19,
+            "minimum": 1.9037,
+            "median": 2.3505,
+            "p90": 3.6442,
+            "maximum": 4.258
+          }
+        }
+      },
+      "health": [
+        {
+          "sequence": 3,
+          "t": 0.0274,
+          "displayLinkCallbacksPerSecond": 0,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 14,
+          "t": 1.033,
+          "displayLinkCallbacksPerSecond": 84.54,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 25,
+          "t": 2.0363,
+          "displayLinkCallbacksPerSecond": 86.7102,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 37,
+          "t": 3.1325,
+          "displayLinkCallbacksPerSecond": 72.0891,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 47,
+          "t": 4.1323,
+          "displayLinkCallbacksPerSecond": 26.997,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 58,
+          "t": 5.1364,
+          "displayLinkCallbacksPerSecond": 28.8828,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 70,
+          "t": 6.2326,
+          "displayLinkCallbacksPerSecond": 58.3858,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 81,
+          "t": 7.3327,
+          "displayLinkCallbacksPerSecond": 27.2705,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 92,
+          "t": 8.3334,
+          "displayLinkCallbacksPerSecond": 35.9716,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 105,
+          "t": 9.4338,
+          "displayLinkCallbacksPerSecond": 56.3429,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 116,
+          "t": 10.5328,
+          "displayLinkCallbacksPerSecond": 28.2075,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 126,
+          "t": 11.533,
+          "displayLinkCallbacksPerSecond": 36.9956,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 138,
+          "t": 12.5343,
+          "displayLinkCallbacksPerSecond": 24.968,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 151,
+          "t": 13.6332,
+          "displayLinkCallbacksPerSecond": 16.3801,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 164,
+          "t": 14.6333,
+          "displayLinkCallbacksPerSecond": 15.9989,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 176,
+          "t": 15.6369,
+          "displayLinkCallbacksPerSecond": 14.9457,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 188,
+          "t": 16.7334,
+          "displayLinkCallbacksPerSecond": 14.5907,
+          "droppedMainEvents": 0
+        },
+        {
+          "sequence": 200,
+          "t": 17.7336,
+          "displayLinkCallbacksPerSecond": 27.9979,
+          "droppedMainEvents": 0
+        }
+      ],
+      "lastMethodStats": {
+        "sequence": 199,
+        "t": 17.7334,
+        "methods": [
+          {
+            "method": "tick:",
+            "calls": 686,
+            "inclusiveTotalMS": 12554.1753,
+            "maximumDepth": 1,
+            "class": "WXGIntegrationHost",
+            "maximumCompletedMS": 67.3714,
+            "sameMethodReentries": 0,
+            "activeDepth": 1
+          },
+          {
+            "method": "capture",
+            "calls": 1447,
+            "inclusiveTotalMS": 855.0432,
+            "maximumDepth": 1,
+            "class": "WXGGlassView",
+            "maximumCompletedMS": 3.8915,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "tick:",
+            "calls": 274,
+            "inclusiveTotalMS": 174.1522,
+            "maximumDepth": 1,
+            "class": "WXGDemoBar",
+            "maximumCompletedMS": 4.012,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "drawMetalFrame",
+            "calls": 1435,
+            "inclusiveTotalMS": 78.3125,
+            "maximumDepth": 1,
+            "class": "WXGGlassView",
+            "maximumCompletedMS": 2.7828,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "refresh",
+            "calls": 86,
+            "inclusiveTotalMS": 60.0702,
+            "maximumDepth": 1,
+            "class": "WXGIntegrationHost",
+            "maximumCompletedMS": 3.7715,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "nativeNavigationLaidOut",
+            "calls": 57,
+            "inclusiveTotalMS": 47.7957,
+            "maximumDepth": 1,
+            "class": "WXGIntegrationHost",
+            "maximumCompletedMS": 3.475,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "buildNavigation",
+            "calls": 61,
+            "inclusiveTotalMS": 37.1876,
+            "maximumDepth": 1,
+            "class": "WXGIntegrationHost",
+            "maximumCompletedMS": 2.672,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          },
+          {
+            "method": "reapply",
+            "calls": 2105,
+            "inclusiveTotalMS": 36.1023,
+            "maximumDepth": 1,
+            "class": "WXGStateBag",
+            "maximumCompletedMS": 1.693,
+            "sameMethodReentries": 0,
+            "activeDepth": 0
+          }
+        ]
+      }
+    }
+  ],
+  "findings": [
+    {
+      "id": "cpu_capture_bottleneck",
+      "confidence": "high",
+      "finding": "FIX8 branch hierarchy capture consumes most host tick time and overwhelms 120 Hz/60 Hz budget. Chat median sampled host tick 53.5675ms, backdrop49.992ms.",
+      "evidence": [
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "7-part-003",
+          "sequence": 117,
+          "t": 10.5388
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "4-part-004",
+          "sequence": 188,
+          "t": 16.7334
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "4-part-004",
+          "sequence": 199,
+          "t": 17.7334
+        }
+      ],
+      "details": {
+        "chatSeq117": {
+          "batchRegions": 2,
+          "topCaptureMS": 33.541375,
+          "bottomCaptureMS": 16.673583,
+          "batchMS": 50.244833,
+          "nativeTopBranches": [
+            "MMTableView",
+            "WeChat.MagicEmojiImplicitBackgroundView",
+            "UIView 408x12",
+            "UIView 440x166.333"
+          ],
+          "bottomBranches": [
+            "WeChat.MagicEmojiImplicitBackgroundView",
+            "MMTableView"
+          ],
+          "modelFallbacks": 0
+        },
+        "callbackRateAtSeq188": 14.5907,
+        "hostInclusiveBySeq199MS": 12554.1753,
+        "elapsedAtSeq199Seconds": 17.7334,
+        "maxHostTickMS": 67.3714,
+        "sameMethodReentries": 0
+      },
+      "recommendedAction": "Rollback FIX8 drawViewHierarchy branch backend before shader optimization. Keep source capture bounded by measured CPU time and avoid rendering whole-page branches once for each small ROI."
+    },
+    {
+      "id": "falling_back_surface",
+      "confidence": "high",
+      "finding": "Chat-settings return causes an extra plugin surface presentation transform even though native back button stays fixed.",
+      "evidence": [
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "5-part-002",
+          "sequence": 67,
+          "t": 6.1039
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "5-part-002",
+          "sequence": 71,
+          "t": 6.2362
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "5-part-002",
+          "sequence": 72,
+          "t": 6.3784
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "5-part-002",
+          "sequence": 74,
+          "t": 6.658
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "5-part-002",
+          "sequence": 106,
+          "t": 9.5291
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "7-part-003",
+          "sequence": 108,
+          "t": 9.6448
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "7-part-003",
+          "sequence": 109,
+          "t": 9.7524
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "7-part-003",
+          "sequence": 112,
+          "t": 10.138
+        }
+      ],
+      "details": {
+        "modelSurfaceY": 22,
+        "nativeBackPresentationRect": [
+          16,
+          56.3333,
+          45,
+          44
+        ],
+        "firstReturnPresentationY": [
+          -25.798,
+          -8.7456,
+          20.4048,
+          22
+        ],
+        "secondReturnPresentationY": [
+          -29.5535,
+          -17.9028,
+          6.6503,
+          22
+        ],
+        "firstReturnInitialTransformDy": -47.798,
+        "secondReturnInitialTransformDy": -51.5535,
+        "modelTransform": "identity",
+        "nativePopAnimated": true,
+        "nativeAnimationsEnabled": true,
+        "nativeDisableActions": false
+      },
+      "recommendedAction": "Remove FIX8 immediate follow writes inside native animation transactions or explicitly suppress only plugin layer implicit animation while retaining native transition progress. Preserve prior native-pop ownership implementation."
+    },
+    {
+      "id": "gray_material_not_gpu_failure",
+      "confidence": "medium",
+      "finding": "Gray surfaces can be actively rendering valid captures; logs do not show general Metal/capture failure or visible stale video overlays.",
+      "evidence": [
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "6-part-001",
+          "sequence": 35,
+          "t": 3.098
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "6-part-001",
+          "sequence": 44,
+          "t": 3.9632
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "7-part-003",
+          "sequence": 117,
+          "t": 10.5388
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "4-part-004",
+          "sequence": 194,
+          "t": 17.2981
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "4-part-004",
+          "sequence": 195,
+          "t": 17.4127
+        }
+      ],
+      "details": {
+        "backSurfaceID": "0x16c841c00",
+        "chatSourceID": "0x408fe39c0",
+        "backCompletedFramesSeq44": 16,
+        "backCompletedFramesSeq117": 89,
+        "backCompletedFramesSeq194": 193,
+        "backdropRevisionSeq44": 3395,
+        "backdropRevisionSeq117": 3605,
+        "backdropRevisionSeq194": 3813,
+        "captureFailures": 0,
+        "modelFallbacks": 0,
+        "cachedVideoSurfaces": "Child views attached but owner WXGSurface hidden=true and effectiveAlpha10Ancestors=0; not proof of visible video-page overlap.",
+        "homeSeq195TopBranches": [
+          "FakeNavigationBar 440x100.333",
+          "MainFrameTableView"
+        ],
+        "homeSeq195TopCaptureMS": 24.65125
+      },
+      "recommendedAction": "Treat native opaque chrome copied into branch snapshots and unsupported snapshot compositing as capture-backend suspects. Restore FIX7 rendering before adjusting material parameters; do not claim evidence proves exact gray pixel source."
+    },
+    {
+      "id": "home_button_host_churn",
+      "confidence": "medium",
+      "finding": "Native MainFrameLeftBarView is repeatedly replaced and old host can detach, requiring binding to new host. Uploaded frames do not conclusively show complete idle glass disappearance.",
+      "evidence": [
+        {
+          "session": "WGP4_20261004_171219_852_flight",
+          "part": "1-part-003",
+          "sequence": 195,
+          "t": 15.8091
+        },
+        {
+          "session": "WGP4_20261004_171219_852_flight",
+          "part": "1-part-003",
+          "sequence": 200,
+          "t": 16.2967
+        },
+        {
+          "session": "WGP4_20261004_171219_852_flight",
+          "part": "1-part-003",
+          "sequence": 206,
+          "t": 16.8317
+        },
+        {
+          "session": "WGP4_20261004_171219_852_flight",
+          "part": "1-part-003",
+          "sequence": 207,
+          "t": 16.9322
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "4-part-004",
+          "sequence": 198,
+          "t": 17.6514
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "4-part-004",
+          "sequence": 201,
+          "t": 17.7592
+        },
+        {
+          "session": "WGP4_20261004_171250_382_flight",
+          "part": "4-part-004",
+          "sequence": 208,
+          "t": 18.5016
+        }
+      ],
+      "details": {
+        "firstSessionOldHost": "0x40094a300",
+        "firstSessionReplacement": "0x400990f00",
+        "oldAlphaAtSeq200": 0,
+        "replacementWindowYAtSeq206": 59.3333,
+        "replacementWindowYAtSeq207": 24.3333,
+        "secondSessionOldHost": "0x400741680",
+        "secondSessionOldDetachedSeq": 201,
+        "secondSessionNewHost": "0x400833480",
+        "secondSessionReplacementSeq": 208
+      },
+      "recommendedAction": "Scope lifecycle rebind to replacement MainFrameLeftBarView attachment/layout; no permanent pinning to destroyed original view. Do not broaden global geometry hooks."
+    },
+    {
+      "id": "dock_occlusion_not_resolved_by_logs",
+      "confidence": "limited",
+      "finding": "Native MMTabBar is opacity zero in all sampled frames; reported native-bar obstruction may be transient or a transition snapshot, not actual visible bar at sampling time.",
+      "details": {
+        "framesWithNativeTabModelOrPresentationOpacityAboveZero": 0,
+        "glassListMaximum": 8,
+        "boundedProbe": "glass cap 8 and targets cap32 may omit current title/right button when old cached glass objects fill the list.",
+        "dockOwnership": "FIX8 page overlay often detached throughout chat, returns with owner page. This does not prove sibling stacking/transition snapshot correctness."
+      },
+      "recommendedAction": "Restore prior dock attachment/transition behavior; future targeted diagnostics should prioritize visible/current-owner glass before cached entries and inspect only bounded transition snapshot siblings."
+    },
+    {
+      "id": "coverage_limits",
+      "confidence": "high",
+      "finding": "Enough evidence for CPU sampler rollback and plugin layer fall; no need to request missing uploads before implementing those.",
+      "notCapturedConclusive": [
+        "iOS 15.7 freeze",
+        "cold launch chrome",
+        "idle disappearance full lifecycle",
+        "actual gray sampled pixels",
+        "native overlay snapshot occlusion"
+      ]
+    }
+  ]
+}

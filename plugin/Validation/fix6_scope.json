@@ -1,0 +1,99 @@
+{
+  "baseline": "0.4.4-test4fix4",
+  "release": "0.4.6-test4fix6",
+  "exactFileSHA256": {
+    "WXGBackdrop.m": "fedc2c6a2c1fd157960624b19c723a0d069bca271721d88a7844d1fd803ea3b1",
+    "WXGCommon.h": "fe2309fee6bcc5e1d1b4a9955b64cc4b0ffe538511aececccf22090a7a6e64dd",
+    "WXGCompactInputGeometry.h": "f15325cd6a24358ce798b11070c287a115ddd244ac227c30eaf68abd4991e345",
+    "WXGConfig.m": "32875b09519d589f8c3e5def7a36cbf47613247c84db067ff8f8af1c5227a671",
+    "WXGDistanceField.h": "4fae3a3111aaecd248782800879cc757db33ba04f92a74ce28db6428907e5f34",
+    "WXGElasticMotion.h": "7c63c2d87ee6083ec09079cdb70c6c5ba6486de4525de929b4045e16ed23706c",
+    "WXGGeometry.h": "ed9fd3fda246ddccafa3c0c089eefb17f6c286efb038bbf2d4a88710c83232f4",
+    "WXGGlass.metal": "892ae64f8e961e20b08e925a7d1c7abcb24d96adec5c36ce734b7f32a34b8bd3",
+    "WXGIconAlignment.h": "bf4650602ec4798bcbf2603f581179e04491d3c10a92ada15a5e17e75f474ac7",
+    "WXGInputPolicy.h": "0faa282c5625e18f7c7f006a6e8cbe1a78c148d5985e44ea63afadc2f2b0412d",
+    "WXGLensOptics.h": "3cf31a9f522abdab663b29fb0ae6782d82e69d53dee1c6d2a9488403d75ff86b",
+    "WXGMonochrome.h": "e0a2200a30c77b2ed5867d001f25e9bfc599f111474f9de4a8fb89a0a97714a8",
+    "WXGMotion.h": "7221af92f125968f3382e8af529a4d23658c1659fe8b6920efbf787679aebb1b",
+    "WXGNativeIcons.h": "baf11fe1f5d3c5cbf6a423b9c9d53db9c6bbcfbfb8902645904fe151291b364d",
+    "WXGNativeIcons.m": "c5cad052af4670d792ab9b346b5b1bf89493f48b40fe5adf5a1fe6541ef16c64",
+    "WXGNativeInputGeometry.h": "b0f1a87763793df4788d513b2c1e6d3fc310b6b0c9ea0386bd12518884aac810",
+    "WXGOpticalSettings.m": "7d113506b60424f432bdae43d7005d2d9f60b556396eb4e57734840cedf9f620",
+    "WXGOptics.h": "f6009395808ead01030eac515261192d3562afc3841119113261b7d2693147bf",
+    "WXGPresentationMath.h": "99a3e22c4ac673fae4af780cedffafce969bdbb2fb319bc2a940d5e80e1727c7",
+    "WXGRenderPolicy.h": "e07693e601b46d382b7f0bb1eab075055095f90dc8a257edd891fe61fb57e825",
+    "WXGShaderSource.h": "adb689c31d60e29896bc669f8b6da96c7aa612eacf723929d1f010e26a22ad18"
+  },
+  "exactMethodSHA256": {
+    "WXGHost.m: - (void)buildDock": "feb4d02aed2a76aab41346558ef52b8d3a628818fcb939576382d0ff4eef0934",
+    "WXGHost.m: - (void)dockChanged:": "29df7868df015477c9161e663853a9214032f92ad55ed866ac35253bc92eae92",
+    "WXGHost.m: - (NSString *)backCount:": "8bcce84bb00cb03a35c91d4862500233f8d357d74006b04aec7f19111afeef4c",
+    "WXGHost.m: - (NSString *)titleForControl:": "e4c5b7097f7920fedc75b332b7a3ad160e2a800ccd3ef72b024e97f0b67b632a",
+    "WXGHost.m: - (NSString *)fullTitleFromView:": "d58b7972143bd96bec37962decabe390a68a20a27948f42f3030174af841841b",
+    "WXGHost.m: - (void)presentSettings": "4986b190401b575dc0f3135b54cf14b9d047554e37af576a982f4364e9cc9d04",
+    "WXGDemoBar.m: - (void)layoutSubviews": "f456fd350de7613e796c348bd26433d152ae4cb688c334cc3cc8104a9751ddf6",
+    "WXGDemoBar.m: - (void)updateGeometry": "8e941eab15f1d9026eda77d77995b557e294b14a3190c3480e9cd09c8a551cf3",
+    "WXGDemoBar.m: - (void)tick:": "02fd5778123384b8d4209833477282822a865d0e770055fce14acf74e1ea310f",
+    "WXGDemoBar.m: - (BOOL)beginTrackingWithTouch:": "016cd86bbc9ed107261fbf374af5c6f65cc9eed38d9048bf16efc41232207c67",
+    "WXGDemoBar.m: - (void)endTrackingWithTouch:": "65180c3bae51b4bb4327e338c9977fbedc3456a4cf698fb1e882031d4a27359d",
+    "WXGGlassView.m: - (BOOL)encodeBlur:": "03b6ff6012d967b8fd9d9aad0ff0daaf0b237dc9ca24cf6331275ba714fbf6e9",
+    "WXGSurface.m: - (void)activateOriginal": "9fb3fd5f2de8272b3fb1a4e5e62c1e98d50206208de659ceefc681f817f67941",
+    "WXGSurface.m: - (void)updateContentTransform": "dacb73d0f2cc4043840cdd985e91774bae26ef2a52bebbd72856aad093d9ae5c",
+    "WXGInput.m: - (void)clearPaint": "c82d4759f6c562ba089fae49ce3e8a001aca40165baede1e03ea33437ec743d4",
+    "WXGInput.m: - (BOOL)installInController:": "72b86f5bbc6fec8caa25e386465a1a54cfb8fab4fda8f08dee335e788d330c52",
+    "WXGNativeInput.m: - (void)clearPaint": "6bb5a195c3b7a26baa7b2e0199d03cb5f3a9e1e485e6a26d41592893e2f215a7",
+    "WXGNativeInput.m: - (void)layout": "cb1d4551ab3930187a6e5523fa6744c4165b00527491266ec3c150ae8cbbb232"
+  },
+  "changedSourceSHA256": {
+    "WXGDecorations.m": {
+      "before": "1608dcfaf12d28fd898e13f5a3cb8d751030d09108c1587262ec0d9a378f237a",
+      "after": "b54d63386bb19c00b84a9e262612295bc080bce74d576731e824aa10de22a3c9"
+    },
+    "WXGDemoBar.m": {
+      "before": "595282fa5fb5e6c8d23585a82d34799120ef6e7028ad2391f9db4ce0cd923d61",
+      "after": "9aace1a4cac0c1ffecea011ec4fe1bd0084eea172e4cb762376adecf4558f43f"
+    },
+    "WXGGlassView.m": {
+      "before": "37a86b0e249b01cb19cf4ee8aedddc803d74a2d80e95de439390b3261e9a5d69",
+      "after": "0a0e97273f4c8d3450f63ca6577cf6b4a459243db3e10ace0beec41f13d0a5c3"
+    },
+    "WXGHost.m": {
+      "before": "f16961ce0d8960fd49e956809e48040b8eb15a2a9790f85e57a1d4d809374f61",
+      "after": "5641672b6e91cae7cb08e3fdcb1a27a92839e40ed8f32a8368c78de0e66a64c3"
+    },
+    "WXGInput.m": {
+      "before": "5e17dd4a905c2a001676ec2d8f7bf33bc4b8a1a617fe6bbbfda28971f678a43f",
+      "after": "8b468c7d1126ad97fa532c462a4be58890f449d2fdc844165956b29f5d437ebe"
+    },
+    "WXGIntegration.h": {
+      "before": "7fab6e58effc7c92fecdb51046967f3fa05999d5973a636a4856715bca12dde3",
+      "after": "a97703cafd08754524ea41ce14820193a8c948e884843bb298dfba435482c847"
+    },
+    "WXGNative.m": {
+      "before": "fd9b9ccea97151bf80a28ffd924695a077ab48b69e1880f6c1c83672bcf45b33",
+      "after": "cb9e2d170183f0ea638169319cdab7939705d13a95fef466b57d0e4f9bb13d95"
+    },
+    "WXGNativeInput.m": {
+      "before": "76e75e181feed4f6e0d1aaee603c4d8ce42c1a0bd7ce9791bf1308aabdbd2915",
+      "after": "d7d0885fa788f360a2d0e1cf58fbd3660507c0ccb99f06672424c67253abe435"
+    },
+    "WXGSettings.m": {
+      "before": "c0244798268a8776ae528d7de59b6ebafa31e865e2fa0cf949baaec52366683f",
+      "after": "df1aa0e3d2537e426481944d29d53767b39aa02000469163e8ea2463cc0381f4"
+    },
+    "WXGSurface.m": {
+      "before": "76a456cb4bd8adfd2553f505f234bc616716b189d0b574f59e5930f4502eb5da",
+      "after": "9fb0029eed22cab7489514b9bdf47d7f77d7a33257c41897069a47869a970df0"
+    }
+  },
+  "addedSource": [
+    "WXGInputWidthPolicy.h"
+  ],
+  "demoOpticsAndSettingsUnchanged": true,
+  "inputActionPolicyUnchanged": true,
+  "drawMethodUnchangedExceptTraitAppearance": true,
+  "inputGuardClass": "MMGrowTextView only",
+  "departureReferenceUsesCapturedNativeTrace": true,
+  "deviceTested": false,
+  "scope": "source preservation; does not certify UIKit interaction, Metal pixels, performance or absence of hangs"
+}

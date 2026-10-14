@@ -1,0 +1,36 @@
+{
+ "baseline": "WeChatLiquidGlass_0_4_34_TEST4_FIX34_flat.zip (unpacked)",
+ "changedSources": [
+  "WXGDemoBar.m",
+  "WXGGlassView.m",
+  "WXGHost.m",
+  "WXGOpticalSettings.m",
+  "WXGSettings.m"
+ ],
+ "addedSources": [],
+ "frozenIdentical": [
+  "WXGMeshRefraction.h",
+  "WXGLensOptics.h",
+  "WXGMotion.h",
+  "WXGMotionPrediction.h",
+  "WXGDistanceField.h",
+  "WXGBackdropCopy.h",
+  "WXGBackdropROI.h",
+  "WXGBackdropTraversal.h",
+  "WXGSourceMapping.h",
+  "WXGGeometry.h",
+  "WXGRenderPolicy.h",
+  "WXGInput.m",
+  "WXGNativeInput.m",
+  "WXGNative.m",
+  "WXGDockInteraction.m",
+  "WXGNativeIcons.m",
+  "WXGDecorations.m",
+  "WXGGlass.metal",
+  "WXGShaderSource.h",
+  "WXGOptics.h",
+  "WXGBackdrop.m"
+ ],
+ "lumiOccurrences": [],
+ "problems": []
+}

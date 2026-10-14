@@ -1,0 +1,35 @@
+diff --git a/worker.js b/worker.js
+index 50857a2..6640af1 100644
+--- a/worker.js
++++ b/worker.js
+@@ -11,6 +11,11 @@ const ALLOWLIST = [
+ ];
+ // 着色器版本:换新着色器时我会直接给你新的整份文件,这行不用手改。
+ const VER = "1";
++// 复查间隔（秒，插件 FIX104 起按这个来）：
++// 已授权的账号每隔多久回来问一次。从名单删掉一个账号，它联网使用时最多这么久玻璃就会关掉。
++const RECHECK_AFTER = 300;
++// 不在名单的账号多久再来问一次。把它加进名单后，最多这么久就自动生效（设置里点“重新检测”是立即）。
++const DENIED_RECHECK_AFTER = 300;
+ // ──────────────────────────────────
+ 
+ export default {
+@@ -37,7 +42,7 @@ export default {
+     if (!ts || Math.abs(Date.now() / 1000 - ts) > 300) return json({ error: "stale" }, 400);   // 5 分钟重放窗口
+ 
+     const allow = ALLOWLIST.map(s => s.trim().toLowerCase());
+-    if (!allow.includes(account)) return json({ error: "not authorized" }, 403);
++    if (!allow.includes(account)) return json({ error: "not authorized", recheckAfter: DENIED_RECHECK_AFTER }, 403);
+     if (!env.SIGN_PRIV) return json({ error: "SIGN_PRIV not set" }, 500);
+ 
+     const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 3600;  // 有效期 7 天
+@@ -46,7 +51,8 @@ export default {
+     let sig;
+     try { sig = await signP256(env.SIGN_PRIV.trim(), utf8(msg)); }
+     catch { return json({ error: "SIGN_PRIV invalid" }, 500); }
+-    return json({ ver: VER, expiresAt, shader: b64(utf8(SHADER)), digest, sig });
++    // recheckAfter 不在签名里：旧插件照常验签；它只决定多久复查一次，改不了签名里的到期时间。
++    return json({ ver: VER, expiresAt, shader: b64(utf8(SHADER)), digest, sig, recheckAfter: RECHECK_AFTER });
+   }
+ };
+ 

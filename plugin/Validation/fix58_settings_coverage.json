@@ -1,0 +1,1873 @@
+{
+ "fix57": [
+  {
+   "old": {
+    "kind": "switch",
+    "title": "清透材质",
+    "key": "clearMaterial",
+    "target": "config"
+   },
+   "new": [
+    "材质强度与范围 · 通用 · 清透材质"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "触感反馈",
+    "key": "haptics",
+    "target": "config"
+   },
+   "new": [
+    "基本设置 · 交互 · 触感反馈"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "底栏使用微信原生图标",
+    "key": "useWeChatIcons",
+    "target": "config"
+   },
+   "new": [
+    "底栏 · 图标与动画 · 使用微信原生图标"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "底栏点击动画由系统渲染",
+    "key": "dockTapTravel",
+    "target": "config"
+   },
+   "new": [
+    "底栏 · 图标与动画 · 点击动画由系统渲染"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "RGB 色散",
+    "key": "syncDispersion",
+    "target": "config"
+   },
+   "new": [
+    "折射强度和色散 · 色散方式 · RGB 色散"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "在边缘减弱",
+    "key": "materialEdgeFadeEnabled",
+    "target": "config"
+   },
+   "new": [
+    "材质强度与范围 · 边缘减弱 · 在边缘减弱（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "在边缘减弱",
+    "key": "dockMaterialEdgeFadeEnabled",
+    "target": "config"
+   },
+   "new": [
+    "材质强度与范围 · 边缘减弱 · 在边缘减弱（底栏）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "普通玻璃折射强度",
+    "key": "refraction",
+    "target": "config",
+    "min": 0.0,
+    "max": 20.0
+   },
+   "new": [
+    "折射强度和色散 · 其余玻璃 · 折射强度"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "普通玻璃 RGB 色散",
+    "key": "dispersion",
+    "target": "config",
+    "min": 0.0,
+    "max": 8.0
+   },
+   "new": [
+    "折射强度和色散 · 其余玻璃 · RGB 色散"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "普通玻璃折射宽度 · pt",
+    "key": "edgeWidth",
+    "target": "config",
+    "min": 1.0,
+    "max": 60.0
+   },
+   "new": [
+    "折射强度和色散 · 其余玻璃 · 折射宽度"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "模糊半径 · pt",
+    "key": "blur",
+    "target": "config",
+    "min": 0.0,
+    "max": 12.0
+   },
+   "new": [
+    "模糊强度与范围 · 其余玻璃 · 模糊半径"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "模糊覆盖扩展 · %",
+    "key": "blurCoverage",
+    "target": "config",
+    "min": 0.0,
+    "max": 100.0
+   },
+   "new": [
+    "模糊强度与范围 · 其余玻璃 · 模糊覆盖扩展"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜折射强度",
+    "key": "lensRefraction",
+    "target": "config",
+    "min": 0.0,
+    "max": 20.0
+   },
+   "new": [
+    "折射强度和色散 · 透镜（按压时） · 透镜折射强度"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜 RGB 色散",
+    "key": "lensDispersion",
+    "target": "config",
+    "min": 0.0,
+    "max": 8.0
+   },
+   "new": [
+    "折射强度和色散 · 透镜（按压时） · 透镜 RGB 色散"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜折射宽度 · pt（两端）",
+    "key": "lensEdgeWidth",
+    "target": "config",
+    "min": 1.0,
+    "max": 60.0
+   },
+   "new": [
+    "折射强度和色散 · 透镜（按压时） · 透镜折射宽度（两端）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜上下折射宽度比例（1 为与两端相同）",
+    "key": "lensTopEdgeRatio",
+    "target": "config",
+    "min": 0.1,
+    "max": 1.0
+   },
+   "new": [
+    "折射强度和色散 · 透镜（按压时） · 上下折射宽度比例"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "上下收窄曲线（越大越快收窄）",
+    "key": "lensEdgeSharpness",
+    "target": "config",
+    "min": 1.0,
+    "max": 6.0
+   },
+   "new": [
+    "折射强度和色散 · 透镜（按压时） · 上下收窄曲线"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜模糊半径 · pt（0 为关闭）",
+    "key": "lensBlur",
+    "target": "config",
+    "min": 0.0,
+    "max": 12.0
+   },
+   "new": [
+    "模糊强度与范围 · 透镜（按压时） · 透镜模糊半径"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜模糊覆盖扩展 · %",
+    "key": "lensBlurCoverage",
+    "target": "config",
+    "min": 0.0,
+    "max": 100.0
+   },
+   "new": [
+    "模糊强度与范围 · 透镜（按压时） · 透镜模糊覆盖扩展"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜内容放大倍数",
+    "key": "lensZoom",
+    "target": "config",
+    "min": 1.0,
+    "max": 1.5
+   },
+   "new": [
+    "底栏 · 透镜 · 透镜内容放大倍数"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "按压底栏整体放大",
+    "key": "barGrowth",
+    "target": "config",
+    "min": 1.0,
+    "max": 1.08
+   },
+   "new": [
+    "底栏 · 透镜 · 按压底栏整体放大"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "首尾透镜外包距离 · pt",
+    "key": "endWrap",
+    "target": "config",
+    "min": 2.0,
+    "max": 10.0
+   },
+   "new": [
+    "底栏 · 透镜 · 首尾透镜外包距离"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "按压透镜外扩倍数",
+    "key": "lensGrowth",
+    "target": "config",
+    "min": 1.08,
+    "max": 1.5
+   },
+   "new": [
+    "底栏 · 透镜 · 按压透镜外扩倍数"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "镜内底栏统一内收",
+    "key": "bodyPinch",
+    "target": "config",
+    "min": 0.0,
+    "max": 0.3
+   },
+   "new": [
+    "底栏 · 透镜 · 镜内底栏统一内收"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "模糊倍率",
+    "key": "syncBlurScale",
+    "target": "config",
+    "min": 0.5,
+    "max": 3.0
+   },
+   "new": [
+    "模糊强度与范围 · 清晰度 · 模糊倍率"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "采样倍率（0 = 跟随屏幕）",
+    "key": "syncCaptureScale",
+    "target": "config",
+    "min": 0.0,
+    "max": 3.0
+   },
+   "new": [
+    "模糊强度与范围 · 清晰度 · 采样倍率"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "底栏边框不透明度",
+    "key": "rimOpacity",
+    "target": "config",
+    "min": 0.0,
+    "max": 1.0
+   },
+   "new": [
+    "边框与渐隐 · 浅色模式 · 不透明度（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "底栏边框宽度 · pt",
+    "key": "barBorderWidth",
+    "target": "config",
+    "min": 0.0,
+    "max": 2.0
+   },
+   "new": [
+    "边框与渐隐 · 浅色模式 · 宽度（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜边框不透明度",
+    "key": "lensRimOpacity",
+    "target": "config",
+    "min": 0.0,
+    "max": 1.0
+   },
+   "new": [
+    "边框与渐隐 · 浅色模式 · 透镜 · 不透明度"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜边框宽度 · pt",
+    "key": "lensBorderWidth",
+    "target": "config",
+    "min": 0.0,
+    "max": 2.0
+   },
+   "new": [
+    "边框与渐隐 · 浅色模式 · 透镜 · 宽度"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "边框亮度（1 为原色）",
+    "key": "rimBrightness",
+    "target": "config",
+    "min": 0.0,
+    "max": 2.0
+   },
+   "new": [
+    "边框与渐隐 · 浅色模式 · 亮度（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "左下 / 右上渐隐",
+    "key": "rimFade",
+    "target": "config",
+    "min": 0.0,
+    "max": 1.0
+   },
+   "new": [
+    "边框与渐隐 · 浅色模式 · 左下 / 右上渐隐（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "底栏边框不透明度",
+    "key": "darkRimOpacity",
+    "target": "config",
+    "min": 0.0,
+    "max": 1.0
+   },
+   "new": [
+    "边框与渐隐 · 深色模式 · 不透明度（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "底栏边框宽度 · pt",
+    "key": "darkBarBorderWidth",
+    "target": "config",
+    "min": 0.0,
+    "max": 2.0
+   },
+   "new": [
+    "边框与渐隐 · 深色模式 · 宽度（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜边框不透明度",
+    "key": "darkLensRimOpacity",
+    "target": "config",
+    "min": 0.0,
+    "max": 1.0
+   },
+   "new": [
+    "边框与渐隐 · 深色模式 · 透镜 · 不透明度"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "透镜边框宽度 · pt",
+    "key": "darkLensBorderWidth",
+    "target": "config",
+    "min": 0.0,
+    "max": 2.0
+   },
+   "new": [
+    "边框与渐隐 · 深色模式 · 透镜 · 宽度"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "边框亮度（1 为原色）",
+    "key": "darkRimBrightness",
+    "target": "config",
+    "min": 0.0,
+    "max": 2.0
+   },
+   "new": [
+    "边框与渐隐 · 深色模式 · 亮度（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "左下 / 右上渐隐",
+    "key": "darkRimFade",
+    "target": "config",
+    "min": 0.0,
+    "max": 1.0
+   },
+   "new": [
+    "边框与渐隐 · 深色模式 · 左下 / 右上渐隐（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "静置底色不透明度",
+    "key": "selectionOpacity",
+    "target": "config",
+    "min": 0.0,
+    "max": 0.75
+   },
+   "new": [
+    "底栏 · 选中胶囊 · 静置底色不透明度"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "静置内边距 · pt",
+    "key": "selectionInset",
+    "target": "config",
+    "min": 2.0,
+    "max": 14.0
+   },
+   "new": [
+    "底栏 · 选中胶囊 · 静置内边距"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "减弱范围 · pt（0 = 不减弱）",
+    "key": "materialEdgeFade",
+    "target": "config",
+    "min": 0.0,
+    "max": 60.0
+   },
+   "new": [
+    "材质强度与范围 · 边缘减弱 · 减弱范围（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "浅色模式材质遮盖",
+    "key": "materialOpacity",
+    "target": "config",
+    "min": 0.0,
+    "max": 0.95
+   },
+   "new": [
+    "材质强度与范围 · 浅色模式 · 材质遮盖（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "深色模式材质遮盖",
+    "key": "darkMaterialOpacity",
+    "target": "config",
+    "min": 0.0,
+    "max": 0.95
+   },
+   "new": [
+    "材质强度与范围 · 深色模式 · 材质遮盖（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "减弱范围 · pt（0 = 不减弱）",
+    "key": "dockMaterialEdgeFade",
+    "target": "config",
+    "min": 0.0,
+    "max": 60.0
+   },
+   "new": [
+    "材质强度与范围 · 边缘减弱 · 减弱范围（底栏）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "浅色模式材质遮盖",
+    "key": "dockMaterialOpacity",
+    "target": "config",
+    "min": 0.0,
+    "max": 0.95
+   },
+   "new": [
+    "材质强度与范围 · 浅色模式 · 材质遮盖（底栏）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "深色模式材质遮盖",
+    "key": "dockDarkMaterialOpacity",
+    "target": "config",
+    "min": 0.0,
+    "max": 0.95
+   },
+   "new": [
+    "材质强度与范围 · 深色模式 · 材质遮盖（底栏）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "消息长按菜单圆角 · pt",
+    "key": "messageMenuCornerRadius",
+    "target": "config",
+    "min": 0.0,
+    "max": 40.0
+   },
+   "new": [
+    "基本设置 · 消息长按菜单 · 菜单圆角"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "底栏宽度比例",
+    "key": "widthFraction",
+    "target": "config",
+    "min": 0.65,
+    "max": 0.98
+   },
+   "new": [
+    "底栏 · 尺寸 · 底栏宽度比例"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "底栏高度 · pt",
+    "key": "height",
+    "target": "config",
+    "min": 54.0,
+    "max": 90.0
+   },
+   "new": [
+    "底栏 · 尺寸 · 底栏高度"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "底边相对安全区 · pt",
+    "key": "lift",
+    "target": "config",
+    "min": -80.0,
+    "max": 160.0
+   },
+   "new": [
+    "底栏 · 尺寸 · 底边相对安全区"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "color",
+    "title": "底栏边框颜色",
+    "key": "rimHex",
+    "target": "config"
+   },
+   "new": [
+    "边框与渐隐 · 浅色模式 · 边框颜色（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "color",
+    "title": "透镜边框颜色",
+    "key": "lensRimHex",
+    "target": "config"
+   },
+   "new": [
+    "边框与渐隐 · 浅色模式 · 透镜 · 边框颜色"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "color",
+    "title": "底栏边框颜色",
+    "key": "darkRimHex",
+    "target": "config"
+   },
+   "new": [
+    "边框与渐隐 · 深色模式 · 边框颜色（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "color",
+    "title": "透镜边框颜色",
+    "key": "darkLensRimHex",
+    "target": "config"
+   },
+   "new": [
+    "边框与渐隐 · 深色模式 · 透镜 · 边框颜色"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "color",
+    "title": "浅色模式选中胶囊底色",
+    "key": "selectionHex",
+    "target": "config"
+   },
+   "new": [
+    "底栏 · 选中胶囊 · 浅色模式底色"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "color",
+    "title": "深色模式选中胶囊底色",
+    "key": "darkSelectionHex",
+    "target": "config"
+   },
+   "new": [
+    "底栏 · 选中胶囊 · 深色模式底色"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "color",
+    "title": "浅色模式材质底色",
+    "key": "materialHex",
+    "target": "config"
+   },
+   "new": [
+    "材质强度与范围 · 浅色模式 · 材质底色（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "color",
+    "title": "深色模式材质底色",
+    "key": "darkMaterialHex",
+    "target": "config"
+   },
+   "new": [
+    "材质强度与范围 · 深色模式 · 材质底色（其余玻璃）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "color",
+    "title": "浅色模式材质底色",
+    "key": "dockMaterialHex",
+    "target": "config"
+   },
+   "new": [
+    "材质强度与范围 · 浅色模式 · 材质底色（底栏）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "color",
+    "title": "深色模式材质底色",
+    "key": "dockDarkMaterialHex",
+    "target": "config"
+   },
+   "new": [
+    "材质强度与范围 · 深色模式 · 材质底色（底栏）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "action",
+    "title": "恢复 TEST9 材质与本版默认设置",
+    "key": "reset",
+    "target": "action"
+   },
+   "new": [
+    "基本设置 · 恢复 · 恢复本版默认参数"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "开启微信玻璃测试版",
+    "key": "enabled",
+    "target": "pref"
+   },
+   "new": "设置首页 · 头部卡片右侧开关",
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "顶部按钮与背景适配",
+    "key": "nav",
+    "target": "pref"
+   },
+   "new": [
+    "基本设置 · 适配 · 顶部按钮与背景适配"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "真实悬浮标签栏",
+    "key": "dock",
+    "target": "pref"
+   },
+   "new": [
+    "基本设置 · 适配 · 真实悬浮标签栏"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "聊天悬浮输入栏",
+    "key": "input",
+    "target": "pref"
+   },
+   "new": [
+    "基本设置 · 适配 · 聊天悬浮输入栏"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "原生宽度三端输入（测试）",
+    "key": "nativeInputTest",
+    "target": "pref"
+   },
+   "new": [
+    "基本设置 · 适配 · 原生宽度三端输入（测试）"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "switch",
+    "title": "聊天标题使用头像 + 小胶囊",
+    "key": "avatarTitle",
+    "target": "pref"
+   },
+   "new": [
+    "基本设置 · 标题与比例 · 聊天标题使用头像 + 小胶囊"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "slider",
+    "title": "截图比例微调",
+    "key": "sizeScale",
+    "target": "pref",
+    "min": 0.85,
+    "max": 1.2
+   },
+   "new": [
+    "基本设置 · 标题与比例 · 截图比例微调"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "action",
+    "title": "材质、位置与性能诊断",
+    "key": "diagnostics",
+    "target": "action"
+   },
+   "new": [
+    "基本设置 · 诊断 · 材质、位置与性能诊断"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "action",
+    "title": "导出各页诊断 JSON",
+    "key": "export",
+    "target": "action"
+   },
+   "new": [
+    "基本设置 · 诊断 · 导出各页诊断 JSON"
+   ],
+   "covered": true
+  },
+  {
+   "old": {
+    "kind": "page",
+    "title": "TEST9 玻璃与独立透镜",
+    "key": "optical",
+    "target": "page"
+   },
+   "new": "设置首页的玻璃模块卡片",
+   "covered": true
+  }
+ ],
+ "fix58_modules": {
+  "basic": {
+   "title": "基本设置",
+   "scoped": false,
+   "rows": [
+    {
+     "kind": "switch",
+     "title": "顶部按钮与背景适配",
+     "group": "适配",
+     "scope": null,
+     "module": "basic",
+     "key": "pref.nav",
+     "dock": null
+    },
+    {
+     "kind": "switch",
+     "title": "真实悬浮标签栏",
+     "group": "适配",
+     "scope": null,
+     "module": "basic",
+     "key": "pref.dock",
+     "dock": null
+    },
+    {
+     "kind": "switch",
+     "title": "聊天悬浮输入栏",
+     "group": "适配",
+     "scope": null,
+     "module": "basic",
+     "key": "pref.input",
+     "dock": null
+    },
+    {
+     "kind": "switch",
+     "title": "原生宽度三端输入（测试）",
+     "group": "适配",
+     "scope": null,
+     "module": "basic",
+     "key": "pref.nativeInputTest",
+     "dock": null
+    },
+    {
+     "kind": "switch",
+     "title": "聊天标题使用头像 + 小胶囊",
+     "group": "标题与比例",
+     "scope": null,
+     "module": "basic",
+     "key": "pref.avatarTitle",
+     "dock": null
+    },
+    {
+     "kind": "slider",
+     "title": "截图比例微调",
+     "group": "标题与比例",
+     "scope": null,
+     "module": "basic",
+     "key": "pref.sizeScale",
+     "dock": null,
+     "min": 0.85,
+     "max": 1.2
+    },
+    {
+     "kind": "switch",
+     "title": "触感反馈",
+     "group": "交互",
+     "scope": null,
+     "module": "basic",
+     "key": "haptics",
+     "dock": null
+    },
+    {
+     "kind": "slider",
+     "title": "菜单圆角",
+     "group": "消息长按菜单",
+     "scope": null,
+     "module": "basic",
+     "key": "messageMenuCornerRadius",
+     "dock": null,
+     "min": 0.0,
+     "max": 40.0
+    },
+    {
+     "kind": "action",
+     "title": "材质、位置与性能诊断",
+     "group": "诊断",
+     "scope": null,
+     "module": "basic",
+     "key": "diagnostics",
+     "dock": null
+    },
+    {
+     "kind": "action",
+     "title": "导出各页诊断 JSON",
+     "group": "诊断",
+     "scope": null,
+     "module": "basic",
+     "key": "export",
+     "dock": null
+    },
+    {
+     "kind": "action",
+     "title": "恢复本版默认参数",
+     "group": "恢复",
+     "scope": null,
+     "module": "basic",
+     "key": "reset",
+     "dock": null
+    }
+   ]
+  },
+  "refraction": {
+   "title": "折射强度和色散",
+   "scoped": true,
+   "rows": [
+    {
+     "kind": "slider",
+     "title": "折射强度",
+     "group": "底栏本体",
+     "scope": "dock",
+     "module": "refraction",
+     "key": "dockRefraction",
+     "dock": null,
+     "min": 0.0,
+     "max": 20.0
+    },
+    {
+     "kind": "slider",
+     "title": "RGB 色散",
+     "group": "底栏本体",
+     "scope": "dock",
+     "module": "refraction",
+     "key": "dockDispersion",
+     "dock": null,
+     "min": 0.0,
+     "max": 8.0
+    },
+    {
+     "kind": "slider",
+     "title": "折射宽度",
+     "group": "底栏本体",
+     "scope": "dock",
+     "module": "refraction",
+     "key": "dockEdgeWidth",
+     "dock": null,
+     "min": 1.0,
+     "max": 60.0
+    },
+    {
+     "kind": "slider",
+     "title": "透镜折射强度",
+     "group": "透镜（按压时）",
+     "scope": "dock",
+     "module": "refraction",
+     "key": "lensRefraction",
+     "dock": null,
+     "min": 0.0,
+     "max": 20.0
+    },
+    {
+     "kind": "slider",
+     "title": "透镜 RGB 色散",
+     "group": "透镜（按压时）",
+     "scope": "dock",
+     "module": "refraction",
+     "key": "lensDispersion",
+     "dock": null,
+     "min": 0.0,
+     "max": 8.0
+    },
+    {
+     "kind": "slider",
+     "title": "透镜折射宽度（两端）",
+     "group": "透镜（按压时）",
+     "scope": "dock",
+     "module": "refraction",
+     "key": "lensEdgeWidth",
+     "dock": null,
+     "min": 1.0,
+     "max": 60.0
+    },
+    {
+     "kind": "slider",
+     "title": "上下折射宽度比例",
+     "group": "透镜（按压时）",
+     "scope": "dock",
+     "module": "refraction",
+     "key": "lensTopEdgeRatio",
+     "dock": null,
+     "min": 0.1,
+     "max": 1.0
+    },
+    {
+     "kind": "slider",
+     "title": "上下收窄曲线",
+     "group": "透镜（按压时）",
+     "scope": "dock",
+     "module": "refraction",
+     "key": "lensEdgeSharpness",
+     "dock": null,
+     "min": 1.0,
+     "max": 6.0
+    },
+    {
+     "kind": "slider",
+     "title": "折射强度",
+     "group": "其余玻璃",
+     "scope": "other",
+     "module": "refraction",
+     "key": "refraction",
+     "dock": null,
+     "min": 0.0,
+     "max": 20.0
+    },
+    {
+     "kind": "slider",
+     "title": "RGB 色散",
+     "group": "其余玻璃",
+     "scope": "other",
+     "module": "refraction",
+     "key": "dispersion",
+     "dock": null,
+     "min": 0.0,
+     "max": 8.0
+    },
+    {
+     "kind": "slider",
+     "title": "折射宽度",
+     "group": "其余玻璃",
+     "scope": "other",
+     "module": "refraction",
+     "key": "edgeWidth",
+     "dock": null,
+     "min": 1.0,
+     "max": 60.0
+    },
+    {
+     "kind": "switch",
+     "title": "RGB 色散",
+     "group": "色散方式",
+     "scope": null,
+     "module": "refraction",
+     "key": "syncDispersion",
+     "dock": null
+    }
+   ]
+  },
+  "blur": {
+   "title": "模糊强度与范围",
+   "scoped": true,
+   "rows": [
+    {
+     "kind": "slider",
+     "title": "模糊半径",
+     "group": "底栏本体",
+     "scope": "dock",
+     "module": "blur",
+     "key": "dockBlur",
+     "dock": null,
+     "min": 0.0,
+     "max": 12.0
+    },
+    {
+     "kind": "slider",
+     "title": "模糊覆盖扩展",
+     "group": "底栏本体",
+     "scope": "dock",
+     "module": "blur",
+     "key": "dockBlurCoverage",
+     "dock": null,
+     "min": 0.0,
+     "max": 100.0
+    },
+    {
+     "kind": "slider",
+     "title": "透镜模糊半径",
+     "group": "透镜（按压时）",
+     "scope": "dock",
+     "module": "blur",
+     "key": "lensBlur",
+     "dock": null,
+     "min": 0.0,
+     "max": 12.0
+    },
+    {
+     "kind": "slider",
+     "title": "透镜模糊覆盖扩展",
+     "group": "透镜（按压时）",
+     "scope": "dock",
+     "module": "blur",
+     "key": "lensBlurCoverage",
+     "dock": null,
+     "min": 0.0,
+     "max": 100.0
+    },
+    {
+     "kind": "slider",
+     "title": "模糊半径",
+     "group": "其余玻璃",
+     "scope": "other",
+     "module": "blur",
+     "key": "blur",
+     "dock": null,
+     "min": 0.0,
+     "max": 12.0
+    },
+    {
+     "kind": "slider",
+     "title": "模糊覆盖扩展",
+     "group": "其余玻璃",
+     "scope": "other",
+     "module": "blur",
+     "key": "blurCoverage",
+     "dock": null,
+     "min": 0.0,
+     "max": 100.0
+    },
+    {
+     "kind": "slider",
+     "title": "模糊倍率",
+     "group": "清晰度",
+     "scope": null,
+     "module": "blur",
+     "key": "syncBlurScale",
+     "dock": null,
+     "min": 0.5,
+     "max": 3.0
+    },
+    {
+     "kind": "slider",
+     "title": "采样倍率",
+     "group": "清晰度",
+     "scope": null,
+     "module": "blur",
+     "key": "syncCaptureScale",
+     "dock": null,
+     "min": 0.0,
+     "max": 3.0
+    }
+   ]
+  },
+  "material": {
+   "title": "材质强度与范围",
+   "scoped": true,
+   "rows": [
+    {
+     "kind": "switch",
+     "title": "在边缘减弱",
+     "group": "边缘减弱",
+     "scope": null,
+     "module": "material",
+     "key": "materialEdgeFadeEnabled",
+     "dock": "dockMaterialEdgeFadeEnabled"
+    },
+    {
+     "kind": "slider",
+     "title": "减弱范围",
+     "group": "边缘减弱",
+     "scope": null,
+     "module": "material",
+     "key": "materialEdgeFade",
+     "dock": "dockMaterialEdgeFade",
+     "min": 0.0,
+     "max": 60.0
+    },
+    {
+     "kind": "color",
+     "title": "材质底色",
+     "group": "浅色模式",
+     "scope": null,
+     "module": "material",
+     "key": "materialHex",
+     "dock": "dockMaterialHex"
+    },
+    {
+     "kind": "slider",
+     "title": "材质遮盖",
+     "group": "浅色模式",
+     "scope": null,
+     "module": "material",
+     "key": "materialOpacity",
+     "dock": "dockMaterialOpacity",
+     "min": 0.0,
+     "max": 0.95
+    },
+    {
+     "kind": "color",
+     "title": "材质底色",
+     "group": "深色模式",
+     "scope": null,
+     "module": "material",
+     "key": "darkMaterialHex",
+     "dock": "dockDarkMaterialHex"
+    },
+    {
+     "kind": "slider",
+     "title": "材质遮盖",
+     "group": "深色模式",
+     "scope": null,
+     "module": "material",
+     "key": "darkMaterialOpacity",
+     "dock": "dockDarkMaterialOpacity",
+     "min": 0.0,
+     "max": 0.95
+    },
+    {
+     "kind": "switch",
+     "title": "清透材质",
+     "group": "通用",
+     "scope": null,
+     "module": "material",
+     "key": "clearMaterial",
+     "dock": null
+    }
+   ]
+  },
+  "border": {
+   "title": "边框与渐隐",
+   "scoped": true,
+   "rows": [
+    {
+     "kind": "color",
+     "title": "边框颜色",
+     "group": "浅色模式",
+     "scope": null,
+     "module": "border",
+     "key": "rimHex",
+     "dock": "dockRimHex"
+    },
+    {
+     "kind": "slider",
+     "title": "不透明度",
+     "group": "浅色模式",
+     "scope": null,
+     "module": "border",
+     "key": "rimOpacity",
+     "dock": "dockRimOpacity",
+     "min": 0.0,
+     "max": 1.0
+    },
+    {
+     "kind": "slider",
+     "title": "宽度",
+     "group": "浅色模式",
+     "scope": null,
+     "module": "border",
+     "key": "barBorderWidth",
+     "dock": "dockBorderWidth",
+     "min": 0.0,
+     "max": 2.0
+    },
+    {
+     "kind": "slider",
+     "title": "亮度",
+     "group": "浅色模式",
+     "scope": null,
+     "module": "border",
+     "key": "rimBrightness",
+     "dock": "dockRimBrightness",
+     "min": 0.0,
+     "max": 2.0
+    },
+    {
+     "kind": "slider",
+     "title": "左下 / 右上渐隐",
+     "group": "浅色模式",
+     "scope": null,
+     "module": "border",
+     "key": "rimFade",
+     "dock": "dockRimFade",
+     "min": 0.0,
+     "max": 1.0
+    },
+    {
+     "kind": "color",
+     "title": "边框颜色",
+     "group": "浅色模式 · 透镜",
+     "scope": "dock",
+     "module": "border",
+     "key": "lensRimHex",
+     "dock": null
+    },
+    {
+     "kind": "slider",
+     "title": "不透明度",
+     "group": "浅色模式 · 透镜",
+     "scope": "dock",
+     "module": "border",
+     "key": "lensRimOpacity",
+     "dock": null,
+     "min": 0.0,
+     "max": 1.0
+    },
+    {
+     "kind": "slider",
+     "title": "宽度",
+     "group": "浅色模式 · 透镜",
+     "scope": "dock",
+     "module": "border",
+     "key": "lensBorderWidth",
+     "dock": null,
+     "min": 0.0,
+     "max": 2.0
+    },
+    {
+     "kind": "color",
+     "title": "边框颜色",
+     "group": "深色模式",
+     "scope": null,
+     "module": "border",
+     "key": "darkRimHex",
+     "dock": "dockDarkRimHex"
+    },
+    {
+     "kind": "slider",
+     "title": "不透明度",
+     "group": "深色模式",
+     "scope": null,
+     "module": "border",
+     "key": "darkRimOpacity",
+     "dock": "dockDarkRimOpacity",
+     "min": 0.0,
+     "max": 1.0
+    },
+    {
+     "kind": "slider",
+     "title": "宽度",
+     "group": "深色模式",
+     "scope": null,
+     "module": "border",
+     "key": "darkBarBorderWidth",
+     "dock": "dockDarkBorderWidth",
+     "min": 0.0,
+     "max": 2.0
+    },
+    {
+     "kind": "slider",
+     "title": "亮度",
+     "group": "深色模式",
+     "scope": null,
+     "module": "border",
+     "key": "darkRimBrightness",
+     "dock": "dockDarkRimBrightness",
+     "min": 0.0,
+     "max": 2.0
+    },
+    {
+     "kind": "slider",
+     "title": "左下 / 右上渐隐",
+     "group": "深色模式",
+     "scope": null,
+     "module": "border",
+     "key": "darkRimFade",
+     "dock": "dockDarkRimFade",
+     "min": 0.0,
+     "max": 1.0
+    },
+    {
+     "kind": "color",
+     "title": "边框颜色",
+     "group": "深色模式 · 透镜",
+     "scope": "dock",
+     "module": "border",
+     "key": "darkLensRimHex",
+     "dock": null
+    },
+    {
+     "kind": "slider",
+     "title": "不透明度",
+     "group": "深色模式 · 透镜",
+     "scope": "dock",
+     "module": "border",
+     "key": "darkLensRimOpacity",
+     "dock": null,
+     "min": 0.0,
+     "max": 1.0
+    },
+    {
+     "kind": "slider",
+     "title": "宽度",
+     "group": "深色模式 · 透镜",
+     "scope": "dock",
+     "module": "border",
+     "key": "darkLensBorderWidth",
+     "dock": null,
+     "min": 0.0,
+     "max": 2.0
+    }
+   ]
+  },
+  "dock": {
+   "title": "底栏",
+   "scoped": false,
+   "rows": [
+    {
+     "kind": "slider",
+     "title": "底栏宽度比例",
+     "group": "尺寸",
+     "scope": null,
+     "module": "dock",
+     "key": "widthFraction",
+     "dock": null,
+     "min": 0.65,
+     "max": 0.98
+    },
+    {
+     "kind": "slider",
+     "title": "底栏高度",
+     "group": "尺寸",
+     "scope": null,
+     "module": "dock",
+     "key": "height",
+     "dock": null,
+     "min": 54.0,
+     "max": 90.0
+    },
+    {
+     "kind": "slider",
+     "title": "底边相对安全区",
+     "group": "尺寸",
+     "scope": null,
+     "module": "dock",
+     "key": "lift",
+     "dock": null,
+     "min": -80.0,
+     "max": 160.0
+    },
+    {
+     "kind": "slider",
+     "title": "透镜内容放大倍数",
+     "group": "透镜",
+     "scope": null,
+     "module": "dock",
+     "key": "lensZoom",
+     "dock": null,
+     "min": 1.0,
+     "max": 1.5
+    },
+    {
+     "kind": "slider",
+     "title": "按压透镜外扩倍数",
+     "group": "透镜",
+     "scope": null,
+     "module": "dock",
+     "key": "lensGrowth",
+     "dock": null,
+     "min": 1.08,
+     "max": 1.5
+    },
+    {
+     "kind": "slider",
+     "title": "按压底栏整体放大",
+     "group": "透镜",
+     "scope": null,
+     "module": "dock",
+     "key": "barGrowth",
+     "dock": null,
+     "min": 1.0,
+     "max": 1.08
+    },
+    {
+     "kind": "slider",
+     "title": "首尾透镜外包距离",
+     "group": "透镜",
+     "scope": null,
+     "module": "dock",
+     "key": "endWrap",
+     "dock": null,
+     "min": 2.0,
+     "max": 10.0
+    },
+    {
+     "kind": "slider",
+     "title": "镜内底栏统一内收",
+     "group": "透镜",
+     "scope": null,
+     "module": "dock",
+     "key": "bodyPinch",
+     "dock": null,
+     "min": 0.0,
+     "max": 0.3
+    },
+    {
+     "kind": "color",
+     "title": "浅色模式底色",
+     "group": "选中胶囊",
+     "scope": null,
+     "module": "dock",
+     "key": "selectionHex",
+     "dock": null
+    },
+    {
+     "kind": "color",
+     "title": "深色模式底色",
+     "group": "选中胶囊",
+     "scope": null,
+     "module": "dock",
+     "key": "darkSelectionHex",
+     "dock": null
+    },
+    {
+     "kind": "slider",
+     "title": "静置底色不透明度",
+     "group": "选中胶囊",
+     "scope": null,
+     "module": "dock",
+     "key": "selectionOpacity",
+     "dock": null,
+     "min": 0.0,
+     "max": 0.75
+    },
+    {
+     "kind": "slider",
+     "title": "静置内边距",
+     "group": "选中胶囊",
+     "scope": null,
+     "module": "dock",
+     "key": "selectionInset",
+     "dock": null,
+     "min": 2.0,
+     "max": 14.0
+    },
+    {
+     "kind": "switch",
+     "title": "使用微信原生图标",
+     "group": "图标与动画",
+     "scope": null,
+     "module": "dock",
+     "key": "useWeChatIcons",
+     "dock": null
+    },
+    {
+     "kind": "switch",
+     "title": "点击动画由系统渲染",
+     "group": "图标与动画",
+     "scope": null,
+     "module": "dock",
+     "key": "dockTapTravel",
+     "dock": null
+    }
+   ]
+  },
+  "wallpaper": {
+   "title": "壁纸",
+   "scoped": false,
+   "rows": [
+    {
+     "kind": "wallpaper",
+     "title": "浅色模式",
+     "group": "设置页壁纸",
+     "scope": null,
+     "module": "wallpaper",
+     "key": null,
+     "dock": null,
+     "dark": false
+    },
+    {
+     "kind": "wallpaper",
+     "title": "深色模式",
+     "group": "设置页壁纸",
+     "scope": null,
+     "module": "wallpaper",
+     "key": null,
+     "dock": null,
+     "dark": true
+    },
+    {
+     "kind": "slider",
+     "title": "卡片圆角",
+     "group": "卡片",
+     "scope": null,
+     "module": "wallpaper",
+     "key": "ui.cardRadius",
+     "dock": null,
+     "min": 0.0,
+     "max": 40.0
+    },
+    {
+     "kind": "color",
+     "title": "字体与图标",
+     "group": "强调色",
+     "scope": null,
+     "module": "wallpaper",
+     "key": "ui.accentHex",
+     "dock": null
+    },
+    {
+     "kind": "action",
+     "title": "恢复跟随系统",
+     "group": "强调色",
+     "scope": null,
+     "module": "wallpaper",
+     "key": "accentReset",
+     "dock": null
+    }
+   ]
+  }
+ },
+ "home_cards": [
+  [
+   "basic",
+   "基本设置",
+   "适配开关 · 比例 · 诊断"
+  ],
+  [
+   "dock",
+   "底栏",
+   "尺寸 · 透镜 · 选中胶囊"
+  ],
+  [
+   "refraction",
+   "折射强度和色散",
+   "强度 · 色散 · 折射宽度"
+  ],
+  [
+   "blur",
+   "模糊强度与范围",
+   "半径 · 覆盖范围 · 清晰度"
+  ],
+  [
+   "material",
+   "材质强度与范围",
+   "底色 · 遮盖 · 边缘减弱"
+  ],
+  [
+   "border",
+   "边框与渐隐",
+   "颜色 · 宽度 · 亮度 · 渐隐"
+  ],
+  [
+   "wallpaper",
+   "壁纸",
+   "深浅色壁纸 · 卡片圆角"
+  ]
+ ],
+ "split_rows": [
+  {
+   "module": "材质强度与范围",
+   "title": "在边缘减弱",
+   "other": "materialEdgeFadeEnabled",
+   "dock": "dockMaterialEdgeFadeEnabled"
+  },
+  {
+   "module": "材质强度与范围",
+   "title": "减弱范围",
+   "other": "materialEdgeFade",
+   "dock": "dockMaterialEdgeFade"
+  },
+  {
+   "module": "材质强度与范围",
+   "title": "材质底色",
+   "other": "materialHex",
+   "dock": "dockMaterialHex"
+  },
+  {
+   "module": "材质强度与范围",
+   "title": "材质遮盖",
+   "other": "materialOpacity",
+   "dock": "dockMaterialOpacity"
+  },
+  {
+   "module": "材质强度与范围",
+   "title": "材质底色",
+   "other": "darkMaterialHex",
+   "dock": "dockDarkMaterialHex"
+  },
+  {
+   "module": "材质强度与范围",
+   "title": "材质遮盖",
+   "other": "darkMaterialOpacity",
+   "dock": "dockDarkMaterialOpacity"
+  },
+  {
+   "module": "边框与渐隐",
+   "title": "边框颜色",
+   "other": "rimHex",
+   "dock": "dockRimHex"
+  },
+  {
+   "module": "边框与渐隐",
+   "title": "不透明度",
+   "other": "rimOpacity",
+   "dock": "dockRimOpacity"
+  },
+  {
+   "module": "边框与渐隐",
+   "title": "宽度",
+   "other": "barBorderWidth",
+   "dock": "dockBorderWidth"
+  },
+  {
+   "module": "边框与渐隐",
+   "title": "亮度",
+   "other": "rimBrightness",
+   "dock": "dockRimBrightness"
+  },
+  {
+   "module": "边框与渐隐",
+   "title": "左下 / 右上渐隐",
+   "other": "rimFade",
+   "dock": "dockRimFade"
+  },
+  {
+   "module": "边框与渐隐",
+   "title": "边框颜色",
+   "other": "darkRimHex",
+   "dock": "dockDarkRimHex"
+  },
+  {
+   "module": "边框与渐隐",
+   "title": "不透明度",
+   "other": "darkRimOpacity",
+   "dock": "dockDarkRimOpacity"
+  },
+  {
+   "module": "边框与渐隐",
+   "title": "宽度",
+   "other": "darkBarBorderWidth",
+   "dock": "dockDarkBorderWidth"
+  },
+  {
+   "module": "边框与渐隐",
+   "title": "亮度",
+   "other": "darkRimBrightness",
+   "dock": "dockDarkRimBrightness"
+  },
+  {
+   "module": "边框与渐隐",
+   "title": "左下 / 右上渐隐",
+   "other": "darkRimFade",
+   "dock": "dockDarkRimFade"
+  }
+ ],
+ "problems": []
+}

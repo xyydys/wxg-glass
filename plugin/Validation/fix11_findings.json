@@ -1,0 +1,44 @@
+{
+  "release": "0.4.11-test4fix11",
+  "deviceTested": false,
+  "evidenceInputs": [
+    "Latest user description of FIX10 regressions",
+    "FIX10 source",
+    "Earlier FIX9 WGP4.3 logs; not FIX11 runtime"
+  ],
+  "confirmedCodeCauses": [
+    {
+      "symptom": "Transition/keyboard intermediate sampling missing",
+      "oldCode": "TransitionSamplingPaused + pendingController gate + two-consumer copy limit",
+      "change": "Continuous shared readback of the current visible scene; all due consumers use GPU copies in the same coordinate space"
+    },
+    {
+      "symptom": "Dock stays fixed and is revealed by crop",
+      "oldCode": "Root overlay and WXGDockExposure; root snapshot source",
+      "change": "Native MMTabBar child; page-owned lifecycle, pixels from the current visible scene; no manual exposure crop"
+    },
+    {
+      "symptom": "Native layout writes move corrected star",
+      "oldCode": "Repair after layout/display callback; native local geometry writable between repairs",
+      "change": "Registered image-only frame/bounds/center guard; material child of native host"
+    },
+    {
+      "symptom": "Cold top background survives",
+      "oldCode": "FakeNavigationBar checked only under leaf.view",
+      "change": "Track native background lifecycle under navigation container, including MMUIHookView sibling"
+    }
+  ],
+  "unconfirmedOnDevice": [
+    "low-device freeze cause and recovery",
+    "end-to-end 60/120Hz performance",
+    "video compositor pixels",
+    "cold launch and interactive cancellation appearance"
+  ],
+  "shaderOpticsChanged": false,
+  "cpuBitmapsPerGlassRemoved": true,
+  "newDiagnostics": [
+    "per-scene capture interval/cost/scale",
+    "per-glass actual presented frames and new-background presentations",
+    "background age at presentation"
+  ]
+}

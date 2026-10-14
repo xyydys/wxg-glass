@@ -1,0 +1,127 @@
+{
+  "source": "反馈.zip",
+  "baseline": "0.4.7-test4fix7",
+  "release": "0.4.8-test4fix8",
+  "mediaIndex": "Feedback images named 01..22 locally; 13 is the MOV. Index is archive extraction order, not chronological.",
+  "newPerformanceLogsProvided": false,
+  "items": [
+    {
+      "id": "input_emoji_send",
+      "mediaIndices": [
+        1,
+        14,
+        16
+      ],
+      "symptom": "双段式表情抖动、发送图标小且截边",
+      "change": "停止写原生表情按钮 frame；底部基线代理；SF Symbol 留白栅格化、发送图标增大",
+      "verificationBoundary": "输入规则/几何自动检查；外观与输入法待真机"
+    },
+    {
+      "id": "dock_owner",
+      "mediaIndices": [
+        3,
+        5,
+        20
+      ],
+      "symptom": "底栏延迟消失、半屏返回露原生底栏",
+      "change": "主 Tab 页面持有底栏；不再跟踪全局 tabBar 位移；功能开启时保留原生遮盖",
+      "verificationBoundary": "原生离场数学保留；宿主布局待真机"
+    },
+    {
+      "id": "dock_position",
+      "mediaIndices": [
+        6,
+        8
+      ],
+      "symptom": "底栏离边缘太高",
+      "change": "现有 lift 支持负值，最小实际边距 0",
+      "verificationBoundary": "保留原有正值位置"
+    },
+    {
+      "id": "channels_order_fill",
+      "mediaIndices": [
+        3,
+        9,
+        10
+      ],
+      "symptom": "视频号右侧按钮重排、玻璃残留底色",
+      "change": "导航项排序与早期回退统一；采样排除原生按钮；回退色服从材质透明度",
+      "verificationBoundary": "特殊视频/自绘层未确诊；WGP4.2 记录来源/回退/图层"
+    },
+    {
+      "id": "tap_lens",
+      "mediaIndices": [
+        12,
+        18,
+        21
+      ],
+      "symptom": "点选过急、矩形、底色过渡及图标变色滞后",
+      "change": "完整透镜画布；连续抬起/移动/落下；到位提交原生动作",
+      "verificationBoundary": "数值/源码校验；实际 GPU 与着色视觉待真机"
+    },
+    {
+      "id": "lens_blur_outside",
+      "mediaIndices": [
+        12,
+        18,
+        21
+      ],
+      "symptom": "独立模糊、透镜外扩背景",
+      "change": "独立半径/覆盖默认 0，完整外扩区域采样",
+      "verificationBoundary": "光学还原检查；外部画布/强折射效果待真机"
+    },
+    {
+      "id": "quick_return_flash",
+      "mediaIndices": [
+        13
+      ],
+      "symptom": "快滑返回末尾胶囊闪烁",
+      "change": "重绑定与原生完成回调同帧同步位置/透明度；停止隐藏树采样",
+      "verificationBoundary": "无唯一根因定论；记录转场与实际采样时序"
+    },
+    {
+      "id": "cold_white",
+      "mediaIndices": [
+        6,
+        8
+      ],
+      "symptom": "冷启动顶部白底",
+      "change": "导航布局重新清理，仅观察本插件导航栏背景生命周期",
+      "verificationBoundary": "第三方单独背景可能需要局部探针"
+    },
+    {
+      "id": "page_sampling",
+      "mediaIndices": [
+        1,
+        2,
+        4,
+        7,
+        14,
+        16,
+        17,
+        22
+      ],
+      "symptom": "置顶采到另一页、气泡/模糊背景漏采",
+      "change": "按原生宿主页固定来源，读取不含插件的原生内容分支合成图",
+      "verificationBoundary": "UIKit 快照失败有模型回退；真实气泡、特效/视频兼容性待真机"
+    },
+    {
+      "id": "capture_cadence",
+      "mediaIndices": [],
+      "symptom": "采样帧率似乎减半、页面很卡",
+      "change": "所有到期区域使用同一显示时间戳；去掉轮流名额、强制原生布局和隐藏树",
+      "verificationBoundary": "数值证明无调度减半；没有实测帧率"
+    },
+    {
+      "id": "button_press",
+      "mediaIndices": [
+        11,
+        15,
+        19
+      ],
+      "symptom": "按压出现外圈新玻璃、本体不统一变化",
+      "change": "普通代理按钮单一本体与图标微放大 4.5%",
+      "verificationBoundary": "选择用户认可的简单放大方案；未实现完整系统拖拽变形"
+    }
+  ]
+}

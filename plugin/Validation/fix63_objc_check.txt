@@ -1,0 +1,17 @@
+ok WXGBackdrop.m
+ok WXGConfig.m
+ok WXGDecorations.m
+ok WXGDemoBar.m
+ok WXGDockInteraction.m
+ok WXGDockSearch.m
+ok WXGGlassView.m
+ok WXGHost.m
+ok WXGInput.m
+ok WXGLicense.m
+ok WXGNative.m
+ok WXGNativeIcons.m
+ok WXGNativeInput.m
+ok WXGOpticalSettings.m
+ok WXGSettings.m
+ok WXGSurface.m
+exit=0

@@ -1,0 +1,35 @@
+{
+  "embeddedShaderMatches": true,
+  "unchangedDemoFunctions": {
+    "WXGOClamp": true,
+    "WXGCapsuleOpticalField": true,
+    "WXGSelectionGap": true,
+    "WXGSelectionWidth": true,
+    "WXGSelectionCenter": true,
+    "WXGLensHeight": true,
+    "WXGLensWidth": true,
+    "WXGFitMaterialWidth": true,
+    "WXGRimStrength": true,
+    "WXGPressedBorderAlpha": true,
+    "WXGInnerInset": true,
+    "WXGOpticalOffset": true,
+    "WXGMaterialOpacity": true,
+    "WXGBlurSharpWeight": true,
+    "WXGLensRingBlurWeight": true,
+    "WXGCaptureScale": true,
+    "WXGMakeGaussian": true
+  },
+  "unchangedNamespacedHeaders": {
+    "Motion": true,
+    "DistanceField": true
+  },
+  "shaderReducesToTEST9": true,
+  "shaderReductionConditions": "Lens strength/dispersion/width and blur radius/coverage equal body values; native input maximumCornerRadius=0. Independent lens blur, opt-in single-body button press, FIX14 resting-selection withdrawal multiplier and these documented extensions are normalized; remaining shader tokens match TEST9. FIX14 intentionally changes selection fill compositing during reveal/release, not the optical functions.",
+  "restingSelectionWithdrawsBeforeRaisedLens": true,
+  "originalPressSpringRetained": true,
+  "releasePositionSpring": "340/29 (FIX7: 380/30); drag620/39 unchanged",
+  "lumiActiveScaleAndRevealRemoved": true,
+  "fullResolutionTwoPassGaussian": true,
+  "uniformBytes": 192,
+  "scope": "source/math audit; does not assert GPU pixel equality or device performance"
+}

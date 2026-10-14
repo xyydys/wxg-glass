@@ -1,0 +1,38 @@
+{
+  "baseline": "original 0.4 TEST4",
+  "release": "0.4.4-test4fix4",
+  "exactFileSHA256": {
+    "WXGConfig.m": "32875b09519d589f8c3e5def7a36cbf47613247c84db067ff8f8af1c5227a671",
+    "WXGOpticalSettings.m": "7d113506b60424f432bdae43d7005d2d9f60b556396eb4e57734840cedf9f620",
+    "WXGGlass.metal": "892ae64f8e961e20b08e925a7d1c7abcb24d96adec5c36ce734b7f32a34b8bd3",
+    "WXGShaderSource.h": "adb689c31d60e29896bc669f8b6da96c7aa612eacf723929d1f010e26a22ad18",
+    "WXGOptics.h": "f6009395808ead01030eac515261192d3562afc3841119113261b7d2693147bf",
+    "WXGLensOptics.h": "3cf31a9f522abdab663b29fb0ae6782d82e69d53dee1c6d2a9488403d75ff86b",
+    "WXGElasticMotion.h": "7c63c2d87ee6083ec09079cdb70c6c5ba6486de4525de929b4045e16ed23706c",
+    "WXGMotion.h": "7221af92f125968f3382e8af529a4d23658c1659fe8b6920efbf787679aebb1b",
+    "WXGDistanceField.h": "4fae3a3111aaecd248782800879cc757db33ba04f92a74ce28db6428907e5f34",
+    "WXGGeometry.h": "ed9fd3fda246ddccafa3c0c089eefb17f6c286efb038bbf2d4a88710c83232f4",
+    "WXGIconAlignment.h": "bf4650602ec4798bcbf2603f581179e04491d3c10a92ada15a5e17e75f474ac7",
+    "WXGRenderPolicy.h": "e07693e601b46d382b7f0bb1eab075055095f90dc8a257edd891fe61fb57e825"
+  },
+  "exactMethodSHA256": {
+    "WXGHost.m: - (void)buildDock": "feb4d02aed2a76aab41346558ef52b8d3a628818fcb939576382d0ff4eef0934",
+    "WXGHost.m: - (void)dockChanged:": "29df7868df015477c9161e663853a9214032f92ad55ed866ac35253bc92eae92",
+    "WXGHost.m: - (NSString *)backCount:": "8bcce84bb00cb03a35c91d4862500233f8d357d74006b04aec7f19111afeef4c",
+    "WXGHost.m: - (NSString *)titleForControl:": "e4c5b7097f7920fedc75b332b7a3ad160e2a800ccd3ef72b024e97f0b67b632a",
+    "WXGSurface.m: - (void)layoutSubviews": "f5b90fd5c2395cf947828f7b4614cbcfe4e5e3f026dfc56fe030e92f4c44c783",
+    "WXGGlassView.m: - (void)layoutSubviews": "0285e4a7d4da317a71ca6125d68bf01bb85f236f65377fae00b2185857ef7433",
+    "WXGGlassView.m: - (void)drawMetalFrame": "461894e79b258e7abf4430073f8caf2fdb55f2aac78ac95d33d95fbaaf4b01fb",
+    "WXGGlassView.m: - (void)capture": "357ef136da75c6239d6f00cc04afb59fcfff2f327de4f04bf461b2af8bbe44f7",
+    "WXGGlassView.m: - (BOOL)encodeBlur:": "03b6ff6012d967b8fd9d9aad0ff0daaf0b237dc9ca24cf6331275ba714fbf6e9",
+    "WXGDemoBar.m: - (void)layoutSubviews": "f456fd350de7613e796c348bd26433d152ae4cb688c334cc3cc8104a9751ddf6",
+    "WXGDemoBar.m: - (void)updateGeometry": "8e941eab15f1d9026eda77d77995b557e294b14a3190c3480e9cd09c8a551cf3"
+  },
+  "chatTitleWidthFormulaRetainedWithFullNativeSuffix": true,
+  "outerInputGeometryFileExact": true,
+  "twoSegmentActionAndHostWidthIntentionallyChangedInFIX3": true,
+  "twoSegmentDoesNotAssignNativeEditorGeometry": true,
+  "experimentalInputDoesNotAssignNativeEditorGeometryOrForwardActions": true,
+  "threeSegmentHostWidthAndControlOriginsIntentionallyChangedInFIX4": true,
+  "scope": "source preservation and opt-in boundary only; no UIKit, GPU or device performance claim"
+}

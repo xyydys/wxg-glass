@@ -1,0 +1,1571 @@
+{
+  "archives": [
+    {
+      "name": "1-part-001.zip",
+      "bytes": 5060291,
+      "sha256": "116088cd4e51368a35a6d2ee8b923b280aa4c384ec2f7345e4600c4945a930f1",
+      "crc": "pass"
+    },
+    {
+      "name": "2-part-002.zip",
+      "bytes": 2580817,
+      "sha256": "a2da6f68aa9f68ad4f566566d2c5577efa269160dd627baa2034bea917943119",
+      "crc": "pass"
+    }
+  ],
+  "events": 75,
+  "sequenceContinuous": true,
+  "savedSnapshots": 7,
+  "encodingRepairs": 0,
+  "detailErrors": 0,
+  "platform": {
+    "wechatBuild": "8.0.73.33",
+    "screenMaximumFPS": 60,
+    "deviceModel": "iPhone11,6",
+    "probeVersion": "1.2.2-test3fix2",
+    "systemVersion": "15.7",
+    "windowBounds_pt": [
+      0,
+      0,
+      414,
+      896
+    ],
+    "wechatVersion": "8.0.73"
+  },
+  "findings": [
+    "Snapshot 3 retains a native iconClicked dictation target while editor.firstResponder is false.",
+    "onInputModeChangeButtonClicked: is a separate native mode switch; voice recording uses the existing record button long-press recognizer.",
+    "Two-segment snapshots 10/13 show native editor x=6 and width=grow.width-9 after custom layout; it overlaps the emoji action column.",
+    "Three-segment snapshots reach the bounded tree limit but include editor, mode-switch and native voice record controls. No repeated capture needed for this fix."
+  ],
+  "snapshots": [
+    {
+      "sequence": 3,
+      "layout": "two_segment",
+      "nodeCount": 116,
+      "treeTruncated": false,
+      "editorState": {
+        "firstResponder": false,
+        "documentLength": 0,
+        "contentInset": [
+          -6,
+          0,
+          -6,
+          -10
+        ],
+        "contentOffset": [
+          0,
+          3.6667
+        ],
+        "contentSize": [
+          283.4203,
+          37
+        ],
+        "textContainerInset": [
+          8,
+          0,
+          8,
+          0
+        ],
+        "widthTracksTextView": true
+      },
+      "views": {
+        "grow": {
+          "attached": true,
+          "frame_parent": [
+            90.059,
+            8,
+            292.4203,
+            40
+          ],
+          "class": "MMGrowTextView",
+          "windowRect": [
+            90.059,
+            814,
+            292.4203,
+            40
+          ],
+          "effectiveAlpha": 1
+        },
+        "editor": {
+          "attached": true,
+          "frame_parent": [
+            6,
+            5,
+            283.4203,
+            30
+          ],
+          "class": "MMTextView",
+          "windowRect": [
+            96.059,
+            819,
+            283.4203,
+            30
+          ],
+          "effectiveAlpha": 1
+        },
+        "voiceButton": {
+          "attached": true,
+          "frame_parent": [
+            8,
+            12,
+            32,
+            32
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            8,
+            818,
+            32,
+            32
+          ],
+          "effectiveAlpha": 0
+        },
+        "sendButton": {
+          "attached": true,
+          "frame_parent": [
+            354,
+            12,
+            50,
+            32
+          ],
+          "class": "UIButton",
+          "windowRect": [
+            354,
+            818,
+            50,
+            32
+          ],
+          "effectiveAlpha": 0
+        },
+        "emojiButton": {
+          "attached": true,
+          "frame_parent": [
+            301.5697,
+            14,
+            28,
+            28
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            301.5697,
+            820,
+            28,
+            28
+          ],
+          "effectiveAlpha": 1
+        },
+        "dictationButton": {
+          "attached": true,
+          "frame_parent": [
+            0,
+            0,
+            32,
+            40
+          ],
+          "class": "MMTransparentButton",
+          "windowRect": [
+            344.4793,
+            814,
+            32,
+            40
+          ],
+          "effectiveAlpha": 0
+        }
+      },
+      "actions": {
+        "voiceButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onInputModeChangeButtonClicked:"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "sendButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onTapSendButton"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "dictationButton": {
+          "actions": [
+            {
+              "targetID": "0x174639de0",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "iconClicked"
+                  ]
+                }
+              ],
+              "targetClass": "MMGrowDictationIconView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "recordButton": {
+          "class": "MMTransparentButton",
+          "windowRect": [
+            48,
+            814,
+            278,
+            40
+          ],
+          "effectiveAlpha": 0,
+          "control": {
+            "actions": [
+              {
+                "targetID": "0x1794cca00",
+                "bindings": [
+                  {
+                    "event": 128,
+                    "selectors": [
+                      "HideRecordTips"
+                    ]
+                  }
+                ],
+                "targetClass": "MMInputToolView"
+              }
+            ],
+            "allControlEvents": 128,
+            "enabled": true
+          },
+          "gestures": [
+            {
+              "class": "UILongPressGestureRecognizer",
+              "enabled": true,
+              "delegateClass": "MMTransparentButton"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sequence": 10,
+      "layout": "two_segment",
+      "nodeCount": 117,
+      "treeTruncated": false,
+      "editorState": {
+        "firstResponder": true,
+        "documentLength": 26,
+        "contentInset": [
+          -6,
+          0,
+          -6,
+          -10
+        ],
+        "contentOffset": [
+          0,
+          6
+        ],
+        "contentSize": [
+          283.4203,
+          57
+        ],
+        "textContainerInset": [
+          8,
+          0,
+          8,
+          0
+        ],
+        "widthTracksTextView": true
+      },
+      "views": {
+        "grow": {
+          "attached": true,
+          "frame_parent": [
+            90.059,
+            8,
+            292.4203,
+            57
+          ],
+          "class": "MMGrowTextView",
+          "windowRect": [
+            90.059,
+            476,
+            292.4203,
+            57
+          ],
+          "effectiveAlpha": 1
+        },
+        "editor": {
+          "attached": true,
+          "frame_parent": [
+            6,
+            5,
+            283.4203,
+            47
+          ],
+          "class": "MMTextView",
+          "windowRect": [
+            96.059,
+            481,
+            283.4203,
+            47
+          ],
+          "effectiveAlpha": 1
+        },
+        "voiceButton": {
+          "attached": true,
+          "frame_parent": [
+            8,
+            29,
+            32,
+            32
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            8,
+            497,
+            32,
+            32
+          ],
+          "effectiveAlpha": 0
+        },
+        "sendButton": {
+          "attached": true,
+          "frame_parent": [
+            354,
+            29,
+            50,
+            32
+          ],
+          "class": "UIButton",
+          "windowRect": [
+            354,
+            497,
+            50,
+            32
+          ],
+          "effectiveAlpha": 0
+        },
+        "emojiButton": {
+          "attached": true,
+          "frame_parent": [
+            301.5697,
+            22.5,
+            28,
+            28
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            301.5697,
+            490.5,
+            28,
+            28
+          ],
+          "effectiveAlpha": 1
+        }
+      },
+      "actions": {
+        "voiceButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onInputModeChangeButtonClicked:"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "sendButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onTapSendButton"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "recordButton": {
+          "class": "MMTransparentButton",
+          "windowRect": [
+            48,
+            493,
+            278,
+            40
+          ],
+          "effectiveAlpha": 0,
+          "control": {
+            "actions": [
+              {
+                "targetID": "0x1794cca00",
+                "bindings": [
+                  {
+                    "event": 128,
+                    "selectors": [
+                      "HideRecordTips"
+                    ]
+                  }
+                ],
+                "targetClass": "MMInputToolView"
+              }
+            ],
+            "allControlEvents": 128,
+            "enabled": true
+          },
+          "gestures": [
+            {
+              "class": "UILongPressGestureRecognizer",
+              "enabled": true,
+              "delegateClass": "MMTransparentButton"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sequence": 13,
+      "layout": "two_segment",
+      "nodeCount": 117,
+      "treeTruncated": false,
+      "editorState": {
+        "firstResponder": true,
+        "documentLength": 84,
+        "contentInset": [
+          -6,
+          0,
+          -6,
+          -10
+        ],
+        "contentOffset": [
+          0,
+          6
+        ],
+        "contentSize": [
+          283.4203,
+          98
+        ],
+        "textContainerInset": [
+          8,
+          0,
+          8,
+          0
+        ],
+        "widthTracksTextView": true
+      },
+      "views": {
+        "grow": {
+          "attached": true,
+          "frame_parent": [
+            90.059,
+            8,
+            292.4203,
+            138
+          ],
+          "class": "MMGrowTextView",
+          "windowRect": [
+            90.059,
+            395,
+            292.4203,
+            138
+          ],
+          "effectiveAlpha": 1
+        },
+        "editor": {
+          "attached": true,
+          "frame_parent": [
+            6,
+            5,
+            283.4203,
+            128
+          ],
+          "class": "MMTextView",
+          "windowRect": [
+            96.059,
+            400,
+            283.4203,
+            128
+          ],
+          "effectiveAlpha": 1
+        },
+        "voiceButton": {
+          "attached": true,
+          "frame_parent": [
+            8,
+            110,
+            32,
+            32
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            8,
+            497,
+            32,
+            32
+          ],
+          "effectiveAlpha": 0
+        },
+        "sendButton": {
+          "attached": true,
+          "frame_parent": [
+            354,
+            110,
+            50,
+            32
+          ],
+          "class": "UIButton",
+          "windowRect": [
+            354,
+            497,
+            50,
+            32
+          ],
+          "effectiveAlpha": 0
+        },
+        "emojiButton": {
+          "attached": true,
+          "frame_parent": [
+            301.5697,
+            63,
+            28,
+            28
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            301.5697,
+            450,
+            28,
+            28
+          ],
+          "effectiveAlpha": 1
+        }
+      },
+      "actions": {
+        "voiceButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onInputModeChangeButtonClicked:"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "sendButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onTapSendButton"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "recordButton": {
+          "class": "MMTransparentButton",
+          "windowRect": [
+            48,
+            493,
+            278,
+            40
+          ],
+          "effectiveAlpha": 0,
+          "control": {
+            "actions": [
+              {
+                "targetID": "0x1794cca00",
+                "bindings": [
+                  {
+                    "event": 128,
+                    "selectors": [
+                      "HideRecordTips"
+                    ]
+                  }
+                ],
+                "targetClass": "MMInputToolView"
+              }
+            ],
+            "allControlEvents": 128,
+            "enabled": true
+          },
+          "gestures": [
+            {
+              "class": "UILongPressGestureRecognizer",
+              "enabled": true,
+              "delegateClass": "MMTransparentButton"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sequence": 52,
+      "layout": "three_segment_test",
+      "nodeCount": 192,
+      "treeTruncated": true,
+      "editorState": {
+        "firstResponder": false,
+        "documentLength": 0,
+        "contentInset": [
+          -6,
+          0,
+          -6,
+          -10
+        ],
+        "contentOffset": [
+          0,
+          3.6667
+        ],
+        "contentSize": [
+          269,
+          37
+        ],
+        "textContainerInset": [
+          8,
+          0,
+          8,
+          0
+        ],
+        "widthTracksTextView": true
+      },
+      "views": {
+        "grow": {
+          "attached": true,
+          "frame_parent": [
+            48,
+            8,
+            278,
+            40
+          ],
+          "class": "MMGrowTextView",
+          "windowRect": [
+            48,
+            814,
+            278,
+            40
+          ],
+          "effectiveAlpha": 1
+        },
+        "editor": {
+          "attached": true,
+          "frame_parent": [
+            6,
+            5,
+            269,
+            30
+          ],
+          "class": "MMTextView",
+          "windowRect": [
+            54,
+            819,
+            269,
+            30
+          ],
+          "effectiveAlpha": 1
+        },
+        "voiceButton": {
+          "attached": true,
+          "frame_parent": [
+            8,
+            12,
+            32,
+            32
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            8,
+            818,
+            32,
+            32
+          ],
+          "effectiveAlpha": 1
+        },
+        "sendButton": {
+          "attached": true,
+          "frame_parent": [
+            354,
+            12,
+            50,
+            32
+          ],
+          "class": "UIButton",
+          "windowRect": [
+            354,
+            818,
+            50,
+            32
+          ],
+          "effectiveAlpha": 0
+        },
+        "emojiButton": {
+          "attached": true,
+          "frame_parent": [
+            338,
+            16,
+            28,
+            28
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            338,
+            822,
+            28,
+            28
+          ],
+          "effectiveAlpha": 1
+        },
+        "dictationButton": {
+          "attached": true,
+          "frame_parent": [
+            0,
+            0,
+            32,
+            40
+          ],
+          "class": "MMTransparentButton",
+          "windowRect": [
+            288,
+            814,
+            32,
+            40
+          ],
+          "effectiveAlpha": 1
+        },
+        "centerHost": {
+          "attached": true,
+          "frame_parent": [
+            48,
+            8,
+            278,
+            40
+          ],
+          "class": "MMGrowTextView",
+          "windowRect": [
+            48,
+            814,
+            278,
+            40
+          ],
+          "effectiveAlpha": 1
+        }
+      },
+      "actions": {
+        "voiceButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onInputModeChangeButtonClicked:"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "sendButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onTapSendButton"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "dictationButton": {
+          "actions": [
+            {
+              "targetID": "0x174639de0",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "iconClicked"
+                  ]
+                }
+              ],
+              "targetClass": "MMGrowDictationIconView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "recordButton": {
+          "class": "MMTransparentButton",
+          "windowRect": [
+            48,
+            814,
+            278,
+            40
+          ],
+          "effectiveAlpha": 0,
+          "control": {
+            "actions": [
+              {
+                "targetID": "0x1794cca00",
+                "bindings": [
+                  {
+                    "event": 128,
+                    "selectors": [
+                      "HideRecordTips"
+                    ]
+                  }
+                ],
+                "targetClass": "MMInputToolView"
+              }
+            ],
+            "allControlEvents": 128,
+            "enabled": true
+          },
+          "gestures": [
+            {
+              "class": "UILongPressGestureRecognizer",
+              "enabled": true,
+              "delegateClass": "MMTransparentButton"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sequence": 55,
+      "layout": "three_segment_test",
+      "nodeCount": 192,
+      "treeTruncated": true,
+      "editorState": {
+        "firstResponder": false,
+        "documentLength": 0,
+        "contentInset": [
+          -6,
+          0,
+          -6,
+          -10
+        ],
+        "contentOffset": [
+          0,
+          3.6667
+        ],
+        "contentSize": [
+          269,
+          37
+        ],
+        "textContainerInset": [
+          8,
+          0,
+          8,
+          0
+        ],
+        "widthTracksTextView": true
+      },
+      "views": {
+        "grow": {
+          "attached": true,
+          "frame_parent": [
+            48,
+            8,
+            278,
+            40
+          ],
+          "class": "MMGrowTextView",
+          "windowRect": [
+            48,
+            814,
+            278,
+            40
+          ],
+          "effectiveAlpha": 0
+        },
+        "editor": {
+          "attached": true,
+          "frame_parent": [
+            6,
+            5,
+            269,
+            30
+          ],
+          "class": "MMTextView",
+          "windowRect": [
+            54,
+            819,
+            269,
+            30
+          ],
+          "effectiveAlpha": 0
+        },
+        "voiceButton": {
+          "attached": true,
+          "frame_parent": [
+            8,
+            12,
+            32,
+            32
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            8,
+            818,
+            32,
+            32
+          ],
+          "effectiveAlpha": 1
+        },
+        "sendButton": {
+          "attached": true,
+          "frame_parent": [
+            354,
+            12,
+            50,
+            32
+          ],
+          "class": "UIButton",
+          "windowRect": [
+            354,
+            818,
+            50,
+            32
+          ],
+          "effectiveAlpha": 0
+        },
+        "emojiButton": {
+          "attached": true,
+          "frame_parent": [
+            338,
+            16,
+            28,
+            28
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            338,
+            822,
+            28,
+            28
+          ],
+          "effectiveAlpha": 1
+        },
+        "dictationButton": {
+          "attached": true,
+          "frame_parent": [
+            0,
+            0,
+            32,
+            40
+          ],
+          "class": "MMTransparentButton",
+          "windowRect": [
+            288,
+            814,
+            32,
+            40
+          ],
+          "effectiveAlpha": 0
+        },
+        "centerHost": {
+          "attached": true,
+          "frame_parent": [
+            48,
+            8,
+            278,
+            40
+          ],
+          "class": "MMTransparentButton",
+          "windowRect": [
+            48,
+            814,
+            278,
+            40
+          ],
+          "effectiveAlpha": 1
+        }
+      },
+      "actions": {
+        "voiceButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onInputModeChangeButtonClicked:"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "sendButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onTapSendButton"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "recordButton": {
+          "class": "MMTransparentButton",
+          "windowRect": [
+            48,
+            814,
+            278,
+            40
+          ],
+          "effectiveAlpha": 1,
+          "control": {
+            "actions": [
+              {
+                "targetID": "0x1794cca00",
+                "bindings": [
+                  {
+                    "event": 128,
+                    "selectors": [
+                      "HideRecordTips"
+                    ]
+                  }
+                ],
+                "targetClass": "MMInputToolView"
+              }
+            ],
+            "allControlEvents": 128,
+            "enabled": true
+          },
+          "gestures": [
+            {
+              "class": "UILongPressGestureRecognizer",
+              "enabled": true,
+              "delegateClass": "MMTransparentButton"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sequence": 60,
+      "layout": "three_segment_test",
+      "nodeCount": 192,
+      "treeTruncated": true,
+      "editorState": {
+        "firstResponder": true,
+        "documentLength": 55,
+        "contentInset": [
+          -6,
+          0,
+          -6,
+          -10
+        ],
+        "contentOffset": [
+          0,
+          6
+        ],
+        "contentSize": [
+          269,
+          77
+        ],
+        "textContainerInset": [
+          8,
+          0,
+          8,
+          0
+        ],
+        "widthTracksTextView": true
+      },
+      "views": {
+        "grow": {
+          "attached": true,
+          "frame_parent": [
+            48,
+            8,
+            278,
+            77
+          ],
+          "class": "MMGrowTextView",
+          "windowRect": [
+            48,
+            456,
+            278,
+            77
+          ],
+          "effectiveAlpha": 1
+        },
+        "editor": {
+          "attached": true,
+          "frame_parent": [
+            6,
+            5,
+            269,
+            67
+          ],
+          "class": "MMTextView",
+          "windowRect": [
+            54,
+            461,
+            269,
+            67
+          ],
+          "effectiveAlpha": 1
+        },
+        "voiceButton": {
+          "attached": true,
+          "frame_parent": [
+            8,
+            49,
+            32,
+            32
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            8,
+            497,
+            32,
+            32
+          ],
+          "effectiveAlpha": 1
+        },
+        "sendButton": {
+          "attached": true,
+          "frame_parent": [
+            354,
+            49,
+            50,
+            32
+          ],
+          "class": "UIButton",
+          "windowRect": [
+            354,
+            497,
+            50,
+            32
+          ],
+          "effectiveAlpha": 0
+        },
+        "emojiButton": {
+          "attached": true,
+          "frame_parent": [
+            338,
+            53,
+            28,
+            28
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            338,
+            501,
+            28,
+            28
+          ],
+          "effectiveAlpha": 1
+        },
+        "centerHost": {
+          "attached": true,
+          "frame_parent": [
+            48,
+            8,
+            278,
+            77
+          ],
+          "class": "MMGrowTextView",
+          "windowRect": [
+            48,
+            456,
+            278,
+            77
+          ],
+          "effectiveAlpha": 1
+        }
+      },
+      "actions": {
+        "voiceButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onInputModeChangeButtonClicked:"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "sendButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onTapSendButton"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "recordButton": {
+          "class": "MMTransparentButton",
+          "windowRect": [
+            48,
+            493,
+            278,
+            40
+          ],
+          "effectiveAlpha": 0,
+          "control": {
+            "actions": [
+              {
+                "targetID": "0x1794cca00",
+                "bindings": [
+                  {
+                    "event": 128,
+                    "selectors": [
+                      "HideRecordTips"
+                    ]
+                  }
+                ],
+                "targetClass": "MMInputToolView"
+              }
+            ],
+            "allControlEvents": 128,
+            "enabled": true
+          },
+          "gestures": [
+            {
+              "class": "UILongPressGestureRecognizer",
+              "enabled": true,
+              "delegateClass": "MMTransparentButton"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "sequence": 69,
+      "layout": "three_segment_test",
+      "nodeCount": 192,
+      "treeTruncated": true,
+      "editorState": {
+        "firstResponder": false,
+        "documentLength": 0,
+        "contentInset": [
+          -6,
+          0,
+          -6,
+          -10
+        ],
+        "contentOffset": [
+          0,
+          3.6667
+        ],
+        "contentSize": [
+          269,
+          37
+        ],
+        "textContainerInset": [
+          8,
+          0,
+          8,
+          0
+        ],
+        "widthTracksTextView": true
+      },
+      "views": {
+        "grow": {
+          "attached": true,
+          "frame_parent": [
+            48,
+            8,
+            278,
+            40
+          ],
+          "class": "MMGrowTextView",
+          "windowRect": [
+            48,
+            814,
+            278,
+            40
+          ],
+          "effectiveAlpha": 1
+        },
+        "editor": {
+          "attached": true,
+          "frame_parent": [
+            6,
+            5,
+            269,
+            30
+          ],
+          "class": "MMTextView",
+          "windowRect": [
+            54,
+            819,
+            269,
+            30
+          ],
+          "effectiveAlpha": 1
+        },
+        "voiceButton": {
+          "attached": true,
+          "frame_parent": [
+            8,
+            12,
+            32,
+            32
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            8,
+            818,
+            32,
+            32
+          ],
+          "effectiveAlpha": 1
+        },
+        "sendButton": {
+          "attached": true,
+          "frame_parent": [
+            354,
+            12,
+            50,
+            32
+          ],
+          "class": "UIButton",
+          "windowRect": [
+            354,
+            818,
+            50,
+            32
+          ],
+          "effectiveAlpha": 0
+        },
+        "emojiButton": {
+          "attached": true,
+          "frame_parent": [
+            338,
+            16,
+            28,
+            28
+          ],
+          "class": "MMUIButton",
+          "windowRect": [
+            338,
+            822,
+            28,
+            28
+          ],
+          "effectiveAlpha": 1
+        },
+        "dictationButton": {
+          "attached": true,
+          "frame_parent": [
+            0,
+            0,
+            32,
+            40
+          ],
+          "class": "MMTransparentButton",
+          "windowRect": [
+            288,
+            814,
+            32,
+            40
+          ],
+          "effectiveAlpha": 1
+        },
+        "centerHost": {
+          "attached": true,
+          "frame_parent": [
+            48,
+            8,
+            278,
+            40
+          ],
+          "class": "MMGrowTextView",
+          "windowRect": [
+            48,
+            814,
+            278,
+            40
+          ],
+          "effectiveAlpha": 1
+        }
+      },
+      "actions": {
+        "voiceButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onInputModeChangeButtonClicked:"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "sendButton": {
+          "actions": [
+            {
+              "targetID": "0x1794cca00",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "onTapSendButton"
+                  ]
+                }
+              ],
+              "targetClass": "MMInputToolView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "dictationButton": {
+          "actions": [
+            {
+              "targetID": "0x174639de0",
+              "bindings": [
+                {
+                  "event": 64,
+                  "selectors": [
+                    "iconClicked"
+                  ]
+                }
+              ],
+              "targetClass": "MMGrowDictationIconView"
+            }
+          ],
+          "allControlEvents": 64,
+          "enabled": true
+        },
+        "recordButton": {
+          "class": "MMTransparentButton",
+          "windowRect": [
+            48,
+            814,
+            278,
+            40
+          ],
+          "effectiveAlpha": 0,
+          "control": {
+            "actions": [
+              {
+                "targetID": "0x1794cca00",
+                "bindings": [
+                  {
+                    "event": 128,
+                    "selectors": [
+                      "HideRecordTips"
+                    ]
+                  }
+                ],
+                "targetClass": "MMInputToolView"
+              }
+            ],
+            "allControlEvents": 128,
+            "enabled": true
+          },
+          "gestures": [
+            {
+              "class": "UILongPressGestureRecognizer",
+              "enabled": true,
+              "delegateClass": "MMTransparentButton"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "postFixDeviceTested": false
+}

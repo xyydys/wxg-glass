@@ -1,0 +1,818 @@
+{
+  "evidenceVersion": "FIX14",
+  "inputDiagnosticSHA256": "805eadc861531a918a60a3acffdbbbda7c3f8a448380b4975ab5463d822c6e0c",
+  "inputDemoSHA256": "1e61b5cace57ed36cd83e48299a42a9152f0b8bbfff610df49db2137cf203476",
+  "uniqueSnapshots": 15,
+  "duplicateLastSnapshotExcluded": true,
+  "system": "15.7",
+  "displayMaximumFPS": 60,
+  "snapshotScope": "point samples; not a continuous FPS trace; no hardware model inferred from resolution",
+  "chatCaptureCPUms": {
+    "min": 26.247541652992368,
+    "median": 56.26106244744733,
+    "max": 79.36241675633937
+  },
+  "snapshots": [
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 63.66779166273773,
+      "tickCPUms": 65.06699998863041,
+      "drawSubmissionCPUms": 0.9552499977871776,
+      "callbackIntervalMS": 73.41258332598954,
+      "callbackRate": 30.285727673451,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 63.349916716106236,
+          "intervalMS": 73.41258332598954,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 62.599166529253125,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 26.241416577249765,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 895.99999999999989}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 19.058916717767715,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 17.298833234235644,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 26.247541652992368,
+      "tickCPUms": 26.978041627444327,
+      "drawSubmissionCPUms": 0.33466669265180826,
+      "callbackIntervalMS": 51.88641673885286,
+      "callbackRate": 28.609834720308843,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 26.061250013299286,
+          "intervalMS": 51.88641673885286,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 25.362291606143117,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 11.740041663870215,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 895.99999999999989}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 8.479083306156099,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 5.143166636116803,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 55.96441659145057,
+      "tickCPUms": 57.0766250602901,
+      "drawSubmissionCPUms": 0.7425417425110936,
+      "callbackIntervalMS": 68.51879158057272,
+      "callbackRate": 13.937057941097368,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 55.6363333016634,
+          "intervalMS": 68.51879158057272,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 54.81570842675865,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 23.215458379127085,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896.00000000000011}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 16.46145828999579,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 15.138791757635772,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "NewMainFrameViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 22.481708438135684,
+      "tickCPUms": 23.71041662991047,
+      "drawSubmissionCPUms": 0.947625027038157,
+      "callbackIntervalMS": 24.75708327256143,
+      "callbackRate": 41.710051992275076,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 22.329000057652593,
+          "intervalMS": 24.75708327256143,
+          "branchDraws": 1,
+          "nativeHierarchyMS": 21.45520830526948,
+          "nativeReadAreaPoints": 370944,
+          "spatialSplits": 3,
+          "atomicGuards": 1,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 21.45520830526948,
+              "class": "MainFrameTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 61.35858339257538,
+      "tickCPUms": 62.90741660632193,
+      "drawSubmissionCPUms": 0.9385832818225026,
+      "callbackIntervalMS": 72.0707499422133,
+      "callbackRate": 42.22540941366074,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 60.91849994845688,
+          "intervalMS": 72.0707499422133,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 60.20620826166123,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 24.102750001475215,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 18.404791597276926,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 17.69866666290909,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 79.36241675633937,
+      "tickCPUms": 80.73804166633636,
+      "drawSubmissionCPUms": 0.960625009611249,
+      "callbackIntervalMS": 62.93079163879156,
+      "callbackRate": 10.291593872844235,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 79.06345836818218,
+          "intervalMS": 62.93079163879156,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 78.26620840933174,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 29.311708407476544,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 27.536583365872502,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 21.417916635982692,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 38.52354164700955,
+      "tickCPUms": 39.62624992709607,
+      "drawSubmissionCPUms": 0.743416603654623,
+      "callbackIntervalMS": 60.81570836249739,
+      "callbackRate": 27.83443759453332,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 38.270374992862344,
+          "intervalMS": 60.81570836249739,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 37.57829172536731,
+          "nativeReadAreaPoints": 747088,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 17.586458357982337,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 16.07358339242637,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "shadow",
+              "milliseconds": 3.9182499749585986,
+              "class": "MMEdgeTipsView",
+              "rect": "{{284, 170}, {130, 40}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 56.73499999102205,
+      "tickCPUms": 57.96779168304056,
+      "drawSubmissionCPUms": 0.7899584015831351,
+      "callbackIntervalMS": 61.732458299957216,
+      "callbackRate": 20.196403980245115,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 56.475333287380636,
+          "intervalMS": 61.732458299957216,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 55.84962503053248,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 20.208874950185418,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 19.483875017613173,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 16.15687506273389,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 60.55062497034669,
+      "tickCPUms": 61.79520837031305,
+      "drawSubmissionCPUms": 0.8790000574663281,
+      "callbackIntervalMS": 68.31945839803666,
+      "callbackRate": 15.546382735408898,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 60.27824990451336,
+          "intervalMS": 68.31945839803666,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 59.64145844336599,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 24.659083341248333,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 19.630250055342913,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 15.352125046774745,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 55.35291670821607,
+      "tickCPUms": 56.576124974526465,
+      "drawSubmissionCPUms": 0.8478333475068212,
+      "callbackIntervalMS": 61.62833340931684,
+      "callbackRate": 15.70984308836573,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 55.067083332687616,
+          "intervalMS": 61.62833340931684,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 54.398333304561675,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 21.942041697911918,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 16.29275002051145,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 16.163541586138308,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 42.36316669266671,
+      "tickCPUms": 43.459500069729984,
+      "drawSubmissionCPUms": 0.7182916160672903,
+      "callbackIntervalMS": 45.65637500490993,
+      "callbackRate": 19.10600066014096,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 42.03270829748362,
+          "intervalMS": 45.65637500490993,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 41.316166636534035,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 15.20999998319894,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 14.749708352610469,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 11.356458300724626,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 45.60920828953385,
+      "tickCPUms": 47.026374959386885,
+      "drawSubmissionCPUms": 1.0456667514517903,
+      "callbackIntervalMS": 54.7285417560488,
+      "callbackRate": 19.646330683699556,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 45.345625025220215,
+          "intervalMS": 54.7285417560488,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 44.76379160769284,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 17.436416586861014,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 15.579791739583015,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 11.747583281248808,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 77.28458335623145,
+      "tickCPUms": 78.68395827244967,
+      "drawSubmissionCPUms": 0.9877500124275684,
+      "callbackIntervalMS": 66.57224998343736,
+      "callbackRate": 17.301616305090906,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 76.96166669484228,
+          "intervalMS": 66.57224998343736,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 76.18720841128379,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 31.978208338841796,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 28.47262506838888,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 15.736375004053116,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 56.55770830344409,
+      "tickCPUms": 58.068333310075104,
+      "drawSubmissionCPUms": 1.0082499356940389,
+      "callbackIntervalMS": 75.54670830722898,
+      "callbackRate": 13.742111788193972,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 56.279291631653905,
+          "intervalMS": 75.54670830722898,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 55.540375178679824,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 23.24187511112541,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 17.022125073708594,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 15.27637499384582,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "pageClass": "BaseMsgContentViewController",
+      "screenMaximumFPS": 60,
+      "captureCPUms": 53.27195837162435,
+      "tickCPUms": 54.63729170151055,
+      "drawSubmissionCPUms": 0.8729583350941539,
+      "callbackIntervalMS": 61.44270836375654,
+      "callbackRate": 13.19763806009019,
+      "captureFailures": 0,
+      "regions": [
+        {
+          "sourceClass": "UILayoutContainerView",
+          "costMS": 52.8710832586512,
+          "intervalMS": 61.44270836375654,
+          "branchDraws": 3,
+          "nativeHierarchyMS": 52.20537504646927,
+          "nativeReadAreaPoints": 1112832,
+          "spatialSplits": 0,
+          "atomicGuards": 2,
+          "forcedSplitPaintApproximations": 0,
+          "busySkips": 0,
+          "coverageRejects": 0,
+          "slowBranches": [
+            {
+              "atomicReason": "layerOrder",
+              "milliseconds": 20.818458404392004,
+              "class": "MMTableView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "nativeMediaOrControl",
+              "milliseconds": 16.33770833723247,
+              "class": "UIImageView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            },
+            {
+              "atomicReason": "leaf",
+              "milliseconds": 15.049208304844797,
+              "class": "WeChat.MagicEmojiImplicitBackgroundView",
+              "rect": "{{0, 0}, {414, 896}}",
+              "success": true,
+              "atomicGuard": 1,
+              "layerClass": "CALayer"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "findings": [
+    "Three full-screen native reads per ordinary chat sample; table protected by layerOrder, wallpaper classified nativeMediaOrControl, extra background leaf.",
+    "No observed read failures, uncovered samples, or exhausted source pools explain these snapshots.",
+    "FIX14 source explicitly pauses displayLink and exits tick when its settings or another controller presents.",
+    "Uploaded TEST9 performs a repeated drawViewHierarchy read directly into reusable shared Metal buffer; original display link and capture preference max are 60 Hz.",
+    "Neither TEST9 nor FIX15 exposes a zero-copy system compositor texture. FIX15 changes ordinary branches to current-layer CPU composition plus existing GPU optics."
+  ],
+  "fix15RuntimeMeasured": false,
+  "deviceFPSClaim": null
+}

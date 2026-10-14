@@ -1,0 +1,9 @@
+Package: com.runyu.wechatliquidglass
+Name: WeChat Liquid Glass TEST4 FIX105 测试版 ABC
+Version: 0.4.105-test4fix105abc
+Architecture: iphoneos-arm
+Description: FIX105 test build ABC: an unauthorized account (including while verifying or before the account is read) now leaves no trace in WeChat — the whole plugin overlay is pulled out of the view tree and the floating entry is hidden, so nothing flashes and WeChat looks completely untouched. The glass still appears for a licensed account exactly as in FIX104. (A revoked account that still holds a valid cached ticket will briefly show glass on cold start, then lose it when the server refuses — that is the kick taking effect.)
+Maintainer: runyu
+Author: runyu
+Section: Tweaks
+Depends: mobilesubstrate (>= 0.9.5000)
