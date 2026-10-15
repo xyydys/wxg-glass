@@ -49,6 +49,7 @@ struct AllowlistView: View {
                 ScrollView { VStack(spacing: 12) {
                     ErrorBanner(message: m)
                     Button { Task { await load() } } label: { Label("重试", systemImage: "arrow.clockwise") }
+                        .buttonStyle(.glass)
                 }.padding(16) }
             case .loaded(let list):
                 if list.isEmpty { emptyState } else { listView(list) }
@@ -65,7 +66,7 @@ struct AllowlistView: View {
                     .font(.subheadline).foregroundStyle(.secondary).multilineTextAlignment(.center)
                 Button { Task { await seed() } } label: {
                     Label("导入现有名单", systemImage: "square.and.arrow.down").font(.headline)
-                }.buttonStyle(.borderedProminent).padding(.top, 4)
+                }.buttonStyle(.glassProminent).padding(.top, 4)
             }.padding(28)
         }
     }
@@ -77,6 +78,7 @@ struct AllowlistView: View {
                     Text("共 \(list.count) 个授权账号").font(.subheadline).foregroundStyle(.secondary)
                     Spacer()
                     Button { showAdd = true } label: { Label("添加", systemImage: "plus.circle.fill") }
+                        .buttonStyle(.glass)
                 }
                 ForEach(list) { e in row(e) }
             }.padding(16)

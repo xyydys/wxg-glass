@@ -44,19 +44,14 @@ extension Color {
     }
 }
 
-// 玻璃卡片容器。
+// 玻璃卡片容器：iOS 26 原生 Liquid Glass（在渐变背景上折射，自带高光与阴影）。
 struct GlassCard<Content: View>: View {
     @ViewBuilder var content: Content
     var body: some View {
         content
             .padding(16)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
-            .overlay(
-                RoundedRectangle(cornerRadius: 20, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.08), lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.06), radius: 10, y: 4)
+            .glassEffect(.regular, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
     }
 }
 
@@ -133,8 +128,9 @@ struct StatTile: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(tint.opacity(0.18), lineWidth: 1))
+        // 卡片本身已是玻璃，内层指标块用实心着色，避免「玻璃叠玻璃」。
+        .background(tint.opacity(0.12), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 16, style: .continuous).strokeBorder(tint.opacity(0.22), lineWidth: 1))
     }
 }
 

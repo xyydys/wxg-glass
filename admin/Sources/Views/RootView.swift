@@ -5,15 +5,12 @@ struct RootView: View {
 
     var body: some View {
         TabView {
-            OverviewView()
-                .tabItem { Label("概览", systemImage: "shield.lefthalf.filled") }
-            AllowlistView()
-                .tabItem { Label("名单", systemImage: "person.2.badge.key.fill") }
-            ActivityView()
-                .tabItem { Label("活动", systemImage: "waveform.path.ecg") }
-            SettingsView()
-                .tabItem { Label("设置", systemImage: "gearshape.fill") }
+            Tab("概览", systemImage: "shield.lefthalf.filled") { OverviewView() }
+            Tab("名单", systemImage: "person.2.badge.key.fill") { AllowlistView() }
+            Tab("活动", systemImage: "waveform.path.ecg") { ActivityView() }
+            Tab("设置", systemImage: "gearshape.fill") { SettingsView() }
         }
+        .tabBarMinimizeBehavior(.onScrollDown)   // iOS 26：下滑收起玻璃 Tab 栏
     }
 }
 

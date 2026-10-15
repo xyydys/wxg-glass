@@ -57,11 +57,11 @@
 
 > 未签名 ipa 不能直接装——上面这些工具会用你自己的证书重新签名后再装，这就是「自签名」。
 
-Bundle ID 是 `com.xyydys.wxgadmin`，桌面显示名「授权台」。最低系统 iOS 16。
+Bundle ID 是 `com.xyydys.wxgadmin`，桌面显示名「授权台」。**最低系统 iOS 26**（用了原生 Liquid Glass UI：`glassEffect`、玻璃按钮、玻璃 Tab 栏）。CI 跑在 `macos-26` runner（Xcode 26 带 iOS 26 SDK）。
 
 ---
 
-## 三、本地改 / 预览（可选，需要 Mac + Xcode）
+## 三、本地改 / 预览（可选，需要 Mac + Xcode 26）
 
 工程不入库，用 XcodeGen 现生成：
 

@@ -5,7 +5,7 @@ name: WXGAdmin
 options:
   bundleIdPrefix: com.xyydys
   deploymentTarget:
-    iOS: "16.0"
+    iOS: "26.0"
   createIntermediateGroups: true
   minimumXcodeGenVersion: "2.38.0"
 
@@ -15,7 +15,7 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.9"
     DEVELOPMENT_LANGUAGE: zh-Hans
-    IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "26.0"
 
 targets:
   WXGAdmin:

@@ -21,7 +21,8 @@ concurrency:
 
 jobs:
   build:
-    runs-on: macos-14
+    # iOS 26 SDK 需要 Xcode 26，只在 macOS 26（Tahoe）runner 上有。
+    runs-on: macos-26
     defaults:
       run:
         working-directory: admin
@@ -29,8 +30,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Show toolchain
+      - name: Select newest Xcode
         run: |
+          sudo xcode-select -s "$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1 \
+            || ls -d /Applications/Xcode*.app | sort -V | tail -1)"
           xcodebuild -version
           swift --version
 
