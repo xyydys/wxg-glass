@@ -729,13 +729,14 @@ static WXGSettingsNavigationState *WXGNavigationState(UINavigationController *na
         @{@"title":@"通用",@"cards":@[@[@"basic",@"基本设置",@"适配开关 · 比例 · 诊断",@[@"gearshape",@"gear"]],
                                       @[@"dock",@"底栏",@"尺寸 · 搜索 · 透镜 · 胶囊",@[@"dock.rectangle",@"rectangle.bottomthird.inset.filled",@"rectangle.bottomthird.inset.fill",@"rectangle"]],
                                       @[@"tools",@"帧率与参数",@"帧率日志 · 参数导入导出",@[@"speedometer",@"gauge",@"chart.bar"]],
-                                      // FIX104: not a page: tapping it asks the unlock server again (subtitle: the expiry).
-                                      @[@"license",@"授权",@"重新联网检测授权",@[@"checkmark.seal",@"checkmark.shield",@"checkmark.circle"]]]},
+                                      @[@"bubble",@"液态气泡",@"文字气泡 · 单行圆角 · 颜色",@[@"bubble.left.and.bubble.right.fill",@"bubble.left.and.bubble.right",@"message"]]]},
         @{@"title":@"玻璃 · 底栏与其余玻璃分别设置",@"cards":@[@[@"refraction",@"折射强度和色散",@"强度 · 色散 · 折射宽度",@[@"drop",@"drop.fill"]],
                                       @[@"blur",@"模糊强度与范围",@"半径 · 覆盖范围 · 清晰度",@[@"aqi.medium",@"sun.haze",@"circle.dashed"]],
                                       @[@"material",@"材质强度与范围",@"底色 · 遮盖 · 边缘减弱",@[@"circle.lefthalf.filled",@"circle.lefthalf.fill"]],
                                       @[@"border",@"边框与渐隐",@"颜色 · 宽度 · 亮度 · 渐隐",@[@"square.dashed",@"app",@"square"]]]},
-        @{@"title":@"个性化",@"cards":@[@[@"bubble",@"液态气泡",@"文字气泡 · 单行圆角 · 颜色",@[@"bubble.left.and.bubble.right.fill",@"bubble.left.and.bubble.right",@"message"]],
+        // FIX106: 授权行从“通用”挪到最下面这组、降低存在感；原本这组第一张是“液态气泡”，两者对调。
+        // FIX104: 授权行不是页面，点它会重新联网检测（副标题显示有效期）。
+        @{@"title":@"个性化",@"cards":@[@[@"license",@"授权",@"重新联网检测授权",@[@"checkmark.seal",@"checkmark.shield",@"checkmark.circle"]],
                                        @[@"fade",@"渐隐与模糊",@"聊天页 · 其余页面 · 上下距离",@[@"rectangle.topthird.inset.filled",@"rectangle.topthird.inset.fill",@"square.tophalf.fill",@"square"]],
                                        @[@"wallpaper",@"壁纸",@"深浅色壁纸 · 卡片圆角",@[@"photo.on.rectangle",@"photo"]]]}
     ];
@@ -757,12 +758,20 @@ static WXGSettingsNavigationState *WXGNavigationState(UINavigationController *na
     _icons=[NSMutableArray array];_titles=[NSMutableArray array];_subtitles=[NSMutableArray array];
     _licenseCard=nil;_licenseTitle=_licenseText=nil;_copyAccount=_recheck=nil;_licenseSubtitle=nil;
     _license=WXGLicenseCurrentState(YES);
-    _enabled.enabled=_license==WXGLicenseAuthorized;
-    if(_license!=WXGLicenseAuthorized){[self buildLicenseCard];return;}
+    // FIX106: 未授权的普通用户根本进不到设置页（入口只在授权后出现，见 WXGHost 的启动器 /
+    // 微信设置行 / 底栏长按），所以这里不再因未授权就只显示“复制账号发给作者”的提示卡。真能
+    // 走到这一页的只会是绕过授权判定的人：让他看到完整功能设置、开关照常可点，但折射 / 色散 /
+    // 着色器这些要服务器着色器才生效的东西始终拿不到着色器、不出现（FIX103/106），看上去就是个
+    // 平平无奇、最关键效果没生效的插件。授权行只在真正授权时出现（下面过滤掉）。
+    _enabled.enabled=YES;
     NSArray<NSString *> *hidden=WXGHiddenSettingsModules();
     for(NSDictionary *section in WXGSettingsHome.sections) {
         NSMutableArray *specs=[NSMutableArray array];
-        for(NSArray *spec in section[@"cards"])if(![hidden containsObject:spec[0]])[specs addObject:spec];
+        for(NSArray *spec in section[@"cards"]) {
+            if([hidden containsObject:spec[0]])continue;
+            if([spec[0] isEqual:@"license"] && _license!=WXGLicenseAuthorized)continue;   // FIX106: 未授权不露授权行
+            [specs addObject:spec];
+        }
         if(!specs.count)continue;
         [_sectionLabels addObject:[self sectionLabel:section[@"title"]]];
         NSMutableArray *cards=[NSMutableArray array];
@@ -785,48 +794,10 @@ static WXGSettingsNavigationState *WXGNavigationState(UINavigationController *na
     }
 }
 - (NSString *)versionText {return [NSString stringWithFormat:@"%@ · %@",WXGIntegrationHost.shared.versionString,WXGBuildLabel()];}
-- (void)buildLicenseCard {
-    _licenseCard=[self addCard:NO];
-    _licenseTitle=[UILabel new];_licenseTitle.font=[UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
-    _licenseText=[UILabel new];_licenseText.font=[UIFont systemFontOfSize:14];_licenseText.numberOfLines=0;
-    NSString *account=WXGLicenseAccount(),*code=WXGLicenseCode(),*reason=WXGUnlockLastError();   // FIX103
-    switch(_license) {
-        case WXGLicenseDenied:   // FIX103: the server's list (the code is what goes on it)
-            _licenseTitle.text=@"当前微信账号未授权";
-            _licenseText.text=[NSString stringWithFormat:@"授权服务器的名单里没有这个账号，插件现在没有生效，微信保持原样。\n\n当前账号：%@\n授权码：%@\n\n点“复制账号”，把账号和授权码一起发给作者即可加入授权；加入后点“重新检测”。",account?:@"",code?:@""];
-            break;
-        case WXGLicenseChecking:
-            _licenseTitle.text=@"正在联网验证授权";
-            _licenseText.text=@"正在连接授权服务器，验证通过后玻璃会自动出现，不用重启微信。验证成功后 7 天内不联网也能用，联网时会在后台自动续期。";
-            break;
-        case WXGLicenseUnreachable:
-            _licenseTitle.text=@"连不上授权服务器";
-            _licenseText.text=[NSString stringWithFormat:@"插件要先联网验证一次才会生效，现在微信保持原样。\n\n原因：%@\n\n请检查网络（以及手机时间是否正确）后点“重新检测”。验证成功一次后，7 天内不联网也能用。",reason?:@"未知"];
-            break;
-        case WXGLicenseOutdated:
-            _licenseTitle.text=@"插件需要更新";
-            _licenseText.text=WXGUnlockServerShaderVersion().length?[NSString stringWithFormat:@"授权服务器上的玻璃着色器是第 %@ 版，这个插件用不了，现在没有生效。请安装作者发布的最新版插件。",WXGUnlockServerShaderVersion()]
-                :@"授权服务器上的玻璃着色器和这个插件的版本不一致，插件现在没有生效。请安装作者发布的最新版插件。";
-            break;
-        default:
-            _licenseTitle.text=@"还没有读到当前微信账号";
-            _licenseText.text=@"登录微信并回到首页后，点“重新检测”。插件在读到并确认账号之前不会生效。";
-            break;
-    }
-    _copyAccount=[UIButton buttonWithType:UIButtonTypeSystem];[_copyAccount setTitle:@"复制账号" forState:UIControlStateNormal];
-    _copyAccount.hidden=account.length==0;
-    [_copyAccount addTarget:self action:@selector(copyAccount) forControlEvents:UIControlEventTouchUpInside];
-    _recheck=[UIButton buttonWithType:UIButtonTypeSystem];[_recheck setTitle:@"重新检测" forState:UIControlStateNormal];
-    [_recheck addTarget:self action:@selector(recheckLicense) forControlEvents:UIControlEventTouchUpInside];
-    for(UIButton *b in @[_copyAccount,_recheck])b.titleLabel.font=[UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
-    for(UIView *v in @[_licenseTitle,_licenseText,_copyAccount,_recheck])[_licenseCard.contentView addSubview:v];
-}
-- (void)copyAccount {
-    NSString *account=WXGLicenseAccount(),*code=WXGLicenseCode();if(!account.length)return;
-    // FIX103: with the licence code, the line the author adds to the server's list.
-    NSString *text=code.length?[NSString stringWithFormat:@"微信账号：%@\n授权码：%@",account,code]:account;
-    UIPasteboard.generalPasteboard.string=text;[self showMessage:@"已复制" detail:text];
-}
+// FIX106: 旧的“未授权”提示卡（复制账号 / 把账号和授权码发给作者 / buildLicenseCard +
+// copyAccount）已删除。未授权账号根本进不到设置页，这张卡拿不到；新买家的授权码走线下
+// （作者按 wxid 用 license_hash.py 入名单）。_licenseCard / _licenseText / _copyAccount 等 ivar
+// 保留但恒为 nil，applyLook 与布局里对它们的引用都是对 nil 的空操作，无副作用。
 // FIX103: reads the account again and asks the server now (whatever the
 // back-off says); the answer arrives later (licenseChanged).
 // FIX104: an authorized account too (the "授权" card): the subtitle shows the
