@@ -27,6 +27,10 @@ on:
         description: '自测包：强制「已授权」(-DWXG_FORCE_AUTHORIZED)，复现破解后的状态，仅供自己真机验证加固，切勿外发'
         type: boolean
         default: false
+      mesh_off:
+        description: '自测包：关掉网格折射 (-DWXG_MESH_OFF)，只看纯着色器观感，装在已授权设备上对比'
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # 打 tag 时建 Release 用
@@ -76,14 +80,18 @@ jobs:
       - name: Build .deb
         env:
           SDK: ${{ github.workspace }}/plugin/toolchain/sdks/iPhoneOS16.5.sdk
-          # 仅手动 Run 且勾了 force_authorized 时注入；push / tag 永远是干净的正式包。
-          EXTRA_CFLAGS: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_authorized) && '-DWXG_FORCE_AUTHORIZED=1' || '' }}
+          # 两个自测开关，仅手动 Run 时可选；push / tag 都为空 → 永远干净正式包。
+          FORCE_AUTH: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_authorized) && '1' || '' }}
+          MESH_OFF: ${{ (github.event_name == 'workflow_dispatch' && inputs.mesh_off) && '1' || '' }}
         run: |
           export LDID="$RUNNER_TEMP/ldid"
           VER=$(sed -n 's/^Version: *//p' control)
           mkdir -p dist
-          SUFFIX=""
-          [ -n "$EXTRA_CFLAGS" ] && { SUFFIX="_FORCEAUTH"; echo "::warning::强制授权自测包（含 -DWXG_FORCE_AUTHORIZED），仅供真机验证，勿外发"; }
+          EXTRA_CFLAGS=""; SUFFIX=""
+          [ -n "$FORCE_AUTH" ] && { EXTRA_CFLAGS="$EXTRA_CFLAGS -DWXG_FORCE_AUTHORIZED=1"; SUFFIX="${SUFFIX}_FORCEAUTH"; }
+          [ -n "$MESH_OFF" ]   && { EXTRA_CFLAGS="$EXTRA_CFLAGS -DWXG_MESH_OFF=1";        SUFFIX="${SUFFIX}_MESHOFF"; }
+          [ -n "$SUFFIX" ] && echo "::warning::自测包（${SUFFIX}），仅供自己真机验证，切勿外发"
+          export EXTRA_CFLAGS
           OUT="dist/com.runyu.wechatliquidglass_${VER}_iphoneos-arm64${SUFFIX}.deb"
           sh tools/build_deb_linux.sh "$GITHUB_WORKSPACE/plugin" "$OUT"
           ls -la dist

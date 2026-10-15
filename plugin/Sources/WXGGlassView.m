@@ -1652,7 +1652,13 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
     // hybrid mode keeps its readback edge band). FIX23: contour mesh, built in
     // unscaled glass units so a press (bar growth) never rebuilds it, and RGB
     // dispersion as three channel backdrops with their own meshes.
+#ifdef WXG_MESH_OFF
+    // 自测专用（默认不定义）：强制关掉网格折射，只走纯着色器(TEST9 field)，用来对比观感、
+    // 评估「把折射全收进着色器」的可行性。split / lensMesh 都由 mesh 派生，随之一并关闭。
+    BOOL mesh=NO;
+#else
     BOOL mesh=mode>=2 && c.syncMeshRefraction;
+#endif
     // FIX59: lightweight glass (settings cards) and 流畅模式: one backdrop.
     BOOL lean=_lightweight || c.performanceMode;
     BOOL split=mesh && c.syncDispersion && WXGFilterFactoryAvailable() && !lean;
