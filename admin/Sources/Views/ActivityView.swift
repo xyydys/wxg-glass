@@ -61,7 +61,7 @@ struct ActivityView: View {
             StatTile(value: s.totalErrors.formatted(), label: "错误数", tint: Theme.bad, icon: "exclamationmark.circle.fill")
             StatTile(value: String(format: "%.1f%%", s.errorRate * 100), label: "错误率", tint: Theme.warn, icon: "percent")
         }
-        if s.points.isEmpty {
+        if s.totalRequests == 0 {
             Text("这段时间没有请求记录。").font(.subheadline).foregroundStyle(.secondary).padding(.top, 8)
         } else {
             Chart(s.points) { p in

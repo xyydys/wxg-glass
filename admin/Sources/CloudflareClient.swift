@@ -1,14 +1,16 @@
 import Foundation
 
 // Cloudflare GraphQL Analytics：抓 worker `xyylwc` 的请求量 / 错误量时间序列。
-// 需要一个 API Token，权限：Account Analytics → Read（范围选对应账号即可）。
-// 创建：Cloudflare 控制台 → My Profile → API Tokens → Create Token → Custom。
+// 需要一个 API Token，权限：Account → Account Analytics → Read（范围选对应账号即可）。
+// 数据集是官方教程「Querying Workers Metrics with GraphQL」里的 workersInvocationsAdaptive
+// （没有 …Groups 后缀）；变量类型照官方示例用小写 string。
 struct CloudflareClient {
     let token: String
     let accountId: String
     var scriptName = "xyylwc"
 
     private static let endpoint = "https://api.cloudflare.com/client/v4/graphql"
+    private static let hour: Double = 3600
 
     enum Window: String, CaseIterable, Identifiable {
         case day = "24 小时", week = "7 天"
@@ -16,33 +18,58 @@ struct CloudflareClient {
         var hours: Int { self == .day ? 24 : 24 * 7 }
     }
 
+    private struct Row { let date: Date; let requests: Int; let errors: Int }
+
     func fetch(window: Window) async throws -> AnalyticsSummary {
         let now = Date()
-        let start = Calendar.current.date(byAdding: .hour, value: -window.hours, to: now)!
-        let iso = ISO8601DateFormatter()
-        let dimField = "datetimeHour"   // 统一按小时分桶：24h=24 点、7d=168 点，图表都扛得住
+        let start = now.addingTimeInterval(-Double(window.hours) * Self.hour)
 
+        // 先按小时分组（行数少）；该数据集若没有 datetimeHour 维度，退回官方示例里的 datetime，本地按小时汇总。
+        let rows: [Row]
+        do { rows = try await query(dimension: "datetimeHour", start: start, end: now) }
+        catch let e as APIError where e.message.contains("datetimeHour") {
+            rows = try await query(dimension: "datetime", start: start, end: now)
+        }
+
+        // 按小时分桶，窗口内每个小时都补上（没请求的小时为 0，曲线不会跨空档连线）。
+        let first = floor(start.timeIntervalSince1970 / Self.hour) * Self.hour
+        let last = floor(now.timeIntervalSince1970 / Self.hour) * Self.hour
+        var buckets: [Double: (requests: Int, errors: Int)] = [:]
+        for t in stride(from: first, through: last, by: Self.hour) { buckets[t] = (0, 0) }
+        for r in rows {
+            let k = floor(r.date.timeIntervalSince1970 / Self.hour) * Self.hour
+            let cur = buckets[k] ?? (0, 0)
+            buckets[k] = (cur.requests + r.requests, cur.errors + r.errors)
+        }
+        let points = buckets
+            .map { AnalyticsPoint(date: Date(timeIntervalSince1970: $0.key), requests: $0.value.requests, errors: $0.value.errors) }
+            .sorted { $0.date < $1.date }
+        return AnalyticsSummary(points: points)
+    }
+
+    private func query(dimension: String, start: Date, end: Date) async throws -> [Row] {
         let query = """
-        query($a:String!,$s:Time!,$u:Time!,$script:String!){
-          viewer{
-            accounts(filter:{accountTag:$a}){
-              workersInvocationsAdaptiveGroups(
-                limit:10000,
-                filter:{datetime_geq:$s, datetime_leq:$u, scriptName:$script},
-                orderBy:[\(dimField)_ASC]
-              ){
-                dimensions{ \(dimField) }
-                sum{ requests errors }
+        query GetWorkersAnalytics($accountTag: string, $datetimeStart: string, $datetimeEnd: string, $scriptName: string) {
+          viewer {
+            accounts(filter: {accountTag: $accountTag}) {
+              workersInvocationsAdaptive(limit: 10000, filter: {
+                scriptName: $scriptName,
+                datetime_geq: $datetimeStart,
+                datetime_leq: $datetimeEnd
+              }) {
+                sum { requests errors }
+                dimensions { \(dimension) }
               }
             }
           }
         }
         """
+        let iso = ISO8601DateFormatter()
         let variables: [String: Any] = [
-            "a": accountId,
-            "s": iso.string(from: start),
-            "u": iso.string(from: now),
-            "script": scriptName,
+            "accountTag": accountId,
+            "datetimeStart": iso.string(from: start),
+            "datetimeEnd": iso.string(from: end),
+            "scriptName": scriptName,
         ]
 
         guard let url = URL(string: Self.endpoint) else { throw APIError(message: "端点无效") }
@@ -66,24 +93,19 @@ struct CloudflareClient {
         guard http.statusCode == 200 else { throw APIError(message: "HTTP \(http.statusCode)（Token 权限需含 Account Analytics:Read）") }
 
         let groups = (((root["data"] as? [String: Any])?["viewer"] as? [String: Any])?["accounts"] as? [[String: Any]])?
-            .first?["workersInvocationsAdaptiveGroups"] as? [[String: Any]] ?? []
+            .first?["workersInvocationsAdaptive"] as? [[String: Any]] ?? []
 
-        let parser = ISO8601DateFormatter()
-        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let parserPlain = ISO8601DateFormatter()
+        let withFraction = ISO8601DateFormatter()
+        withFraction.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let plain = ISO8601DateFormatter()
 
-        var points: [AnalyticsPoint] = []
-        for g in groups {
-            let dims = g["dimensions"] as? [String: Any]
+        return groups.compactMap { g in
+            let raw = ((g["dimensions"] as? [String: Any])?[dimension] as? String) ?? ""
+            guard let date = plain.date(from: raw) ?? withFraction.date(from: raw) else { return nil }
             let sum = g["sum"] as? [String: Any]
-            let raw = (dims?[dimField] as? String) ?? ""
-            let date = parser.date(from: raw) ?? parserPlain.date(from: raw)
-                ?? parserPlain.date(from: raw + "T00:00:00Z") ?? Date()
             let requests = (sum?["requests"] as? Int) ?? Int((sum?["requests"] as? Double) ?? 0)
             let errors = (sum?["errors"] as? Int) ?? Int((sum?["errors"] as? Double) ?? 0)
-            points.append(AnalyticsPoint(date: date, requests: requests, errors: errors))
+            return Row(date: date, requests: requests, errors: errors)
         }
-        points.sort { $0.date < $1.date }
-        return AnalyticsSummary(points: points)
     }
 }
