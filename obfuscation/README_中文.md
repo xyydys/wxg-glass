@@ -39,7 +39,7 @@ Arkari 的 flag 是 `-irobf-*` 系（不是经典 OLLVM 的 `-sobf/-fla/-sub`）
 | 步 | `obf_flags` | 加了什么 | 验什么 |
 |---|---|---|---|
 | 1 | `-mllvm -irobf -mllvm -irobf-cse` | 字符串加密（藏 endpoint/公钥） | 玻璃正常；dylib 搜不到 `workers.dev` |
-| 2 | 上面 + `-mllvm -irobf-fla` | 控制流平坦化 | 授权/踢人正常；无明显掉帧 |
+| 2 | 上面 + `-mllvm -irobf-cff` | 控制流平坦化 | 授权/踢人正常；无明显掉帧 |
 | 3 | 上面 + `-mllvm -irobf-indbr -mllvm -irobf-icall` | 间接跳转/调用 | 冷启、验签、复查都正常 |
 | 4 | 上面 + `-mllvm -irobf-indgv -mllvm -irobf-cie` | 间接全局 + 整数常量加密 | 全流程回归 |
 
@@ -51,7 +51,7 @@ Arkari 的 flag 是 `-irobf-*` 系（不是经典 OLLVM 的 `-sobf/-fla/-sub`）
 |---|---|
 | `-irobf` | 启用框架（单独开不跑 pass） |
 | `-irobf-cse` | C 字符串加密 ← 最高性价比 |
-| `-irobf-fla` | 控制流平坦化 |
+| `-irobf-cff` | 控制流平坦化 |
 | `-irobf-indbr` | 间接跳转（加密目标） |
 | `-irobf-icall` | 间接调用（加密目标地址） |
 | `-irobf-indgv` | 间接全局变量引用 |
@@ -64,3 +64,9 @@ Arkari 的 flag 是 `-irobf-*` 系（不是经典 OLLVM 的 `-sobf/-fla/-sub`）
   若遇链接/codegen 怪问题，可把 builder 库的 `arkari_ref` 降到更接近 18 的分支，或回退某个 flag。
 - **arm64e**：当前只出 arm64。要 arm64e 需另验（ABI 在 iOS14/Xcode12 变过）。
 - **帧率**：只混授权/联网文件，渲染路径不动；别把 `obf_files` 加进渲染文件。
+
+## flag 名随 Arkari 版本会变
+
+本镜像是 llvm-20 分支：控制流平坦化是 **`-irobf-cff`**（llvm-21 文档里叫 `-irobf-fla`）。
+如果某个 flag 报 `Unknown command line argument`，照 clang 的 `Did you mean ...` 提示改名即可；
+升级 `arkari_ref` 后也要复核这些 flag 名。
