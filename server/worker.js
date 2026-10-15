@@ -5,7 +5,7 @@
 // ───── 你以后可能要改的只有这一处 ─────
 // 授权名单:一行一个账号哈希(64 位),加人 / 踢人就改这里,改完 Deploy。
 const ALLOWLIST = [
-  // "a7a5fc72e26a50adeefabc498db7ec2d85ea5bf6e6cc8b47885514ce4cb01379",  // 测试账号 A（2026-10-15 测试踢人：已下掉，恢复时去掉行首 //）
+  "a7a5fc72e26a50adeefabc498db7ec2d85ea5bf6e6cc8b47885514ce4cb01379",  // 测试账号 A（wxid_mpuxjt2kgy2s22；2026-10-15 踢人测试后恢复授权）
   "e7b744a4f60dc1b6c2efe28127b60820e0562dbb79d574359e26c2b7adf4ad45",  // 测试账号 B
   "037fb7b48436033ed5af9afd75b67ee157acc7efacd4c54b3f779170974fd405",  // 测试账号 C
 ];
