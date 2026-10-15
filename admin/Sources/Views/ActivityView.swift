@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 import Charts
 
 struct ActivityView: View {
@@ -20,7 +21,12 @@ struct ActivityView: View {
             }
             .navigationTitle("活动")
             .toolbar { ToolbarItem(placement: .topBarTrailing) {
-                Button { Task { await loadAll() } } label: { Image(systemName: "arrow.clockwise") } } }
+                Menu {
+                    Button { Task { await loadAll() } } label: { Label("刷新", systemImage: "arrow.clockwise") }
+                    // 空格分隔，直接当 watermark_decode.mjs 的候选账号参数（含已踢出的账号）。
+                    Button { copyAllHashes() } label: { Label("复制全部账号哈希", systemImage: "doc.on.doc") }
+                        .disabled(checkins.value?.accounts.isEmpty ?? true)
+                } label: { Image(systemName: "ellipsis.circle") } } }
             .refreshable { await loadAll() }
             .task { if case .idle = checkins { await loadAll() } }
         }
@@ -122,6 +128,15 @@ struct ActivityView: View {
             }
         }
         .padding(.vertical, 6)
+        .contentShape(Rectangle())
+        .contextMenu {
+            Button { UIPasteboard.general.string = acc.account } label: { Label("复制完整哈希", systemImage: "doc.on.doc") }
+        }
+    }
+
+    private func copyAllHashes() {
+        guard let accounts = checkins.value?.accounts, !accounts.isEmpty else { return }
+        UIPasteboard.general.string = accounts.map(\.account).joined(separator: " ")
     }
 
     private func eventRow(_ ev: ActivityEvent) -> some View {

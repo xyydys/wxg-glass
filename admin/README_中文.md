@@ -2,7 +2,8 @@
 
 一个自签名侧载的 iOS App（SwiftUI），用来远程管理 `xyylwc` 解锁服务器：
 
-- **名单**：加人 / 踢人 / 看当前授权列表，即时生效（走 KV，不用改代码、不用等重部署）。
+- **名单**：加人 / 踢人 / 看当前授权列表。改动直接写进 KV，不用改代码、不用等重部署；
+  加人对方下次联网核对就能用，踢人在对方下次复查时生效（见「五、踢人多久生效」）。
 - **活动**：
   - Cloudflare 聚合请求曲线（24 小时 / 7 天的请求量、错误量、错误率）；
   - 每个账号的联网核对记录（谁、哪台设备、什么时候、通过还是被拒）。
@@ -12,32 +13,38 @@
 
 ---
 
-## 一、先让服务器支持远程管理（一次性）
+## 一、服务器配置（已完成，记录备查）
 
-管理功能是 worker 的 **增量**，加在 `/v1/admin/*` 路径上，**不碰原来的签名 / 着色器逻辑**。
-没配 KV、没设 `ADMIN_TOKEN` 时，worker 自动退回老行为（名单读 `worker.js` 顶部常量，`/v1/admin/*` 返回 503），
-所以下面几步做完之前，现网是完全照旧的。
+管理功能是 worker 的 **增量**，加在 `/v1/admin/*` 路径上，**不碰原来的签名 / 着色器 / 水印逻辑**。
+现状：
 
-1. **建 KV**：Cloudflare 控制台 → Storage & Databases → KV → *Create namespace*（名字随意，如 `wxg-list`）。
-   记下它的 **Namespace ID**。
-2. **绑 KV**：编辑 `server/wrangler.jsonc`，把文件末尾那段注释掉的 `kv_namespaces` 放开，`id` 填上面的真实 ID，
-   `binding` 保持 `LIST`。⚠️ 一定填真实 ID 再放开，否则 Cloudflare 会因为绑定不存在的命名空间而部署失败。
-3. **设管理口令**：Worker 的 *Settings → Variables and Secrets* 加一个 **Secret**：
-   - 名字：`ADMIN_TOKEN`
-   - 值：一串够长的随机口令（这就是 App 里要填的「管理口令」，等同后台密码，别外泄）。
-4. **提交触发部署**：把 `server/worker.js` + `server/wrangler.jsonc` 推到 `main`，Workers Builds 自动重部署。
-5. **导入现有名单**：部署好后，用 App 的「名单」页右上角 → *导入 worker.js 现有名单*
-   （等价于 `POST /v1/admin/seed`），把原来 3 个测试账号灌进 KV。之后名单以 KV 为准，加 / 删都即时生效。
+1. **KV**：命名空间 `wxg-list`（ID `0e2c7c8397f141bc82602102f46e6241`），在 `server/wrangler.jsonc` 里以绑定名
+   `LIST` 绑到 worker。绑定名必须是 `LIST`（Cloudflare 示例里的 `KV_BINDING` 不能用）。
+2. **管理口令**：Worker 的 Secret `ADMIN_TOKEN`。⚠️ 要加在 *Settings → Variables and Secrets*（运行时那一栏，
+   `SIGN_PRIV` 也在那里），**不是** Build 设置里的那个 Variables and secrets——那里的变量只在打包时可见，worker 读不到。
+   换口令：在同一处改值并 Deploy，然后把 App「设置」里的管理口令改成新值。
+3. **名单**：已用 App「名单」页的 *导入 worker.js 现有名单*（= `POST /v1/admin/seed`）把常量名单导入 KV，
+   之后名单以 KV 为准。`worker.js` 顶部的 `ALLOWLIST` 只剩回退与种子作用，改它不生效。
 
-> 验证：浏览器打开 `https://xyylwc.kvgdth56kf.workers.dev/`，JSON 里应看到 `listSource:"kv"`、`admin:"set"`。
+> 验证：浏览器打开 `https://xyylwc.kvgdth56kf.workers.dev/`，JSON 里应看到 `listSource:"kv"`、`admin:"set"`、
+> `allowCount` 为当前人数。
+
+> KV 是最终一致的：加人 / 踢人后，列表或别处读到新结果通常要几秒、最长约 60 秒，稍后下拉刷新即可。
 
 ### Cloudflare 分析 Token（可选，只为看请求曲线）
 
-- **Account ID**：Workers & Pages 概览页右侧。
-- **API Token**：My Profile → API Tokens → *Create Token* → Custom，权限加
-  **Account → Account Analytics → Read**，范围选你的账号即可。只读，不改任何东西。
+1. **建 Token**：Cloudflare 控制台右上角头像 → *My Profile* → *API Tokens* → *Create Token* →
+   最下面 *Custom token* 的 *Get started*。
+   - Token name：随意，如 `授权台只读`
+   - Permissions：三个下拉依次选 **Account** / **Account Analytics** / **Read**
+   - Account Resources：**Include** / 你的账号
+   - 其余不动 → *Continue to summary* → *Create Token*，**复制 Token**（只显示这一次）。
+2. **找 Account ID**：在 Cloudflare 控制台随便点进一个页面，网址里 `dash.cloudflare.com/` 后面那串 32 位字符就是；
+   电脑上 Workers & Pages 概览页右侧也有。
+3. **填进 App**：「设置」→ Cloudflare 分析里填 Account ID 和 API Token，回「活动」页下拉刷新。
 
-不填这两项也能用——「活动」页的 Cloudflare 曲线会提示去配置，但「名单」和「核对记录」照常工作。
+这个 Token 只读，不能改任何东西。不填也能用——曲线会提示去配置，「名单」和「核对记录」照常工作。
+曲线查询走 Cloudflare GraphQL（`workersInvocationsAdaptiveGroups`），出错时 App 会显示 Cloudflare 的原始报错。
 
 ---
 
@@ -88,8 +95,24 @@ open WXGAdmin.xcodeproj
 然后：
 
 - **名单**页：*添加授权* 可直接输 wxid（App 本地算出 `SHA-256("WXGLiquidGlass.license.v1:"+wxid)`，
-  和插件 / 服务器算法完全一致，wxid 不上传、只上传哈希），也可直接粘 64 位哈希；左滑或点垃圾桶踢人（有二次确认）。
-- **活动**页：上半 Cloudflare 曲线，下半按账号的核对明细 + 最近流水。
+  和插件 / 服务器算法完全一致，wxid 不上传、只上传哈希），也可直接粘 64 位哈希；点垃圾桶踢人（有二次确认）。
+  长按某个账号可「复制完整哈希」。
+- **活动**页：上半 Cloudflare 曲线，下半按账号的核对明细 + 最近流水。长按账号行复制完整哈希；
+  右上角 *复制全部账号哈希*（空格分隔，含已踢出的账号），可直接当水印溯源工具
+  `plugin/tools/watermark_decode.mjs` 的候选账号参数——工具不传账号时只比对 `worker.js` 常量名单，
+  App 里新加的、已踢出的账号都不在其中。
+
+---
+
+## 五、踢人多久生效
+
+服务器没法主动通知手机，插件只在「复查」时知道自己被踢：复查被拒（403）会**立刻删掉本地票据并关闭**。
+所以踢人的延迟 = 对方下次复查的时间：
+
+- 复查间隔由 `server/worker.js` 顶部的 `RECHECK_AFTER` 决定（现 2 天），插件接受 60 秒～7 天，改它只需改 worker，不用重编插件。
+- 新间隔要等每台设备下一次核对拿到新票据后才生效（过渡期最长等于旧间隔）。
+- 复查只在微信前台、插件在跑时发生；完全离线或连不上服务器的设备，会按手上票据用到 7 天有效期结束。
+- 间隔越短，请求和 KV 写入越多（每次核对约 2 次写，KV 免费额度每天 1000 次写），调短前先估算人数。
 
 ---
 

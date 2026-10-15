@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct AllowlistView: View {
     @EnvironmentObject var config: AppConfig
@@ -102,6 +103,9 @@ struct AllowlistView: View {
                 Text("加入于 \(absoluteTime(e.addedAt))").font(.caption).foregroundStyle(.tertiary)
             }
         }.glassCard()
+        .contextMenu {
+            Button { UIPasteboard.general.string = e.account } label: { Label("复制完整哈希", systemImage: "doc.on.doc") }
+        }
     }
 
     private func toastView(_ text: String) -> some View {

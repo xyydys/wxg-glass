@@ -1,13 +1,16 @@
 # wxg-glass
 
-单仓库（monorepo），两部分：
+单仓库（monorepo），三部分：
 
 - **`plugin/`** — WeChat Liquid Glass 插件本体（iOS 越狱 Tweak，Theos 工程）。
   源码、测试、云端编译脚本都在这里。详见 `plugin/README_中文.md` 与交接说明
   `plugin/HANDOFF_中文.md`。
 - **`server/`** — Cloudflare Worker 授权检测模块。`/v1/unlock` 收账号码、查
-  `ALLOWLIST`、用 `env.SIGN_PRIV`（Cloudflare Secret）做 ECDSA P-256 签名，把
-  着色器装进签名票据下发。详见 `server/README.md`。
+  授权名单（KV `wxg-list`，空时回退 `worker.js` 里的 `ALLOWLIST` 常量）、用 `env.SIGN_PRIV`
+  （Cloudflare Secret）做 ECDSA P-256 签名，把着色器装进签名票据下发；`/v1/admin/*` 是管理接口
+  （`ADMIN_TOKEN` 鉴权）。详见 `server/README.md`。
+- **`admin/`** — 管理 App「授权台」（SwiftUI，iOS 26），远程增删名单、看核对记录与请求曲线。
+  CI `.github/workflows/admin-ipa.yml` 在 macOS runner 出未签名 ipa，自签侧载。详见 `admin/README_中文.md`。
 
 ## 对接点
 

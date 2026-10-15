@@ -3,7 +3,9 @@
 // 只需要再加一个 Secret:SIGN_PRIV = keygen.html 生成的私钥。
 //
 // ───── 你以后可能要改的只有这一处 ─────
-// 授权名单:一行一个账号哈希(64 位),加人 / 踢人就改这里,改完 Deploy。
+// FIX108 起名单以 KV(绑定 LIST)为准,加人 / 踢人请用管理 App「授权台」(/v1/admin/*),改这里不再生效。
+// 这个常量只剩两个用途:① KV 里还没有任何名单时的回退(不误锁);② App「导入现有名单」
+// (POST /v1/admin/seed)的种子。一行一个账号哈希(64 位)。
 const ALLOWLIST = [
   "a7a5fc72e26a50adeefabc498db7ec2d85ea5bf6e6cc8b47885514ce4cb01379",  // 测试账号 A（wxid_mpuxjt2kgy2s22；2026-10-15 踢人测试后恢复授权）
   "e7b744a4f60dc1b6c2efe28127b60820e0562dbb79d574359e26c2b7adf4ad45",  // 测试账号 B

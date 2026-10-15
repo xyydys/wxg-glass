@@ -2,11 +2,25 @@
 
 私有仓库。Cloudflare 从这里自动部署（Workers Builds）。
 
-- `worker.js`：服务器代码 + 授权名单（文件开头的 ALLOWLIST）+ 着色器。
-- `wrangler.jsonc`：部署配置，`name` 要和 Cloudflare 里的 Worker 名字一致（现在是 xyylwc）。
-- 私钥不在仓库里，在 Cloudflare 的 Settings → Variables and Secrets 里，名字 `SIGN_PRIV`（Secret）。
+- `worker.js`：服务器代码 + 着色器 + 管理接口 `/v1/admin/*`。文件开头的 `ALLOWLIST` 常量现在只作回退与首次导入用。
+- `wrangler.jsonc`：部署配置，`name` 要和 Cloudflare 里的 Worker 名字一致（现在是 xyylwc）；绑定 KV 命名空间 `wxg-list`（绑定名 `LIST`）。
+- Secret（Cloudflare 的 Settings → Variables and Secrets，运行时那一栏，不是 Build 里那栏）：
+  `SIGN_PRIV`（签名私钥）、`ADMIN_TOKEN`（管理 App 的口令）。都不在仓库里。
 
-改名单或换着色器：改 `worker.js` 并提交，Cloudflare 会自动重新部署。
+**改名单**：用管理 App「授权台」（`admin/`），不用改代码、不用重部署。名单存在 KV 的 `allow:<账号哈希>`，
+改动写入即生效（KV 全球同步通常几秒、最长约 60 秒）。KV 里一个名单都没有时，worker 回退到 `ALLOWLIST` 常量，不会误锁。
+
+**换着色器**：仍是改 `worker.js` 并提交，Cloudflare 自动重新部署。
+
+## FIX108 · 管理接口与核对记录
+
+- `/v1/admin/*` 全部要 `Authorization: Bearer <ADMIN_TOKEN>`；没设 `ADMIN_TOKEN` 或没绑 KV 时整组返回 503。
+  接口清单见 `admin/README_中文.md`。
+- 每次 `/v1/unlock` 都尽力而为记一笔核对记录（`ctx.waitUntil`，失败不影响授权）：
+  `seen:<账号>` 每账号最近状态（常驻，**包括已被踢出的账号**），`ev:<时间>:<随机>` 流水（30 天 TTL）。
+- 签名、着色器加密、按账号水印这条下发链路没有改动，只是「这个账号在不在名单里」改成先查 KV。
+- KV 免费额度：每天 10 万次读、1000 次写。每次核对约 2 读 2 写，人多或复查间隔调短时留意写入额度
+  （写超了只会丢核对记录，不影响授权；但当天在 App 里加人也会写失败）。
 
 部署：Cloudflare Worker `xyylwc` 已连接本仓库 main 分支，每次推送自动部署。
 
@@ -24,15 +38,18 @@ info="WXGLiquidGlass.shader.v1|账号|设备")` 派生 AES-256 密钥，把着�
 
 ### 复查间隔 `RECHECK_AFTER`
 
-票据随包下发 `recheckAfter`（现 **2 天**，文件顶部一个常量，上限 7 天）。它决定**在线用户
-多久联网核对一次 = 踢人多久生效**；离线仍按 `expiresAt`（7 天）。只影响在线核对频率与负载，
-不碰签名有效期，服务器下发、改它不用重新编插件。Cloudflare 免费额度（约 10 万次/天）对这个
-频率绰绰有余。
+票据随包下发 `recheckAfter`（现 **2 天**，文件顶部一个常量）。插件把它夹在 **60 秒～7 天**之间
+（`plugin/Sources/WXGUnlockPolicy.h`）。它决定**在线用户多久联网核对一次 = 踢人多久生效**：
+核对时被拒（403），插件立刻删掉本地票据并关闭。离线或连不上服务器时仍按 `expiresAt`（7 天）照常用。
+只影响在线核对频率与负载，不碰签名有效期，服务器下发、改它不用重新编插件；新值要等每台设备
+下一次核对拿到新票据后才生效（过渡期最长等于旧值）。调短时注意上面的 KV 写入额度。
 
 ### 着色器水印（溯源）
 
 每个账号下发的着色器都按 `账号 + 签名私钥` 把 8 个 Metal-only 的保护/边界常数（`WM_SITES`，二进制里没有参照）做了一点点肉眼无感的
 确定性微扰。流落在外的 `.metal` 用 `plugin/tools/watermark_decode.mjs <leaked.metal>
-<SIGN_PRIV> [账号…]` 逐个比对即可认出**是从哪个授权账号扒出去的**——插件通用、不用每人单独
+<SIGN_PRIV> [账号…]` 逐个比对即可认出**是从哪个授权账号扒出去的**（FIX108 起：不传账号时工具只比对
+`worker.js` 里的常量名单，App 里新加的账号、已踢出的账号都不在里面——溯源时把候选账号哈希作为参数
+传进去，可从 App「活动」页的各账号记录里复制，那里也保留着已踢出的账号）——插件通用、不用每人单独
 分发，指纹在着色器数据里。诚实边界：拿到两个账号的着色器一 diff 能定位并抹掉水印（水印通病），
 对本体量不值得上抗合谋编码；它拦的是"随手原样转发"这一大类。
