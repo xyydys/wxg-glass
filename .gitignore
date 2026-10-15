@@ -11,6 +11,13 @@ plugin/toolchain/
 server/node_modules/
 server/.wrangler/
 
+# ---- admin app (SwiftUI, XcodeGen) ----
+admin/WXGAdmin.xcodeproj/
+admin/build/
+admin/Payload/
+admin/*.ipa
+admin/DerivedData/
+
 # ---- OS / editor ----
 .DS_Store
 *.swp

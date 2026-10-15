@@ -4,4 +4,20 @@
   "main": "worker.js",
   "compatibility_date": "2025-09-01",
   "workers_dev": true
+
+  // FIX108：授权名单 + 核对流水都存这个 KV。管理 App 通过 /v1/admin/* 读写它。
+  //
+  // ⚠️ 这个 KV 绑定默认是注释掉的：填了「真实」Namespace ID 再放开，否则 Cloudflare
+  //    会因为绑定了不存在的命名空间而「部署失败」。不放开时 worker 自动退化成老行为
+  //    （名单读 worker.js 顶部的 ALLOWLIST 常量，/v1/admin/* 返回 503），照旧能跑。
+  //
+  // 开通步骤（一次）：
+  //   1) Cloudflare 控制台 → Storage & Databases → KV → Create namespace（名字随意，如 wxg-list）。
+  //   2) 把它的 Namespace ID 填进下面的 id，并去掉本行上下这段的注释（逗号也要放开）。
+  //   3) Worker 的 Settings → Variables and Secrets 加一个 Secret：ADMIN_TOKEN（App 用的管理口令，越长越好）。
+  //   4) push 触发重部署后，用 App 的「导入现有名单」按钮（= POST /v1/admin/seed）把常量名单灌进 KV。
+  //
+  // , "kv_namespaces": [
+  //     { "binding": "LIST", "id": "在这里填真实的 Namespace ID" }
+  //   ]
 }

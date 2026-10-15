@@ -1,0 +1,75 @@
+name: admin-ipa
+
+# 管理 App（admin/）打包：macOS runner 上用 XcodeGen 生成工程，xcodebuild 编出
+# 「未签名」的 .ipa 作为产物。下载后用 Sideloadly / AltStore / TrollStore 等自签侧载到自己手机。
+# 手动 Run，或改了 admin/ 下的东西时自动跑。
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'admin/**'
+      - '.github/workflows/admin-ipa.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: admin-ipa-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: admin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: |
+          xcodegen generate
+          ls -la *.xcodeproj
+
+      - name: Build (unsigned)
+        run: |
+          xcodebuild \
+            -project WXGAdmin.xcodeproj \
+            -scheme WXGAdmin \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath build \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package .ipa
+        run: |
+          APP="build/Build/Products/Release-iphoneos/WXGAdmin.app"
+          test -d "$APP" || { echo "未找到 $APP"; find build -name '*.app' -maxdepth 6; exit 1; }
+          rm -rf Payload WXGAdmin-unsigned.ipa
+          mkdir -p Payload
+          cp -R "$APP" Payload/
+          zip -qry WXGAdmin-unsigned.ipa Payload
+          echo "打好了："; ls -la WXGAdmin-unsigned.ipa
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: WXGAdmin-unsigned-ipa
+          path: admin/WXGAdmin-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 30

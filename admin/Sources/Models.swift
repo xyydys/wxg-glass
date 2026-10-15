@@ -1,0 +1,81 @@
+import Foundation
+
+struct AllowEntry: Codable, Identifiable, Hashable {
+    let account: String
+    var note: String
+    var addedAt: Double
+    var id: String { account }
+}
+
+struct SeenAccount: Codable, Identifiable, Hashable {
+    let account: String
+    var lastDevice: String
+    var lastTs: Double
+    var firstTs: Double
+    var count: Int
+    var lastResult: String
+    var id: String { account }
+}
+
+struct ActivityEvent: Codable, Identifiable, Hashable {
+    let ts: Double
+    let account: String
+    let device: String
+    let result: String
+    var id: String { "\(ts)-\(account)-\(device)" }
+    var allowed: Bool { result == "ok" }
+}
+
+struct AdminActivity: Codable {
+    var events: [ActivityEvent]
+    var accounts: [SeenAccount]
+}
+
+// GET / 自检
+struct Health: Codable {
+    var ok: Bool?
+    var service: String?
+    var ver: String?
+    var signKey: String?
+    var pub: String?
+    var listSource: String?
+    var allowCount: Int?
+    var admin: String?
+}
+
+// GET /v1/admin/ping
+struct AdminPing: Codable {
+    var ok: Bool
+    var admin: Bool
+    var ver: String?
+    var allowCount: Int?
+    var recheckAfter: Int?
+    var signKey: String?
+}
+
+struct AddAllowResult: Codable {
+    var ok: Bool
+    var added: Bool
+    var entry: AllowEntry
+}
+
+struct SeedResult: Codable {
+    var ok: Bool
+    var added: Int
+    var count: Int
+}
+
+// Cloudflare 聚合分析里的一个时间点。
+struct AnalyticsPoint: Identifiable, Hashable {
+    let date: Date
+    let requests: Int
+    let errors: Int
+    var id: Date { date }
+}
+
+struct AnalyticsSummary {
+    var points: [AnalyticsPoint]
+    var totalRequests: Int { points.reduce(0) { $0 + $1.requests } }
+    var totalErrors: Int { points.reduce(0) { $0 + $1.errors } }
+    var errorRate: Double { totalRequests == 0 ? 0 : Double(totalErrors) / Double(totalRequests) }
+}

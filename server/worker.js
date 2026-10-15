@@ -31,16 +31,24 @@ const WM_SITES = [
 ];
 
 export default {
-  async fetch(req, env) {
+  async fetch(req, env, ctx) {
     if (req.method === "OPTIONS") return cors(new Response(null, { status: 204 }));
+    const url = new URL(req.url);
+
+    // FIX108: 管理接口。名单与活动都走 KV，App 用 ADMIN_TOKEN 调这组 /v1/admin/*。
+    // 不碰下面的签名/着色器逻辑；没配 KV 或没设 ADMIN_TOKEN 时整组退化为 503。
+    if (url.pathname === "/v1/admin" || url.pathname.startsWith("/v1/admin/"))
+      return admin(req, env, url);
+
     if (req.method === "GET") {   // 自检：私钥在不在、对应的公钥是哪把（公钥本来就是公开的）
       let pub = null;
       if (env.SIGN_PRIV) { try { pub = await publicFromPriv(env.SIGN_PRIV.trim()); } catch { pub = "invalid"; } }
-      return json({ ok: true, service: "wxg-unlock", ver: VER, signKey: env.SIGN_PRIV ? "set" : "missing", pub });
+      const list = await listMeta(env);
+      return json({ ok: true, service: "wxg-unlock", ver: VER, signKey: env.SIGN_PRIV ? "set" : "missing", pub,
+                    listSource: list.source, allowCount: list.count, admin: env.ADMIN_TOKEN ? "set" : "missing" });
     }
     if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
-    const url = new URL(req.url);
     if (url.pathname !== "/v1/unlock") return json({ error: "not found" }, 404);
 
     let body;
@@ -53,8 +61,7 @@ export default {
     if (!device)                         return json({ error: "no device" }, 400);
     if (!ts || Math.abs(Date.now() / 1000 - ts) > 300) return json({ error: "stale" }, 400);   // 5 分钟重放窗口
 
-    const allow = ALLOWLIST.map(s => s.trim().toLowerCase());
-    if (!allow.includes(account)) return json({ error: "not authorized" }, 403);
+    if (!(await isAllowed(env, account))) { logCheckin(env, ctx, account, device, "denied"); return json({ error: "not authorized" }, 403); }
     if (!env.SIGN_PRIV) return json({ error: "SIGN_PRIV not set" }, 500);
 
     const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 3600;  // 有效期 7 天
@@ -70,6 +77,7 @@ export default {
     // 或自建服务器伪造票据，都只会解出坏着色器，而不是打开大门。签名与报文字段格式不变。
     const shaderKey = await hkdf32(sigDer, digestBytes, utf8("WXGLiquidGlass.shader.v1|" + account + "|" + device));
     const sealed = await aesCbcSeal(shaderKey, shaderBytes);
+    logCheckin(env, ctx, account, device, "ok");
     return json({ ver: VER, expiresAt, shader: b64(sealed), digest, sig: b64(sigDer), recheckAfter: RECHECK_AFTER });
   }
 };
@@ -82,8 +90,8 @@ function toHex(bytes) { return [...new Uint8Array(bytes)].map(b => b.toString(16
 async function sha256(bytes) { return new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)); }
 function cors(resp) {
   resp.headers.set("access-control-allow-origin", "*");
-  resp.headers.set("access-control-allow-methods", "GET, POST, OPTIONS");
-  resp.headers.set("access-control-allow-headers", "content-type");
+  resp.headers.set("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
+  resp.headers.set("access-control-allow-headers", "content-type, authorization");
   return resp;
 }
 function json(obj, status = 200) {
@@ -862,3 +870,149 @@ const SHADER = [
   "}",
   "",
 ].join("\n");
+
+// ───────────────────────── FIX108 · 管理接口 + KV 名单 / 活动 ─────────────────────────
+// KV 绑定名 LIST（在 wrangler.jsonc 里配）。没配就整段退化：名单回退到文件顶部的
+// ALLOWLIST 常量，/v1/admin/* 一律 503 —— 所以这份 worker 不配 KV 也能照旧跑，可零风险先部署。
+//
+//   allow:<account>   {account, note, addedAt}             —— 在这张表里即「已授权」
+//   seen:<account>    {account, lastDevice, lastTs, firstTs, count, lastResult}
+//   ev:<ts>:<rand>    {ts, account, device, result}         —— 近期核对流水（30 天 TTL）
+const LICENSE_PREFIX = "WXGLiquidGlass.license.v1:";
+const EV_TTL = 30 * 24 * 3600;
+
+function hasKV(env) { return !!(env && env.LIST && typeof env.LIST.get === "function"); }
+async function sha256hex(str) { return toHex(await sha256(utf8(str))); }
+
+// KV 是否已导入名单（判定回退用，只在「账号不在 KV」时才查，开销落在拒绝分支）
+async function kvPopulated(env) {
+  const r = await env.LIST.list({ prefix: "allow:", limit: 1 });
+  return r.keys.length > 0;
+}
+// 名单判定：KV 优先；KV 尚未导入任何名单时回退常量，避免误锁测试机。
+async function isAllowed(env, account) {
+  if (hasKV(env)) {
+    if (await env.LIST.get("allow:" + account)) return true;
+    if (await kvPopulated(env)) return false;              // KV 已是权威来源
+  }
+  return ALLOWLIST.map(s => s.trim().toLowerCase()).includes(account);   // 回退
+}
+async function listMeta(env) {
+  if (!hasKV(env)) return { source: "const", count: ALLOWLIST.length };
+  let count = 0, cursor;
+  do { const r = await env.LIST.list({ prefix: "allow:", cursor }); count += r.keys.length; cursor = r.list_complete ? undefined : r.cursor; } while (cursor);
+  return { source: "kv", count };
+}
+
+// 核对流水：尽力而为，绝不影响解锁响应（ctx.waitUntil + try/catch 吞掉一切）。
+function logCheckin(env, ctx, account, device, result) {
+  if (!hasKV(env) || !/^[0-9a-f]{64}$/.test(account)) return;
+  const ts = Math.floor(Date.now() / 1000);
+  const job = (async () => {
+    try {
+      const prev = JSON.parse(await env.LIST.get("seen:" + account) || "null") || {};
+      const seen = {
+        account,
+        lastDevice: device || prev.lastDevice || "",
+        lastTs: ts,
+        firstTs: prev.firstTs || ts,
+        count: (prev.count | 0) + 1,
+        lastResult: result,
+      };
+      await env.LIST.put("seen:" + account, JSON.stringify(seen));
+      const rand = Math.random().toString(36).slice(2, 8);
+      await env.LIST.put(`ev:${ts}:${rand}`, JSON.stringify({ ts, account, device: device || "", result }), { expirationTtl: EV_TTL });
+    } catch { /* 日志失败不影响授权 */ }
+  })();
+  if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job); else job.catch(() => {});
+}
+
+// ── 鉴权 ──
+function tseq(a, b) { if (a.length !== b.length) return false; let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i); return r === 0; }
+function adminAuthed(req, env) {
+  if (!env.ADMIN_TOKEN) return false;
+  const m = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") || "").trim());
+  return !!m && tseq(m[1], env.ADMIN_TOKEN);
+}
+
+// ── 路由 ──
+async function admin(req, env, url) {
+  if (!env.ADMIN_TOKEN) return json({ error: "admin disabled (set ADMIN_TOKEN secret)" }, 503);
+  if (!hasKV(env))      return json({ error: "admin disabled (bind KV namespace LIST)" }, 503);
+  if (!adminAuthed(req, env)) return json({ error: "unauthorized" }, 401);
+  const p = url.pathname;
+
+  if (p === "/v1/admin/ping" && req.method === "GET") {
+    const meta = await listMeta(env);
+    return json({ ok: true, admin: true, ver: VER, allowCount: meta.count, recheckAfter: RECHECK_AFTER, signKey: env.SIGN_PRIV ? "set" : "missing" });
+  }
+
+  if (p === "/v1/admin/allow") {
+    if (req.method === "GET") {
+      const entries = []; let cursor;
+      do {
+        const r = await env.LIST.list({ prefix: "allow:", cursor });
+        for (const k of r.keys) { const v = JSON.parse(await env.LIST.get(k.name) || "null"); if (v) entries.push(v); }
+        cursor = r.list_complete ? undefined : r.cursor;
+      } while (cursor);
+      entries.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
+      return json({ count: entries.length, entries });
+    }
+    if (req.method === "POST") {
+      let body; try { body = await req.json(); } catch { return json({ error: "bad json" }, 400); }
+      let account = String(body.account || "").toLowerCase().trim();
+      if (!account && body.wxid) account = await sha256hex(LICENSE_PREFIX + String(body.wxid));   // 服务器侧也能从 wxid 算，双保险
+      if (!/^[0-9a-f]{64}$/.test(account)) return json({ error: "bad account" }, 400);
+      const old = JSON.parse(await env.LIST.get("allow:" + account) || "null");
+      const entry = { account, note: String(body.note || (old && old.note) || "").slice(0, 200), addedAt: (old && old.addedAt) || Math.floor(Date.now() / 1000) };
+      await env.LIST.put("allow:" + account, JSON.stringify(entry));
+      return json({ ok: true, added: !old, entry });
+    }
+    return json({ error: "method not allowed" }, 405);
+  }
+
+  if (p.startsWith("/v1/admin/allow/") && req.method === "DELETE") {
+    const account = decodeURIComponent(p.slice("/v1/admin/allow/".length)).toLowerCase().trim();
+    if (!/^[0-9a-f]{64}$/.test(account)) return json({ error: "bad account" }, 400);
+    const existed = !!(await env.LIST.get("allow:" + account));
+    await env.LIST.delete("allow:" + account);
+    return json({ ok: true, removed: existed });
+  }
+
+  if (p === "/v1/admin/seed" && req.method === "POST") {   // 把文件顶部 ALLOWLIST 常量导入 KV（幂等）
+    let added = 0;
+    for (const raw of ALLOWLIST) {
+      const account = raw.trim().toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(account)) continue;
+      if (await env.LIST.get("allow:" + account)) continue;
+      await env.LIST.put("allow:" + account, JSON.stringify({ account, note: "seed from worker.js", addedAt: Math.floor(Date.now() / 1000) }));
+      added++;
+    }
+    const meta = await listMeta(env);
+    return json({ ok: true, added, count: meta.count });
+  }
+
+  if (p === "/v1/admin/activity" && req.method === "GET") {
+    const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 1000);
+    const names = []; let cursor;
+    do {
+      const r = await env.LIST.list({ prefix: "ev:", cursor });
+      for (const k of r.keys) names.push(k.name);
+      cursor = r.list_complete ? undefined : r.cursor;
+    } while (cursor && names.length < 5000);
+    names.sort();                                   // 键名含零填充 ts，升序即时间序
+    const events = [];
+    for (const name of names.slice(-limit)) { const v = JSON.parse(await env.LIST.get(name) || "null"); if (v) events.push(v); }
+    events.reverse();                               // 最新在前
+    const accounts = []; cursor = undefined;
+    do {
+      const r = await env.LIST.list({ prefix: "seen:", cursor });
+      for (const k of r.keys) { const v = JSON.parse(await env.LIST.get(k.name) || "null"); if (v) accounts.push(v); }
+      cursor = r.list_complete ? undefined : r.cursor;
+    } while (cursor);
+    accounts.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
+    return json({ events, accounts });
+  }
+
+  return json({ error: "not found" }, 404);
+}
