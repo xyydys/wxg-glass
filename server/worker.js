@@ -15,9 +15,20 @@ const VER = "1";
 // 只影响在线核对频率与负载,不碰签名有效期。想调快 / 调慢改这一个数即可(上限 7 天)。
 const RECHECK_AFTER = 2 * 24 * 3600;   // 2 天
 // ──────────────────────────────────
-// 着色器水印基准系数(WXGContinuousDeviation 的 5 个拟合系数)。每个账号按账号哈希把它们在末位
-// 做一点点、肉眼无感的确定性微扰;泄露的 .metal 用 tools/watermark_decode.mjs 一比就知道源头。
-const WM_BASE = [0.000865, 0.007454, 0.002456, 0.002256, 0.002806];
+// 着色器水印站点(FIX107 升级):挪到"二进制里没有参照"的 8 个 Metal-only 常数——AA 半宽、glow 下限、
+// 按压光学增益、smoothstep 边界,全是"动了也看不出来"的保护/边界值,且散布多处。去掉了旧版 5 系数全挤在
+// WXGContinuousDeviation(其基准值恰好也编进了 dylib,一 diff 就能定位)的毛病。pre+lit+suf 是该常数在
+// 着色器里的唯一上下文;下发时按账号把 lit 换成微扰值。tools/watermark_decode.mjs 用同一组上下文反查。
+const WM_SITES = [
+  { pre: "aa=",             lit: ".8",  suf: "/u.viewport.z",     base: 0.8  },
+  { pre: "max(width,",      lit: ".01", suf: ")",                 base: 0.01 },
+  { pre: "max(g.w,",        lit: ".05", suf: ")",                 base: 0.05 },
+  { pre: "max(g.z,",        lit: ".05", suf: ")",                 base: 0.05 },
+  { pre: "refraction*=1.+", lit: ".35", suf: "*buttonPress",      base: 0.35 },
+  { pre: "dispersion*=1.+", lit: ".20", suf: "*buttonPress",      base: 0.20 },
+  { pre: "(1.+",            lit: ".04", suf: "*buttonPress)",     base: 0.04 },
+  { pre: "smoothstep(-.5,", lit: ".5",  suf: ",inLens.distance)", base: 0.5  },
+];
 
 export default {
   async fetch(req, env) {
@@ -100,24 +111,27 @@ async function aesCbcSeal(keyBytes, plaintext) {
   return out;
 }
 // FIX106: 按账号给着色器盖隐形水印。水印钥匙从签名私钥派生(不随着色器下发、客户端拿不到);
-// 每个基准系数做 4 比特(0..15)的确定性微扰:±约 0.6% 系数值,换算到画面 < 0.001% 半径,肉眼不可见。
-// 5 个槽共 16^5 ≈ 100 万种组合。解码见 tools/watermark_decode.mjs(对名单逐个重算、比中即源头)。
+// 每个站点做 4 比特(0..15)的确定性微扰:±约 0.6%,挑的都是保护/边界值,肉眼不可见。
+// 8 个槽共 16^8 ≈ 43 亿种组合。解码见 tools/watermark_decode.mjs(对名单逐个重算、比中即源头)。
 async function hmacSha256(keyBytes, msgBytes) {
   const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return new Uint8Array(await crypto.subtle.sign("HMAC", key, msgBytes));
 }
 async function watermarkKey(signPrivB64) { return sha256(utf8("wxg.watermark.v1|" + signPrivB64)); }
-function wmValue(base, k) { return (base + (k - 7.5) * base * 0.0008).toFixed(9) + "f"; }
+function wmValue(base, k) { return (base + (k - 7.5) * base * 0.0008).toFixed(9); }
 async function watermarkSlots(account, signPrivB64) {
   const key = await watermarkKey(signPrivB64);
   const slots = [];
-  for (let i = 0; i < WM_BASE.length; i++) { const mac = await hmacSha256(key, utf8(account + "|" + i)); slots.push(mac[0] % 16); }
+  for (let i = 0; i < WM_SITES.length; i++) { const mac = await hmacSha256(key, utf8(account + "|" + i)); slots.push(mac[0] % 16); }
   return slots;
 }
 async function watermarkedShader(account, signPrivB64) {
   const slots = await watermarkSlots(account, signPrivB64);
   let shader = SHADER;
-  for (let i = 0; i < WM_BASE.length; i++) shader = shader.replace("__WM" + i + "__", wmValue(WM_BASE[i], slots[i]));
+  for (let i = 0; i < WM_SITES.length; i++) {
+    const s = WM_SITES[i];
+    shader = shader.replace(s.pre + s.lit + s.suf, s.pre + wmValue(s.base, slots[i]) + s.suf);
+  }
   return shader;
 }
 // 从私钥推出公钥（未压缩 04||X||Y 十六进制），用来核对和插件内置的是不是同一把
@@ -194,7 +208,7 @@ const SHADER = [
   "    float s3=s2*c1+c2*s1,c3=c2*c1-s2*s1;",
   "    float s4=s3*c1+c3*s1,c4=c3*c1-s3*s1;",
   "    float s5=s4*c1+c4*s1;",
-  "    return __WM0__*s1-__WM1__*s2-__WM2__*s3+__WM3__*s4+__WM4__*s5;",
+  "    return .000865f*s1-.007454f*s2-.002456f*s3+.002256f*s4+.002806f*s5;",
   "}",
   "// FIX96: how far a capsule's continuous outline lies outside the circular",
   "// one at a point (centred coordinates): what the capsule's distance loses. A",
