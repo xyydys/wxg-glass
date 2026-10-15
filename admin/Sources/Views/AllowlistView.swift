@@ -28,7 +28,7 @@ struct AllowlistView: View {
             .refreshable { await load() }
             .task { if case .idle = entries { await load() } }
             .sheet(isPresented: $showAdd) { AddAllowSheet { await load() } }
-            .confirmationDialog("移出名单后，该账号下次联网核对就会失效（最慢 2 天）。",
+            .confirmationDialog("移出名单后，该账号下次联网核对就会失效（最慢约 1 天）。",
                                 isPresented: Binding(get: { pendingDelete != nil }, set: { if !$0 { pendingDelete = nil } }),
                                 titleVisibility: .visible) {
                 if let e = pendingDelete {
