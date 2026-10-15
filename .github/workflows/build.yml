@@ -1,16 +1,9 @@
 name: build-deb
 
-# 在 GitHub 云端（Linux runner）出 rootless .deb，和 plugin/tools/build_deb_linux.sh
-# 完全一样的工具链：clang-18 + ld64.lld + theos/sdks 的 iPhoneOS16.5.sdk + ldid。
-# 不需要任何密钥：着色器在服务器，deb 里没有秘密；越狱签名是 ldid -S 假签。
-#
 # monorepo：插件在 plugin/，本工作流以 plugin/ 为工作目录。
-# 触发：推到 main、打 v* 标签、或在 Actions 页面手动点 Run。
-# 产物：Actions 运行页的 Artifacts 里下载 deb（打 tag 时还会建一个 Release）。
-#
-# 混淆（第二步，默认关）：手动 Run 时把 obfuscate 选 true，并且事先把带混淆的
-# clang 做成镜像或装进这一步（见 plugin/README_中文.md 的“云端混淆”一节）。没配好
-# 之前保持 false，就是现在的普通编译。
+# 普通包：推到 main / 打 v* 标签 / 手动 Run（obfuscate=false）→ build 作业，ubuntu 原生 clang-18。
+# 混淆包：手动 Run 且 obfuscate=true → build-obf 作业，跑在 Arkari 工具链镜像里
+#         （镜像先用 obf-toolchain 工作流编好推 GHCR）。只对授权/联网文件混淆，渲染热路径不动。
 
 on:
   push:
@@ -19,15 +12,25 @@ on:
   workflow_dispatch:
     inputs:
       obfuscate:
-        description: '只对授权/联网文件开混淆（需先备好混淆 clang）'
+        description: '开混淆（需先用 obf-toolchain 工作流把 Arkari 镜像推到 GHCR）'
         type: boolean
         default: false
+      obf_flags:
+        description: 'Arkari -mllvm flag（分步上：先只字符串加密，再逐个加）'
+        type: string
+        default: '-mllvm -irobf -mllvm -irobf-cse'
+      obf_files:
+        description: '只混淆这些文件（空格分隔，相对 plugin/）'
+        type: string
+        default: 'Sources/WXGUnlock.m Sources/WXGLicense.m'
 
 permissions:
-  contents: write   # 打 tag 时建 Release 用；只出 artifact 可改回 read
+  contents: write   # 打 tag 时建 Release 用
 
 jobs:
+  # ---------- 普通包（push / tag / 手动且不混淆）----------
   build:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.obfuscate }}
     runs-on: ubuntu-24.04
     defaults:
       run:
@@ -35,21 +38,17 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
       - name: Install clang-18, lld, dpkg
         run: |
           sudo apt-get update
           sudo apt-get install -y clang-18 lld-18 dpkg-dev curl
-          # build_deb_linux.sh 默认用 /usr/lib/llvm-18/bin，apt 装到的正是这里。
           ls /usr/lib/llvm-18/bin/clang /usr/lib/llvm-18/bin/ld64.lld
-
       - name: Cache iOS 16.5 SDK
         id: sdk-cache
         uses: actions/cache@v4
         with:
           path: plugin/toolchain/sdks/iPhoneOS16.5.sdk
           key: ios-sdk-16-5-v1
-
       - name: Fetch iOS 16.5 SDK (sparse)
         if: steps.sdk-cache.outputs.cache-hit != 'true'
         run: |
@@ -64,48 +63,103 @@ jobs:
             '/iPhoneOS16.5.sdk/SDKSettings.*'
           git checkout
           test -d iPhoneOS16.5.sdk/System/Library/Frameworks
-
       - name: Fetch ldid
         run: |
           curl -sSL -o "$RUNNER_TEMP/ldid" \
             https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64
           chmod +x "$RUNNER_TEMP/ldid"
           "$RUNNER_TEMP/ldid" | head -1
-
       - name: Build .deb
         env:
           SDK: ${{ github.workspace }}/plugin/toolchain/sdks/iPhoneOS16.5.sdk
-          # LDID 由下一行指向临时目录；CC/OBF_* 普通编译时留空。
         run: |
           export LDID="$RUNNER_TEMP/ldid"
-          # ---- 混淆（默认关）。配好混淆 clang 后把下面几行按需打开 ----
-          if [ "${{ github.event.inputs.obfuscate }}" = "true" ]; then
-            # export CC_DIR=/path/to/obf-clang/bin        # 混淆 clang 所在目录
-            # export CC=clang
-            export OBF_FLAGS="-mllvm -sobf -mllvm -fla -mllvm -sub"
-            export OBF_FILES="Sources/WXGUnlock.m Sources/WXGLicense.m"
-            echo "::warning::obfuscate=true：确认 CC_DIR 指向了混淆 clang，否则普通 clang 不认 -mllvm 会报错"
-          fi
-          # ---------------------------------------------------------------
           VER=$(sed -n 's/^Version: *//p' control)
           mkdir -p dist
           OUT="dist/com.runyu.wechatliquidglass_${VER}_iphoneos-arm64.deb"
           sh tools/build_deb_linux.sh "$GITHUB_WORKSPACE/plugin" "$OUT"
           ls -la dist
-          # 确认 dylib 里没有着色器文本（只该有函数名 wxgFragment）
           if strings "${OUT%.deb}.dylib" | grep -q "__METAL_VERSION__\|METAL_VERSION"; then
             echo "::error::dylib 里出现了着色器文本，构建中止"; exit 1
           fi
-
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: WeChatLiquidGlass-deb
           path: plugin/dist/*.deb
           retention-days: 30
-
       - name: Release (tag only)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           files: plugin/dist/*.deb
+
+  # ---------- 混淆包（手动且 obfuscate=true，跑在 Arkari 镜像里）----------
+  build-obf:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.obfuscate }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ghcr.io/${{ github.repository_owner }}/wxg-glass-arkari:latest
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Fetch iOS 16.5 SDK (sparse)
+        run: |
+          mkdir -p toolchain && cd toolchain
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --filter=blob:none --no-checkout https://github.com/theos/sdks sdks
+          cd sdks
+          git sparse-checkout init --no-cone
+          git sparse-checkout set \
+            '/iPhoneOS16.5.sdk/usr/include/' \
+            '/iPhoneOS16.5.sdk/usr/lib/' \
+            '/iPhoneOS16.5.sdk/System/Library/Frameworks/' \
+            '/iPhoneOS16.5.sdk/SDKSettings.*'
+          git checkout
+          test -d iPhoneOS16.5.sdk/System/Library/Frameworks
+      - name: Fetch ldid
+        run: |
+          curl -sSL -o "$RUNNER_TEMP/ldid" \
+            https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64
+          chmod +x "$RUNNER_TEMP/ldid"
+          "$RUNNER_TEMP/ldid" | head -1
+      - name: Build .deb (obfuscated, Arkari)
+        env:
+          SDK: ${{ github.workspace }}/plugin/toolchain/sdks/iPhoneOS16.5.sdk
+          CC_DIR: /opt/arkari/bin
+          CC: clang
+          OBF_FLAGS: ${{ inputs.obf_flags }}
+          OBF_FILES: ${{ inputs.obf_files }}
+        run: |
+          export LDID="$RUNNER_TEMP/ldid"
+          echo "混淆 flag: $OBF_FLAGS"
+          echo "混淆文件: $OBF_FILES"
+          clang --version | head -1
+          VER=$(sed -n 's/^Version: *//p' control)
+          mkdir -p dist
+          OUT="dist/com.runyu.wechatliquidglass_${VER}_iphoneos-arm64_obf.deb"
+          sh tools/build_deb_linux.sh "$GITHUB_WORKSPACE/plugin" "$OUT"
+          ls -la dist
+          if strings "${OUT%.deb}.dylib" | grep -q "__METAL_VERSION__\|METAL_VERSION"; then
+            echo "::error::dylib 里出现了着色器文本，构建中止"; exit 1
+          fi
+          # 自检：混淆文件里的明文 endpoint 应该已被字符串加密，dylib 里搜不到
+          if strings "${OUT%.deb}.dylib" | grep -q "workers.dev"; then
+            echo "::warning::dylib 里仍能搜到 workers.dev —— 确认 -irobf-cse 生效且覆盖了端点字符串"
+          else
+            echo "OK：dylib 里搜不到 workers.dev 明文"
+          fi
+      - name: Upload artifact (obfuscated)
+        uses: actions/upload-artifact@v4
+        with:
+          name: WeChatLiquidGlass-deb-obf
+          path: plugin/dist/*.deb
+          retention-days: 30
