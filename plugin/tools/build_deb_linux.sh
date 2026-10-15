@@ -41,13 +41,19 @@ for f in $FILES; do
     obf=
     for g in $OBF_FILES; do [ "$g" = "$f" ] && obf=$OBF_FLAGS; done
     # Theos adds -Werror; keep it so on-device builds behave the same.
-    "$CC" $COMMON $CFLAGS $obf -Werror -I"$PROJ/Sources" -c "$PROJ/$f" -o "$o"
+    # FIX107: -fvisibility=hidden 让内部符号(WXGLicenseCurrentState 等)变成隐藏,
+    # 配合链接期 -Wl,-x 从符号表里抹掉名字——破解者就没法"按名字跳到判定函数改返回 1"了。
+    # ObjC 类 / 分类 / %ctor 走运行时的 __objc_* 段注册,与符号可见性无关,不受影响。
+    "$CC" $COMMON -fvisibility=hidden $CFLAGS $obf -Werror -I"$PROJ/Sources" -c "$PROJ/$f" -o "$o"
     OBJS="$OBJS $o"
 done
 FW=; for x in $FRAMEWORKS; do FW="$FW -framework $x"; done
 LB=; for x in $LIBRARIES; do LB="$LB -l$x"; done
 "$CC" $COMMON -fuse-ld=lld -mlinker-version=711 -dynamiclib \
-    -install_name "@rpath/$NAME.dylib" -Wl,-dead_strip $LD_EXTRA -lobjc $FW $LB $OBJS -o "$WORK/$NAME.dylib"
+    -install_name "@rpath/$NAME.dylib" -Wl,-dead_strip -Wl,-x $LD_EXTRA -lobjc $FW $LB $OBJS -o "$WORK/$NAME.dylib"
+# FIX107: 再尽力跑一遍 llvm-strip（能找到就剥，找不到也不致构建失败；-Wl,-x 已在链接期做了主要的事）。
+STRIP=$(command -v llvm-strip 2>/dev/null || echo "${CC_DIR:-/usr/lib/llvm-18/bin}/llvm-strip")
+[ -x "$STRIP" ] && "$STRIP" -x "$WORK/$NAME.dylib" 2>/dev/null || echo "note: 跳过额外 strip（链接期 -Wl,-x 已剥离局部符号）"
 "$LDID" -S "$WORK/$NAME.dylib"
 PKG="$WORK/pkg"; DST="$PKG/var/jb/Library/MobileSubstrate/DynamicLibraries"
 mkdir -p "$DST" "$PKG/DEBIAN"
