@@ -74,7 +74,14 @@ static dispatch_queue_t WXGUnlockQueue(void) {
     return queue;
 }
 static double WXGDeviceNow(void) {return NSDate.date.timeIntervalSince1970;}
-static NSArray<NSString *> *WXGEndpoints(void) {return WXG_UNLOCK_ENDPOINTS;}
+static NSArray<NSString *> *WXGEndpoints(void) {
+    // Built at runtime from encrypted C strings (see WXGBuildProfile.h): no
+    // plaintext endpoint @"..." literal is baked into the dylib.
+    static const char *const eps[]={WXG_UNLOCK_ENDPOINTS_C};
+    NSMutableArray<NSString *> *a=[NSMutableArray arrayWithCapacity:sizeof(eps)/sizeof(*eps)];
+    for(size_t i=0;i<sizeof(eps)/sizeof(*eps);i++)[a addObject:[NSString stringWithUTF8String:eps[i]]];
+    return a;
+}
 
 #pragma mark - Hashes, keys
 

@@ -7,9 +7,13 @@
 // settings page of an unlisted account shows (and copies) its code.
 // Testers A, B, C: a7a5fc72…, e7b744a4…, 037fb7b4… (all three on the server).
 #define WXG_BUILD_LABEL @"测试版 ABC"
-// The unlock server, tried in order (a failure moves on to the next): a
-// custom domain on the same Worker can be put first.
-#define WXG_UNLOCK_ENDPOINTS @[@"https://xyylwc.kvgdth56kf.workers.dev/v1/unlock"]
+// The unlock server(s), tried in order (a failure moves on to the next): a
+// custom domain on the same Worker can be put first. Kept as C string
+// literal(s) so Arkari's -irobf-cse string encryption hides them in the dylib
+// (Objective-C @"..." literals are NOT covered by that pass); WXGEndpoints()
+// builds the NSString array from these at runtime. Add more, comma-separated:
+//   #define WXG_UNLOCK_ENDPOINTS_C "https://a/v1/unlock", "https://b/v1/unlock"
+#define WXG_UNLOCK_ENDPOINTS_C "https://xyylwc.kvgdth56kf.workers.dev/v1/unlock"
 // The server's ECDSA P-256 public key, uncompressed 04||X||Y; its private key
 // is the Worker's SIGN_PRIV secret. A GET on the server shows its key ("pub").
 #define WXG_UNLOCK_PUBLIC_KEY "0473a7b661b9de7c97a538b8360584d0b1207815ebf48ddede0703ac03da8f722817c2944c0a8222d81daaeed2dbfd0dc4ec0bb4b07c810e2dc2745ab1736942d0"
