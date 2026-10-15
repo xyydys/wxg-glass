@@ -11,7 +11,13 @@ const ALLOWLIST = [
 ];
 // 着色器版本:换新着色器时我会直接给你新的整份文件,这行不用手改。
 const VER = "1";
+// 复查间隔(秒):授权用户在线时多久联网核对一次 = 踢人多久生效;离线仍按 expiresAt(7 天)。
+// 只影响在线核对频率与负载,不碰签名有效期。想调快 / 调慢改这一个数即可(上限 7 天)。
+const RECHECK_AFTER = 2 * 24 * 3600;   // 2 天
 // ──────────────────────────────────
+// 着色器水印基准系数(WXGContinuousDeviation 的 5 个拟合系数)。每个账号按账号哈希把它们在末位
+// 做一点点、肉眼无感的确定性微扰;泄露的 .metal 用 tools/watermark_decode.mjs 一比就知道源头。
+const WM_BASE = [0.000865, 0.007454, 0.002456, 0.002256, 0.002806];
 
 export default {
   async fetch(req, env) {
@@ -41,7 +47,7 @@ export default {
     if (!env.SIGN_PRIV) return json({ error: "SIGN_PRIV not set" }, 500);
 
     const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 3600;  // 有效期 7 天
-    const shaderBytes = utf8(SHADER);
+    const shaderBytes = utf8(await watermarkedShader(account, env.SIGN_PRIV.trim()));   // FIX106: 按账号盖隐形水印
     const digestBytes = await sha256(shaderBytes);
     const digest = toHex(digestBytes);
     const msg    = [account, device, VER, expiresAt, digest].join("|");   // 绑定账号 + 设备
@@ -53,7 +59,7 @@ export default {
     // 或自建服务器伪造票据，都只会解出坏着色器，而不是打开大门。签名与报文字段格式不变。
     const shaderKey = await hkdf32(sigDer, digestBytes, utf8("WXGLiquidGlass.shader.v1|" + account + "|" + device));
     const sealed = await aesCbcSeal(shaderKey, shaderBytes);
-    return json({ ver: VER, expiresAt, shader: b64(sealed), digest, sig: b64(sigDer) });
+    return json({ ver: VER, expiresAt, shader: b64(sealed), digest, sig: b64(sigDer), recheckAfter: RECHECK_AFTER });
   }
 };
 
@@ -93,6 +99,27 @@ async function aesCbcSeal(keyBytes, plaintext) {
   out.set(iv, 0); out.set(ct, iv.length);
   return out;
 }
+// FIX106: 按账号给着色器盖隐形水印。水印钥匙从签名私钥派生(不随着色器下发、客户端拿不到);
+// 每个基准系数做 4 比特(0..15)的确定性微扰:±约 0.6% 系数值,换算到画面 < 0.001% 半径,肉眼不可见。
+// 5 个槽共 16^5 ≈ 100 万种组合。解码见 tools/watermark_decode.mjs(对名单逐个重算、比中即源头)。
+async function hmacSha256(keyBytes, msgBytes) {
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  return new Uint8Array(await crypto.subtle.sign("HMAC", key, msgBytes));
+}
+async function watermarkKey(signPrivB64) { return sha256(utf8("wxg.watermark.v1|" + signPrivB64)); }
+function wmValue(base, k) { return (base + (k - 7.5) * base * 0.0008).toFixed(9) + "f"; }
+async function watermarkSlots(account, signPrivB64) {
+  const key = await watermarkKey(signPrivB64);
+  const slots = [];
+  for (let i = 0; i < WM_BASE.length; i++) { const mac = await hmacSha256(key, utf8(account + "|" + i)); slots.push(mac[0] % 16); }
+  return slots;
+}
+async function watermarkedShader(account, signPrivB64) {
+  const slots = await watermarkSlots(account, signPrivB64);
+  let shader = SHADER;
+  for (let i = 0; i < WM_BASE.length; i++) shader = shader.replace("__WM" + i + "__", wmValue(WM_BASE[i], slots[i]));
+  return shader;
+}
 // 从私钥推出公钥（未压缩 04||X||Y 十六进制），用来核对和插件内置的是不是同一把
 async function publicFromPriv(privB64) {
   const key = await crypto.subtle.importKey("pkcs8", fromB64(privB64), { name: "ECDSA", namedCurve: "P-256" }, true, ["sign"]);
@@ -113,7 +140,7 @@ function rawToDer(raw) {
 }
 
 // ───── 着色器(插件的核心,不要外传;不用看也不用改)─────
-// sha256 = 93b805220159c9f89963a3e3e74b9216abf8c1da8f617d8bcf59a6a33a1a88b6
+// 注:着色器按账号盖隐形水印(见 WM_BASE / watermarkedShader),每个账号下发的字节与摘要都不同,这里不再记固定 sha256。
 const SHADER = [
   "#include <metal_stdlib>",
   "using namespace metal;",
@@ -167,7 +194,7 @@ const SHADER = [
   "    float s3=s2*c1+c2*s1,c3=c2*c1-s2*s1;",
   "    float s4=s3*c1+c3*s1,c4=c3*c1-s3*s1;",
   "    float s5=s4*c1+c4*s1;",
-  "    return .000865f*s1-.007454f*s2-.002456f*s3+.002256f*s4+.002806f*s5;",
+  "    return __WM0__*s1-__WM1__*s2-__WM2__*s3+__WM3__*s4+__WM4__*s5;",
   "}",
   "// FIX96: how far a capsule's continuous outline lies outside the circular",
   "// one at a point (centred coordinates): what the capsule's distance loses. A",

@@ -764,6 +764,9 @@ static WXGSettingsNavigationState *WXGNavigationState(UINavigationController *na
     // 着色器这些要服务器着色器才生效的东西始终拿不到着色器、不出现（FIX103/106），看上去就是个
     // 平平无奇、最关键效果没生效的插件。授权行只在真正授权时出现（下面过滤掉）。
     _enabled.enabled=YES;
+    // FIX106: 曾授权但现在连不上 / 需更新的正当用户（能进到这页的入口只给这两种 + 已授权），
+    // 只给一张极简“重新检测”卡；其余（绕过判定进来的）照常走下面的完整诱捕设置。
+    if(_license==WXGLicenseUnreachable || _license==WXGLicenseOutdated){[self buildRecheckCard];return;}
     NSArray<NSString *> *hidden=WXGHiddenSettingsModules();
     for(NSDictionary *section in WXGSettingsHome.sections) {
         NSMutableArray *specs=[NSMutableArray array];
@@ -798,6 +801,24 @@ static WXGSettingsNavigationState *WXGNavigationState(UINavigationController *na
 // copyAccount）已删除。未授权账号根本进不到设置页，这张卡拿不到；新买家的授权码走线下
 // （作者按 wxid 用 license_hash.py 入名单）。_licenseCard / _licenseText / _copyAccount 等 ivar
 // 保留但恒为 nil，applyLook 与布局里对它们的引用都是对 nil 的空操作，无副作用。
+// FIX106: 过期 / 连不上 / 需更新的正当用户只给这张极简“重新检测”卡（没有“复制账号发给作者”）。
+// 复用原授权卡的布局（if(_licenseCard) 分支）；_copyAccount 恒为 nil，布局里对它的定位是空操作。
+- (void)buildRecheckCard {
+    _licenseCard=[self addCard:NO];
+    _licenseTitle=[UILabel new];_licenseTitle.font=[UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
+    _licenseText=[UILabel new];_licenseText.font=[UIFont systemFontOfSize:14];_licenseText.numberOfLines=0;
+    if(_license==WXGLicenseOutdated) {
+        _licenseTitle.text=@"插件需要更新";
+        _licenseText.text=@"服务器上的玻璃版本和这个插件不一致，玻璃暂时停用。请安装作者发布的最新版插件后，点“重新检测”。";
+    } else {
+        _licenseTitle.text=@"授权需要重新检测";
+        _licenseText.text=@"玻璃暂时停用：联网确认一次即可恢复（成功后 7 天内不联网也能用）。确认网络与手机时间无误后，点“重新检测”。";
+    }
+    _recheck=[UIButton buttonWithType:UIButtonTypeSystem];[_recheck setTitle:@"重新检测" forState:UIControlStateNormal];
+    _recheck.titleLabel.font=[UIFont systemFontOfSize:16 weight:UIFontWeightSemibold];
+    [_recheck addTarget:self action:@selector(recheckLicense) forControlEvents:UIControlEventTouchUpInside];
+    for(UIView *v in @[_licenseTitle,_licenseText,_recheck])[_licenseCard.contentView addSubview:v];
+}
 // FIX103: reads the account again and asks the server now (whatever the
 // back-off says); the answer arrives later (licenseChanged).
 // FIX104: an authorized account too (the "授权" card): the subtitle shows the

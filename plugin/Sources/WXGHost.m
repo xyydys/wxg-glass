@@ -3361,7 +3361,11 @@ static void WXGInsertSettingsEntry(UIViewController *settings) {
     // so the row appears the next time WeChat rebuilds that table after the
     // account becomes authorized (reopening Settings; authorization normally
     // finishes well before the user is on this page).
-    if(WXGLicenseCurrentState(NO)!=WXGLicenseAuthorized)return;
+    // FIX106: 授权行入口也给“曾授权但现在连不上 / 需更新”的正当用户（Unreachable/Outdated），
+    // 让他们进设置点“重新检测”；从没授权过的人永远是 Denied/Unknown，仍然零入口、零痕迹。
+    // Authorized 仍照旧插入（下面的条件包含它），首次授权用户的入口不受影响。
+    WXGLicenseState entryState=WXGLicenseCurrentState(NO);
+    if(entryState!=WXGLicenseAuthorized && entryState!=WXGLicenseUnreachable && entryState!=WXGLicenseOutdated)return;
     @try {
         Ivar ivar=class_getInstanceVariable(object_getClass(settings),"m_tableViewMgr");
         id manager=ivar?object_getIvar(settings,ivar):nil;
