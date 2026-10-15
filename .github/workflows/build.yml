@@ -23,6 +23,10 @@ on:
         description: '只混淆这些文件（空格分隔，相对 plugin/）'
         type: string
         default: 'Sources/WXGUnlock.m Sources/WXGLicense.m'
+      force_authorized:
+        description: '自测包：强制「已授权」(-DWXG_FORCE_AUTHORIZED)，复现破解后的状态，仅供自己真机验证加固，切勿外发'
+        type: boolean
+        default: false
 
 permissions:
   contents: write   # 打 tag 时建 Release 用
@@ -72,11 +76,15 @@ jobs:
       - name: Build .deb
         env:
           SDK: ${{ github.workspace }}/plugin/toolchain/sdks/iPhoneOS16.5.sdk
+          # 仅手动 Run 且勾了 force_authorized 时注入；push / tag 永远是干净的正式包。
+          EXTRA_CFLAGS: ${{ (github.event_name == 'workflow_dispatch' && inputs.force_authorized) && '-DWXG_FORCE_AUTHORIZED=1' || '' }}
         run: |
           export LDID="$RUNNER_TEMP/ldid"
           VER=$(sed -n 's/^Version: *//p' control)
           mkdir -p dist
-          OUT="dist/com.runyu.wechatliquidglass_${VER}_iphoneos-arm64.deb"
+          SUFFIX=""
+          [ -n "$EXTRA_CFLAGS" ] && { SUFFIX="_FORCEAUTH"; echo "::warning::强制授权自测包（含 -DWXG_FORCE_AUTHORIZED），仅供真机验证，勿外发"; }
+          OUT="dist/com.runyu.wechatliquidglass_${VER}_iphoneos-arm64${SUFFIX}.deb"
           sh tools/build_deb_linux.sh "$GITHUB_WORKSPACE/plugin" "$OUT"
           ls -la dist
           if strings "${OUT%.deb}.dylib" | grep -q "__METAL_VERSION__\|METAL_VERSION"; then

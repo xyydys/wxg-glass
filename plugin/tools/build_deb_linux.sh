@@ -26,6 +26,8 @@ OBF_FILES=${OBF_FILES:-}
 # 额外链接选项（普通构建留空、不变）。间接跳转/调用混淆会生成撑爆 iOS chained
 # fixups 的地址常量，链接时需 -Wl,-no_fixup_chains（由 CI 的 build-obf 设置）。
 LD_EXTRA=${LD_EXTRA:-}
+# 额外编译宏（普通构建留空、不变）。CI 的自测包用它传 -DWXG_FORCE_AUTHORIZED=1。
+EXTRA_CFLAGS=${EXTRA_CFLAGS:-}
 NAME=$(sed -n 's/^TWEAK_NAME *= *//p' "$PROJ/Makefile")
 FILES=$(sed -n "s/^${NAME}_FILES *= *//p" "$PROJ/Makefile")
 CFLAGS=$(sed -n "s/^${NAME}_CFLAGS *= *//p" "$PROJ/Makefile")
@@ -44,7 +46,7 @@ for f in $FILES; do
     # FIX107: -fvisibility=hidden 让内部符号(WXGLicenseCurrentState 等)变成隐藏,
     # 配合链接期 -Wl,-x 从符号表里抹掉名字——破解者就没法"按名字跳到判定函数改返回 1"了。
     # ObjC 类 / 分类 / %ctor 走运行时的 __objc_* 段注册,与符号可见性无关,不受影响。
-    "$CC" $COMMON -fvisibility=hidden $CFLAGS $obf -Werror -I"$PROJ/Sources" -c "$PROJ/$f" -o "$o"
+    "$CC" $COMMON -fvisibility=hidden $CFLAGS $EXTRA_CFLAGS $obf -Werror -I"$PROJ/Sources" -c "$PROJ/$f" -o "$o"
     OBJS="$OBJS $o"
 done
 FW=; for x in $FRAMEWORKS; do FW="$FW -framework $x"; done

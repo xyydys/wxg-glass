@@ -148,6 +148,13 @@ void WXGLicenseNoteMainInterface(void) {WXGMainInterface=YES;}
 // most every 60 s (0.5 s while unknown), so switching accounts is noticed; the
 // server's answer for it is kept by WXGUnlock.m. force: ask the server now.
 static WXGLicenseState WXGLicenseEvaluate(BOOL recheck,BOOL force) {
+#ifdef WXG_FORCE_AUTHORIZED
+    // 测试专用（默认不定义这个宏，正式/混淆包完全不含这段）。强制「已授权」，等效于破解版
+    // 把授权判定 patch 成恒真之后的状态：overlay 装上、本地渲染照跑；但授权链不走真票，
+    // Metal 着色器仍然不会加载。用来在自己源码上复现破解效果，并验证加固后本地路径还渲不渲。
+    (void)recheck; (void)force;
+    return WXGLicenseAuthorized;
+#endif
     if(recheck)WXGMainInterface=YES;
     if(!WXGMainInterface || !NSThread.isMainThread)return WXGState;
     CFTimeInterval now=CACurrentMediaTime();
