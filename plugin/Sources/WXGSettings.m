@@ -846,16 +846,12 @@ static WXGSettingsNavigationState *WXGNavigationState(UINavigationController *na
 }
 - (NSString *)licenseSubtitleText {
     if(_recheckPending)return @"正在联网检测…";
-    NSString *expiry=[self licenseExpiryText:NO];
-    return expiry?[NSString stringWithFormat:@"有效至 %@ · 点按检测",expiry]:@"点按重新联网检测";
+    return @"已授权";   // FIX106: 只显示状态，不再露有效期
 }
 - (void)updateLicenseSubtitle {_licenseSubtitle.text=[self licenseSubtitleText];}
 - (void)showRecheckResult {
-    NSString *reason=WXGUnlockLastError(),*expiry=[self licenseExpiryText:YES]?:@"—";
-    if(WXGUnlockServerShaderVersion().length)   // the server moved to a shader this build cannot use
-        [self showMessage:@"插件需要更新" detail:[NSString stringWithFormat:@"授权服务器上的玻璃着色器是第 %@ 版，这个插件用不了。本机保存的授权到 %@ 为止，之后玻璃会停用；请安装作者发布的最新版插件。",WXGUnlockServerShaderVersion(),expiry]];
-    else if(!reason)[self showMessage:@"授权有效" detail:[NSString stringWithFormat:@"已联网确认，这个账号在授权名单里。\n有效期至 %@，联网使用时会在后台自动复查和续期。",expiry]];
-    else [self showMessage:@"联网检测没有成功" detail:[NSString stringWithFormat:@"原因：%@\n\n本机保存的授权仍然有效（至 %@），玻璃照常使用；联网后会自动再检测。",reason,expiry]];
+    // FIX106: 只告诉用户是否已授权，不再显示有效期 / 续期等细节（showRecheckResult 只在已授权时被调用）。
+    [self showMessage:@"已授权" detail:nil];
 }
 - (void)applyLook {
     [super applyLook];
