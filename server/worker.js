@@ -41,12 +41,19 @@ export default {
     if (!env.SIGN_PRIV) return json({ error: "SIGN_PRIV not set" }, 500);
 
     const expiresAt = Math.floor(Date.now() / 1000) + 7 * 24 * 3600;  // 有效期 7 天
-    const digest = toHex(await sha256(utf8(SHADER)));
+    const shaderBytes = utf8(SHADER);
+    const digestBytes = await sha256(shaderBytes);
+    const digest = toHex(digestBytes);
     const msg    = [account, device, VER, expiresAt, digest].join("|");   // 绑定账号 + 设备
-    let sig;
-    try { sig = await signP256(env.SIGN_PRIV.trim(), utf8(msg)); }
+    let sigDer;
+    try { sigDer = await signP256der(env.SIGN_PRIV.trim(), utf8(msg)); }
     catch { return json({ error: "SIGN_PRIV invalid" }, 500); }
-    return json({ ver: VER, expiresAt, shader: b64(utf8(SHADER)), digest, sig });
+    // FIX106: 着色器不再明文下发。用验签结果(sig)+摘要+账号/设备经 HKDF 派生 AES 密钥，
+    // 把着色器封成 iv‖密文；只有拿到对这个账号 + 这台设备的真签名才解得开。patch 掉验签
+    // 或自建服务器伪造票据，都只会解出坏着色器，而不是打开大门。签名与报文字段格式不变。
+    const shaderKey = await hkdf32(sigDer, digestBytes, utf8("WXGLiquidGlass.shader.v1|" + account + "|" + device));
+    const sealed = await aesCbcSeal(shaderKey, shaderBytes);
+    return json({ ver: VER, expiresAt, shader: b64(sealed), digest, sig: b64(sigDer) });
   }
 };
 
@@ -65,11 +72,26 @@ function cors(resp) {
 function json(obj, status = 200) {
   return cors(new Response(JSON.stringify(obj), { status, headers: { "content-type": "application/json" } }));
 }
-// ECDSA P-256 / SHA-256,输出 X9.62 DER(iOS SecKeyVerifySignature 要的格式)
-async function signP256(privB64, message) {
+// ECDSA P-256 / SHA-256,输出 X9.62 DER 字节(iOS SecKeyVerifySignature 要的格式)
+async function signP256der(privB64, message) {
   const key = await crypto.subtle.importKey("pkcs8", fromB64(privB64), { name: "ECDSA", namedCurve: "P-256" }, false, ["sign"]);
   const raw = new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, key, message));
-  return b64(rawToDer(raw));
+  return rawToDer(raw);
+}
+// FIX106: HKDF-SHA256 → 32 字节(ikm=签名, salt=着色器摘要, info=固定串|账号|设备);
+// 以及 AES-256-CBC 封装(Web Crypto 自带 PKCS7),输出 iv(16)‖密文,与插件端 CommonCrypto 对齐。
+async function hkdf32(ikm, salt, info) {
+  const key = await crypto.subtle.importKey("raw", ikm, "HKDF", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt, info }, key, 256);
+  return new Uint8Array(bits);
+}
+async function aesCbcSeal(keyBytes, plaintext) {
+  const iv = crypto.getRandomValues(new Uint8Array(16));
+  const key = await crypto.subtle.importKey("raw", keyBytes, { name: "AES-CBC" }, false, ["encrypt"]);
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-CBC", iv }, key, plaintext));
+  const out = new Uint8Array(iv.length + ct.length);
+  out.set(iv, 0); out.set(ct, iv.length);
+  return out;
 }
 // 从私钥推出公钥（未压缩 04||X||Y 十六进制），用来核对和插件内置的是不是同一把
 async function publicFromPriv(privB64) {

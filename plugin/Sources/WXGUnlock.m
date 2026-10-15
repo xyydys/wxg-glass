@@ -31,7 +31,7 @@ NSString * const WXGLicenseChangedNotification=@"WXGLicenseChangedNotification";
 @property(nonatomic) long long expiresAt;
 @property(nonatomic) double fetchedAt;
 @property(nonatomic) double recheckAfter;   // FIX104: the server's, as sent (0: none; WXGUnlockRecheckInterval applies the rules)
-@property(nonatomic,copy) NSData *shader,*sig;
+@property(nonatomic,copy) NSData *shader,*sig,*shaderSealed;
 @end
 @implementation WXGUnlockTicket
 @end
@@ -105,6 +105,32 @@ static NSData *WXGFromHex(const char *hex) {
     }
     return data;
 }
+static NSData *WXGCrypt(CCOperation operation,NSData *key,const void *iv,NSData *input);   // 定义在下方「加密缓存」一节
+// HKDF-SHA256 (RFC 5869)，取 32 字节（L = 散列长度，一次 expand 即可）。
+static NSData *WXGHKDF32(NSData *ikm,NSData *salt,NSData *info) {
+    unsigned char prk[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256,salt.length?salt.bytes:(const void *)"",salt.length,ikm.bytes,ikm.length,prk);   // extract
+    NSMutableData *block=[NSMutableData dataWithData:info];
+    unsigned char counter=0x01;[block appendBytes:&counter length:1];   // expand: info ‖ 0x01
+    unsigned char okm[CC_SHA256_DIGEST_LENGTH];
+    CCHmac(kCCHmacAlgSHA256,prk,sizeof prk,block.bytes,block.length,okm);
+    return [NSData dataWithBytes:okm length:sizeof okm];
+}
+// FIX106: 着色器不再明文下发。服务器用 AES-256-CBC 把它封好（iv ‖ 密文），密钥由 HKDF
+// 从票据的签名(ikm)、着色器摘要(salt)、账号+设备(info)派生。只有对这个账号 + 这台设备
+// 的真签名才能解开：patch 掉验签、或自建服务器伪造票据，都只会解出坏着色器而不是打开
+// 大门；账号/设备并不在票据里，所以把别人的票据搬到另一台设备也解不开。解出来后仍由
+// WXGTicketProblem 的 SHA256(着色器)==digest 核对（密钥不对 → 摘要不符 → 丢弃）。
+static NSData *WXGUnsealShader(NSData *sealed,NSData *sig,NSString *digest,NSString *account,NSString *device) {
+    if(sealed.length<=kCCBlockSizeAES128 || !sig.length || !account || !device)return nil;
+    NSData *salt=WXGFromHex(digest.UTF8String);
+    if(salt.length!=CC_SHA256_DIGEST_LENGTH)return nil;
+    NSData *info=[[NSString stringWithFormat:@"WXGLiquidGlass.shader.v1|%@|%@",account,device] dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *key=WXGHKDF32(sig,salt,info);
+    NSData *ciphertext=[sealed subdataWithRange:NSMakeRange(kCCBlockSizeAES128,sealed.length-kCCBlockSizeAES128)];
+    NSData *plain=WXGCrypt(kCCDecrypt,key,sealed.bytes,ciphertext);   // iv = sealed 的前 16 字节
+    return plain.length?plain:nil;
+}
 // identifierForVendor stays the same for WeChat on this phone (it changes only
 // if every Tencent app is deleted); nil just after a reboot, before unlock.
 static NSString *WXGComputeDeviceHash(void) {
@@ -175,8 +201,9 @@ static WXGUnlockTicket *WXGTicketFromAnswer(NSDictionary *body,NSString *account
     WXGUnlockTicket *ticket=[WXGUnlockTicket new];
     ticket.account=account;ticket.device=device;ticket.ver=ver;ticket.digest=digest.lowercaseString;
     ticket.expiresAt=(long long)expiresAt;
-    ticket.shader=[[NSData alloc] initWithBase64EncodedString:shader options:NSDataBase64DecodingIgnoreUnknownCharacters];
     ticket.sig=[[NSData alloc] initWithBase64EncodedString:sig options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    ticket.shaderSealed=[[NSData alloc] initWithBase64EncodedString:shader options:NSDataBase64DecodingIgnoreUnknownCharacters];
+    ticket.shader=WXGUnsealShader(ticket.shaderSealed,ticket.sig,ticket.digest,account,device);   // FIX106: 验签派生密钥解封着色器
     ticket.recheckAfter=WXGSecondsValue(body[@"recheckAfter"]);
     return ticket.shader && ticket.sig?ticket:nil;
 }
@@ -203,7 +230,7 @@ static const char WXGCacheMagic[5]={'W','X','G','U','1'};
 static void WXGWriteCache(WXGUnlockTicket *ticket) {
     NSDictionary *plain=@{@"account":ticket.account,@"device":ticket.device,@"ver":ticket.ver,@"expiresAt":@(ticket.expiresAt),
                           @"digest":ticket.digest,@"fetchedAt":@(ticket.fetchedAt),@"recheckAfter":@(ticket.recheckAfter),
-                          @"sig":[ticket.sig base64EncodedStringWithOptions:0],@"shader":[ticket.shader base64EncodedStringWithOptions:0]};
+                          @"sig":[ticket.sig base64EncodedStringWithOptions:0],@"shader":[ticket.shaderSealed base64EncodedStringWithOptions:0]};   // FIX106: 缓存里也只存封好的密文
     NSData *json=[NSJSONSerialization dataWithJSONObject:plain options:0 error:nil];
     unsigned char iv[kCCBlockSizeAES128];
     if(!json || SecRandomCopyBytes(kSecRandomDefault,sizeof iv,iv)!=errSecSuccess)return;
