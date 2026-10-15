@@ -140,6 +140,7 @@ jobs:
           CC: clang
           OBF_FLAGS: ${{ inputs.obf_flags }}
           OBF_FILES: ${{ inputs.obf_files }}
+          LD_EXTRA: -Wl,-no_fixup_chains   # 间接跳转/调用混淆会撑爆 chained fixups，关掉它
         run: |
           export LDID="$RUNNER_TEMP/ldid"
           echo "混淆 flag: $OBF_FLAGS"

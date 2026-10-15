@@ -23,6 +23,9 @@ CC=${CC:-clang}
 export PATH=${CC_DIR:-/usr/lib/llvm-18/bin}:$PATH
 OBF_FLAGS=${OBF_FLAGS:-}
 OBF_FILES=${OBF_FILES:-}
+# 额外链接选项（普通构建留空、不变）。间接跳转/调用混淆会生成撑爆 iOS chained
+# fixups 的地址常量，链接时需 -Wl,-no_fixup_chains（由 CI 的 build-obf 设置）。
+LD_EXTRA=${LD_EXTRA:-}
 NAME=$(sed -n 's/^TWEAK_NAME *= *//p' "$PROJ/Makefile")
 FILES=$(sed -n "s/^${NAME}_FILES *= *//p" "$PROJ/Makefile")
 CFLAGS=$(sed -n "s/^${NAME}_CFLAGS *= *//p" "$PROJ/Makefile")
@@ -44,7 +47,7 @@ done
 FW=; for x in $FRAMEWORKS; do FW="$FW -framework $x"; done
 LB=; for x in $LIBRARIES; do LB="$LB -l$x"; done
 "$CC" $COMMON -fuse-ld=lld -mlinker-version=711 -dynamiclib \
-    -install_name "@rpath/$NAME.dylib" -Wl,-dead_strip -lobjc $FW $LB $OBJS -o "$WORK/$NAME.dylib"
+    -install_name "@rpath/$NAME.dylib" -Wl,-dead_strip $LD_EXTRA -lobjc $FW $LB $OBJS -o "$WORK/$NAME.dylib"
 "$LDID" -S "$WORK/$NAME.dylib"
 PKG="$WORK/pkg"; DST="$PKG/var/jb/Library/MobileSubstrate/DynamicLibraries"
 mkdir -p "$DST" "$PKG/DEBIAN"
