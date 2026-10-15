@@ -73,6 +73,14 @@ struct AnalyticsPoint: Identifiable, Hashable {
     var id: Date { date }
 }
 
+// 当天（UTC）额度用量。两部分各自可能失败，失败时对应 error 有值。
+struct UsageToday {
+    var workerRequests: Int?
+    var workerError: String?
+    var kv: [String: Int] = [:]   // read / write / delete / list
+    var kvError: String?
+}
+
 struct AnalyticsSummary {
     var points: [AnalyticsPoint]
     var totalRequests: Int { points.reduce(0) { $0 + $1.requests } }

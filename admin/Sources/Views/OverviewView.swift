@@ -4,6 +4,7 @@ struct OverviewView: View {
     @EnvironmentObject var config: AppConfig
     @State private var health: Loadable<Health> = .idle
     @State private var ping: Loadable<AdminPing> = .idle
+    @State private var usage: Loadable<UsageToday> = .idle
 
     var body: some View {
         NavigationStack {
@@ -18,6 +19,7 @@ struct OverviewView: View {
                             serverCard
                             adminCard
                         }
+                        usageCard
                     }
                     .padding(16)
                 }
@@ -99,7 +101,46 @@ struct OverviewView: View {
         }.glassCard()
     }
 
+    // 今日额度（Cloudflare 免费版，UTC 0 点重置，全账号合计）。
+    @ViewBuilder private var usageCard: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            SectionLabel(text: "今日额度（免费版）", icon: "gauge.with.dots.needle.33percent")
+            if !config.hasCloudflare {
+                Text("在「设置」里填 Cloudflare Account ID 和只读 API Token 后可看当天用量。")
+                    .font(.subheadline).foregroundStyle(.secondary)
+            } else {
+                switch usage {
+                case .idle, .loading:
+                    ProgressView().frame(maxWidth: .infinity).padding(.vertical, 12)
+                case .failed(let m):
+                    ErrorBanner(message: m)
+                case .loaded(let u):
+                    if let e = u.workerError { ErrorBanner(message: "Worker 请求：\(e)") }
+                    else { QuotaRow(label: "Worker 请求", used: u.workerRequests, limit: 100_000) }
+                    if let e = u.kvError { ErrorBanner(message: "KV：\(e)") }
+                    else {
+                        QuotaRow(label: "KV 读取", used: u.kv["read"] ?? 0, limit: 100_000)
+                        QuotaRow(label: "KV 写入", used: u.kv["write"] ?? 0, limit: 1_000)
+                        QuotaRow(label: "KV 删除", used: u.kv["delete"] ?? 0, limit: 1_000)
+                        QuotaRow(label: "KV 列表", used: u.kv["list"] ?? 0, limit: 1_000)
+                        // Cloudflare 若给出别的操作类型，也照列出来（无额度条）。
+                        ForEach(u.kv.keys.sorted().filter { !["read", "write", "delete", "list"].contains($0) }, id: \.self) { k in
+                            KeyValueRow(key: "KV \(k)", value: (u.kv[k] ?? 0).formatted())
+                        }
+                    }
+                    Text("每天 UTC 0 点（北京时间 08:00）重置，全账号合计；Cloudflare 分析是近似值，晚几分钟。付费版额度高得多，这里按免费版算。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }.glassCard()
+    }
+
     private func load() async {
+        if config.hasCloudflare {
+            usage = .loading
+            let cf = config.cloudflare
+            Task { let u = await cf.usageToday(); usage = .loaded(u) }
+        }
         health = .loading
         ping = config.hasAdmin ? .loading : .idle
         do { health = .loaded(try await config.worker.health()) }
@@ -107,5 +148,30 @@ struct OverviewView: View {
         guard config.hasAdmin else { return }
         do { ping = .loaded(try await config.worker.ping()) }
         catch { ping = .failed((error as? APIError)?.message ?? error.localizedDescription) }
+    }
+}
+
+// 一行额度：用量 / 上限 + 进度条（60% 橙、90% 红）。
+private struct QuotaRow: View {
+    let label: String
+    let used: Int?
+    let limit: Int
+
+    private var ratio: Double { Double(used ?? 0) / Double(limit) }
+    private var tint: Color { ratio >= 0.9 ? Theme.bad : ratio >= 0.6 ? Theme.warn : Theme.good }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(label).font(.subheadline)
+                Spacer()
+                Text(used.map { "\($0.formatted()) / \(limit.formatted())" } ?? "—")
+                    .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                Text(String(format: "%.1f%%", ratio * 100))
+                    .font(.caption.weight(.semibold).monospacedDigit()).foregroundStyle(tint)
+                    .frame(minWidth: 48, alignment: .trailing)
+            }
+            ProgressView(value: min(ratio, 1)).tint(tint)
+        }
     }
 }
