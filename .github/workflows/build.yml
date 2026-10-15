@@ -16,9 +16,9 @@ on:
         type: boolean
         default: false
       obf_flags:
-        description: 'Arkari -mllvm flag（分步上：先只字符串加密，再逐个加）'
+        description: 'Arkari -mllvm flag（默认全套：字符串加密 + 控制流平坦化 + 间接跳转/调用，已真机验过）'
         type: string
-        default: '-mllvm -irobf -mllvm -irobf-cse'
+        default: '-mllvm -irobf -mllvm -irobf-cse -mllvm -irobf-cff -mllvm -irobf-indbr -mllvm -irobf-icall'
       obf_files:
         description: '只混淆这些文件（空格分隔，相对 plugin/）'
         type: string
