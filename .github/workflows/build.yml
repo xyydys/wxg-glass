@@ -112,6 +112,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Install linker runtime deps (ld64.lld 依赖 libxml2)
+        run: apt-get update && apt-get install -y --no-install-recommends libxml2 libzstd1 zlib1g
       - name: Fetch iOS 16.5 SDK (sparse)
         run: |
           mkdir -p toolchain && cd toolchain
