@@ -591,6 +591,14 @@ WXGUnlockState WXGUnlockStateFor(NSString *account,BOOL force) {
 NSString *WXGUnlockLastError(void) {return [WXGAttemptAccount isEqualToString:WXGEvalAccount]?WXGLastError:nil;}
 NSString *WXGUnlockServerShaderVersion(void) {return WXGOutdatedVer;}
 BOOL WXGUnlockAsking(NSString *account) {return WXGInFlight && account && [WXGInFlightAccount isEqualToString:account];}   // FIX104
+// FIX109 防篡改用的"真实货"信号：破解只是把授权判定焊成真，并不会凭空造出着色器或票。
+// 这两个读的是实际数据(WXGShaderText / WXGTickets)，所以"自称已授权却这俩都空"即被 patch。
+BOOL WXGUnlockShaderReady(void) {return WXGShaderReady(NULL);}
+BOOL WXGUnlockHasUsableTicket(NSString *account) {
+    if(!account)return NO;
+    WXGUnlockTicket *t=WXGTickets[account];
+    return t && WXGUnlockTicketUsable(WXGDeviceNow()+WXGClockOffset,(double)t.expiresAt,t.fetchedAt);
+}
 NSDate *WXGUnlockExpiry(NSString *account) {
     WXGUnlockTicket *ticket=account?WXGTickets[account]:nil;
     return ticket?[NSDate dateWithTimeIntervalSince1970:(double)ticket.expiresAt]:nil;

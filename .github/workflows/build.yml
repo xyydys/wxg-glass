@@ -20,9 +20,9 @@ on:
         type: string
         default: '-mllvm -irobf -mllvm -irobf-cse -mllvm -irobf-cff -mllvm -irobf-indbr -mllvm -irobf-icall'
       obf_files:
-        description: '只混淆这些文件（空格分隔，相对 plugin/）'
+        description: '混淆这些文件（空格分隔）。默认已含网格后端 WXGGlassView/WXGBackdrop——⚠️这俩有每帧热路径，上机务必测帧率，卡顿就把 WXGGlassView.m 从本行删掉再 Run。'
         type: string
-        default: 'Sources/WXGUnlock.m Sources/WXGLicense.m'
+        default: 'Sources/WXGUnlock.m Sources/WXGLicense.m Sources/WXGGlassView.m Sources/WXGBackdrop.m'
       force_authorized:
         description: '自测包：强制「已授权」(-DWXG_FORCE_AUTHORIZED)，复现破解后的状态，仅供自己真机验证加固，切勿外发'
         type: boolean

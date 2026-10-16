@@ -177,7 +177,28 @@ static WXGLicenseState WXGLicenseEvaluate(BOOL recheck,BOOL force) {
 }
 WXGLicenseState WXGLicenseCurrentState(BOOL recheck) {return WXGLicenseEvaluate(recheck,NO);}
 WXGLicenseState WXGLicenseRecheckServer(void) {return WXGLicenseEvaluate(YES,YES);}
-BOOL WXGPluginEnabled(void) {return WXGPreferences.shared.enabled && WXGLicenseCurrentState(NO)==WXGLicenseAuthorized;}
+// FIX109: 自相矛盾陷阱。正版里"授权为真"必然伴随"有真票或真着色器"——授权状态本就由票派生。
+// 破解只把授权判定焊成真，却造不出票/着色器(他那份诊断就是 shaderReady=false、ticket={})。
+// 所以"自称已授权、却既无票也无着色器、还过了启动宽限"= 判定被 patch → 不再放行渲染，且锁定本次运行。
+// 它照样能被再 patch 掉；意义在于每版、在混淆包里，是破解者要再找的"又一个"点(明文包里一眼删掉)。
+static BOOL WXGLicenseTamperSuspected(void) {
+#ifdef WXG_FORCE_AUTHORIZED
+    return NO;   // 强制授权自测包本就无票，别自触发
+#endif
+    static BOOL tripped=NO; if(tripped)return YES;
+    // 只在已被判为"授权"后才会走到这里(见 WXGPluginEnabled)；核对是否有真货。
+    if(WXGUnlockShaderReady() || WXGUnlockHasUsableTicket(WXGAccountCode))return NO;   // 有真货 = 正版
+    static CFTimeInterval firstSeen=0; CFTimeInterval now=CACurrentMediaTime();
+    if(firstSeen==0){firstSeen=now;return NO;}   // 第一次看到，给足正版启动/取票宽限
+    if(now-firstSeen<60)return NO;               // 60s 宽限：正版一旦授权就有票，绝不会卡在这，杜绝误伤
+    tripped=YES; return YES;
+}
+BOOL WXGPluginEnabled(void) {
+    if(!WXGPreferences.shared.enabled)return NO;
+    if(WXGLicenseCurrentState(NO)!=WXGLicenseAuthorized)return NO;
+    if(WXGLicenseTamperSuspected())return NO;    // FIX109: 自称已授权，但拿不出真货 → 拒绝
+    return YES;
+}
 NSString *WXGLicenseAccount(void) {return WXGAccount;}
 NSString *WXGLicenseCode(void) {return WXGAccountCode;}
 NSString *WXGLicenseAccountSource(void) {return WXGAccountSource;}

@@ -38,6 +38,8 @@ FOUNDATION_EXPORT WXGUnlockState WXGUnlockStateFor(NSString *licenseCode,BOOL fo
 FOUNDATION_EXPORT void WXGUnlockWhenShaderReady(void (^block)(NSString *source));   // any thread; block runs once, off main
 FOUNDATION_EXPORT NSString *WXGUnlockLastError(void);
 FOUNDATION_EXPORT BOOL WXGUnlockAsking(NSString *licenseCode);   // FIX104: a request for this account is on its way
+FOUNDATION_EXPORT BOOL WXGUnlockShaderReady(void);               // FIX109: 真实着色器是否已加载(防篡改用的真货信号)
+FOUNDATION_EXPORT BOOL WXGUnlockHasUsableTicket(NSString *licenseCode);   // FIX109: 该账号是否真有一张没过期的票
 FOUNDATION_EXPORT NSString *WXGUnlockServerShaderVersion(void);   // the server's shader version when it is not this plugin's, else nil
 FOUNDATION_EXPORT NSDate *WXGUnlockExpiry(NSString *licenseCode);
 FOUNDATION_EXPORT NSDictionary *WXGUnlockEvidence(void);
