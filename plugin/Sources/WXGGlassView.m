@@ -1491,11 +1491,16 @@ void WXGDropDeferredGlassTicks(void) {
     // for a glass whose overlay is hidden: only the overlay reads the field.
     if(_shapeAnimating)return;
     if(!CGRectEqualToRect(_maskRect,_glassRect) || !CGSizeEqualToSize(_maskSize,self.bounds.size))_bodyMask=nil;
+    if(_deferShapeField)return;   // 离散底栏: capsule distance while the outline moves
     if(!_overlayHidden && (_dockSurface || (!_buttonPressEffect && _pressAmount>.005)))[self refreshBodyMask];
 }
 - (void)setShapeAnimating:(BOOL)animating {
     if(_shapeAnimating==animating)return;
     _shapeAnimating=animating;if(!animating)[self setNeedsLayout];
+}
+- (void)setDeferShapeField:(BOOL)defer {
+    if(_deferShapeField==defer)return;
+    _deferShapeField=defer;if(!defer)[self setNeedsLayout];
 }
 - (BOOL)needsBackdropCapture {return YES;}
 - (BOOL)directDemoCapture {

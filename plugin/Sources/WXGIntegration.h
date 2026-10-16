@@ -270,3 +270,9 @@ void WXGInstallNativeIconGuard(void);
 @end
 
 FOUNDATION_EXPORT UIViewController *WXGIntegrationSettings(void);
+// FIX106 I: the settings hide WeChat's navigation bar while they are shown and
+// give it back after; whether they still hold it (and what WeChat had), and
+// the safety net giving it back once no settings page is in the stack.
+FOUNDATION_EXPORT BOOL WXGSettingsHoldsNavigation(UINavigationController *nav,BOOL *barWasHidden);
+FOUNDATION_EXPORT BOOL WXGSettingsReleaseStaleNavigation(UINavigationController *nav);
+FOUNDATION_EXPORT BOOL WXGSettingsShowBarForPage(UIViewController *page);

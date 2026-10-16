@@ -201,6 +201,23 @@ static CGImageRef WXGEdgeBlurMaskImage(BOOL bottomEdge) {
 @end
 @implementation WXGEdgePlateView
 @end
+/* FIX106 I (user: 聊天设置 always opened with its first rows under the title
+   bar). FIX106 I's own log on 聊天信息 (single and group): WeChat's list there
+   is never adjusted by UIKit (contentInsetAdjustmentBehavior never) and its
+   own top inset was 0, while it was the page's SECOND subview, the plate in
+   front of it. WeChat gives a page's list its top inset only while the list
+   is the page's first subview (as UIKit's old automatic insets did); 设置 sets
+   its own and was not affected. Where the list leads its parent the plate now
+   goes after it in the subviews, drawn below it by a lower zPosition: the
+   list stays first, the plate stays a view (the glass sampler keeps skipping
+   it and keeps splitting the page, whose sublayers stay all views). */
+static BOOL WXGEdgeListLeads(UIScrollView *list) {
+    for(UIView *v in list.superview.subviews) {
+        if(v==list)return YES;
+        if(!WXGIsPluginView(v))return NO;   // our own views aside (an older plate below it)
+    }
+    return NO;
+}
 
 @interface WXGEdgePage : NSObject
 @property(nonatomic,weak) UIViewController *controller;
@@ -542,7 +559,22 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
     NSUInteger listIndex=[siblings indexOfObjectIdenticalTo:list],index=[siblings indexOfObjectIdenticalTo:view];
     if(view.superview==parent && listIndex!=NSNotFound && index!=NSNotFound && index<listIndex)return;
     [UIView performWithoutAnimation:^{
+        if(view.layer.zPosition!=0)view.layer.zPosition=0;
         [parent insertSubview:view belowSubview:list];
+        view.frame=frame;
+    }];
+}
+/* FIX106 I: `view` drawn below `list` while after it in the subviews (a lower
+   zPosition), so the list stays its parent's first subview. Placed again only
+   when it is not after it or not lower. */
+- (void)place:(UIView *)view behind:(UIView *)list parent:(UIView *)parent frame:(CGRect)frame {
+    NSArray<UIView *> *siblings=parent.subviews;
+    NSUInteger listIndex=[siblings indexOfObjectIdenticalTo:list],index=[siblings indexOfObjectIdenticalTo:view];
+    if(view.superview==parent && listIndex!=NSNotFound && index!=NSNotFound && index>listIndex &&
+       view.layer.zPosition<list.layer.zPosition)return;
+    [UIView performWithoutAnimation:^{
+        view.layer.zPosition=list.layer.zPosition-1;
+        [parent insertSubview:view aboveSubview:list];
         view.frame=frame;
     }];
 }
@@ -610,7 +642,10 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
     if(!source && fading && parent && plateColor) {
         if(!_plate){_plate=[WXGEdgePlateView new];_plate.userInteractionEnabled=NO;}
         if(![_plate.backgroundColor isEqual:plateColor])_plate.backgroundColor=plateColor;
-        [self place:_plate below:list parent:parent frame:[self listRect]];
+        // FIX106 I: behind the list (after it, drawn lower) where the list leads
+        // its parent on WeChat's other pages; the chat page as before.
+        if(_scope!=WXGEdgeScopeChat && WXGEdgeListLeads(list))[self place:_plate behind:list parent:parent frame:[self listRect]];
+        else [self place:_plate below:list parent:parent frame:[self listRect]];
     }else if(_plate){[_plate removeFromSuperview];_plate=nil;}
     // Our settings pages: their glass cards sit in the list, and a mask above
     // a backdrop breaks it. The list stays unmasked; a copy of the page's
@@ -787,8 +822,10 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
     if(_cover)d[@"coverFrame"]=NSStringFromCGRect(_cover.frame);
     if(_plate) {
         CGFloat r=0,g=0,b=0,a=0;[_plate.backgroundColor getRed:&r green:&g blue:&b alpha:&a];
-        d[@"backgroundPlate"]=@{@"frame":NSStringFromCGRect(_plate.frame),@"rgba":@[@(r),@(g),@(b),@(a)],@"source":_plateSource?:@"none"};
+        d[@"backgroundPlate"]=@{@"frame":NSStringFromCGRect(_plate.frame),@"rgba":@[@(r),@(g),@(b),@(a)],@"source":_plateSource?:@"none",
+                               @"behindList":@(_plate.layer.zPosition<0)};   // FIX106 I: after the list, drawn lower
     }
+    if(list.superview)d[@"listIndex"]=@([list.superview.subviews indexOfObjectIdenticalTo:list]);
     if(_topBlur)d[@"topBlurFrame"]=NSStringFromCGRect(_topBlur.frame);
     if(_bottomBlur)d[@"bottomBlurFrame"]=NSStringFromCGRect(_bottomBlur.frame);
     return d;

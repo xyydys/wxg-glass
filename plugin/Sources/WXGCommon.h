@@ -237,6 +237,25 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (BOOL)dockTapSwitchAtTouchDown;
 - (BOOL)dockTapWaitForCalm;           // FIX101: after a switch the lens waits for the main thread to be calm
 - (BOOL)dockTapCatchUp;               // FIX102: after a pause the rest of the tap runs a little faster
+// 离散底栏 (WXGDockDiscrete.h): the selected tab a wide capsule (icon, 中文 /
+// English titles), the others balls; connected balls, the original pill on
+// the selected tab, the gap, the selection's width in cells, the balls'
+// size (x the dock's height), the spring (damping ratio, response s), and
+// lighter glass for the pieces.
+- (BOOL)dockDiscrete;
+- (BOOL)dockDiscreteConnected;
+- (BOOL)dockDiscretePill;
+- (CGFloat)dockDiscreteGap;
+- (CGFloat)dockDiscreteWide;
+- (CGFloat)dockDiscreteBall;
+- (CGFloat)dockDiscreteDamping;
+- (CGFloat)dockDiscreteResponse;
+- (BOOL)dockDiscreteLight;
+- (CGFloat)dockDiscreteIconSize;       // FIX106 B: pt
+- (CGFloat)dockDiscreteTitleSize;      // FIX106 B: 中文 title, pt
+- (CGFloat)dockDiscreteSubtitleSize;   // FIX106 B: English title, pt
+- (CGFloat)dockDiscreteGather;         // FIX106 C: connected, icons toward the run's middle (share of a cell)
+- (CGFloat)dockDiscreteContentShift;   // FIX106 H: wide capsule's icon + titles moved left (pt; 0 = centred)
 // FIX95: the chat title's avatar.
 - (CGFloat)avatarSize;
 - (CGFloat)avatarOffsetY;
@@ -330,6 +349,11 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 // FIX60: the outline is being animated (dock search morph): the outline's
 // distance field (Metal overlay only) is neither dropped nor rebuilt per frame.
 @property(nonatomic) BOOL shapeAnimating;
+// 离散底栏: the outline changes every frame of a switch while the overlay
+// stays on. The native distance field is dropped and not requested (the
+// shader's capsule distance stands in, exact for a capsule); NO again once
+// the outline rests, and the field is made once for it.
+@property(nonatomic) BOOL deferShapeField;
 // Ordinary controls use optical deformation in their single body, never a second lens.
 @property(nonatomic) BOOL buttonPressEffect;
 @property(nonatomic,readonly) BOOL needsBackdropCapture,directDemoCapture;
@@ -401,6 +425,14 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 @property(nonatomic) CGFloat endStretchRoomLeft,endStretchRoomRight;
 @property(nonatomic,readonly) BOOL morphing;
 - (void)setSearchShape:(CGRect)shape progress:(CGFloat)progress;
+// 离散底栏 (WXGDockDiscrete.h): shown (not while searching or morphing). The
+// glass that draws the dock now: the pieces' (one per capsule in use) or
+// the bar's; every glass the dock owns (memory warnings); the bar glass's
+// source view and exclusions copied to the pieces (after the host sets them).
+@property(nonatomic,readonly) BOOL discreteShown;
+@property(nonatomic,readonly) NSArray<WXGGlassView *> *renderGlasses;
+@property(nonatomic,readonly) NSArray<WXGGlassView *> *allGlasses;
+- (void)propagateGlassSources;
 @end
 
 // FIX60/63: the dock's search button: a round glass. The host animates its

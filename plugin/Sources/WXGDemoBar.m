@@ -8,6 +8,7 @@
 #import "WXGPressStretch.h"
 #import "WXGTravelVeil.h"
 #import "WXGDockScript.h"
+#import "WXGDockDiscrete.h"
 
 // FIX21: everything the dock icon atlas depends on, captured on the main
 // thread, so the two large atlases are drawn and uploaded on a background
@@ -19,7 +20,15 @@
 @property(nonatomic,copy) NSArray<NSNumber *> *centers;
 @property(nonatomic) BOOL darkInk,useNative;
 @property(nonatomic) NSInteger selectedIndex;
-@property(nonatomic,copy) NSArray<WXGNativeIconPair *> *pairs;
+// FIX106 D: each tab's artwork, ready to draw (the trait variant picked and
+// tinted on the main thread: WXGDockTabArtwork), its title and colour, per
+// state. The queue only draws: -[UIImage imageAsset] creates and registers
+// an asset the first time and is not thread-safe - read on this queue while
+// the main thread read the same images (the discrete dock), it crashed
+// (EXC_BAD_ACCESS in -[UIImageAsset _unsafe_registerImage:...], cold start).
+@property(nonatomic,copy) NSArray *normalArt,*selectedArt;   // UIImage or NSNull
+@property(nonatomic,copy) NSArray<UIColor *> *normalColors,*selectedColors;
+@property(nonatomic,copy) NSArray<NSString *> *titles;
 @property(nonatomic) CGFloat iconShift,titleShift;   // FIX89: from where they were (pt, + down)
 @property(nonatomic) CGFloat titleSize;              // FIX91
 @property(nonatomic) NSInteger titleWeight;          // FIX91: 0 light .. 4 bold
@@ -66,6 +75,34 @@ static UIImage *WXGTravelHoleImage(void) {
     });
     return image;
 }
+// One tab's artwork as the dock shows it: WeChat's own (the variant for its
+// traits, tinted when it is a template) or the SF symbol (drawn at the size
+// shown: 24 pt for the atlas's 26 pt box), and the colour its title takes.
+// MAIN THREAD ONLY (FIX106 D): it reads -[UIImage imageAsset].
+static UIImage *WXGDockTabArtwork(WXGNativeIconPair *pair,NSInteger i,BOOL selected,BOOL darkInk,CGFloat iconSize,UIColor **textColor) {
+    NSArray *symbols=@[@"bubble.left.and.bubble.right",@"person.2",@"safari",@"person.crop.circle"];
+    NSArray *filled=@[@"bubble.left.and.bubble.right.fill",@"person.2.fill",@"safari.fill",@"person.crop.circle.fill"];
+    i=MAX(0,MIN(3,i));
+    UIColor *color=selected?[UIColor colorWithRed:.03 green:.72 blue:.38 alpha:1]:
+        (darkInk?[UIColor colorWithWhite:.10 alpha:.92]:[UIColor colorWithWhite:.97 alpha:.97]);
+    UIImage *icon=selected?pair.selectedImage:pair.normalImage;
+    if(icon) {
+        UIImage *variant=icon.imageAsset?[icon.imageAsset imageWithTraitCollection:pair.traits]:nil;
+        if(variant)icon=variant;
+        BOOL templ=selected?pair.selectedTemplate:pair.normalTemplate;
+        UIColor *nativeTint=selected?pair.selectedTint:pair.normalTint;
+        if(templ)icon=[icon imageWithTintColor:nativeTint?:color renderingMode:UIImageRenderingModeAlwaysOriginal];
+        UIColor *native=selected?pair.selectedTextColor:pair.normalTextColor;
+        color=native?:(templ?nativeTint:nil)?:color;
+    } else {
+        UIImageSymbolConfiguration *config=[UIImageSymbolConfiguration configurationWithPointSize:MAX(12,round(iconSize*24/26)) weight:UIImageSymbolWeightMedium];
+        icon=[UIImage systemImageNamed:selected?filled[i]:symbols[i] withConfiguration:config];
+        if(!icon)icon=[UIImage systemImageNamed:i==0?@"bubble.left":@"circle" withConfiguration:config];
+        icon=[icon imageWithTintColor:color renderingMode:UIImageRenderingModeAlwaysOriginal];
+    }
+    if(textColor)*textColor=color;
+    return icon;
+}
 static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) {
     if(!job || job.size.width<1 || job.size.height<1)return nil;
     UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];
@@ -73,31 +110,15 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
     UIGraphicsImageRenderer *r=[[UIGraphicsImageRenderer alloc] initWithSize:job.size format:format];
     return [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
         (void)ctx;
-        NSArray *names=@[@"微信",@"通讯录",@"发现",@"我"];
-        NSArray *symbols=@[@"bubble.left.and.bubble.right",@"person.2",@"safari",@"person.crop.circle"];
-        NSArray *filled=@[@"bubble.left.and.bubble.right.fill",@"person.2.fill",@"safari.fill",@"person.crop.circle.fill"];
+        // FIX106 D: only what the job holds (resolved on the main thread).
         for(NSInteger i=0;i<4;i++) {
             BOOL useSelected=fallback?(i==job.selectedIndex):selected;
-            UIColor *color=useSelected?[UIColor colorWithRed:.03 green:.72 blue:.38 alpha:1]:
-                (job.darkInk?[UIColor colorWithWhite:.10 alpha:.92]:[UIColor colorWithWhite:.97 alpha:.97]);
-            WXGNativeIconPair *pair=job.useNative && i<(NSInteger)job.pairs.count?job.pairs[i]:nil;
-            UIImage *icon=useSelected?pair.selectedImage:pair.normalImage;
-            NSString *title=pair.title.length?pair.title:names[i];
-            if(icon) {
-                UIImage *variant=icon.imageAsset?[icon.imageAsset imageWithTraitCollection:pair.traits]:nil;
-                if(variant) icon=variant;
-                BOOL templ=useSelected?pair.selectedTemplate:pair.normalTemplate;
-                UIColor *nativeTint=useSelected?pair.selectedTint:pair.normalTint;
-                if(templ) icon=[icon imageWithTintColor:nativeTint?:color renderingMode:UIImageRenderingModeAlwaysOriginal];
-                UIColor *textColor=useSelected?pair.selectedTextColor:pair.normalTextColor;
-                color=textColor?:(templ?nativeTint:nil)?:color;
-            } else {
-                NSString *name=useSelected?filled[i]:symbols[i];
-                UIImageSymbolConfiguration *symbolConfig=[UIImageSymbolConfiguration configurationWithPointSize:24 weight:UIImageSymbolWeightMedium];
-                icon=[UIImage systemImageNamed:name withConfiguration:symbolConfig];
-                if (!icon) icon=[UIImage systemImageNamed:i==0?@"bubble.left":@"circle" withConfiguration:symbolConfig];
-                icon=[icon imageWithTintColor:color renderingMode:UIImageRenderingModeAlwaysOriginal];
-            }
+            NSArray *art=useSelected?job.selectedArt:job.normalArt;
+            NSArray<UIColor *> *colors=useSelected?job.selectedColors:job.normalColors;
+            id artwork=i<(NSInteger)art.count?art[(NSUInteger)i]:nil;
+            UIImage *icon=[artwork isKindOfClass:UIImage.class]?artwork:nil;
+            UIColor *color=i<(NSInteger)colors.count?colors[(NSUInteger)i]:UIColor.grayColor;
+            NSString *title=i<(NSInteger)job.titles.count?job.titles[(NSUInteger)i]:@"";
             CGFloat cx=i<(NSInteger)job.centers.count?job.centers[i].doubleValue:0,cy=CGRectGetMidY(job.materialRect)-8+job.iconShift;
             CGFloat ratio=MIN(28/MAX(icon.size.width,1),26/MAX(icon.size.height,1));
             CGSize sz=CGSizeMake(icon.size.width*ratio,icon.size.height*ratio);
@@ -112,6 +133,17 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
             [title drawAtPoint:CGPointMake(cx-text.width/2,CGRectGetMidY(job.materialRect)+10+job.titleShift) withAttributes:attrs];
         }
     }];
+}
+
+static NSString *WXGDiscreteEnglish(NSInteger i) {
+    NSArray *names=@[@"Chats",@"Contacts",@"Discover",@"Me"];
+    return i>=0 && i<4?names[i]:@"";
+}
+// The icon's size in a box `size` tall and 2 pt wider (the atlas: 28 x 26).
+static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
+    if(!icon || icon.size.width<1 || icon.size.height<1)return CGSizeMake(size,size);
+    CGFloat ratio=MIN((size+2)/icon.size.width,size/icon.size.height);
+    return CGSizeMake(icon.size.width*ratio,icon.size.height*ratio);
 }
 
 @interface WXGTickProxy : NSObject
@@ -243,6 +275,20 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
 @property(nonatomic,strong) CALayer *morphMask,*morphContent,*morphNormal,*morphHole,*morphPill,*morphSelected;
 @property(nonatomic,strong) UIImageView *closeIcon;
 @property(nonatomic,strong) WXGAccessibleItem *closeItem;
+// 离散底栏 (WXGDockDiscrete.h): the pieces' glass (one per capsule in use),
+// each tab's content (clip, icon unselected / selected, 中文 / English
+// title), how many capsules are in use, whether the bar glass / the pieces
+// stay on through a crossfade (the search morph), and the counts.
+@property(nonatomic,readwrite) BOOL discreteShown;
+@property(nonatomic,strong) UIView *discreteView;
+@property(nonatomic,strong) NSMutableArray<WXGGlassView *> *pieces;
+@property(nonatomic,strong) NSArray<UIView *> *tabClips;
+@property(nonatomic,strong) NSArray<UIImageView *> *tabIcons,*tabSelectedIcons;
+@property(nonatomic,strong) NSArray<UILabel *> *tabTitles,*tabSubtitles;
+@property(nonatomic) NSInteger pieceCount;
+@property(nonatomic) BOOL discreteDirty,classicLingers,piecesLinger,discreteLaying;
+@property(nonatomic) NSUInteger discreteFadeToken,discreteSwitches,discreteShows;
+@property(nonatomic) CGRect discreteRowRect;
 - (void)tick:(CADisplayLink *)link;
 - (void)endTravel:(NSUInteger)token;
 - (BOOL)beginTravelToIndex:(NSInteger)index;
@@ -258,7 +304,18 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
 - (void)tick:(CADisplayLink *)link { [self.owner tick:link]; }
 @end
 
-@implementation WXGDemoBar
+@implementation WXGDemoBar {
+    // 离散底栏: each tab's expansion (0 ball .. 1 wide) and its velocity, the
+    // bridges between neighbours (connected), and where each tab was laid
+    // (material space), its text block's width and its icon's centre.
+    double _discreteE[WXGDiscreteTabs],_discreteV[WXGDiscreteTabs];
+    double _bridge[WXGDiscreteTabs-1],_bridgeV[WXGDiscreteTabs-1];
+    double _gather[WXGDiscreteTabs],_gatherV[WXGDiscreteTabs];   // FIX106 C: icon offsets (cells + gap), springs
+    float _tabX[WXGDiscreteTabs],_tabW[WXGDiscreteTabs];
+    CGFloat _tabTextW[WXGDiscreteTabs];
+    CGPoint _tabIconCentre[WXGDiscreteTabs];
+    WXGDiscreteMetrics _discreteMetrics;
+}
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
         self.backgroundColor=UIColor.clearColor; self.opaque=NO; self.clipsToBounds=NO;
@@ -283,11 +340,17 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
         __weak WXGDemoBar *weakSelf=self;
         _glass.onReady=^(BOOL ready) {
             WXGDemoBar *bar=weakSelf; if (!bar) return;
+            // 离散底栏: the pieces draw the dock; the bar glass and its
+            // fallbacks stay out of sight (unless it lingers in a crossfade).
+            if(bar.discreteShown && !bar.classicLingers) {
+                bar.glass.hidden=YES;bar.fallback.hidden=YES;bar.fallbackLens.hidden=YES;bar.fallbackIcons.hidden=YES;
+                [bar rebuildIcons];[bar setActive:bar.active];return;
+            }
             // FIX33: render-server glass shows its live backdrop before the
             // overlay is ready, so the fallback blur bar is not needed there.
             BOOL live=WXGConfig.shared.renderMode>=2;
             bar.glass.hidden=!ready && !live;
-            BOOL rendered=ready && bar.glass.hasPresentedFrame;
+            BOOL rendered=(ready && bar.glass.hasPresentedFrame) || (live && bar.discreteShows>0);   // 离散底栏 (see updateGeometry)
             // FIX42: the fallback material bar stays until the glass has drawn
             // its first frame, render-server mode included (cold start).
             (void)live;bar.fallback.hidden=rendered; bar.fallbackLens.hidden=rendered; bar.fallbackIcons.hidden=rendered;
@@ -339,11 +402,13 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
     [_nativeIcons invalidateAppearance];
     if(_nativeTabs)[_nativeIcons updateFromTabController:_nativeTabs];
     [self rebuildIcons];[_glass invalidateBackdrop];
+    for(WXGGlassView *piece in [_pieces copy])[piece invalidateBackdrop];
 }
 - (void)setExternallyDriven:(BOOL)external {_externallyDriven=external;[self setActive:_active];}
 - (void)setActive:(BOOL)active {
     BOOL changed=_active!=active,wasPaused=_displayLink.paused;
-    _active=active; _glass.active=active;
+    _active=active; _glass.active=active && (!_discreteShown || _classicLingers);
+    for(NSInteger j=0;j<(NSInteger)_pieces.count;j++)_pieces[j].active=active && (_discreteShown || _piecesLinger) && j<_pieceCount;
     _displayLink.paused=_externallyDriven || !(active && self.window);
     if(changed || (wasPaused && !_displayLink.paused)) _lastTime=0;
     if(changed && !active) [self cancelInteraction];
@@ -352,6 +417,8 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
     (void)event;
     // FIX60: searching, only the round close button takes touches.
     if(_searchMode)return _showsClose && CGRectContainsPoint(CGRectInset(_morphing?_morphShape:_materialRect,-6,-6),point);
+    // 离散底栏: the row of capsules (the gaps between them included).
+    if(_discreteShown && !CGRectIsEmpty(_discreteRowRect))return CGRectContainsPoint(CGRectInset(_discreteRowRect,-6,-10),point);
     return CGRectContainsPoint(CGRectInset(CGRectUnion(_fallback.frame,_glass.lensRect),-4,-6),point);
 }
 - (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)event {
@@ -371,6 +438,10 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
     _glass.bounds=(CGRect){CGPointZero,self.bounds.size};_glass.center=CGPointMake(CGRectGetMidX(self.bounds),CGRectGetMidY(self.bounds));
     _glass.glassRect=outline;
     _morphView.frame=self.bounds;
+    if(_discreteView) {
+        _discreteView.frame=self.bounds;_discreteDirty=YES;
+        for(WXGGlassView *piece in [_pieces copy]){piece.bounds=(CGRect){CGPointZero,self.bounds.size};piece.center=CGPointMake(CGRectGetMidX(self.bounds),CGRectGetMidY(self.bounds));}
+    }
     if (!CGSizeEqualToSize(_previousSize,self.bounds.size) || _previousInset!=[self selectionGap]) {
         _previousInset=[self selectionGap];
         _previousSize=self.bounds.size; [self cancelInteraction];
@@ -390,6 +461,15 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
     BOOL nativeChanged=_previousNativeIcons!=WXGConfig.shared.useWeChatIcons;
     _previousNativeIcons=WXGConfig.shared.useWeChatIcons;
     if(nativeChanged || !CGRectEqualToRect(_iconMaterialRect,_materialRect) || fabs(_iconScale-scale)>.001 || ![_iconLayout isEqual:[self iconLayoutKey]]){[self rebuildIcons];[self layoutBadges];}
+    // 离散底栏: on / off, the pieces' glass style, titles (sizes may have changed).
+    [self syncDiscreteVisibility];
+    BOOL light=WXGConfig.shared.dockDiscreteLight;
+    for(WXGGlassView *piece in [_pieces copy]) {
+        if(piece.lightweight!=light){piece.lightweight=light;[piece setNeedsLayout];}
+        [piece invalidateBackdrop];[piece applyStyle];
+    }
+    [self loadDiscreteContent];
+    if(_discreteShown){_discreteDirty=YES;[self updateDiscreteGeometry];[self layoutBadges];}
 }
 - (void)updateNativeIconsFromTabController:(UITabBarController *)tabs {
     _nativeTabs=tabs;
@@ -403,9 +483,21 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
     NSMutableArray<NSNumber *> *centers=[NSMutableArray array];
     for(NSInteger i=0;i<4;i++)[centers addObject:@([self centerForIndex:i])];
     job.centers=centers;
-    NSMutableArray<WXGNativeIconPair *> *pairs=[NSMutableArray array];
-    for(WXGNativeIconPair *pair in _nativeIcons.items)[pairs addObject:[pair copy]];
-    job.pairs=pairs;
+    // FIX106 D: the artwork resolved here, on the main thread (WXGDockTabArtwork
+    // reads -[UIImage imageAsset]); the icon queue only draws it. (iconJob is
+    // main-thread only anyway: it reads the view's bounds and window.)
+    NSArray *names=@[@"微信",@"通讯录",@"发现",@"我"];
+    NSArray<WXGNativeIconPair *> *items=_nativeIcons.items;
+    NSMutableArray *normalArt=[NSMutableArray array],*selectedArt=[NSMutableArray array],*normalColors=[NSMutableArray array],*selectedColors=[NSMutableArray array],*titles=[NSMutableArray array];
+    for(NSInteger i=0;i<4;i++) {
+        WXGNativeIconPair *pair=job.useNative && i<(NSInteger)items.count?items[(NSUInteger)i]:nil;
+        UIColor *normalColor=nil,*selectedColor=nil;
+        UIImage *normal=WXGDockTabArtwork(pair,i,NO,_darkInk,26,&normalColor),*selected=WXGDockTabArtwork(pair,i,YES,_darkInk,26,&selectedColor);
+        [normalArt addObject:normal?:(id)NSNull.null];[selectedArt addObject:selected?:(id)NSNull.null];
+        [normalColors addObject:normalColor?:UIColor.grayColor];[selectedColors addObject:selectedColor?:UIColor.grayColor];
+        [titles addObject:pair.title.length?pair.title:names[(NSUInteger)i]];
+    }
+    job.normalArt=normalArt;job.selectedArt=selectedArt;job.normalColors=normalColors;job.selectedColors=selectedColors;job.titles=titles;
     job.iconShift=[self iconShift];job.titleShift=[self titleShift];
     WXGConfig *c=WXGConfig.shared;job.titleSize=c.dockTitleSize;job.titleWeight=c.dockTitleWeight;job.bolderSelected=c.dockTitleBolderSelected;
     return job;
@@ -456,6 +548,7 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
         NSString *title=WXGConfig.shared.useWeChatIcons && i<(NSInteger)_nativeIcons.items.count?_nativeIcons.items[i].title:nil;
         _a11yItems[i].accessibilityLabel=title.length?title:names[i];
     }
+    [self loadDiscreteContent];   // 离散底栏: same artwork, theme and titles
 }
 // FIX21: WeChat shows a tab's selected (accent) artwork only once that tab is
 // selected, sometimes after its own short icon animation. Rescan at 0.12,
@@ -484,6 +577,7 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
     if (!_fingerDown) _targetX=[self centerForIndex:index];
     if (changed && haptic && WXGConfig.shared.haptics) { [_feedback selectionChanged]; [_feedback prepare]; }
     if (changed) {
+        if(_discreteShown){_discreteDirty=YES;++_discreteSwitches;}   // 离散底栏: the springs take it from here
         [self rescanNativeIconsAfterSelection];
         if(_morphing)[self loadMorphContent];   // FIX60: the pill follows WeChat's tab
         // All selected variants live in one texture: dragging reveals each through
@@ -506,6 +600,7 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
     // FIX60: searching, the bar is only the round close button.
     if(_searchMode){_closeTracking=YES;[self setClosePressed:YES];if(WXGConfig.shared.haptics)[_feedback prepare];return YES;}
     if(_morphing)return NO;   // the tabs are still coming back
+    if(_discreteShown)return [self beginDiscreteTracking:touch];   // 离散底栏
     ++_downCount; _previewStart=0;
     _lastTrackingReason=@"began";WXGDockTouchForget(&_trackingPoint);
     CGPoint point=[touch locationInView:self]; _initialSelected=_selectedIndex; _fingerDown=YES;_touchDownTime=CACurrentMediaTime();
@@ -566,6 +661,7 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
 - (BOOL)continueTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
     if(_closeTracking){(void)event;[self setClosePressed:CGRectContainsPoint([self closeTouchRect],[touch locationInView:self])];return YES;}
     if(!_fingerDown)return YES;   // FIX89: an interaction already cancelled (e.g. the settings long press) ignores later moves
+    if(_discreteShown){[self continueDiscreteTracking:touch];return YES;}   // 离散底栏
     (void)event; ++_moveCount;CGPoint point=[touch locationInView:self];
     if(!_dragging && hypot(point.x-_touchStart.x,point.y-_touchStart.y)>10) {
         _dragging=YES;_jumping=NO;_jumpPlanEnd=0;
@@ -616,6 +712,7 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
         if(inside && _searchMode && _active){if(WXGConfig.shared.haptics)[_feedback selectionChanged];[self sendActionsForControlEvents:UIControlEventPrimaryActionTriggered];}
         return;
     }
+    if(_discreteShown && _fingerDown){[self endDiscreteTracking:touch event:event];return;}   // 离散底栏
     ++_trackingEnds;if(!touch)++_nilTrackingEnds;
     [self releaseEndStretch];   // FIX68
     if(!_fingerDown){_lastTrackingReason=@"end_without_tracking";WXGDockTouchForget(&_trackingPoint);return;}
@@ -1207,11 +1304,15 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         @"clockStalls":@(_clockStalls),@"clockLostMS":@(round(_clockLostMS)),@"tapDurationScale":@(WXGConfig.shared.dockTapDurationScale),@"tapLensShare":@(WXGConfig.shared.dockTapLensShare),@"taps":_tapRecords?:@[],
         @"tapDrop":@(WXGConfig.shared.dockTapDropDuration),@"tapSwitchWhen":@(WXGConfig.shared.dockTapSwitchWhen),@"uncommittedEnds":@(_uncommittedEnds),@"travelVeil":@(_travelVeilOn),@"travelVeilBands":@(_travelVeilCount),@"travelSetupMaxMS":@(round(_travelSetupMS*10)/10),
         @"lastPoint":@[@(_trackingPoint.x),@(_trackingPoint.y)],@"hasTrackingPoint":@(_trackingPoint.valid),
-        @"searchMode":@(_searchMode),@"morphing":@(_morphing),@"morphs":@(_morphs)};
+        @"searchMode":@(_searchMode),@"morphing":@(_morphing),@"morphs":@(_morphs),
+        @"discrete":@(_discreteShown),@"discretePieces":@(_pieceCount),@"discreteSwitches":@(_discreteSwitches),@"discreteShows":@(_discreteShows)};
 }
 - (void)tick:(CADisplayLink *)link {
     if (!_active || !self.window) return;
     double dt=_lastTime?link.timestamp-_lastTime:(link.targetTimestamp>link.timestamp?link.targetTimestamp-link.timestamp:1.0/60); _lastTime=link.timestamp;
+    [self syncDiscreteVisibility];
+    if(_discreteShown){[self tickDiscrete:link dt:dt];return;}   // 离散底栏
+    if(_piecesLinger)for(NSInteger j=0;j<_pieceCount && j<(NSInteger)_pieces.count;j++)[_pieces[j] tick:link.timestamp];
     if(_previewStart>0 && !_fingerDown) {
         double t=CACurrentMediaTime()-_previewStart;
         if(t<3) { _targetPress=1; _targetX=[self centerForIndex:0]+([self centerForIndex:3]-[self centerForIndex:0])*(.5-.5*cos(M_PI*t/3)); }
@@ -1288,6 +1389,8 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
 }
 - (void)updateGeometry {
     if(CGRectIsEmpty(_materialRect)) return;
+    [self syncDiscreteVisibility];
+    if(_discreteShown){_discreteDirty=YES;[self updateDiscreteGeometry];return;}   // 离散底栏
     WXGConfig *c=WXGConfig.shared;
     CGFloat press=WXGClamp(_press,0,1);
     CGFloat stretch=UIAccessibilityIsReduceMotionEnabled()?0:WXGClamp(fabs(_velocityX)/2200,0,.10)*press;
@@ -1305,7 +1408,9 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     _glass.lensRect=lens; _glass.pressAmount=press; _glass.selectionWeight=selection; [_glass layoutIfNeeded];
     BOOL live=WXGConfig.shared.renderMode>=2;
     _glass.hidden=!_glass.ready && !live;
-    BOOL presented=_glass.ready && _glass.hasPresentedFrame;
+    // 离散底栏: the bar glass woken from the pieces (the search morph) has its
+    // live backdrop at once in render-server mode: no fallback blur bar.
+    BOOL presented=(_glass.ready && _glass.hasPresentedFrame) || (live && _discreteShows>0);
     _fallback.hidden=presented;_fallbackLens.hidden=presented || _travelling;_fallbackIcons.hidden=presented;
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     _fallback.frame=bar; _fallback.layer.cornerRadius=MIN(bar.size.width,bar.size.height)*.5;
@@ -1338,6 +1443,30 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     }[self layoutBadges];
 }
 - (void)layoutBadges {
+    if(_discreteShown) {
+        // 离散底栏 (FIX106 B, user: the badge covered the wide tab's icon and
+        // titles): on each capsule's top-right corner (its end cap at 45
+        // degrees), a ball's and the wide one's alike, gliding with its width.
+        WXGDiscreteMetrics m=_discreteMetrics;
+        CGFloat oy=round((_materialRect.origin.y+m.originY)*2)/2,ch=round(m.cell*2)/2;
+        for(NSInteger i=0;i<4;i++) {
+            UILabel *b=_badges[i];if(b.hidden)continue;
+            BOOL dot=b.tag==1;CGFloat h=dot?8:17;
+            CGFloat w=dot?8:MAX(h,[b.text sizeWithAttributes:@{NSFontAttributeName:b.font}].width+7);
+            float cx=0,cy=0;
+            WXGDiscreteBadgeCentre((float)(_materialRect.origin.x+_tabX[i]),(float)oy,_tabW[i],(float)ch,&cx,&cy);
+            // FIX106 C: a ball's badge goes with its icon (gathered in a joined
+            // run), at the same corner a lone ball's has; the wide capsule's
+            // stays on its right end; between, by how wide the tab is.
+            float r=(float)ch*.5f,k=.70710678f,e=(float)WXGClamp(_discreteE[i],0,1);
+            float bx=(float)_tabIconCentre[i].x+r*k,by=(float)(oy+ch*.5)-r*k;
+            cx=bx+(cx-bx)*e;cy=by+(cy-by)*e;
+            // Its round left end on that point (nudged 1.5 pt outward): longer
+            // counts grow outward, away from the titles.
+            b.frame=CGRectMake(round((cx+1.5-h*.5)*2)/2,round((cy-1.5-h*.5)*2)/2,w,h);b.layer.cornerRadius=h*.5;
+        }
+        return;
+    }
     CGFloat scale=_glass.barScale,center=CGRectGetMidX(_materialRect),cy=CGRectGetMidY(_materialRect);
     for(NSInteger i=0;i<4;i++) {
         UILabel *b=_badges[i];if(b.hidden)continue;
@@ -1355,11 +1484,13 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
 - (NSString *)nativeIconSummary {return _nativeIcons.diagnostics;}
 - (NSString *)renderState {
     return [NSString stringWithFormat:@"底栏 隐%d 透%.2f %.0fx%.0f 外观%@ | 备用 底板隐%d 透镜隐%d 图标隐%d | %@",self.hidden,self.alpha,self.bounds.size.width,self.bounds.size.height,
-        _darkInk?@"浅":@"深",_fallback.hidden,_fallbackLens.hidden,_fallbackIcons.hidden,_glass.renderState];
+        _darkInk?@"浅":@"深",_fallback.hidden,_fallbackLens.hidden,_fallbackIcons.hidden,
+        _discreteShown?[NSString stringWithFormat:@"%@ | %@",[self discreteSummary],_pieces.firstObject.renderState?:@"-"]:_glass.renderState];
 }
 // FIX39: the tap animation's layers and refracting backdrop, built while idle
 // so the first taps after launch do not pay for them.
 - (void)prewarmTravel {
+    if(_discreteShown)return;   // 离散底栏: no lens travel
     if(_travelling || CGRectIsEmpty(_materialRect) || !self.window || !WXGConfig.shared.dockTapSimpleTravel ||
        !_selectedAtlas.CGImage || !_normalAtlas.CGImage)return;
     WXGConfig *c=WXGConfig.shared;
@@ -1392,6 +1523,405 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         for(UIView *v in bar.travelBackdrops)[v.layer removeFromSuperlayer];
         [CATransaction commit];
     });
+}
+#pragma mark - 离散底栏 (discrete dock)
+/* The selected tab is a wide capsule (icon on the left, 中文 title above the
+   English one), the others are balls; a switch springs every tab's width
+   (WXGDockDiscrete.h). Each capsule is its own dock glass (the dock's
+   material, optics and rim), the icons and titles plain views above them.
+   The bar glass sleeps meanwhile; while searching the bar takes over again
+   (the search morph is the bar's), the two crossfading. */
+static const CFTimeInterval WXGDiscreteFade=.2;
+static NSString * const WXGDiscreteFadeKey=@"wxg.discreteFade";
+- (BOOL)discreteWanted {return WXGConfig.shared.dockDiscrete && !_searchMode && !_morphing;}
+// Toward the search button (its side is the one with stretch room), else centred.
+- (int)discreteAlign {return _endStretchRoomLeft>0?-1:(_endStretchRoomRight>0?1:0);}
+- (void)ensureDiscreteViews {
+    if(_discreteView)return;
+    _discreteView=[[UIView alloc]initWithFrame:self.bounds];
+    _discreteView.userInteractionEnabled=NO;_discreteView.hidden=YES;_discreteView.backgroundColor=UIColor.clearColor;
+    UIView *badge=_badges.firstObject;
+    if(badge.superview==self)[self insertSubview:_discreteView belowSubview:badge];else [self addSubview:_discreteView];
+    _pieces=[NSMutableArray array];
+    NSMutableArray *clips=[NSMutableArray array],*icons=[NSMutableArray array],*selectedIcons=[NSMutableArray array];
+    NSMutableArray *titles=[NSMutableArray array],*subtitles=[NSMutableArray array];
+    for(NSInteger i=0;i<4;i++) {
+        UIView *clip=[UIView new];clip.userInteractionEnabled=NO;clip.clipsToBounds=YES;
+        clip.backgroundColor=UIColor.clearColor;clip.layer.cornerCurve=kCACornerCurveContinuous;
+        UIImageView *normal=[UIImageView new],*selected=[UIImageView new];
+        normal.contentMode=UIViewContentModeScaleAspectFit;selected.contentMode=UIViewContentModeScaleAspectFit;
+        normal.userInteractionEnabled=NO;selected.userInteractionEnabled=NO;
+        UILabel *title=[UILabel new],*subtitle=[UILabel new];
+        for(UILabel *label in @[title,subtitle]) {
+            label.backgroundColor=UIColor.clearColor;label.opaque=NO;label.numberOfLines=1;label.userInteractionEnabled=NO;
+            label.textAlignment=NSTextAlignmentLeft;label.adjustsFontSizeToFitWidth=YES;label.minimumScaleFactor=.7;
+            label.lineBreakMode=NSLineBreakByClipping;label.hidden=YES;
+        }
+        // FIX106 C: the titles clipped to their capsule, the icons free (above,
+        // in the dock's space): gathered in a joined run they reach past their cell.
+        [clip addSubview:title];[clip addSubview:subtitle];
+        [_discreteView addSubview:clip];[_discreteView addSubview:normal];[_discreteView addSubview:selected];
+        [clips addObject:clip];[icons addObject:normal];[selectedIcons addObject:selected];[titles addObject:title];[subtitles addObject:subtitle];
+    }
+    _tabClips=clips;_tabIcons=icons;_tabSelectedIcons=selectedIcons;_tabTitles=titles;_tabSubtitles=subtitles;
+    [self loadDiscreteContent];
+}
+// The glass of capsule j (made on first use, under every tab's content).
+- (WXGGlassView *)pieceAtIndex:(NSInteger)j {
+    while((NSInteger)_pieces.count<=j) {
+        WXGGlassView *piece=[[WXGGlassView alloc]initWithFrame:self.bounds];
+        piece.dockSurface=YES;piece.userInteractionEnabled=NO;piece.hidden=YES;
+        piece.deferShapeField=YES;piece.lightweight=WXGConfig.shared.dockDiscreteLight;
+        piece.sourceView=_glass.sourceView;piece.backdropExclusions=_glass.backdropExclusions;
+        __weak WXGDemoBar *weakSelf=self;
+        piece.onReady=^(BOOL ready){(void)ready;WXGDemoBar *bar=weakSelf;if(!bar || !bar.discreteShown)return;bar.discreteDirty=YES;[bar updateDiscreteGeometry];};
+        [_discreteView insertSubview:piece atIndex:(NSInteger)_pieces.count];
+        [_pieces addObject:piece];
+    }
+    return _pieces[(NSUInteger)j];
+}
+- (void)propagateGlassSources {
+    UIView *source=_glass.sourceView;NSArray<UIView *> *exclusions=_glass.backdropExclusions?:@[];
+    for(WXGGlassView *piece in [_pieces copy]) {
+        piece.sourceView=source;
+        if(![piece.backdropExclusions isEqualToArray:exclusions])piece.backdropExclusions=exclusions;
+    }
+}
+- (NSArray<WXGGlassView *> *)renderGlasses {
+    if(!_discreteShown)return @[_glass];
+    NSInteger n=MIN(_pieceCount,(NSInteger)_pieces.count);
+    return n>0?[_pieces subarrayWithRange:NSMakeRange(0,(NSUInteger)n)]:@[];
+}
+- (NSArray<WXGGlassView *> *)allGlasses {return _pieces.count?[@[_glass] arrayByAddingObjectsFromArray:_pieces]:@[_glass];}
+// Icons, titles, colours and fonts: the same artwork the atlas uses (WeChat's
+// own or the symbols), the 中文 title (WeChat's) and its English name.
+- (void)loadDiscreteContent {
+    if(!_tabClips.count)return;
+    WXGConfig *c=WXGConfig.shared;
+    NSArray *names=@[@"微信",@"通讯录",@"发现",@"我"];
+    static const CGFloat weights[5]={-.4,0,.23,.3,.4};   // UIFontWeightLight .. UIFontWeightBold
+    NSInteger step=MAX(0,MIN(4,c.dockTitleWeight));
+    // FIX106 B: their own sizes (the bar's titles stay as they are).
+    UIFont *zh=[UIFont systemFontOfSize:c.dockDiscreteTitleSize weight:weights[MIN(4,step+1)]];
+    UIFont *en=[UIFont systemFontOfSize:c.dockDiscreteSubtitleSize weight:weights[step]];
+    CGFloat iconSize=c.dockDiscreteIconSize;
+    for(NSInteger i=0;i<4;i++) {
+        WXGNativeIconPair *pair=c.useWeChatIcons && i<(NSInteger)_nativeIcons.items.count?_nativeIcons.items[(NSUInteger)i]:nil;
+        UIColor *accent=nil;
+        _tabIcons[(NSUInteger)i].image=WXGDockTabArtwork(pair,i,NO,_darkInk,iconSize,NULL);
+        _tabSelectedIcons[(NSUInteger)i].image=WXGDockTabArtwork(pair,i,YES,_darkInk,iconSize,&accent);
+        NSString *title=pair.title.length?pair.title:names[(NSUInteger)i],*english=WXGDiscreteEnglish(i);
+        if([title caseInsensitiveCompare:english]==NSOrderedSame)english=@"";   // WeChat in English: one title
+        UILabel *t=_tabTitles[(NSUInteger)i],*s=_tabSubtitles[(NSUInteger)i];
+        t.text=title;t.font=zh;t.textColor=accent;
+        s.text=english;s.font=en;s.textColor=[accent colorWithAlphaComponent:CGColorGetAlpha(accent.CGColor)*.7];
+        CGFloat w=[title sizeWithAttributes:@{NSFontAttributeName:zh}].width;
+        if(english.length)w=MAX(w,[english sizeWithAttributes:@{NSFontAttributeName:en}].width);
+        _tabTextW[i]=ceil(w)+1;
+    }
+    _discreteDirty=YES;
+}
+- (BOOL)discreteSettled {
+    for(int i=0;i<WXGDiscreteTabs;i++)
+        if(fabs(_discreteE[i]-(i==_selectedIndex?1.:0.))>.002 || fabs(_discreteV[i])>.02)return NO;
+    int connected=WXGConfig.shared.dockDiscreteConnected?1:0;
+    for(int i=0;i<WXGDiscreteTabs-1;i++)
+        if(_bridge[i]!=WXGDiscreteBridgeTarget(connected,(int)_selectedIndex,i))return NO;   // constant-rate steps land exactly
+    double gather[WXGDiscreteTabs];
+    WXGDiscreteGatherTargets(connected,(int)_selectedIndex,(float)WXGConfig.shared.dockDiscreteGather,gather);
+    for(int i=0;i<WXGDiscreteTabs;i++)if(fabs(_gather[i]-gather[i])>.002 || fabs(_gatherV[i])>.02)return NO;
+    return YES;
+}
+- (void)fadeDiscreteFrom:(float)from to:(float)to {
+    CALayer *layer=_discreteView.layer;
+    [layer removeAnimationForKey:WXGDiscreteFadeKey];
+    [CATransaction begin];[CATransaction setDisableActions:YES];layer.opacity=to;[CATransaction commit];
+    if(fabsf(from-to)<.01f)return;
+    CABasicAnimation *fade=[CABasicAnimation animationWithKeyPath:@"opacity"];
+    fade.fromValue=@(from);fade.toValue=@(to);fade.duration=WXGDiscreteFade;
+    fade.timingFunction=[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseInEaseOut];
+    [layer addAnimation:fade forKey:WXGDiscreteFadeKey];
+}
+// The bar glass goes to sleep (after the crossfade, if one ran).
+- (void)retireClassicGlass {
+    _classicLingers=NO;
+    if(!_discreteShown)return;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    _glass.active=NO;_glass.hidden=YES;_glass.deferShapeField=YES;   // asleep: no distance field for it either
+    _fallback.hidden=YES;_fallbackLens.hidden=YES;_fallbackIcons.hidden=YES;
+    [CATransaction commit];
+}
+// The pieces go to sleep (after the crossfade, if one ran).
+- (void)retirePieces {
+    _piecesLinger=NO;
+    if(_discreteShown)return;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    for(WXGGlassView *piece in [_pieces copy]){piece.active=NO;piece.hidden=YES;}
+    [_discreteView.layer removeAnimationForKey:WXGDiscreteFadeKey];
+    _discreteView.hidden=YES;_discreteView.layer.opacity=1;
+    [CATransaction commit];
+}
+// Into or out of the discrete dock: settings (at once) or the search morph
+// (a crossfade: the outgoing glass stays on under / over the incoming one).
+- (void)syncDiscreteVisibility {
+    BOOL want=[self discreteWanted];
+    if(want==_discreteShown)return;
+    BOOL animated=self.window!=nil && _discreteShows>0 && (_searchMode || _morphing || (_morphView && !_morphView.hidden));
+    NSUInteger token=++_discreteFadeToken;
+    __weak WXGDemoBar *weakSelf=self;
+    _discreteShown=want;
+    if(want) {
+        ++_discreteShows;
+        [self ensureDiscreteViews];
+        // From where WeChat is: the selected tab wide, no spring running.
+        for(int i=0;i<WXGDiscreteTabs;i++){_discreteE[i]=i==_selectedIndex?1:0;_discreteV[i]=0;}
+        int connected=WXGConfig.shared.dockDiscreteConnected?1:0;
+        for(int i=0;i<WXGDiscreteTabs-1;i++){_bridge[i]=WXGDiscreteBridgeTarget(connected,(int)_selectedIndex,i);_bridgeV[i]=0;}
+        WXGDiscreteGatherTargets(connected,(int)_selectedIndex,(float)WXGConfig.shared.dockDiscreteGather,_gather);
+        for(int i=0;i<WXGDiscreteTabs;i++)_gatherV[i]=0;
+        _piecesLinger=NO;_discreteDirty=YES;
+        BOOL wasHidden=_discreteView.hidden;
+        CALayer *shown=_discreteView.layer.presentationLayer;
+        float from=wasHidden?0.f:(shown?shown.opacity:_discreteView.layer.opacity);
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        _discreteView.hidden=NO;
+        _fallback.hidden=YES;_fallbackLens.hidden=YES;_fallbackIcons.hidden=YES;
+        [CATransaction commit];
+        [self propagateGlassSources];
+        [self loadDiscreteContent];
+        [self updateDiscreteGeometry];
+        if(animated) {
+            _classicLingers=YES;
+            [self fadeDiscreteFrom:from to:1];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(WXGDiscreteFade*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+                WXGDemoBar *bar=weakSelf;if(!bar || bar.discreteFadeToken!=token)return;[bar retireClassicGlass];
+            });
+        }else {
+            [self fadeDiscreteFrom:1 to:1];
+            [self retireClassicGlass];
+        }
+        [self layoutBadges];
+    }else {
+        _classicLingers=NO;
+        _glass.deferShapeField=NO;_glass.active=_active;
+        BOOL live=WXGConfig.shared.renderMode>=2;
+        _glass.hidden=!_glass.ready && !live;
+        [_glass setNeedsLayout];[_glass invalidateBackdrop];
+        // The bar's lens takes up at rest on the tab (tick / updateGeometry go on from here).
+        _lensX=[self centerForIndex:_selectedIndex];_targetX=_lensX;_velocityX=0;_press=0;_pressVelocity=0;_targetPress=0;
+        if(!CGRectIsEmpty(_materialRect))
+            self.layer.shadowPath=[UIBezierPath bezierPathWithRoundedRect:_materialRect cornerRadius:_materialRect.size.height*.5].CGPath;
+        if(animated && _discreteView && !_discreteView.hidden) {
+            _piecesLinger=YES;
+            CALayer *shown=_discreteView.layer.presentationLayer;
+            [self fadeDiscreteFrom:shown?shown.opacity:_discreteView.layer.opacity to:0];
+            dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(WXGDiscreteFade*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+                WXGDemoBar *bar=weakSelf;if(!bar || bar.discreteFadeToken!=token)return;[bar retirePieces];
+            });
+        }else [self retirePieces];
+    }
+}
+- (void)tickDiscrete:(CADisplayLink *)link dt:(double)dt {
+    WXGConfig *c=WXGConfig.shared;BOOL reduce=UIAccessibilityIsReduceMotionEnabled();
+    // Every tab on the same spring (so the row never moves, WXGDockDiscrete.h);
+    // Reduce Motion: critically damped and quick.
+    double stiffness=0,friction=0;
+    WXGDiscreteSpringConstants(reduce?1.:c.dockDiscreteDamping,reduce?.3:c.dockDiscreteResponse,&stiffness,&friction);
+    for(int i=0;i<WXGDiscreteTabs;i++)WXGSpring(&_discreteE[i],&_discreteV[i],i==_selectedIndex?1.:0.,stiffness,friction,dt);
+    // FIX106 B: the joins and splits (connected) start with the switch and are
+    // done ~0.35 x its response in (one capsule while the new tab still widens).
+    double bridgeTime=WXGDiscreteBridgeDuration(reduce?.3:c.dockDiscreteResponse);
+    int connected=c.dockDiscreteConnected?1:0;
+    for(int i=0;i<WXGDiscreteTabs-1;i++){_bridge[i]=WXGDiscreteBridgeStep(_bridge[i],WXGDiscreteBridgeTarget(connected,(int)_selectedIndex,i),WXGClamp(dt,0,.064),bridgeTime);_bridgeV[i]=0;}
+    // FIX106 C: the joined balls' icons gather on the widths' spring.
+    double gather[WXGDiscreteTabs];
+    WXGDiscreteGatherTargets(connected,(int)_selectedIndex,(float)c.dockDiscreteGather,gather);
+    for(int i=0;i<WXGDiscreteTabs;i++)WXGSpring(&_gather[i],&_gatherV[i],gather[i],stiffness,friction,dt);
+    // What the host reads of the lens (lensArrived / lensAtRest, the license's
+    // quiet check, a held switch): at rest on the selected tab, never pressed.
+    _targetX=[self centerForIndex:_selectedIndex];_lensX=_targetX;_velocityX=0;
+    _press=0;_pressVelocity=0;_targetPress=0;_elasticMotion=(WXGElasticMotion){0};
+    BOOL moving=![self discreteSettled];
+    if(moving || _discreteDirty){[self updateDiscreteGeometry];[self layoutBadges];_discreteDirty=moving;}
+    for(NSInteger j=0;j<_pieceCount && j<(NSInteger)_pieces.count;j++)[_pieces[(NSUInteger)j] tick:link.timestamp];
+    if(_classicLingers)[_glass tick:link.timestamp];
+}
+- (void)updateDiscreteGeometry {
+    if(CGRectIsEmpty(_materialRect) || !_discreteView)return;
+    // A piece's layout can call back here (its ready callback): the next frame redoes it.
+    if(_discreteLaying){_discreteDirty=YES;return;}
+    _discreteLaying=YES;
+    @try {[self layDiscreteGeometry];}
+    @finally {_discreteLaying=NO;}
+}
+- (void)layDiscreteGeometry {
+    WXGConfig *c=WXGConfig.shared;int align=[self discreteAlign];
+    WXGDiscreteMetrics m=WXGDiscreteFit((float)_materialRect.size.width,(float)_materialRect.size.height,(float)c.dockDiscreteBall,
+                                        (float)c.dockDiscreteGap,(float)c.dockDiscreteWide,align);
+    _discreteMetrics=m;
+    WXGDiscreteLayout(m,_discreteE,align,_tabX,_tabW);
+    WXGDiscreteRun runs[WXGDiscreteTabs];
+    int count=WXGDiscreteRuns(_tabX,_tabW,_bridge,m.gap,runs);
+    CGFloat ox=_materialRect.origin.x,oy=round((_materialRect.origin.y+m.originY)*2)/2,h=round(m.cell*2)/2;
+    _discreteRowRect=CGRectMake(ox+_tabX[0],oy,_tabX[WXGDiscreteTabs-1]+_tabW[WXGDiscreteTabs-1]-_tabX[0],h);
+    BOOL live=c.renderMode>=2,settled=[self discreteSettled],pill=c.dockDiscretePill,keep=_discreteShown || _piecesLinger;
+    CGFloat selectionGap=WXGSelectionGap((float)c.selectionInset,(float)h);
+    CGSize size=self.bounds.size;CGPoint centre=CGPointMake(size.width*.5,size.height*.5);
+    UIBezierPath *shadow=[UIBezierPath bezierPath];
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    for(int j=0;j<count;j++) {
+        WXGGlassView *piece=[self pieceAtIndex:j];
+        if(!CGSizeEqualToSize(piece.bounds.size,size)){piece.bounds=(CGRect){CGPointZero,size};piece.center=centre;}
+        // Half-point steps: the meshes and the field are reused within a step.
+        CGFloat x0=round((ox+runs[j].x)*2)/2,x1=round((ox+runs[j].x+runs[j].w)*2)/2;
+        CGRect rect=CGRectMake(x0,oy,MAX(1,x1-x0),h);
+        piece.glassRect=rect;
+        // 选中胶囊: the original pill on the capsule's widest tab, growing from
+        // its centre as the tab widens (and shrinking away as it narrows).
+        int best=-1;double widest=0;
+        for(int t=runs[j].first;t<=runs[j].last;t++)if(_discreteE[t]>widest){widest=_discreteE[t];best=t;}
+        CGFloat grow=pill && best>=0?WXGDiscreteSmooth(.04f,.7f,(float)widest):0;
+        if(grow>.01) {
+            CGRect cell=CGRectInset(CGRectMake(ox+_tabX[best],oy,_tabW[best],h),selectionGap,selectionGap);
+            CGRect lens=CGRectInset(cell,cell.size.width*(1-grow)*.5,cell.size.height*(1-grow)*.5);
+            piece.lensRect=CGRectMake(round(lens.origin.x*2)/2,round(lens.origin.y*2)/2,round(lens.size.width*2)/2,round(lens.size.height*2)/2);
+            piece.lensAnchorX=CGRectGetMidX(lens);piece.selectionWeight=grow;
+        }else {piece.lensRect=CGRectZero;piece.selectionWeight=0;}
+        piece.barScale=1;piece.pressAmount=0;piece.deferShapeField=!settled;
+        piece.active=_active && keep;
+        piece.hidden=!keep || (!piece.ready && !live);
+        [piece layoutIfNeeded];
+        [shadow appendPath:[UIBezierPath bezierPathWithRoundedRect:rect cornerRadius:rect.size.height*.5]];
+    }
+    for(NSInteger j=count;j<(NSInteger)_pieces.count;j++){WXGGlassView *piece=_pieces[(NSUInteger)j];piece.active=NO;piece.hidden=YES;piece.lensRect=CGRectZero;}
+    _pieceCount=count;
+    if(_discreteShown)self.layer.shadowPath=shadow.CGPath;
+    [self layoutDiscreteContent];
+    for(NSInteger i=0;i<4;i++)_a11yItems[(NSUInteger)i].accessibilityFrameInContainerSpace=CGRectMake(ox+_tabX[i],oy,_tabW[i],h);
+    [CATransaction commit];
+}
+// Each tab's icon and titles, clipped to its own capsule: a ball shows its
+// icon centred; widening, the icon slides left and the titles fade in to its
+// right (after ~45% of the way), the block centred in the capsule.
+- (void)layoutDiscreteContent {
+    if(!_tabClips.count)return;
+    WXGConfig *c=WXGConfig.shared;WXGDiscreteMetrics m=_discreteMetrics;
+    CGFloat ox=_materialRect.origin.x,oy=round((_materialRect.origin.y+m.originY)*2)/2,h=round(m.cell*2)/2;
+    CGFloat wideW=WXGDiscreteTabWidth(m,1),spacing=MAX(4,round(h*.11)),lift=c.dockIconOffset;
+    for(int i=0;i<WXGDiscreteTabs;i++) {
+        UIView *clip=_tabClips[(NSUInteger)i];
+        CGRect cell=CGRectMake(ox+_tabX[i],oy,_tabW[i],h);
+        clip.frame=cell;clip.layer.cornerRadius=MIN(cell.size.width,cell.size.height)*.5;
+        CGFloat e=WXGClamp(_discreteE[i],0,1);
+        UIImageView *normal=_tabIcons[(NSUInteger)i],*selected=_tabSelectedIcons[(NSUInteger)i];
+        CGFloat iconSize=MIN(c.dockDiscreteIconSize,h*.82);   // never past the ball
+        CGSize ns=WXGDiscreteIconSize(normal.image,iconSize),ss=WXGDiscreteIconSize(selected.image,iconSize);
+        CGFloat iconW=MAX(ns.width,ss.width);
+        // The titles as wide as they are, at most what the wide capsule leaves
+        // (a fifth of its height clear at each end); too little: icon only.
+        CGFloat textW=MIN(_tabTextW[i],MAX(0,wideW-iconW-spacing-h*.4));
+        BOOL text=textW>=14 && _tabTitles[(NSUInteger)i].text.length>0;
+        float textX=0;
+        // FIX106 H: the centred block moved left by 宽位内容左移 when wide (in
+        // step with the expansion; never past the icon on the left cap's centre).
+        CGFloat iconX=WXGDiscreteContentShifted(0,(float)cell.size.width,(float)h,(float)iconW,(float)spacing,text?(float)textW:0.f,
+                                                (float)e,(float)c.dockDiscreteContentShift,&textX);
+        // FIX106 C: connected, gathered toward the run's middle (a spring, so
+        // it glides as the balls join or split). The titles move with it.
+        CGFloat gather=_gather[i]*(m.cell+m.gap);
+        iconX+=gather;textX+=(float)gather;
+        CGFloat cy=h*.5+lift;
+        // The icons are not clipped to their cell (gathered, they reach past it).
+        CGPoint centre=CGPointMake(round((cell.origin.x+iconX)*4)/4,round((cell.origin.y+cy)*4)/4);
+        normal.bounds=(CGRect){CGPointZero,ns};normal.center=centre;normal.alpha=1-e;
+        selected.bounds=(CGRect){CGPointZero,ss};selected.center=centre;selected.alpha=e;
+        _tabIconCentre[i]=centre;
+        CGFloat reveal=text?WXGDiscreteSmooth(.45f,1.f,(float)e):0;
+        UILabel *title=_tabTitles[(NSUInteger)i],*subtitle=_tabSubtitles[(NSUInteger)i];
+        title.hidden=reveal<.01;subtitle.hidden=title.hidden || subtitle.text.length==0;
+        if(!title.hidden) {
+            CGFloat th=ceil(title.font.lineHeight),sh=subtitle.hidden?0:ceil(subtitle.font.lineHeight);
+            CGFloat top=cy-(th+sh)*.5,slide=(1-reveal)*6;
+            title.frame=CGRectMake(textX+slide,top,textW,th);title.alpha=reveal;
+            if(!subtitle.hidden){subtitle.frame=CGRectMake(textX+slide,top+th,textW,sh);subtitle.alpha=reveal;}
+        }
+    }
+}
+- (NSInteger)discreteTabAt:(CGPoint)point {
+    return WXGDiscreteTabAt(_tabX,_tabW,_discreteMetrics.gap,(float)(point.x-_materialRect.origin.x));
+}
+// A touch: the tab under the finger is selected at once (and, 按下时, WeChat
+// is asked to switch, as the bar does); dragging past 10 pt follows the finger.
+- (BOOL)beginDiscreteTracking:(UITouch *)touch {
+    ++_downCount;_previewStart=0;_lastTrackingReason=@"began";WXGDockTouchForget(&_trackingPoint);
+    if(_travelling)[self endTravel:_travelToken];
+    if(_script.phase)[self endScript];
+    CGPoint point=[touch locationInView:self];
+    _initialSelected=_selectedIndex;_fingerDown=YES;_touchDownTime=CACurrentMediaTime();
+    _dragging=NO;_touchStart=point;_jumping=NO;_jumpPlanEnd=0;_resumeIndex=-1;_targetPress=0;
+    WXGDockTouchRemember(&_trackingPoint,point.x,point.y);
+    [_feedback prepare];
+    [self selectIndex:[self discreteTabAt:point] haptic:YES];
+    _touchDownIndex=_selectedIndex;
+    _earlyIndex=-1;_earlySent=NO;
+    if(_selectedIndex!=_initialSelected && WXGConfig.shared.dockTapSwitchAtTouchDown && self.tabSwitchRequest) {
+        NSInteger index=_selectedIndex;_earlyIndex=index;
+        __weak WXGDemoBar *weakSelf=self;
+        dispatch_async(dispatch_get_main_queue(),^{
+            WXGDemoBar *bar=weakSelf;
+            if(!bar || bar.earlyIndex!=index || !bar.tabSwitchRequest || !bar.fingerDown)return;
+            bar.earlySent=bar.tabSwitchRequest(index);
+        });
+    }
+    return YES;
+}
+- (void)continueDiscreteTracking:(UITouch *)touch {
+    ++_moveCount;CGPoint point=[touch locationInView:self];
+    WXGDockTouchRemember(&_trackingPoint,point.x,point.y);
+    if(!_dragging && hypot(point.x-_touchStart.x,point.y-_touchStart.y)>10)_dragging=YES;
+    if(_dragging)[self selectIndex:[self discreteTabAt:point] haptic:YES];   // a tap's slip never changes the tab
+}
+// The release: as the bar's (FIX88 / FIX100), without the lens.
+- (void)endDiscreteTracking:(UITouch *)touch event:(UIEvent *)event {
+    ++_trackingEnds;if(!touch)++_nilTrackingEnds;
+    BOOL cancelledPhase=touch.phase==UITouchPhaseCancelled,confirmedEnd=touch!=nil;
+    if(!touch)for(UITouch *candidate in event.allTouches) {
+        UIView *target=candidate.view;
+        if(target!=self && ![target isDescendantOfView:self])continue;
+        if(candidate.phase==UITouchPhaseCancelled){cancelledPhase=YES;break;}
+        if(candidate.phase==UITouchPhaseEnded)confirmedEnd=YES;
+    }
+    BOOL inactive=!_active || !self.window || UIApplication.sharedApplication.applicationState!=UIApplicationStateActive;
+    BOOL cancelled=cancelledPhase || inactive || !confirmedEnd;
+    CGPoint supplied=touch?[touch locationInView:self]:CGPointZero;
+    BOOL hasPoint=WXGDockTouchResolve(&_trackingPoint,touch!=nil,cancelled,supplied.x,supplied.y);
+    CGPoint p=CGPointMake(_trackingPoint.x,_trackingPoint.y);
+    BOOL inside=hasPoint && CGRectContainsPoint(CGRectInset(_materialRect,-35,-45),p);
+    _fingerDown=NO;_dragging=NO;_jumping=NO;
+    BOOL keptEarly=!inside && _earlySent && _earlyIndex>=0;
+    if(keptEarly){inside=YES;[self selectIndex:_earlyIndex haptic:NO];}
+    if(!inside)[self selectIndex:_initialSelected haptic:NO];
+    _targetX=[self centerForIndex:_selectedIndex];_targetPress=0;
+    _lastTrackingReason=inactive?@"ended_inactive":(cancelledPhase?@"ended_cancelled":(!confirmedEnd?@"nil_end_unconfirmed":
+        (inside?(touch?@"committed":@"committed_saved_point"):(hasPoint?@"ended_outside":@"ended_without_point"))));
+    if(keptEarly)_lastTrackingReason=@"kept_touch_down_switch";
+    WXGDockTouchForget(&_trackingPoint);
+    if((!inside || (_selectedIndex==_initialSelected && _touchDownIndex!=_initialSelected)) && ++_uncommittedEnds<=20)
+        WXGLog(@"底栏（离散）：松手没有切换（%@，按下 %.2f s，按在第 %ld 个，松手时第 %ld 个，原来第 %ld 个）",_lastTrackingReason,CACurrentMediaTime()-_touchDownTime,
+               (long)_touchDownIndex+1,(long)_selectedIndex+1,(long)_initialSelected+1);
+    if(inside) {
+        ++_trackingCommits;_lastCommittedIndex=_selectedIndex;
+        _switchedAtTouchDown=_earlySent && _earlyIndex==_selectedIndex;   // FIX100
+        [self sendActionsForControlEvents:UIControlEventValueChanged];
+        _switchedAtTouchDown=NO;
+    }
+    _resumeIndex=-1;_earlyIndex=-1;_earlySent=NO;
+}
+- (NSString *)discreteSummary {
+    WXGConfig *c=WXGConfig.shared;
+    return [NSString stringWithFormat:@"离散底栏 %@%@ | 胶囊 %ld 块 | 球 %.1f pt 间距 %.1f 宽 %.2f 格 | 相连 %d 胶囊 %d 轻量 %d | 弹簧 %.2f/%.2fs | 切换 %lu 次 已静止 %d",
+        _discreteShown?@"开":@"关",_classicLingers?@"(淡入)":_piecesLinger?@"(淡出)":@"",(long)_pieceCount,_discreteMetrics.cell,_discreteMetrics.gap,_discreteMetrics.wide,
+        c.dockDiscreteConnected,c.dockDiscretePill,c.dockDiscreteLight,c.dockDiscreteDamping,c.dockDiscreteResponse,(unsigned long)_discreteSwitches,[self discreteSettled]];
 }
 #pragma mark - FIX60 search morph
 // While the dock search is open (or opening / closing) the bar's glass takes
@@ -1462,6 +1992,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     _morphView.frame=self.bounds;_morphView.hidden=NO;
     _glass.shapeAnimating=YES;_glass.lensSuppressed=YES;_glass.overlayHidden=YES;
     [CATransaction commit];
+    [self syncDiscreteVisibility];   // 离散底栏: the bar takes over for the morph (crossfade)
 }
 - (void)setSearchShape:(CGRect)shape progress:(CGFloat)progress {
     progress=WXGClamp(progress,0,1);
@@ -1614,12 +2145,14 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     if(lost>.01)[self catchUpAfterPause:lost];   // FIX102
     return next;
 }
-- (BOOL)lensAtRest {return self.lensArrived && _targetPress<=0 && _press<.06;}
+// 离散底栏: at rest once every spring has settled too (the license's quiet check).
+- (BOOL)lensAtRest {return self.lensArrived && _targetPress<=0 && _press<.06 && (!_discreteShown || [self discreteSettled]);}
 - (NSString *)diagnostics {
     WXGConfig *c=WXGConfig.shared;
     WXGScopeOptics dock=[c opticsForDock:YES];
     return [NSString stringWithFormat:@"TEST9 呼出/收回；运动形变 %@；按压 %.3f；速度 %.1f pt/s；形变 %.3f\n底栏：折射 %.2f / 色散 %.2f / 宽度 %.1f pt\n透镜：折射 %.2f / 色散 %.2f / 宽度 %.1f pt\n底栏模糊 %.2f pt / 覆盖 %.0f%%\n%@",
         @"elastic",WXGClamp(_press,0,1),_velocityX,_elasticMotion.stretch,
-        dock.refraction,dock.dispersion,dock.edgeWidth,c.lensRefraction,c.lensDispersion,c.lensEdgeWidth,dock.blur,dock.blurCoverage,_glass.diagnostics];
+        dock.refraction,dock.dispersion,dock.edgeWidth,c.lensRefraction,c.lensDispersion,c.lensEdgeWidth,dock.blur,dock.blurCoverage,
+        _discreteShown?[[self discreteSummary] stringByAppendingFormat:@"\n%@",_pieces.firstObject.diagnostics?:@""]:_glass.diagnostics];
 }
 @end

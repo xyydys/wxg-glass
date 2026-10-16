@@ -11,6 +11,7 @@
 # Needs clang 18 and ld64.lld (/usr/lib/llvm-18/bin) and dpkg-deb.
 set -eu
 PROJ=$(cd "$1" && pwd); OUT=$2
+mkdir -p "$(dirname "$OUT")"   # FIX106: dist/ is gitignored, absent in a fresh checkout
 SDK=${SDK:-/home/claude/toolchain/sdks/iPhoneOS16.5.sdk}
 LDID=${LDID:-/home/claude/toolchain/ldid}
 # FIX105: the compiler is overridable so an obfuscating clang (obfuscator-llvm /

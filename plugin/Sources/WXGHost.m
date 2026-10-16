@@ -67,6 +67,7 @@ static void WXGInstallIdleClock(void) {
 
 // Do not rebuild/reparent native chrome inside UIKit's push/pop setup stack.
 static NSUInteger WXGNavigationCallDepth;
+static NSUInteger WXGPageTopLogs,WXGPageTopRepairs;   // FIX106 I (WXGCheckPageTop)
 
 @interface WXGRoute : NSObject
 @property(nonatomic,strong) UIViewController *leaf;
@@ -439,7 +440,8 @@ static UIResponder *WXGFirstResponder(void) {
             for(WXGSurface *surface in page.pool.allValues)[surface.glass releaseTransientResources];
             for(WXGSurface *surface in page.input.surfaces)[surface.glass releaseTransientResources];
         }
-        [_dockView.glass releaseTransientResources];WXGInvalidateSharedBackdrop();return;
+        for(WXGGlassView *glass in _dockView.allGlasses)[glass releaseTransientResources];   // 离散底栏: the pieces too
+        WXGInvalidateSharedBackdrop();return;
     }
     if([n.name isEqual:UITextViewTextDidChangeNotification])[self layoutInput];
     if([n.name isEqual:WXGSettingsChanged])[WXGConfig.shared reloadSharedParameters];
@@ -784,7 +786,7 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
     for(WXGSurface *surface in _buttons)if(surface.active && !surface.plain)[all addObject:surface.glass];
     for(WXGSurface *surface in _inputAdapter.surfaces)if(surface.active && !surface.plain)[all addObject:surface.glass];
     for(WXGSurface *surface in [WXGDecorations.shared visibleSurfaces])[all addObject:surface.glass];
-    if(_dockView.active)[all addObject:_dockView.glass];
+    if(_dockView.active)[all addObjectsFromArray:_dockView.renderGlasses];   // 离散底栏: the pieces' glass
     BOOL cold=NO;for(WXGGlassView *glass in all){[glass layoutIfNeeded];if(glass.ready && !glass.hasPresentedFrame)cold=YES;}
     // Prewarm geometry/Metal only. Native layout and tab target/action callbacks
     // must not synchronously rasterize a newly constructed page's entire tree.
@@ -1924,7 +1926,7 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     _dockView.active=visible;_dockView.hidden=!visible;
     _dockView.userInteractionEnabled=presentation==WXGDockSettled;
     WXGResetOwnedTransform(_dockView);_dockView.layer.mask=nil;
-    _dockView.glass.sourceView=_window.rootViewController.view;
+    _dockView.glass.sourceView=_window.rootViewController.view;[_dockView propagateGlassSources];
     [self applySearchPresentation:visible interactive:presentation==WXGDockSettled];
     if(visible && _overlay){[_overlay.superview bringSubviewToFront:_overlay];[_overlay bringSubviewToFront:_dockRow?:_dockView];[_overlay bringSubviewToFront:_launcher];}
 }
@@ -1996,6 +1998,7 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
         [CATransaction commit];
     }];
     _dockView.glass.sourceView=_window.rootViewController.view;_dockView.glass.backdropExclusions=@[_route.tabs.tabBar];
+    [_dockView propagateGlassSources];   // 离散底栏: the pieces see the same page
     [_dockView updateNativeIconsFromTabController:_route.tabs];
     // FIX31: while a deferred switch is pending the dock is ahead of WeChat on
     // purpose; syncing back would snap the lens to the old tab and cancel it.
@@ -2857,6 +2860,10 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         CFTimeInterval stepMark=CACurrentMediaTime();NSMutableDictionary *steps=[NSMutableDictionary dictionary];
         UIWindow *w=[self contentWindow];if(!w)return;
         WXGRoute *r=WXGRouteForWindow(w);
+        // FIX106 I: WeChat's bar and edge swipe back as they were once no
+        // plugin settings page is left in this navigation (a safety net; the
+        // pages themselves give them back as they leave).
+        if(r.nav && WXGSettingsReleaseStaleNavigation(r.nav))_navigationDirty=YES;
         steps[@"routeMS"]=@((CACurrentMediaTime()-stepMark)*1000);stepMark=CACurrentMediaTime();
         // FIX67: back from a presented chat to the page that presented it
         // (WeChat's search): that chat's glass goes, the page stays native.
@@ -3092,7 +3099,10 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     for(WXGSurface *surface in [navigation arrayByAddingObjectsFromArray:decorations])if(surface.active && !surface.plain && !surface.hidden && surface.alpha>.001){[surface layoutIfNeeded];[surface.glass layoutIfNeeded];[glass addObject:surface.glass];}
     NSArray *inputs=[_inputAdapter.surfaces arrayByAddingObjectsFromArray:_departingInput.surfaces?:@[]];
     for(WXGSurface *surface in inputs)if(surface.active && !surface.plain){[surface layoutIfNeeded];[surface.glass layoutIfNeeded];[glass addObject:surface.glass];}
-    if(_dockView.active && !_dockView.hidden){[_dockView layoutIfNeeded];[_dockView.glass layoutIfNeeded];[glass addObject:_dockView.glass];}
+    if(_dockView.active && !_dockView.hidden) {
+        [_dockView layoutIfNeeded];
+        for(WXGGlassView *view in _dockView.renderGlasses){[view layoutIfNeeded];[glass addObject:view];}   // 离散底栏: the pieces' glass
+    }
     for(WXGGlassView *view in glass)if(view.pressAmount>.001)moving=YES;
     for(WXGGlassView *view in glass)view.backgroundMoving=moving;
     // FIX16: geometry (springs, frames, content transforms) is applied now so
@@ -3218,7 +3228,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     return @{@"version":@"0.4.105-test4fix105",@"pageID":[NSString stringWithFormat:@"%p",_route.leaf],@"page":_route.leaf?NSStringFromClass(_route.leaf.class):@"none",@"primary":@(_route.primary),
       @"tickCPUms":@(_tickCost),@"sharedCaptureCPUms":@(_backdropCost),@"drawAndDockCaptureCPUms":@(_drawCost),@"refreshCPUms":@(_refreshCost),@"maxTickCPUms":@(_maxTickCost),
       @"navigationPaintRescans":@(_navigationPaintRescans),@"tabBarSnapshotsConcealed":@(_snapshotsConcealed),
-      @"coldStartLayersCleared":@(_coldStartLayersCleared),@"tabBarSnapshotLog":_snapshotLog?:@[],@"pageTopPaintCleared":@(_pageTopPaintCleared),@"settingsEntryReady":@(WXGSettingsEntryReady),@"navigationRaises":@(_navigationRaises),@"navigationCovers":@(_navigationCovers),@"lastNavigationCover":_lastNavigationCover?:@"none",@"homePullTrace":_homePullTrace?:@[],@"homeTopBarInList":@(_homeTopBarInList),@"homeTopBarMoves":@(_homeTopBarMoves),@"landedSwitches":@(_landedSwitches),@"homeTopBarInListAtRest":@(_homeTopBarAtRest),@"homePullHosts":_homePullHosts?:@[],@"coldStartLog":WXGColdStartLog?:@[],
+      @"coldStartLayersCleared":@(_coldStartLayersCleared),@"tabBarSnapshotLog":_snapshotLog?:@[],@"pageTopPaintCleared":@(_pageTopPaintCleared),@"pageTopRepairs":@(WXGPageTopRepairs),@"settingsEntryReady":@(WXGSettingsEntryReady),@"navigationRaises":@(_navigationRaises),@"navigationCovers":@(_navigationCovers),@"lastNavigationCover":_lastNavigationCover?:@"none",@"homePullTrace":_homePullTrace?:@[],@"homeTopBarInList":@(_homeTopBarInList),@"homeTopBarMoves":@(_homeTopBarMoves),@"landedSwitches":@(_landedSwitches),@"homeTopBarInListAtRest":@(_homeTopBarAtRest),@"homePullHosts":_homePullHosts?:@[],@"coldStartLog":WXGColdStartLog?:@[],
       @"appearances":@(_appearances),@"stalePendingClears":@(_stalePendingClears),@"appearanceMatches":@(_appearanceMatches),
       @"dockProfile":@{@"windows":@(_profileWindows),@"frames":@(_profileFrames),@"slowFrames":@(_profileSlowFrames),@"worst":_profileWorst?:@[]},@"settingsEntryInsertions":@(WXGSettingsEntryInsertions),@"prewarmedTabPages":_prewarmed?:@[],
       @"tabSwitches":_tabTraces?:@[],@"currentTabTrace":_tabTrace?:@{},@"lastSlowRefresh":_lastSlowRefreshPhases?:@{},
@@ -3491,6 +3501,119 @@ static void WXGInstallDockHitTesting(void) {
     });
     if(!class_addMethod(cls,selector,replacement,method_getTypeEncoding(method)))class_replaceMethod(cls,selector,replacement,method_getTypeEncoding(method));
 }
+/* FIX106 I (user: 聊天设置 - single and group 聊天信息 - always opened with its
+   first rows under the title bar, as if the list had no top inset; 微信设置
+   and a plugin's page opened from it sometimes lost the bar itself). WeChat's
+   settings-like pages rest at their list's top when pushed. Right after the
+   push (four checks over about a second, untouched by the finger): a list
+   whose own top - its adjusted inset - would put the first row below the
+   title bar, but which rests scrolled up into the bar by no more than the
+   bar's area, is put at its top. Each check is logged (the list's frame,
+   insets, offset and place in its parent, the bar, whether the plugin's
+   settings still hold this navigation) so a case this does not cover can be
+   told apart in the diagnostics. */
+static UIScrollView *WXGPageMainList(UIViewController *controller) {
+    UIView *root=controller.view;if(!root.window)return nil;
+    CGFloat width=root.bounds.size.width,height=root.bounds.size.height,bestArea=0;
+    UIScrollView *best=nil;
+    NSMutableArray<UIView *> *queue=[NSMutableArray arrayWithObject:root];
+    for(NSUInteger i=0;i<queue.count && i<400;i++) {
+        UIView *v=queue[i];
+        if(v.hidden || v.alpha<.01 || WXGIsPluginView(v))continue;
+        if([v isKindOfClass:UIScrollView.class] && ![v isKindOfClass:UITextView.class]) {
+            CGRect r=[v convertRect:v.bounds toView:root];
+            if(r.size.width>=width*.9 && r.size.height>=height*.5 && r.size.width*r.size.height>bestArea){best=(UIScrollView *)v;bestArea=r.size.width*r.size.height;}
+            continue;   // a list's own views are its content
+        }
+        if([v isKindOfClass:UITableViewCell.class] || [v isKindOfClass:UICollectionViewCell.class])continue;
+        [queue addObjectsFromArray:v.subviews];
+    }
+    return best;
+}
+static void WXGCheckPageTop(UIViewController *controller,NSUInteger step) {
+    if(!controller.isViewLoaded || !controller.view.window || !WXGPluginEnabled() || WXGBackdropCaptureInProgress())return;
+    UINavigationController *nav=controller.navigationController;
+    if(!nav || nav.topViewController!=controller || nav.transitionCoordinator)return;   // left, covered or moving
+    UIWindow *w=controller.view.window;UINavigationBar *bar=nav.navigationBar;
+    BOOL barShown=!nav.navigationBarHidden && !bar.hidden && bar.alpha>.01 && bar.window==w;
+    CGFloat navBottom=barShown?CGRectGetMaxY([bar convertRect:bar.bounds toView:nil]):w.safeAreaInsets.top;
+    BOOL barWasHidden=NO,held=WXGSettingsHoldsNavigation(nav,&barWasHidden);
+    NSString *page=NSStringFromClass(controller.class);
+    UIScrollView *list=WXGPageMainList(controller);
+    if(!list) {
+        if(step==0 && WXGPageTopLogs++<40)WXGLog(@"顶部：%@ 没找到整页列表（导航栏%@，底边 %.0f）",page,barShown?@"显示":@"隐藏",navBottom);
+        return;
+    }
+    CGRect frame=[list convertRect:list.bounds toView:nil];
+    CGFloat inset=list.adjustedContentInset.top,offset=list.contentOffset.y;
+    CGFloat restingTop=CGRectGetMinY(frame)+inset,currentTop=CGRectGetMinY(frame)-offset,past=offset+inset;
+    BOOL touched=list.tracking || list.dragging || list.decelerating;
+    BOOL under=currentTop<navBottom-2,restOK=restingTop>=navBottom-2;
+    BOOL repair=barShown && !touched && under && restOK && past>2 && past<=navBottom+8;
+    // The list's own top under the bar: WeChat gave it no top inset at all
+    // (UIKit never adjusts it, its inset 0) while it starts under the bar - the
+    // FIX106 I log of 聊天信息 before the edge-fade plate stopped going in front
+    // of the list. A fallback: the inset the bar needs is added (and the list
+    // put at its new top if it rested at the old one).
+    CGFloat missing=navBottom-restingTop;
+    BOOL addInset=!repair && barShown && !touched && !restOK && list.contentInsetAdjustmentBehavior==UIScrollViewContentInsetAdjustmentNever &&
+        list.contentInset.top<1 && CGRectGetMinY(frame)>=-1 && CGRectGetMinY(frame)<navBottom-2 && missing>2 && missing<=navBottom+2;
+    if((step==0 || under || !barShown) && WXGPageTopLogs++<40) {
+        UIView *parent=list.superview;NSUInteger index=[parent.subviews indexOfObjectIdenticalTo:list];
+        Class plate=NSClassFromString(@"WXGEdgePlateView");BOOL plateBelow=NO,plateBehind=NO;
+        for(NSUInteger i=0;i<parent.subviews.count;i++)if(plate && [parent.subviews[i] isKindOfClass:plate]) {
+            if(i<index)plateBelow=YES;
+            else if(parent.subviews[i].layer.zPosition<list.layer.zPosition)plateBehind=YES;
+        }
+        WXGLog(@"顶部 #%lu：%@ 列表 %@ y%.0f 高%.0f | 内边距 系统后 %.0f 自身 %.0f 行为 %ld | 偏移 %.0f 内容 %.0f | 内容顶 现在 %.0f 静止 %.0f | 导航栏%@ 底边 %.0f%@ | 列表是%@第 %lu 个子视图%@%@%@",
+            (unsigned long)step,page,NSStringFromClass(list.class),CGRectGetMinY(frame),frame.size.height,
+            inset,list.contentInset.top,(long)list.contentInsetAdjustmentBehavior,offset,list.contentSize.height,currentTop,restingTop,
+            barShown?@"显示":@"隐藏",navBottom,held?(barWasHidden?@"，插件设置还拿着它（微信原本隐藏）":@"，插件设置还拿着它（微信原本显示）"):@"",
+            parent==controller.view?@"页面视图的":@"子容器的",(unsigned long)index+1,plateBelow?@"（下面有渐隐底板）":plateBehind?@"（渐隐底板排在它后面、画在它下面）":@"",
+            touched?@"，手指在动":@"",repair?@" → 回到列表顶部":addInset?[NSString stringWithFormat:@" → 补上顶部内边距 %.0f",missing]:under?@"，内容压在顶栏下面":@"");
+    }
+    if(repair) {
+        ++WXGPageTopRepairs;
+        [UIView performWithoutAnimation:^{[list setContentOffset:CGPointMake(list.contentOffset.x,-inset) animated:NO];}];
+        return;
+    }
+    if(addInset) {
+        ++WXGPageTopRepairs;
+        BOOL atTop=offset<=-inset+.5;
+        [UIView performWithoutAnimation:^{
+            UIEdgeInsets content=list.contentInset;content.top+=missing;list.contentInset=content;
+            UIEdgeInsets indicator=list.verticalScrollIndicatorInsets;indicator.top+=missing;list.verticalScrollIndicatorInsets=indicator;
+            if(atTop)[list setContentOffset:CGPointMake(list.contentOffset.x,-list.adjustedContentInset.top) animated:NO];
+        }];
+        return;
+    }
+    if(touched || step>=3)return;
+    static const double delays[]={.25,.6,1.2};
+    __weak UIViewController *weakController=controller;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)((delays[step]-(step?delays[step-1]:0))*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+        UIViewController *c=weakController;if(c)WXGCheckPageTop(c,step+1);
+    });
+}
+static void WXGNotePageAppeared(UIViewController *controller) {
+    static Class classes[3];static dispatch_once_t once;
+    dispatch_once(&once,^{
+        NSArray<NSString *> *names=@[@"ChatRoomInfoViewController",@"AddContactToChatRoomViewController",@"NewSettingViewController"];
+        for(NSUInteger i=0;i<3;i++)classes[i]=NSClassFromString(names[i]);
+    });
+    BOOL match=NO;for(NSUInteger i=0;i<3 && !match;i++)match=classes[i] && [controller isKindOfClass:classes[i]];
+    if(!match || !WXGPluginEnabled())return;
+    // The bar always; the list's top when pushed now (not when shown again
+    // after a page above it went: the scroll position is the user's then) or
+    // when the bar has just come back (the list rested at the bar-less top).
+    BOOL pushed=controller.isMovingToParentViewController;
+    __weak UIViewController *weakController=controller;
+    dispatch_async(dispatch_get_main_queue(),^{
+        UIViewController *c=weakController;if(!c)return;
+        BOOL shown=WXGSettingsShowBarForPage(c);
+        if(shown)[c.navigationController.view layoutIfNeeded];
+        if(pushed || shown)WXGCheckPageTop(c,0);
+    });
+}
 __attribute__((constructor)) static void WXGInitialize(void) {
     WXGLoadTime=CACurrentMediaTime();WXGColdLog(@"插件加载");
     if(![NSBundle.mainBundle.bundleIdentifier isEqual:@"com.tencent.xin"])return;
@@ -3508,6 +3631,7 @@ __attribute__((constructor)) static void WXGInitialize(void) {
                 ((void (*)(id,SEL,BOOL))original)(controller,selector,animated);
                 if(WXGBackdropCaptureInProgress()){++WXGIntegrationHost.shared.samplingLayoutSkips;return;}
                 WXGEdgeFadeNoteController(controller,YES);   // FIX64 (FIX65: our own settings pages too)
+                if(!will)WXGNotePageAppeared(controller);   // FIX106 I: 聊天信息 / 设置 rest at their top
                 if([NSStringFromClass(controller.class) hasPrefix:@"WXG"])return;
                 WXGIntegrationHost *host=WXGIntegrationHost.shared;[host start];
                 if(will)[host prepareController:controller];

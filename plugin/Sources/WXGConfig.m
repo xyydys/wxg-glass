@@ -183,6 +183,31 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockTapCalmWaitOn",'b',0,0,1,NULL,NULL},
     // FIX102: after a pause (WeChat's switch) the rest of the tap catches up.
     {"dockTapCatchUp",'b',1,0,1,NULL,NULL},
+    // 离散底栏: the selected tab a wide capsule, the others balls (on by
+    // default in this build); balls joined; the original pill on the
+    // selected tab; gap (pt); the selection's width (cells); balls x the
+    // dock's height; spring damping ratio and response (s, React's damping
+    // 20 / stiffness 230 / mass 1.2 is about 0.6 / 0.45); lighter glass.
+    {"dockDiscrete",'b',1,0,1,NULL,NULL},
+    {"dockDiscreteConnected",'b',0,0,1,NULL,NULL},
+    {"dockDiscretePill",'b',0,0,1,NULL,NULL},
+    {"dockDiscreteGap",'n',8,0,24,NULL,NULL},
+    {"dockDiscreteWide",'n',2,1,3,NULL,NULL},
+    {"dockDiscreteBall",'n',.9,.6,1.3,NULL,NULL},
+    {"dockDiscreteDamping",'n',.6,.45,1,NULL,NULL},
+    {"dockDiscreteResponse",'n',.45,.2,1,NULL,NULL},
+    {"dockDiscreteLight",'b',0,0,1,NULL,NULL},
+    // FIX106 B (user: icons and titles a little small): the icon's size (pt;
+    // A used the atlas's 26), the 中文 and English titles' sizes (A: 13 / 9.5).
+    {"dockDiscreteIconSize",'n',30,20,40,NULL,NULL},
+    {"dockDiscreteTitleSize",'n',15,10,20,NULL,NULL},
+    {"dockDiscreteSubtitleSize",'n',11,8,16,NULL,NULL},
+    // FIX106 C (user: connected, the end icons sat too far out): how far the
+    // joined balls' icons gather toward their run's middle (share of a cell).
+    {"dockDiscreteGather",'n',.22,0,.45,NULL,NULL},
+    // FIX106 H (user: the wide capsule's centred icon + titles look off, they
+    // need an offset): the block moved this far left when wide (pt; 0 = centred).
+    {"dockDiscreteContentShift",'n',10,0,30,NULL,NULL},
     // FIX95: the chat title's avatar (头像模式): its size and height (pt,
     // scaled with 截图比例微调), the ring's width and colour per appearance.
     {"avatarSize",'n',60,32,88,NULL,NULL},
@@ -786,6 +811,20 @@ NSUInteger WXGConfigRevision(void) {return WXGConfigRevisionCounter;}
 - (BOOL)dockTapSwitchAtTouchDown {return self.dockTapSwitchWhen==0;}
 - (BOOL)dockTapWaitForCalm {return [self extraNumber:@"dockTapCalmWaitOn"]>.5;}
 - (BOOL)dockTapCatchUp {return [self extraNumber:@"dockTapCatchUp"]>.5;}
+- (BOOL)dockDiscrete {return [self extraNumber:@"dockDiscrete"]>.5;}
+- (BOOL)dockDiscreteConnected {return [self extraNumber:@"dockDiscreteConnected"]>.5;}
+- (BOOL)dockDiscretePill {return [self extraNumber:@"dockDiscretePill"]>.5;}
+- (CGFloat)dockDiscreteGap {return WXGClamp([self extraNumber:@"dockDiscreteGap"],0,24);}
+- (CGFloat)dockDiscreteWide {return WXGClamp([self extraNumber:@"dockDiscreteWide"],1,3);}
+- (CGFloat)dockDiscreteBall {return WXGClamp([self extraNumber:@"dockDiscreteBall"],.6,1.3);}
+- (CGFloat)dockDiscreteDamping {return WXGClamp([self extraNumber:@"dockDiscreteDamping"],.45,1);}
+- (CGFloat)dockDiscreteResponse {return WXGClamp([self extraNumber:@"dockDiscreteResponse"],.2,1);}
+- (BOOL)dockDiscreteLight {return [self extraNumber:@"dockDiscreteLight"]>.5;}
+- (CGFloat)dockDiscreteIconSize {return WXGClamp([self extraNumber:@"dockDiscreteIconSize"],20,40);}
+- (CGFloat)dockDiscreteTitleSize {return WXGClamp([self extraNumber:@"dockDiscreteTitleSize"],10,20);}
+- (CGFloat)dockDiscreteSubtitleSize {return WXGClamp([self extraNumber:@"dockDiscreteSubtitleSize"],8,16);}
+- (CGFloat)dockDiscreteGather {return WXGClamp([self extraNumber:@"dockDiscreteGather"],0,.45);}
+- (CGFloat)dockDiscreteContentShift {return WXGClamp([self extraNumber:@"dockDiscreteContentShift"],0,30);}
 - (CGFloat)avatarSize {return [self extraNumber:@"avatarSize"];}
 - (CGFloat)avatarOffsetY {return [self extraNumber:@"avatarOffsetY"];}
 - (CGFloat)avatarBorderWidth {return [self extraNumber:@"avatarBorderWidth"];}

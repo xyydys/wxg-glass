@@ -418,6 +418,43 @@ static WXGSettingsNavigationState *WXGNavigationState(UINavigationController *na
     }
     return state;
 }
+// FIX106 I: whether the settings still hold this navigation's bar (diagnostics).
+BOOL WXGSettingsHoldsNavigation(UINavigationController *nav,BOOL *barWasHidden) {
+    WXGSettingsNavigationState *state=WXGNavigationState(nav,NO);
+    if(state && barWasHidden)*barWasHidden=state.barWasHidden;
+    return state!=nil;
+}
+// FIX106 I: a safety net (the host, on every page change): no settings page
+// is in this navigation any more but what WeChat had is still held (a stack
+// replaced without the pages being told, a pop whose completion never came):
+// WeChat gets its bar and edge swipe back as they were. Not mid-transition.
+BOOL WXGSettingsReleaseStaleNavigation(UINavigationController *nav) {
+    WXGSettingsNavigationState *state=WXGNavigationState(nav,NO);
+    if(!state || nav.transitionCoordinator || nav.isBeingDismissed)return NO;
+    for(UIViewController *controller in nav.viewControllers)if([controller isKindOfClass:WXGSettingsPage.class])return NO;
+    UIGestureRecognizer *pop=nav.interactivePopGestureRecognizer;
+    if(state.installed && pop.delegate==state)pop.delegate=state.original;
+    BOOL changed=nav.navigationBarHidden!=state.barWasHidden;
+    if(changed)[nav setNavigationBarHidden:state.barWasHidden animated:NO];
+    objc_setAssociatedObject(nav,&WXGNavigationStateKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    WXGLog(@"顶栏：插件设置已不在导航里，交还微信的导航栏（%@）",changed?(state.barWasHidden?@"隐藏":@"重新显示"):@"状态本来就对");
+    return YES;
+}
+// FIX106 I: one of WeChat's own pages that always show its title bar (设置,
+// 聊天信息) has just appeared without it, nothing of the plugin's settings is
+// in its navigation and nothing is presented over it: the settings' hold (if
+// any) is given back, and the bar shown.
+BOOL WXGSettingsShowBarForPage(UIViewController *page) {
+    UINavigationController *nav=page.navigationController;
+    if(!nav || nav.topViewController!=page || nav.transitionCoordinator || nav.isBeingDismissed ||
+       page.presentedViewController || nav.presentedViewController)return NO;
+    for(UIViewController *controller in nav.viewControllers)if([controller isKindOfClass:WXGSettingsPage.class])return NO;
+    WXGSettingsReleaseStaleNavigation(nav);
+    if(!nav.navigationBarHidden)return NO;
+    [nav setNavigationBarHidden:NO animated:NO];
+    WXGLog(@"顶栏：%@ 出现时微信的导航栏是隐藏的（插件设置已不在导航里），已重新显示",NSStringFromClass(page.class));
+    return YES;
+}
 @interface WXGSettingsPage () <UIColorPickerViewControllerDelegate,PHPickerViewControllerDelegate>
 - (void)step:(CADisplayLink *)link;
 @end
@@ -587,6 +624,24 @@ static WXGSettingsNavigationState *WXGNavigationState(UINavigationController *na
     UIGestureRecognizer *pop=nav.interactivePopGestureRecognizer;
     if(state.installed && pop.delegate==state)pop.delegate=state.original;
     if(nav.navigationBarHidden!=state.barWasHidden)[nav setNavigationBarHidden:state.barWasHidden animated:animated];
+    // FIX106 I (user: WeChat's settings page, and a plugin page opened from
+    // it, sometimes lost their title and back button, the list moved up by
+    // the bar's height): an interactive pop (the edge swipe, or iOS 26's
+    // swipe anywhere on the page) can still be cancelled; UIKit then puts the
+    // bar back as it was during the swipe - hidden - and this page appears
+    // again. Forgetting what WeChat had right here let the page record the
+    // hidden bar as WeChat's, and hand WeChat a hidden bar when it really
+    // left. What WeChat had is kept until the pop has completed.
+    id<UIViewControllerTransitionCoordinator> coordinator=nav.transitionCoordinator;
+    if(coordinator.isInteractive) {
+        __weak UINavigationController *weakNav=nav;
+        BOOL queued=[coordinator animateAlongsideTransition:nil completion:^(id<UIViewControllerTransitionCoordinatorContext> context){
+            UINavigationController *n=weakNav;
+            if(context.isCancelled || !n)return;
+            if(WXGNavigationState(n,NO)==state)objc_setAssociatedObject(n,&WXGNavigationStateKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }];
+        if(queued)return;
+    }
     objc_setAssociatedObject(nav,&WXGNavigationStateKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
 }
 - (void)step:(CADisplayLink *)link {(void)link;[self tickGlass:_forceGlass];_forceGlass=NO;}

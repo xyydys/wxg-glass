@@ -1,4 +1,30 @@
-# 交接说明（给新对话）· WeChat Liquid Glass TEST4 · 当前 FIX105 测试版 ABC
+# 交接说明（给新对话）· WeChat Liquid Glass TEST4 · 当前 FIX106 测试版 J（离散底栏）
+
+## FIX106（测试版 A–J · 离散底栏 + 顶栏修复）
+
+- 分支：`feature/discrete-dock`（含试过又撤回的 E/F/G 及其 revert）和 `feature/discrete-dock-clean`（只有保留的 A/B/C/D/H/I/J，两者代码树完全相同）。`master` = 基线 FIX105（4a8e3f8）。干净补丁 `git format-patch master..feature/discrete-dock-clean`。包版本 0.4.106-test4fix106j；设置页里的 `versionString` 和诊断 `version` 还写着 0.4.105（没改，只差显示）。
+- 编译（Linux，不用完整 Theos）：先跑一次 `plugin/tools/setup_linux_toolchain.sh`（clang-18 + ld64.lld、ldid procursus、theos/sdks 稀疏拉 iOS 16.5 SDK 到 `/home/claude/toolchain`），再 `cd plugin && sh tools/build_deb_linux.sh "$PWD" dist/out.deb`（解析 Makefile，`-Werror`，出 deb + dylib）。测试：`Tests/*.c` 57 个，x86 上用 `-O2 -ffp-contract=off`（不加的话 LensEndRimTests / RestingSelectionTests 在 FMA 下会 abort，基线就这样）；`DockScriptTests.c` 带 `-Werror` 有个基线就有的 unused 变量警告。`tools/check_msl.py`、`tools/check_unused_statics.py` 通过。纯插件改动，没动着色器、`WXGUniforms`、`VER`、服务器。
+
+### A–H 离散底栏（`WXGDockDiscrete.h` 纯 C + `Tests/DockDiscreteTests.c`，`WXGDemoBar.m`）
+
+- 用户要的样子（参考 React DiscreteTabs）：选中项是宽胶囊（左图标，右侧上中文下英文标题），其余是只有图标的玻璃小球（可选连成一个胶囊：小球占位 + 间距相连，不漏标题）；切换用阻尼弹簧（参考 damping 20 / stiffness 230 / mass 1.2）；可选给选中项加原来的选中胶囊。
+- A：每个胶囊一块 dock 玻璃（`WXGGlassView`，dockSurface），图标标题是 UIKit 视图叠在上面；所有 tab 的宽度跟同一个半隐式弹簧（`WXGSpring`），展开量之和恒为 1，整行不漂移，过冲时新 tab 鼓、旧 tab 挤；原来的整条玻璃休眠，搜索变形时交叉淡回整条；按下即切（按下时）、提交、角标照旧；`lensAtRest` 等弹簧停。`WXGGlassView.deferShapeField`（轮廓在动时用胶囊距离场）。宿主：`renderGlasses` / `allGlasses` / `propagateGlassSources` 接入采样、预热、内存释放。
+- B：未读角标放在每个胶囊右上 45° 处（不再压宽位的图标标题）；图标 / 标题加大到 30 / 15 / 11 pt（各一个设置）；相连小球和展开同时开始衔接（约 0.16 s 内连成一体，恒速 0.35×响应），不是等展开完再连。
+- C：相连时一串的图标向这串的中间均匀收拢（默认 0.22 格，设置），随弹簧滑动，角标跟着。
+- D：冷启动后快速切 tab（常是“我”）的闪退：底栏图标图集在后台队列读微信 tab 图标的 `-[UIImage imageAsset]`，主线程同时为离散底栏读同一批图，那个调用会创建并注册 asset、不是线程安全（`-[UIImageAsset _unsafe_registerImage:withConfiguration:]` EXC_BAD_ACCESS）。现在图标只在主线程解析（`WXGDockTabArtwork`），队列只画。
+- E（撤回）：软化各块边缘带 / 边框——用户看不出变化。“圆角鼓鼓的”核实过：轮廓就是连续圆角，观感来自边缘带 + iOS 27 边框参数。
+- F（撤回）：缩小宽位图标——用户要的是左右布局占位，不是大小。G（撤回）：图标贴左、标题右侧居中——用户要 A 的居中布局。
+- H：A 的居中块整体左移一个偏移（默认 10 pt，`dockDiscreteContentShift` 0–30，“宽位内容左移”；不超过左端圆角中心处的图标位置；小球不移），`WXGDiscreteContentShifted`。
+- 设置（底栏 › 离散样式，`WXGConfig.m` 的 `WXGExtraSpecs`）：`dockDiscrete`(开) `dockDiscreteConnected` `dockDiscreteGather`(.22) `dockDiscretePill` `dockDiscreteGap`(8) `dockDiscreteWide`(2 格) `dockDiscreteBall`(.9) `dockDiscreteIconSize`(30) `dockDiscreteTitleSize`(15) `dockDiscreteSubtitleSize`(11) `dockDiscreteContentShift`(10) `dockDiscreteDamping`(.6) `dockDiscreteResponse`(.45 s) `dockDiscreteLight`。
+
+### I / J 顶栏被吃（`WXGSettings.m`、`WXGHost.m`、`WXGEdgeFade.m`）
+
+- 用户：原生顶部被吃掉一部分——聊天设置（单聊 / 群聊的聊天信息）每次都是，微信设置和从它进的插件页偶尔（没有标题和返回）。截图逐像素对比（关插件的同页）：设置是导航栏被隐藏（列表上移“导航栏底 − 安全区顶”= 38 pt）；聊天信息是导航栏和玻璃都在，但列表内容整整压进顶栏 100 pt。
+- I（设置）：插件设置页出现时隐藏微信导航栏、离开时还回去（`WXGSettingsNavigationState`）。交互式返回（边缘滑、iOS 26 全屏滑）可以中途取消，UIKit 把导航栏恢复成隐藏、页面再出现一次；原来在 will-disappear 就丢掉“微信原来的状态”，再出现时把隐藏记成微信的，真正离开时交给微信一个隐藏的导航栏。现在状态保留到 pop 真正完成（coordinator completion、未取消）。兜底：`WXGSettingsReleaseStaleNavigation`（宿主每次 refresh：导航里已没有设置页还被拿着 → 还回导航栏和返回手势）；`WXGSettingsShowBarForPage`（设置 / 聊天信息出现时导航栏是隐藏的、栈里没有设置页、上面没有弹出 → 显示）。用户反馈 I 之后设置没再出现（本来就是偶发，继续观察）。
+- I 还加了 `WXGCheckPageTop`（`WXGHost.m`）：设置 / 聊天信息被 push 后约 1 秒内查 4 次，每次写一行日志“顶部 #n：页面 列表 y/高 | 内边距 系统后/自身/行为 | 偏移 | 内容顶 | 导航栏 | 列表是第几个子视图（底板）”；列表因偏移压进顶栏（内边距本身对）时回到顶部。计数 `runtime.pageTopRepairs`。
+- J（聊天信息，原因由 I 的日志确定）：聊天信息的 `WCTableView` 是 `contentInsetAdjustmentBehavior = never`、自身内边距 0、在页面视图里排第 2——第 1 个是渐隐的背景底板（`WXGEdgePlateView`，FIX66 起插在列表下面防黑边）。微信只给页面的**第一个子视图**留顶部内边距（同 UIKit 旧的自动内边距规则）；设置页自己设 88，不受影响。现在（非聊天页、列表本来排第一时）底板放在列表**后面**、`zPosition` 比列表低 1（`place:behind:`），列表仍是第一个、画面不变；底板仍是视图，玻璃采样照旧跳过它、照旧拆分页面（页面子图层全是视图，不能直接塞 CALayer，否则采样走整页慢路径）。聊天页不变。兜底：从未调整、内边距 0、从顶栏下面开始的列表，push 后补上导航栏需要的内边距（日志“补上顶部内边距”）。诊断 `edgeFade.pages[].backgroundPlate.behindList`、`listIndex`。
+- 待用户确认：J 装机后聊天信息是否正常；若不正常，日志里“顶部 #0”那行能看出列表排第几、内边距是谁给的。
+
 
 ## FIX105（测试版 ABC · 未授权整块撤出图层）
 
