@@ -683,7 +683,7 @@ const SHADER = [
   "    float endLeft=WXGLensEndReach(barMid.x-barHalf,barMid.x+barHalf,u.lens.x,u.lens.x+u.lens.z,-1);",
   "    float endRight=WXGLensEndReach(barMid.x-barHalf,barMid.x+barHalf,u.lens.x,u.lens.x+u.lens.z,1);",
   "    float barBand=WXGLensEndRelax(lensWidth,lens.nx,optical.edgeWidth,u.sync.y,endLeft,endRight);",
-  "    float2 bend=wxgBasePoint(p-n*(WXGOpticalOffset(lens.distance,WXGLensEdgeWidth(lens.nx,lens.ny,optical.edgeWidth,u.sync.y,u.sync.z),optical.refraction)*press),u);",   // FIX110: 底栏上下边框真折射——用透镜自身边宽剖面, 不再受 barBand(AtBar 收窄 + EndRelax 放松)限制
+  "    float2 bend=wxgBasePoint(p-n*(WXGOpticalOffset(lens.distance,barBand,optical.refraction)*press),u);",
   "    // FIX94 (extra.w = the margin, 0 off): the bar follows the lens' rim,",
   "    // magnified vertically per column (WXGLensBarZoom), not bent.",
   "    float zf=1.;",
