@@ -2,13 +2,13 @@
 
 私有仓库。Cloudflare 从这里自动部署（Workers Builds）。
 
-- `worker.js`：服务器代码 + 着色器 + 管理接口 `/v1/admin/*`。文件开头的 `ALLOWLIST` 常量现在只作回退与首次导入用。
+- `worker.js`：服务器代码 + 着色器 + 管理接口 `/v1/admin/*`。文件开头的 `ALLOWLIST` 常量**刻意留空**（FIX112）——名单以 KV 为唯一权威；常量里留真实账号会在 KV 被踢空时把人重新放行（隐形后门，“踢了还继续下发”的根因）。
 - `wrangler.jsonc`：部署配置，`name` 要和 Cloudflare 里的 Worker 名字一致（现在是 xyylwc）；绑定 KV 命名空间 `wxg-list`（绑定名 `LIST`）。
 - Secret（Cloudflare 的 Settings → Variables and Secrets，运行时那一栏，不是 Build 里那栏）：
   `SIGN_PRIV`（签名私钥）、`ADMIN_TOKEN`（管理 App 的口令）。都不在仓库里。
 
 **改名单**：用管理 App「授权台」（`admin/`），不用改代码、不用重部署。名单存在 KV 的 `allow:<账号哈希>`，
-改动写入即生效（KV 全球同步通常几秒、最长约 60 秒）。KV 里一个名单都没有时，worker 回退到 `ALLOWLIST` 常量，不会误锁。
+改动写入即生效（KV 全球同步通常几秒、最长约 60 秒）。**KV 为空时判定为全部拒绝**（`ALLOWLIST` 常量已留空，FIX112）——想放行先在授权台「加人」进 KV；别把真实账号写回常量，否则踢人会被它翻盘。
 
 **换着色器**：仍是改 `worker.js` 并提交，Cloudflare 自动重新部署。
 

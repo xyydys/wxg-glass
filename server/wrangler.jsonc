@@ -6,8 +6,8 @@
   "workers_dev": true,
 
   // FIX108：授权名单 + 核对流水都存这个 KV（命名空间 wxg-list）。管理 App 通过 /v1/admin/* 读写它。
-  // 绑定名必须是 LIST（worker.js 里用 env.LIST）。KV 还没导入名单时，worker 回退到 worker.js
-  // 顶部的 ALLOWLIST 常量，不会误锁；用 App「导入现有名单」（= POST /v1/admin/seed）后以 KV 为准。
+  // 绑定名必须是 LIST（worker.js 里用 env.LIST）。名单以 KV 为唯一权威；worker.js 顶部的
+  // ALLOWLIST 常量已刻意留空（FIX112），KV 为空＝全部拒绝。加人 / 踢人一律用 App（/v1/admin/*）。
   // 管理接口还需要 Worker 的 Secret：ADMIN_TOKEN（Settings → Variables and Secrets）。
   "kv_namespaces": [
     { "binding": "LIST", "id": "0e2c7c8397f141bc82602102f46e6241" }
