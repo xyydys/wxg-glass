@@ -1,3 +1,42 @@
+# 发版纪律与防破解姿态（B 方案）
+
+客户端渲染没有「不可破」：招牌折射是本地 `CAMeshTransform`（iOS 私有 API 从几个参数画），
+没有可藏的秘密、没有密码学手段能锁它。目标不是「不可破」，而是**「随手的免费破解进不来 +
+流出的破解会过期、可溯源」**。据此的纪律：
+
+1. **对外只发 `_obf` 包**（Run `build-deb` workflow 勾 `obfuscate=true`）。上次被 5 分钟破解，
+   是因为发的是普通包（明文端点 + 判定函数平铺）。普通包只内部用。
+2. **勤发版 + 升 `server/worker.js` 的 `VER`**：破解是定点字节补丁，版本一变、函数一挪就失效；
+   升 VER 还让被抠走内置的着色器作废（插件走 Outdated 拒掉）。
+3. **防篡改陷阱（FIX109）只在 obf 包里有意义**，且可被再 patch——它的价值是「每版、混淆里，
+   破解者要重新找的又一个点」，不是「不可破」。
+4. **水印只抓「转发解密着色器」那一类**（想要完整底栏→必须拿着色器）；抓不到纯布尔破解，别混为一谈。
+
+## 每次发版检查清单
+
+- [ ] 改完代码；若动了着色器 → 必须升 `server/worker.js` 的 `VER`（成对升级）
+- [ ] Run `build-deb`，勾 `obfuscate=true`（出 `_obf` 包；自测开关 `force_authorized`/`mesh_off` 保持关）
+- [ ] CI 日志两条自检：`OK：服务器地址已隐藏`、`OK：公钥已隐藏`
+- [ ] `strings *_obf.dylib | grep -E 'xyylwc|workers\.dev|73a7b661'` 应为空
+- [ ] **已授权真机**装 `_obf` 包：玻璃正常，且连用 2–3 分钟不在 60s 后消失（验证 FIX109 陷阱不误伤正版）
+- [ ] 滑动 / 切 tab / 点 dock 测帧率；若卡，Run 时从 `obf_files` 去掉 `Sources/WXGGlassView.m` 再编
+- [ ] 若动了着色器：授权号真机看效果；确认旧插件取到新 VER 会走 Outdated（不会把密文当明文编坏玻璃）
+- [ ] **只把 `_obf` 包对外**；普通包 / `_FORCEAUTH` / `_MESHOFF` 自测包一律不外发
+
+# FIX109 验证
+
+- 改动：`WXGUnlock.m`（导出 `WXGUnlockShaderReady`/`WXGUnlockHasUsableTicket`，读实际 `WXGShaderText`/`WXGTickets`）、
+  `WXGCommon.h`、`WXGLicense.m`（`WXGLicenseTamperSuspected` + 并入 `WXGPluginEnabled`）、
+  `.github/workflows/build.yml`（`obf_files` 默认扩到 `WXGGlassView.m`/`WXGBackdrop.m`；新增自测开关 `force_authorized`、`mesh_off`）、
+  `build_deb_linux.sh`（`EXTRA_CFLAGS` 透传）。
+- 自相矛盾陷阱：正版「授权为真」必伴随「有真票 / 真着色器」；破解只焊授权判定、造不出票/着色器
+  （其诊断即 `shaderReady=false`、`ticket={}`）。`WXGPluginEnabled` 现要求 `!WXGLicenseTamperSuspected()`：
+  自称已授权却既无票也无着色器、过 60s 宽限 → 判为被 patch，锁定本次运行、停止渲染。`WXG_FORCE_AUTHORIZED` 自测包里自动禁用。
+- CI 混淆构建通过（run 38826981581），两条字符串自检过；obf dylib 从 1.76MB 增至 2.6MB（网格后端混淆后变大，证明生效）。
+- 用户真机反馈：混淆未带来可感知的帧率压力。
+- **没有在真机上验证陷阱逻辑**；需上机确认：① 已授权号玻璃正常且不在 60s 后消失（不误伤）；② 帧率。
+- 诚实边界：陷阱可被再 patch，只在 obf 包里有意义；配合「只发 obf + 勤升 VER」才成立。
+
 # FIX105 验证
 
 - 和 FIX104 相比只改 `WXGHost.m`：refresh 的未授权分支调 `detachOverlays`（移走 overlay / 导航 overlay、隐藏悬浮入口），`ensureOverlay` 的悬浮入口显隐加上“已授权”条件；版本号 0.4.105。
