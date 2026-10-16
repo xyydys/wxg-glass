@@ -210,14 +210,30 @@ static WXGUnlockTicket *WXGTicketFromAnswer(NSDictionary *body,NSString *account
 
 #pragma mark - The encrypted cache (WXGUnlockQueue)
 
-// Library/Application Support/WeChatLiquidGlass/Unlock/<licence code>.wxgu in
-// WeChat's container: "WXGU1", a random IV, AES-256-CBC of the ticket's JSON.
+// FIX111：缓存仍在 Application Support（不被 iOS 清理），但目录/文件名不再写 "Unlock"/
+// "WeChatLiquidGlass"，改成从固定串派生的不透明十六进制名——障眼法，让翻容器的人不会一眼
+// 认出是授权缓存（混淆包里路径字符串本就加密，磁盘上的名字也不再是牌子了）。内容/加密/绑定不变：
+// 仍是 "WXGU1" + 随机 IV + AES-256-CBC(票据 JSON)，钥匙 WXGCacheKey(account,device)。
+// 诚实边界：只是 OPSEC 整洁，hook 文件 API 的逆向照样能抓到。
+static NSString *WXGOpaqueName(NSString *seed,NSUInteger hexLen) {
+    NSData *d=[seed dataUsingEncoding:NSUTF8StringEncoding];
+    unsigned char h[CC_SHA256_DIGEST_LENGTH]; CC_SHA256(d.bytes,(CC_LONG)d.length,h);
+    NSMutableString *s=[NSMutableString stringWithCapacity:hexLen];
+    for(NSUInteger i=0;i*2<hexLen && i<CC_SHA256_DIGEST_LENGTH;i++)[s appendFormat:@"%02x",h[i]];
+    return s;
+}
 static NSURL *WXGCacheDirectory(void) {
     NSURL *base=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
-    return [base URLByAppendingPathComponent:@"WeChatLiquidGlass/Unlock" isDirectory:YES];
+    return [base URLByAppendingPathComponent:WXGOpaqueName(@"wxg.store.v1",20) isDirectory:YES];   // 稳定、不透明、不碰微信自己的目录
 }
 static NSURL *WXGCacheFile(NSString *account) {
-    return [WXGCacheDirectory() URLByAppendingPathComponent:[account stringByAppendingPathExtension:@"wxgu"]];
+    NSString *name=WXGOpaqueName([@"wxg.item.v1|" stringByAppendingString:account?:@""],24);
+    return [WXGCacheDirectory() URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"dat"]];
+}
+// 一次性清理旧的显眼目录（Application Support 下 WeChatLiquidGlass 只有 Unlock，可整删）。
+static void WXGCleanupLegacyCache(void) {
+    NSURL *base=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+    if(base)[NSFileManager.defaultManager removeItemAtURL:[base URLByAppendingPathComponent:@"WeChatLiquidGlass" isDirectory:YES] error:nil];
 }
 static NSData *WXGCrypt(CCOperation operation,NSData *key,const void *iv,NSData *input) {
     NSMutableData *output=[NSMutableData dataWithLength:input.length+kCCBlockSizeAES128];size_t moved=0;
@@ -279,7 +295,7 @@ static NSArray<WXGUnlockTicket *> *WXGLoadCache(NSString *device) {
     NSMutableArray *tickets=[NSMutableArray array];
     NSArray<NSURL *> *files=[NSFileManager.defaultManager contentsOfDirectoryAtURL:WXGCacheDirectory() includingPropertiesForKeys:nil options:0 error:nil];
     for(NSURL *url in files) {
-        if(![url.pathExtension isEqualToString:@"wxgu"])continue;
+        if(![url.pathExtension isEqualToString:@"dat"])continue;
         BOOL discard=NO;
         WXGUnlockTicket *ticket=WXGReadCache(url,device,&discard);
         if(ticket)[tickets addObject:ticket];
@@ -543,6 +559,7 @@ void WXGUnlockStart(void) {
     if(WXGStarted || !NSThread.isMainThread)return;
     WXGStarted=YES;
     WXGTickets=[NSMutableDictionary dictionary];WXGDeniedAccounts=[NSMutableSet set];
+    WXGCleanupLegacyCache();   // FIX111: 删掉旧的显眼目录（一次性，不存在则无操作）
     WXGStartCacheLoad();
 }
 // Main thread; cheap (asked again at most once a second unless forced).
