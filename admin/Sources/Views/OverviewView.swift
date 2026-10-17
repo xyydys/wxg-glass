@@ -60,7 +60,8 @@ struct OverviewView: View {
             case .loaded(let h):
                 HStack(spacing: 10) {
                     StatTile(value: h.ver ?? "—", label: "着色器版本", tint: Theme.accent, icon: "cube.fill")
-                    StatTile(value: "\(h.allowCount ?? 0)", label: "授权人数", tint: Theme.accent2, icon: "person.fill")
+                    // L5：授权人数改读已鉴权的 ping（GET / 不再对外泄露这个数字）。
+                    StatTile(value: "\(ping.value?.allowCount ?? 0)", label: "授权人数", tint: Theme.accent2, icon: "person.fill")
                 }
                 VStack(spacing: 8) {
                     KeyValueRow(key: "签名私钥", value: h.signKey == "set" ? "已配置" : "缺失",

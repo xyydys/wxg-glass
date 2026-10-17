@@ -16,7 +16,7 @@ const ALLOWLIST = [];
 const VER = "1";
 // 复查间隔(秒):授权用户在线时多久联网核对一次 = 踢人多久生效;离线仍按 expiresAt(7 天)。
 // 只影响在线核对频率与负载,不碰签名有效期。想调快 / 调慢改这一个数即可(上限 7 天)。
-const RECHECK_AFTER = 1 * 24 * 3600;   // 1 天
+const RECHECK_AFTER = 20 * 60;   // FIX115: 20 分钟——在线复查频率＝踢人对“在线设备”最坏生效时间。离线仍按票据 7 天有效期（保护正常断网用户）。
 // ──────────────────────────────────
 // 着色器水印站点(FIX107 升级):挪到"二进制里没有参照"的 8 个 Metal-only 常数——AA 半宽、glow 下限、
 // 按压光学增益、smoothstep 边界,全是"动了也看不出来"的保护/边界值,且散布多处。去掉了旧版 5 系数全挤在
@@ -41,14 +41,14 @@ export default {
     // FIX108: 管理接口。名单与活动都走 KV，App 用 ADMIN_TOKEN 调这组 /v1/admin/*。
     // 不碰下面的签名/着色器逻辑；没配 KV 或没设 ADMIN_TOKEN 时整组退化为 503。
     if (url.pathname === "/v1/admin" || url.pathname.startsWith("/v1/admin/"))
-      return admin(req, env, url);
+      return stripCors(await admin(req, env, url));   // L8: 管理接口响应不带 CORS，不让浏览器跨源读取
 
     if (req.method === "GET") {   // 自检：私钥在不在、对应的公钥是哪把（公钥本来就是公开的）
       let pub = null;
       if (env.SIGN_PRIV) { try { pub = await publicFromPriv(env.SIGN_PRIV.trim()); } catch { pub = "invalid"; } }
       const list = await listMeta(env);
       return json({ ok: true, service: "wxg-unlock", ver: VER, signKey: env.SIGN_PRIV ? "set" : "missing", pub,
-                    listSource: list.source, allowCount: list.count, admin: env.ADMIN_TOKEN ? "set" : "missing" });
+                    listSource: list.source, admin: env.ADMIN_TOKEN ? "set" : "missing" });   // L5: 不再对未鉴权请求泄露授权人数（allowCount 只在已鉴权的 /v1/admin/ping 返回）
     }
     if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
@@ -57,11 +57,11 @@ export default {
     let body;
     try { body = await req.json(); } catch { return json({ error: "bad json" }, 400); }
     const account = String(body.account || "").toLowerCase();
-    const device  = String(body.device  || "").slice(0, 128);
+    const device  = String(body.device  || "").toLowerCase();
     const ts      = Number(body.ts || 0);
 
     if (!/^[0-9a-f]{64}$/.test(account)) return json({ error: "bad account" }, 400);
-    if (!device)                         return json({ error: "no device" }, 400);
+    if (!/^[0-9a-f]{64}$/.test(device))  return json({ error: "bad device" }, 400);   // L9: 设备也必须是 hex64 正版指纹（原来只查非空）
     if (!ts || Math.abs(Date.now() / 1000 - ts) > 300) return json({ error: "stale" }, 400);   // 5 分钟重放窗口
 
     if (!(await isAllowed(env, account))) { logCheckin(env, ctx, account, device, "denied"); return json({ error: "not authorized" }, 403); }
@@ -95,6 +95,13 @@ function cors(resp) {
   resp.headers.set("access-control-allow-origin", "*");
   resp.headers.set("access-control-allow-methods", "GET, POST, DELETE, OPTIONS");
   resp.headers.set("access-control-allow-headers", "content-type, authorization");
+  return resp;
+}
+// L8: 管理接口不开放 CORS（原生 App 不走浏览器 CORS，本就不需要）。
+function stripCors(resp) {
+  resp.headers.delete("access-control-allow-origin");
+  resp.headers.delete("access-control-allow-methods");
+  resp.headers.delete("access-control-allow-headers");
   return resp;
 }
 function json(obj, status = 200) {
@@ -920,6 +927,9 @@ function logCheckin(env, ctx, account, device, result) {
   const job = (async () => {
     try {
       const prev = JSON.parse(await env.LIST.get("seen:" + account) || "null") || {};
+      // M3/H1：被拒 + 从没见过这个账号（随机哈希洪水）→ 不写任何 KV，避免存储被刷爆；
+      // 被拒但以前成功过（真被踢的老用户）仍记录，方便你在授权台看到踢人生效。
+      if (result !== "ok" && !prev.account) return;
       // FIX114：设备集合 [{d,last}]，只在成功核对(ok)时累计（被拒的不算“在用”）。
       let devices = Array.isArray(prev.devices) ? prev.devices.filter(x => x && typeof x.d === "string")
                   : (prev.lastDevice ? [{ d: prev.lastDevice, last: prev.lastTs || ts }] : []);
@@ -953,17 +963,21 @@ function logCheckin(env, ctx, account, device, result) {
 
 // ── 鉴权 ──
 function tseq(a, b) { if (a.length !== b.length) return false; let r = 0; for (let i = 0; i < a.length; i++) r |= a.charCodeAt(i) ^ b.charCodeAt(i); return r === 0; }
-function adminAuthed(req, env) {
+// L7: 比对口令的 SHA-256（两边都是 64-hex 定长），tseq 定长恒时比较，不通过响应时序泄露口令长度。
+async function adminAuthed(req, env) {
   if (!env.ADMIN_TOKEN) return false;
   const m = /^Bearer\s+(.+)$/i.exec((req.headers.get("authorization") || "").trim());
-  return !!m && tseq(m[1], env.ADMIN_TOKEN);
+  if (!m) return false;
+  const a = await sha256hex(m[1]);
+  const b = await sha256hex(env.ADMIN_TOKEN);
+  return tseq(a, b);
 }
 
 // ── 路由 ──
 async function admin(req, env, url) {
-  if (!env.ADMIN_TOKEN) return json({ error: "admin disabled (set ADMIN_TOKEN secret)" }, 503);
-  if (!hasKV(env))      return json({ error: "admin disabled (bind KV namespace LIST)" }, 503);
-  if (!adminAuthed(req, env)) return json({ error: "unauthorized" }, 401);
+  // L6：先统一鉴权（未授权一律 401），再暴露任何配置状态（KV 是否绑定等），不给未鉴权者当探针。
+  if (!(await adminAuthed(req, env))) return json({ error: "unauthorized" }, 401);
+  if (!hasKV(env)) return json({ error: "admin disabled (bind KV namespace LIST)" }, 503);
   const p = url.pathname;
 
   if (p === "/v1/admin/ping" && req.method === "GET") {
