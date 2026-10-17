@@ -157,6 +157,7 @@ jobs:
           OBF_FLAGS: ${{ inputs.obf_flags }}
           OBF_FILES: ${{ inputs.obf_files }}
           LD_EXTRA: -Wl,-no_fixup_chains   # 间接跳转/调用混淆会撑爆 chained fixups，关掉它
+          EXTRA_CFLAGS: -DWXG_RELEASE=1     # FIX113: 对外发布包关掉日志/诊断（普通 build 不带，照常打日志）
         run: |
           export LDID="$RUNNER_TEMP/ldid"
           echo "混淆 flag: $OBF_FLAGS"

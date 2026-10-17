@@ -3336,6 +3336,9 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     [_actionHistory addObject:e];if(_actionHistory.count>500)[_actionHistory removeObjectAtIndex:0];
 }
 - (void)exportDiagnosticsFrom:(UIViewController *)controller {
+#if defined(WXG_RELEASE) && WXG_RELEASE
+    (void)controller;   // FIX113: 对外发布包不导出诊断
+#else
     /* Preserve pre-cover scene evidence AND separate live sampling counters.
        Exporting from settings must not disguise a paused/stale source. */
     NSString *path=[NSTemporaryDirectory() stringByAppendingPathComponent:@"WeChatLiquidGlass_TEST4_FIX103_diagnostics.json"];
@@ -3343,6 +3346,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     UIActivityViewController *a=[[UIActivityViewController alloc]initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
     a.popoverPresentationController.sourceView=controller.view;a.popoverPresentationController.sourceRect=CGRectMake(controller.view.bounds.size.width*.5,60,1,1);
     [controller presentViewController:a animated:YES completion:nil];
+#endif
 }
 @end
 // FIX102: nothing moving that a 50-95 ms read would freeze: no finger or

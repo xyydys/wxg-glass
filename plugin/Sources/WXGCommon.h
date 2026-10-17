@@ -7,6 +7,10 @@
 #import "WXGRenderPolicy.h"
 
 FOUNDATION_EXPORT NSString * const WXGSettingsChanged;
+// FIX113: 对外发布包（CI 的 build-obf 传 -DWXG_RELEASE=1）里 WXGLog 的函数体为空——
+// 不再在运行时往 syslog 打授权/流程日志（否则连上设备用 Console 就能看实时授权流程）。
+// 保持为真函数（不是空操作宏），调用点的变量照常算“已用”，-Werror 不会误报未使用。
+// 自测 / 调试包（普通 build，无此宏）照常打全量日志。
 FOUNDATION_EXPORT void WXGLog(NSString *format, ...) NS_FORMAT_FUNCTION(1,2);
 FOUNDATION_EXPORT CFTimeInterval WXGSecondsSinceLoad(void);   // FIX99: since the plugin loaded
 FOUNDATION_EXPORT NSString *WXGLogText(void);

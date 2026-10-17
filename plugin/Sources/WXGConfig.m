@@ -4,7 +4,12 @@
 NSString * const WXGSettingsChanged = @"com.runyu.WGLiquidDockDemo.settings";
 static NSMutableArray<NSString *> *WXGMessages;
 
+// FIX113: 对外发布包（-DWXG_RELEASE）里 WXGLog 函数体为空——运行时不再往 syslog 打
+// 授权/流程日志（否则连上设备用 Console 就能看实时授权流程）。保持真函数（非空操作宏），
+// 调用点的变量照常算“已用”，-Werror 不会误报未使用。WXGLogText 两边都在；release 下
+// 缓冲区从不写入，返回 ""。
 void WXGLog(NSString *format, ...) {
+#if !defined(WXG_RELEASE) || !WXG_RELEASE
     va_list args; va_start(args, format);
     NSString *message = [[NSString alloc] initWithFormat:format arguments:args];
     va_end(args);
@@ -14,6 +19,9 @@ void WXGLog(NSString *format, ...) {
         if (WXGMessages.count > 160) [WXGMessages removeObjectAtIndex:0];
     }
     NSLog(@"[WeChatLiquidGlass] %@", message);
+#else
+    (void)format;
+#endif
 }
 NSString *WXGLogText(void) {
     @synchronized(WXGConfig.class) { return [WXGMessages componentsJoinedByString:@"\n"] ?: @""; }
