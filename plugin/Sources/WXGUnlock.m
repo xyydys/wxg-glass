@@ -138,12 +138,16 @@ static NSString *WXGComputeDeviceHash(void) {
     if(!vendor)return nil;
     return WXGSHA256Hex([[@"WXGLiquidGlass.device.v1:" stringByAppendingString:vendor.UUIDString] dataUsingEncoding:NSUTF8StringEncoding]);
 }
-// The cache key belongs to this account on this phone: a copied file cannot
-// even be decrypted elsewhere (and its signature names the device anyway).
-static NSData *WXGCacheKey(NSString *account,NSString *device) {
+// The cache key belongs to this phone: a file copied to another device cannot
+// be decrypted (keyed on this device's id). FIX118: keyed on device ONLY now,
+// not account+device. 原因：FIX111 把缓存文件名改成不透明哈希后，读取侧已无法从文件名
+// 恢复账号，用账号+设备派生的钥匙就解不开自己写的缓存 → 冷启动每次都当没缓存、离线全废。
+// 账号不进钥匙是安全的：缓存文件里的票据本就按账号+设备签名、着色器也按账号+设备封装
+// （WXGTicketProblem / WXGUnsealShader 照验），拷到别的设备既解不开外层、也过不了签名。
+static NSData *WXGCacheKey(NSString *device) {
     static const unsigned char seed[32]={0x19,0x2c,0xb2,0x77,0x74,0x92,0xdf,0x3b,0xa6,0x36,0xfe,0x61,0x04,0xc5,0x97,0x54,
                                          0x63,0xd7,0x34,0xae,0x5e,0x78,0xec,0xf1,0x3e,0x6b,0xc9,0x29,0xca,0x85,0xd3,0xb7};
-    NSData *message=[[NSString stringWithFormat:@"cache.v1|%@|%@",account,device] dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *message=[[@"cache.v2|" stringByAppendingString:device?:@""] dataUsingEncoding:NSUTF8StringEncoding];
     NSMutableData *key=[NSMutableData dataWithLength:CC_SHA256_DIGEST_LENGTH];
     CCHmac(kCCHmacAlgSHA256,seed,sizeof seed,message.bytes,message.length,key.mutableBytes);
     return key;
@@ -213,7 +217,7 @@ static WXGUnlockTicket *WXGTicketFromAnswer(NSDictionary *body,NSString *account
 // FIX111：缓存仍在 Application Support（不被 iOS 清理），但目录/文件名不再写 "Unlock"/
 // "WeChatLiquidGlass"，改成从固定串派生的不透明十六进制名——障眼法，让翻容器的人不会一眼
 // 认出是授权缓存（混淆包里路径字符串本就加密，磁盘上的名字也不再是牌子了）。内容/加密/绑定不变：
-// 仍是 "WXGU1" + 随机 IV + AES-256-CBC(票据 JSON)，钥匙 WXGCacheKey(account,device)。
+// 仍是 "WXGU1" + 随机 IV + AES-256-CBC(票据 JSON)，钥匙 WXGCacheKey(device)（FIX118：只按设备）。
 // 诚实边界：只是 OPSEC 整洁，hook 文件 API 的逆向照样能抓到。
 static NSString *WXGOpaqueName(NSString *seed,NSUInteger hexLen) {
     NSData *d=[seed dataUsingEncoding:NSUTF8StringEncoding];
@@ -250,7 +254,7 @@ static void WXGWriteCache(WXGUnlockTicket *ticket) {
     NSData *json=[NSJSONSerialization dataWithJSONObject:plain options:0 error:nil];
     unsigned char iv[kCCBlockSizeAES128];
     if(!json || SecRandomCopyBytes(kSecRandomDefault,sizeof iv,iv)!=errSecSuccess)return;
-    NSData *sealed=WXGCrypt(kCCEncrypt,WXGCacheKey(ticket.account,ticket.device),iv,json);
+    NSData *sealed=WXGCrypt(kCCEncrypt,WXGCacheKey(ticket.device),iv,json);
     if(!sealed)return;
     NSMutableData *file=[NSMutableData dataWithBytes:WXGCacheMagic length:sizeof WXGCacheMagic];
     [file appendBytes:iv length:sizeof iv];[file appendData:sealed];
@@ -269,18 +273,18 @@ static void WXGDeleteCache(NSString *account) {
 // error) or decrypted with this phone's key is left alone.
 static WXGUnlockTicket *WXGReadCache(NSURL *url,NSString *device,BOOL *discard) {
     *discard=NO;
-    NSString *account=url.URLByDeletingPathExtension.lastPathComponent;
-    if(!WXGUnlockHex64(account.UTF8String)){*discard=YES;return nil;}
     NSData *file=[NSData dataWithContentsOfURL:url];
     if(!file)return nil;
     size_t header=sizeof WXGCacheMagic+kCCBlockSizeAES128;
     if(file.length<=header || memcmp(file.bytes,WXGCacheMagic,sizeof WXGCacheMagic)){*discard=YES;return nil;}
     NSData *sealed=[file subdataWithRange:NSMakeRange(header,file.length-header)];
-    NSData *json=WXGCrypt(kCCDecrypt,WXGCacheKey(account,device),(const unsigned char *)file.bytes+sizeof WXGCacheMagic,sealed);
+    NSData *json=WXGCrypt(kCCDecrypt,WXGCacheKey(device),(const unsigned char *)file.bytes+sizeof WXGCacheMagic,sealed);
     NSDictionary *plain=json?[NSJSONSerialization JSONObjectWithData:json options:0 error:nil]:nil;
-    if(![plain isKindOfClass:NSDictionary.class])return nil;
+    if(![plain isKindOfClass:NSDictionary.class])return nil;   // 解不开（不是本机的文件 / 损坏）：留着，别删
     *discard=YES;
-    if(![plain[@"account"] isEqual:account] || ![plain[@"device"] isEqual:device])return nil;
+    // FIX118: 账号从解密后的内容里取（文件名已是不透明哈希，不再是账号）。
+    NSString *account=WXGStringValue(plain[@"account"]);
+    if(!account || !WXGUnlockHex64(account.UTF8String) || ![plain[@"device"] isEqual:device])return nil;
     WXGUnlockTicket *ticket=WXGTicketFromAnswer(plain,account,device);
     ticket.fetchedAt=[plain[@"fetchedAt"] isKindOfClass:NSNumber.class]?[plain[@"fetchedAt"] doubleValue]:0;
     ticket.origin=@"cache";
