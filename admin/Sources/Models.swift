@@ -7,6 +7,11 @@ struct AllowEntry: Codable, Identifiable, Hashable {
     var id: String { account }
 }
 
+struct SeenDevice: Codable, Hashable {
+    let d: String
+    let last: Double
+}
+
 struct SeenAccount: Codable, Identifiable, Hashable {
     let account: String
     var lastDevice: String
@@ -14,6 +19,11 @@ struct SeenAccount: Codable, Identifiable, Hashable {
     var firstTs: Double
     var count: Int
     var lastResult: String
+    // FIX114（A：设备治理）。老记录没有这些字段，解码为 nil，不影响兼容。
+    var devices: [SeenDevice]? = nil
+    var deviceCount: Int? = nil
+    var activeDevices: Int? = nil
+    var flagged: Bool? = nil        // 近 7 天 >1 台设备 → 爆红
     var id: String { account }
 }
 

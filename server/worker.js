@@ -879,10 +879,15 @@ const SHADER = [
 // ALLOWLIST 常量，/v1/admin/* 一律 503 —— 所以这份 worker 不配 KV 也能照旧跑，可零风险先部署。
 //
 //   allow:<account>   {account, note, addedAt}             —— 在这张表里即「已授权」
-//   seen:<account>    {account, lastDevice, lastTs, firstTs, count, lastResult}
+//   seen:<account>    {account, lastDevice, devices:[{d,last}], deviceCount, activeDevices, flagged, lastTs, firstTs, count, lastResult}
 //   ev:<ts>:<rand>    {ts, account, device, result}         —— 近期核对流水（30 天 TTL）
 const LICENSE_PREFIX = "WXGLiquidGlass.license.v1:";
 const EV_TTL = 30 * 24 * 3600;
+// FIX114（A：设备治理）：每账号记录用过的设备，近 DEVICE_WINDOW 内 >1 台即 flagged（授权台爆红，只标记、不拦截）。
+// SEEN_TTL 让 seen: 记录“不活动即过期（每次核对刷新）”，防被随机账号刷爆 KV（审计 H1）。
+const SEEN_TTL = 90 * 24 * 3600;        // 90 天不活动即过期；正版常核对会不断刷新
+const DEVICE_WINDOW = 7 * 24 * 3600;    // 近 7 天算“在用”（与票据有效期一致）
+const DEVICE_KEEP = 5;                  // 每账号最多留最近 5 台设备
 
 function hasKV(env) { return !!(env && env.LIST && typeof env.LIST.get === "function"); }
 async function sha256hex(str) { return toHex(await sha256(utf8(str))); }
@@ -911,20 +916,36 @@ async function listMeta(env) {
 function logCheckin(env, ctx, account, device, result) {
   if (!hasKV(env) || !/^[0-9a-f]{64}$/.test(account)) return;
   const ts = Math.floor(Date.now() / 1000);
+  const validDevice = /^[0-9a-f]{64}$/.test(device || "") ? device : "";   // 只认正版设备指纹，脏值不进集合
   const job = (async () => {
     try {
       const prev = JSON.parse(await env.LIST.get("seen:" + account) || "null") || {};
+      // FIX114：设备集合 [{d,last}]，只在成功核对(ok)时累计（被拒的不算“在用”）。
+      let devices = Array.isArray(prev.devices) ? prev.devices.filter(x => x && typeof x.d === "string")
+                  : (prev.lastDevice ? [{ d: prev.lastDevice, last: prev.lastTs || ts }] : []);
+      if (result === "ok" && validDevice) {
+        const i = devices.findIndex(x => x.d === validDevice);
+        if (i >= 0) devices[i] = { d: validDevice, last: ts };
+        else devices.push({ d: validDevice, last: ts });
+        devices.sort((a, b) => (b.last || 0) - (a.last || 0));   // 最近在前
+        if (devices.length > DEVICE_KEEP) devices = devices.slice(0, DEVICE_KEEP);
+      }
+      const activeDevices = devices.filter(x => ts - (x.last || 0) <= DEVICE_WINDOW).length;
       const seen = {
         account,
-        lastDevice: device || prev.lastDevice || "",
+        lastDevice: validDevice || prev.lastDevice || "",
+        devices,
+        deviceCount: devices.length,
+        activeDevices,
+        flagged: activeDevices > 1,                 // A：近 7 天 >1 台设备 → 授权台爆红（只标记、不拦截）
         lastTs: ts,
         firstTs: prev.firstTs || ts,
         count: (prev.count | 0) + 1,
         lastResult: result,
       };
-      await env.LIST.put("seen:" + account, JSON.stringify(seen));
+      await env.LIST.put("seen:" + account, JSON.stringify(seen), { expirationTtl: SEEN_TTL });
       const rand = Math.random().toString(36).slice(2, 8);
-      await env.LIST.put(`ev:${ts}:${rand}`, JSON.stringify({ ts, account, device: device || "", result }), { expirationTtl: EV_TTL });
+      await env.LIST.put(`ev:${ts}:${rand}`, JSON.stringify({ ts, account, device: validDevice, result }), { expirationTtl: EV_TTL });
     } catch { /* 日志失败不影响授权 */ }
   })();
   if (ctx && typeof ctx.waitUntil === "function") ctx.waitUntil(job); else job.catch(() => {});
@@ -1012,7 +1033,7 @@ async function admin(req, env, url) {
       const r = await env.LIST.list({ prefix: "seen:", cursor });
       for (const k of r.keys) { const v = JSON.parse(await env.LIST.get(k.name) || "null"); if (v) accounts.push(v); }
       cursor = r.list_complete ? undefined : r.cursor;
-    } while (cursor);
+    } while (cursor && accounts.length < 5000);   // FIX114/H1：给 seen: 扫描封顶，防被刷爆后拖垮管理页
     accounts.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
     return json({ events, accounts });
   }

@@ -114,16 +114,22 @@ struct ActivityView: View {
     }
 
     private func accountRow(_ acc: SeenAccount) -> some View {
-        HStack(spacing: 12) {
-            Circle().fill(acc.lastResult == "ok" ? Theme.good : Theme.bad).frame(width: 8, height: 8)
+        // FIX114（A）：近 7 天 >1 台设备 → 爆红（红点 + 红标“多设备 N”），但账号仍放行。
+        let flagged = acc.flagged ?? false
+        let active = acc.activeDevices ?? acc.deviceCount ?? 0
+        return HStack(spacing: 12) {
+            Circle().fill(flagged ? Theme.bad : (acc.lastResult == "ok" ? Theme.good : Theme.bad)).frame(width: 8, height: 8)
             VStack(alignment: .leading, spacing: 2) {
                 Text(shortHash(acc.account)).font(.system(.footnote, design: .monospaced))
-                Text("核对 \(acc.count) 次 · 设备 \(shortHash(acc.lastDevice))")
+                Text(flagged
+                     ? "核对 \(acc.count) 次 · 在用 \(active) 台设备（上限 1）"
+                     : "核对 \(acc.count) 次 · 设备 \(shortHash(acc.lastDevice))")
                     .font(.caption2).foregroundStyle(.tertiary).lineLimit(1)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 2) {
-                StatusPill(text: acc.lastResult == "ok" ? "通过" : "拒绝", kind: acc.lastResult == "ok" ? .good : .bad)
+                StatusPill(text: flagged ? "多设备 \(active)" : (acc.lastResult == "ok" ? "通过" : "拒绝"),
+                           kind: (flagged || acc.lastResult != "ok") ? .bad : .good)
                 Text(relativeTime(acc.lastTs)).font(.caption2).foregroundStyle(.secondary)
             }
         }
