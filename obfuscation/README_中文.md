@@ -61,8 +61,8 @@ Arkari 的 flag 是 `-irobf-*` 系（不是经典 OLLVM 的 `-sobf/-fla/-sub`）
 |---|---|---|---|
 | 1 | `-mllvm -irobf -mllvm -irobf-cse` | 字符串加密（藏 endpoint/公钥） | 玻璃正常；dylib 搜不到 `workers.dev` |
 | 2 | 上面 + `-mllvm -irobf-cff` | 控制流平坦化 | 授权/踢人正常；无明显掉帧 |
-| 3 | 上面 + `-mllvm -irobf-indbr -mllvm -irobf-icall` | 间接跳转/调用 | 冷启、验签、复查都正常 |
-| 4 | 上面 + `-mllvm -irobf-indgv -mllvm -irobf-cie` | 间接全局 + 整数常量加密 | 全流程回归 |
+| 3 | 上面 + `-mllvm -irobf-indbr` | 间接跳转 | 冷启、验签、复查都正常 |
+| 4 | 上面 + `-mllvm -irobf-cie` | 整数常量加密 | 全流程回归 |
 
 每步只在前一步真机通过后再加下一个 flag；一旦某步出问题，回退上一步单独排查。
 
@@ -74,10 +74,27 @@ Arkari 的 flag 是 `-irobf-*` 系（不是经典 OLLVM 的 `-sobf/-fla/-sub`）
 | `-irobf-cse` | C 字符串加密 ← 最高性价比 |
 | `-irobf-cff` | 控制流平坦化 |
 | `-irobf-indbr` | 间接跳转（加密目标） |
-| `-irobf-icall` | 间接调用（加密目标地址） |
-| `-irobf-indgv` | 间接全局变量引用 |
+| `-irobf-icall` | 间接调用（加密目标地址）⚠️ **不能用**，见下 |
+| `-irobf-indgv` | 间接全局变量引用 ⚠️ **不能用**，见下 |
 | `-irobf-cie` / `-irobf-cfe` | 整数 / 浮点常量加密 |
 | `-level-icall=3` 等 | 强度 0–3 |
+
+## ⚠️ 不能开 `-irobf-icall` / `-irobf-indgv`（FIX106 J 闪退）
+
+这两个 pass 把每个被引用的函数 / 全局变量存成「地址 + 64 位随机密钥」，运行时再减回来。
+引用的是系统函数（`CGContextRelease`、`objc_setProperty_nonatomic_copy`、`dispatch_async`…）时，
+它就成了一个**带 64 位附加偏移的绑定**。FIX106 J 的混淆包里有 331 处。
+
+插件被打进 IPA（侧载、巨魔注入，`LC_LOAD_DYLIB`）后是 App 启动的一部分，iOS 16+ 的 dyld4 要把每个
+绑定目标写进启动缓存（PrebuiltLoader），偏移只能存 8 位高位 + 39 位有符号数，存不下就断言退出：
+`Assertion failed: ... "large offset not support", function BindTargetRef, file PrebuiltLoader.cpp`
+——微信每次一打开就闪退（iPhone 15 Pro · iOS 17.0 实测）。越狱插件加载器和 LiveContainer 是启动后
+`dlopen`，不生成启动缓存，所以自己设备上测不出来。
+
+`-irobf-indbr` 只跳函数内部的块（本模块重定位，不是绑定），不受影响；`-Wl,-no_fixup_chains` 仍要留着
+（它的地址常量放不进 chained fixups）。CI 两个作业出包后都会跑 `plugin/tools/check_dyld_binds.sh`，
+有这种绑定就让构建失败。要恢复间接调用，得给 Arkari 打补丁让它跳过外部声明（只混淆本模块里定义的函数），
+再重编工具链镜像。
 
 ## 待验证 / 风险
 

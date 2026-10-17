@@ -16,9 +16,9 @@ on:
         type: boolean
         default: false
       obf_flags:
-        description: 'Arkari -mllvm flag（默认全套：字符串加密 + 控制流平坦化 + 间接跳转/调用，已真机验过）'
+        description: 'Arkari -mllvm flag（默认：字符串加密 + 控制流平坦化 + 间接跳转。别加 -irobf-icall / -irobf-indgv：打进 IPA 后启动即闪退，见 tools/check_dyld_binds.sh）'
         type: string
-        default: '-mllvm -irobf -mllvm -irobf-cse -mllvm -irobf-cff -mllvm -irobf-indbr -mllvm -irobf-icall'
+        default: '-mllvm -irobf -mllvm -irobf-cse -mllvm -irobf-cff -mllvm -irobf-indbr'
       obf_files:
         description: '混淆这些文件（空格分隔）。默认已含网格后端 WXGGlassView/WXGBackdrop——⚠️这俩有每帧热路径，上机务必测帧率，卡顿就把 WXGGlassView.m 从本行删掉再 Run。'
         type: string
@@ -49,8 +49,8 @@ jobs:
       - name: Install clang-18, lld, dpkg
         run: |
           sudo apt-get update
-          sudo apt-get install -y clang-18 lld-18 dpkg-dev curl
-          ls /usr/lib/llvm-18/bin/clang /usr/lib/llvm-18/bin/ld64.lld
+          sudo apt-get install -y clang-18 lld-18 llvm-18 dpkg-dev curl
+          ls /usr/lib/llvm-18/bin/clang /usr/lib/llvm-18/bin/ld64.lld /usr/lib/llvm-18/bin/llvm-objdump
       - name: Cache iOS 16.5 SDK
         id: sdk-cache
         uses: actions/cache@v4
@@ -98,6 +98,9 @@ jobs:
           if strings "${OUT%.deb}.dylib" | grep -q "__METAL_VERSION__\|METAL_VERSION"; then
             echo "::error::dylib 里出现了着色器文本，构建中止"; exit 1
           fi
+          # FIX106：绑定的附加偏移要能放进 dyld 启动缓存（打进 IPA 时启动即闪退的那类问题）
+          OBJDUMP=/usr/lib/llvm-18/bin/llvm-objdump sh tools/check_dyld_binds.sh "${OUT%.deb}.dylib" || {
+            echo "::error::dylib 的绑定表 dyld 启动缓存存不下，打进 IPA 会启动即闪退"; exit 1; }
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
@@ -179,6 +182,19 @@ jobs:
           if strings "$D" | grep -q "73a7b661b9de"; then
             echo "::warning::dylib 里仍能搜到公钥明文 —— -irobf-cse 可能未对 C 字符串生效"
           else echo "OK：公钥已隐藏"; fi
+          # FIX106：-irobf-icall / -irobf-indgv 把导入函数存成「符号 + 64 位随机密钥」，
+          # 这种绑定 dyld 的启动缓存存不下：打进 IPA（侧载 / 巨魔注入）后 iOS 16+ 启动即闪退
+          # （FIX106 J 混淆包：331 处，iPhone 15 Pro iOS 17.0 实测崩溃）。越狱 / LiveContainer 不受影响，所以自测发现不了。
+          set +e; sh tools/check_dyld_binds.sh "$D"; rc=$?; set -e
+          if [ "$rc" = 2 ]; then
+            (apt-get install -y --no-install-recommends llvm >/dev/null 2>&1 || true)
+            set +e; sh tools/check_dyld_binds.sh "$D"; rc=$?; set -e
+          fi
+          if [ "$rc" = 1 ]; then
+            echo "::error::混淆包的绑定表 dyld 启动缓存存不下（打进 IPA 会启动即闪退）——从 obf_flags 去掉 -irobf-icall / -irobf-indgv 再 Run"; exit 1
+          elif [ "$rc" != 0 ]; then
+            echo "::warning::没能检查绑定表（容器里没有 llvm-objdump），发包前请本地跑 tools/check_dyld_binds.sh"
+          fi
       - name: Upload artifact (obfuscated)
         uses: actions/upload-artifact@v4
         with:
