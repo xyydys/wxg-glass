@@ -11,5 +11,13 @@
   // 管理接口还需要 Worker 的 Secret：ADMIN_TOKEN（Settings → Variables and Secrets）。
   "kv_namespaces": [
     { "binding": "LIST", "id": "0e2c7c8397f141bc82602102f46e6241" }
+  ],
+
+  // M3（FIX116）：Workers 原生限流绑定（边缘执行，不走 KV）。按来源 IP 每 10 秒 60 次，
+  // 超了 /v1/unlock 直接返回 429（worker.js 里 fail-open：绑定缺失/异常一律放行，不误伤正版）。
+  // namespace_id 是你账号内这个限流器的唯一 ID（取整数值的字符串）；period 只能是 10 或 60。
+  // 该绑定按 Cloudflare 各站点计数、最终一致，是“尽量挡洪水”，非精确计数——够用。
+  "ratelimits": [
+    { "name": "UNLOCK_RL", "namespace_id": "1001", "simple": { "limit": 60, "period": 10 } }
   ]
 }

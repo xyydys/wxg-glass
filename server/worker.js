@@ -54,6 +54,19 @@ export default {
 
     if (url.pathname !== "/v1/unlock") return json({ error: "not found" }, 404);
 
+    // M3（FIX116）：边缘限流（Workers Rate Limiting 绑定，非 KV）。按来源 IP 限速，挡住洪水 / 批量探测。
+    // fail-open：绑定缺失或异常一律放行，绝不因限流误伤正版。429 只是暂时失败，客户端退避重试，
+    // 手里有效的缓存票不受影响（不会触发“被拒删缓存”，那只对 403 生效）。
+    if (env.UNLOCK_RL) {
+      const ip = req.headers.get("CF-Connecting-IP") || "";
+      if (ip) {
+        try {
+          const { success } = await env.UNLOCK_RL.limit({ key: ip });
+          if (!success) return json({ error: "rate limited" }, 429);
+        } catch { /* 限流器异常 → 放行 */ }
+      }
+    }
+
     let body;
     try { body = await req.json(); } catch { return json({ error: "bad json" }, 400); }
     const account = String(body.account || "").toLowerCase();
