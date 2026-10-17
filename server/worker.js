@@ -940,9 +940,9 @@ function logCheckin(env, ctx, account, device, result) {
   const job = (async () => {
     try {
       const prev = JSON.parse(await env.LIST.get("seen:" + account) || "null") || {};
-      // M3/H1：被拒 + 从没见过这个账号（随机哈希洪水）→ 不写任何 KV，避免存储被刷爆；
-      // 被拒但以前成功过（真被踢的老用户）仍记录，方便你在授权台看到踢人生效。
-      if (result !== "ok" && !prev.account) return;
+      // FIX117：被拒记录全部写回（含从没见过的账号）——新人/被踢/加错账号的“拒绝”都会出现在
+      // 授权台核对记录里，拿它来对账号哈希、给新人开通。当初 FIX115 为防洪水跳过写入，现在洪水已由
+      // FIX116 边缘限流 + ev:/seen: 的 TTL + 管理页扫描封顶兜住，恢复安全。
       // FIX114：设备集合 [{d,last}]，只在成功核对(ok)时累计（被拒的不算“在用”）。
       let devices = Array.isArray(prev.devices) ? prev.devices.filter(x => x && typeof x.d === "string")
                   : (prev.lastDevice ? [{ d: prev.lastDevice, last: prev.lastTs || ts }] : []);
