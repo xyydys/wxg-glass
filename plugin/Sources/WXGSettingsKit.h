@@ -27,6 +27,7 @@ FOUNDATION_EXPORT NSString * const WXGSettingsUIChanged;
 @property(nonatomic,strong,readonly) UIView *contentView;
 @property(nonatomic) BOOL pressable;
 @property(nonatomic) CGFloat cornerRadius;
+@property(nonatomic) BOOL capsule;   // FIX114 E: round ends whatever the page's corner radius
 @property(nonatomic,copy) void (^action)(void);
 - (void)tick:(CFTimeInterval)time force:(BOOL)force;
 @end
@@ -55,5 +56,11 @@ FOUNDATION_EXPORT NSString * const WXGSettingsUIChanged;
 @end
 
 FOUNDATION_EXPORT UIViewController *WXGSettingsModulePage(NSString *module);
+FOUNDATION_EXPORT UIViewController *WXGChatGroupsPage(void);   // FIX113 R: 分组 › 管理分组 (WXGChatGroups.m)
+// FIX113 O: the settings search. A module page opened at a group (spec index)
+// and row (-1: the group); results of a query over the home cards (module,
+// title, subtitle, ...): module, group, row, title, path.
+FOUNDATION_EXPORT UIViewController *WXGSettingsModulePageFocused(NSString *module,NSInteger group,NSInteger row);
+FOUNDATION_EXPORT NSArray<NSDictionary *> *WXGSettingsSearch(NSString *query,NSArray<NSArray *> *cards);
 FOUNDATION_EXPORT UIViewController *WXGSettingsDiagnosticsPage(void);
 FOUNDATION_EXPORT NSString *WXGHexFromColor(UIColor *color);

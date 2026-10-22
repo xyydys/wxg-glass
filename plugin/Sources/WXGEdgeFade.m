@@ -299,7 +299,7 @@ static BOOL WXGEdgeClassOwns(Class cls,SEL selector) {
 static void WXGEdgeListChanged(UIScrollView *list) {
     if(WXGBackdropCaptureInProgress())return;
     WXGEdgePage *page=WXGEdgePageForList(list);
-    if(page)WXGPerfTimePluginWork(^{[page syncGeometry];});   // FIX84: counted in the frame-rate log
+    if(page)WXGPerfTimePluginWorkAs("edgeFade",^{[page syncGeometry];});   // FIX84: counted in the frame-rate log
 }
 /* The list's class (once): its setBounds: / setFrame: / setCenter: /
    layoutSubviews run as before, then the page follows. A method the class

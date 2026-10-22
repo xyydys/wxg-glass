@@ -24,14 +24,24 @@ static inline void WXGElasticStep(WXGElasticMotion *s,double velocity,double dt)
     WXGSpring(&s->stretch,&s->velocity,log1p(WXG_ELASTIC_GAIN*drive),140,10.,dt);
     s->stretch=WXGClamp(s->stretch,log(WXG_ELASTIC_MIN),log(WXG_ELASTIC_MAX));
 }
+// FIX113 Y (user: while the lens stretches with the drag speed, the band
+// above / below the bar inside it swings from almost nothing to fat): the
+// share of the height change kept (1 as before, 0 the height never changes;
+// the width still stretches).
+static inline WXGDockGeometry WXGElasticLayoutLimited(float width,float height,float gap,float anchor,
+        float press,float growth,float demoStretch,WXGElasticMotion motion,float barGrowth,float wrap,float heightShare);
 static inline WXGDockGeometry WXGElasticLayout(float width,float height,float gap,float anchor,
         float press,float growth,float demoStretch,WXGElasticMotion motion,float barGrowth,float wrap) {
+    return WXGElasticLayoutLimited(width,height,gap,anchor,press,growth,demoStretch,motion,barGrowth,wrap,1.f);
+}
+static inline WXGDockGeometry WXGElasticLayoutLimited(float width,float height,float gap,float anchor,
+        float press,float growth,float demoStretch,WXGElasticMotion motion,float barGrowth,float wrap,float heightShare) {
     // Keep the first 65% of the original demo reveal unchanged. Gate both value
     // and slope smoothly; release is still entirely driven by the demo envelope.
     float t=WXGOClamp((press-.65f)/.35f,0,1),gate=t*t*(3-2*t);
     WXGDockGeometry g=WXGDockLayout(width,height,gap,anchor,press,growth,demoStretch*(1-gate),barGrowth,wrap);
     if(gate<=0)return g;
-    float strain=(float)motion.stretch*gate;
+    float strain=(float)motion.stretch*gate,restHeight=g.lensHeight;
     g.lensWidth=WXG_MIN(g.lensWidth*expf(strain),g.barWidth+2*wrap);
     if(strain>0) {
         // Normalize the vertical contraction to the user's larger TEST9
@@ -40,6 +50,7 @@ static inline WXGDockGeometry WXGElasticLayout(float width,float height,float ga
         // Sustained fast travel now ends slightly thinner than the bar (90%).
         g.lensHeight+=(g.barHeight*.90f-g.lensHeight)*compression;
     }else g.lensHeight*=expf(-.78f*strain);
+    g.lensHeight=restHeight+(g.lensHeight-restHeight)*WXGOClamp(heightShare,0.f,1.f);   // FIX113 Y
     g.lensHeight=WXG_MIN(g.lensHeight,height+2*(WXGCanvasPaddingY-4));
     float first=WXGSelectionCenter(width,gap,0),last=WXGSelectionCenter(width,gap,3);
     float position=WXGOClamp((anchor-first)/WXG_MAX(1.f,last-first),0,1);

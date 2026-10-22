@@ -149,7 +149,40 @@ static UIImage *WXGScaledImage(UIImage *image,CGFloat pixels,BOOL opaque) {
 @implementation WXGSettingsStore {
     NSCache<NSString *,id> *_images;   // file name -> UIImage or NSNull; dropped under memory pressure
 }
-+ (instancetype)shared {static WXGSettingsStore *store;static dispatch_once_t once;dispatch_once(&once,^{store=[self new];});return store;}
++ (instancetype)shared {static WXGSettingsStore *store;static dispatch_once_t once;dispatch_once(&once,^{store=[self new];[store adoptBuildDefaults];});return store;}
+// FIX114 G: as WXGConfig's adoptBuildDefaults, for the settings page's look
+// (corner radius, accent): still the previous build's default: this build's.
+- (void)adoptBuildDefaults {
+    NSUserDefaults *suite=[self defaults];NSString *stamp=WXGBuildDefaultsStamp();
+    if(!stamp.length || [[suite stringForKey:@"defaultsStamp.ui"] isEqualToString:stamp])return;
+    NSDictionary *stored=nil;
+    NSDictionary *previous=WXGPreviousBuildDefaultSection(@"ui"),*current=WXGBuildDefaultSection(@"ui");
+    NSUInteger moved=0,kept=0;NSString *failure=nil;
+    @try {   // FIX114 G (review): inside +shared at launch: never throws out; the stamp written whatever happens
+    stored=[suite dictionaryForKey:@"settings.ui"];
+    if(stored.count && WXGPreviousBuildDefaultSection(@"config").count) {   // previous defaults known; no ui section: the built-in look
+        id (^radius)(id)=^id(id v){return [v isKindOfClass:NSNumber.class] && isfinite([v doubleValue])?@(WXGClamp([v doubleValue],0,40)):@26;};
+        id oldRadius=radius(previous[@"cardRadius"]),nowRadius=radius(current[@"cardRadius"]);
+        if(!WXGSameSettingValue(oldRadius,nowRadius)) {
+            if(WXGSameSettingValue(@(_cardRadius),oldRadius)){_cardRadius=[nowRadius doubleValue];++moved;}else ++kept;
+        }
+        NSString *oldAccent=WXGNormalizeHex(previous[@"accentHex"]),*nowAccent=WXGNormalizeHex(current[@"accentHex"]);
+        if(!WXGSameSettingValue(oldAccent,nowAccent)) {
+            if(WXGSameSettingValue(WXGNormalizeHex(_accentHex),oldAccent)){_accentHex=nowAccent;++moved;}else ++kept;
+        }
+        if(moved) {
+            NSMutableDictionary *d=[NSMutableDictionary dictionaryWithObject:@(_cardRadius) forKey:@"cardRadius"];
+            if(_accentHex)d[@"accentHex"]=_accentHex;
+            [suite setObject:d forKey:@"settings.ui"];
+        }
+    }
+    }@catch(NSException *error) {
+        failure=error.reason?:error.name?:@"exception";
+    }@finally {
+        [suite setObject:stamp forKey:@"defaultsStamp.ui"];
+    }
+    WXGNoteDefaultsAdoption(@"ui",@{@"stored":@(stored.count>0),@"moved":@(moved),@"kept":@(kept),@"error":failure?:@""});
+}
 - (NSUserDefaults *)defaults {return [[NSUserDefaults alloc]initWithSuiteName:@"com.runyu.WeChatLiquidGlass"];}
 - (instancetype)init {
     if((self=[super init])) {
@@ -205,36 +238,22 @@ static UIImage *WXGScaledImage(UIImage *image,CGFloat pixels,BOOL opaque) {
 
 #pragma mark - Built-in wallpaper and avatar
 
-// Soft colour fields for the glass to refract until a wallpaper is imported.
+// FIX113 O (user: not the in-between colour fields any more; light grey in
+// light mode, dark grey in dark mode): until a wallpaper is imported, a plain
+// colour (壁纸 › 无壁纸时的背景色), as an image (the edge fade copies it).
 static UIImage *WXGDefaultWallpaper(CGSize size,BOOL dark) {
     static NSCache<NSString *,UIImage *> *cache;static dispatch_once_t once;
     dispatch_once(&once,^{cache=[NSCache new];cache.countLimit=4;});
+    NSString *hex=[WXGConfig.shared extraHex:dark?@"settingsDarkBackgroundHex":@"settingsBackgroundHex"];
+    UIColor *color=WXGColor(hex)?:(dark?[UIColor colorWithRed:.11 green:.11 blue:.118 alpha:1]:[UIColor colorWithRed:.949 green:.949 blue:.969 alpha:1]);
+    CGFloat r=0,g=0,b=0,a=1;if(![color getRed:&r green:&g blue:&b alpha:&a]){r=g=b=dark?.11:.95;}
+    color=[UIColor colorWithRed:r green:g blue:b alpha:1];
     size=CGSizeMake(MAX(64,round(size.width)),MAX(64,round(size.height)));
-    NSString *key=[NSString stringWithFormat:@"%.0fx%.0f/%d",size.width,size.height,dark];
+    NSString *key=[NSString stringWithFormat:@"%.0fx%.0f/%@",size.width,size.height,hex];
     UIImage *image=[cache objectForKey:key];if(image)return image;
     UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat preferredFormat];format.scale=1;format.opaque=YES;
     image=[[[UIGraphicsImageRenderer alloc]initWithSize:size format:format] imageWithActions:^(UIGraphicsImageRendererContext *context){
-        CGContextRef cg=context.CGContext;CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
-        CGFloat base[8]={0};
-        if(dark){CGFloat d[8]={.043,.078,.090,1, .035,.055,.078,1};memcpy(base,d,sizeof d);}
-        else{CGFloat l[8]={.925,.945,.975,1, .965,.930,.950,1};memcpy(base,l,sizeof l);}
-        CGFloat locations[2]={0,1};
-        CGGradientRef linear=CGGradientCreateWithColorComponents(space,base,locations,2);
-        CGContextDrawLinearGradient(cg,linear,CGPointZero,CGPointMake(0,size.height),0);CGGradientRelease(linear);
-        // x, y (fractions of the size), radius (of the width), r, g, b, a
-        static const CGFloat light[][7]={{.18,.16,.62,.55,.78,1,.85},{.88,.32,.55,1,.74,.84,.80},{.24,.62,.60,.70,.95,.82,.75},
-                                         {.82,.78,.55,1,.88,.62,.70},{.40,.95,.50,.62,.70,1,.60}};
-        static const CGFloat night[][7]={{.20,.16,.62,.13,.48,.52,.80},{.90,.36,.55,.20,.26,.62,.65},{.22,.64,.60,.38,.20,.48,.55},
-                                         {.82,.80,.55,.12,.42,.32,.65},{.45,.98,.52,.10,.28,.48,.60}};
-        const CGFloat (*blobs)[7]=dark?night:light;
-        for(int i=0;i<5;i++) {
-            const CGFloat *b=blobs[i];
-            CGFloat colors[8]={b[3],b[4],b[5],b[6],b[3],b[4],b[5],0};
-            CGGradientRef radial=CGGradientCreateWithColorComponents(space,colors,locations,2);
-            CGPoint centre=CGPointMake(b[0]*size.width,b[1]*size.height);
-            CGContextDrawRadialGradient(cg,radial,centre,0,centre,b[2]*size.width,0);CGGradientRelease(radial);
-        }
-        CGColorSpaceRelease(space);
+        [color setFill];UIRectFill(context.format.bounds);
     }];
     [cache setObject:image forKey:key];return image;
 }
@@ -297,6 +316,7 @@ static UIImage *WXGInkedSymbol(NSArray<NSString *> *names,UIColor *color) {
         // FIX59: one backdrop per card (no RGB channels, no clear ring, at most
         // 2x): a page holds up to ten large glass, six layers each was too much.
         _glass.lightweight=YES;
+        _glass.glassScopeOverride=WXGGlassScopeCard;   // FIX113 O: the 设置页 range
         _contentView=[[UIView alloc]initWithFrame:CGRectZero];_contentView.backgroundColor=UIColor.clearColor;[self addSubview:_contentView];
         _cornerRadius=26;_feedback=[[UIImpactFeedbackGenerator alloc]initWithStyle:UIImpactFeedbackStyleLight];
     }return self;
@@ -306,6 +326,7 @@ static UIImage *WXGInkedSymbol(NSArray<NSString *> *names,UIColor *color) {
     self.isAccessibilityElement=pressable;self.accessibilityTraits=pressable?UIAccessibilityTraitButton:UIAccessibilityTraitNone;
 }
 - (void)setCornerRadius:(CGFloat)radius {if(_cornerRadius==radius)return;_cornerRadius=radius;[self setNeedsLayout];}
+- (void)setCapsule:(BOOL)capsule {if(_capsule==capsule)return;_capsule=capsule;[self setNeedsLayout];}
 - (void)didMoveToWindow {[super didMoveToWindow];_glass.active=self.window!=nil;_glassNew=YES;}
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -317,7 +338,7 @@ static UIImage *WXGInkedSymbol(NSArray<NSString *> *names,UIColor *color) {
         self.glass.frame=CGRectInset(b,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
         self.glass.glassRect=CGRectMake(WXGCanvasPaddingX,WXGCanvasPaddingY,b.size.width,b.size.height);
         // 0 would mean a capsule to the glass; a square corner is 0.5 pt.
-        self.glass.maximumCornerRadius=MAX(.5,MIN(self.cornerRadius,MIN(b.size.width,b.size.height)*.5));
+        self.glass.maximumCornerRadius=MAX(.5,MIN(self.capsule?CGFLOAT_MAX:self.cornerRadius,MIN(b.size.width,b.size.height)*.5));
         self.contentView.frame=b;
         [self applyPose];
         [self.glass layoutIfNeeded];
@@ -479,6 +500,7 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     BOOL _colorChanged;
     CFTimeInterval _lastColorWrite;
     void (^_imageDone)(UIImage *image);
+    CGFloat _rowEdge,_rowDown;   // FIX114 C: the title row's margin and move down as laid out
 }
 - (void)viewDidLoad {
     [super viewDidLoad];
@@ -500,6 +522,7 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     if(_showsAccentButton){_accent=[self barSurface:@"navigationAction"];_accent.perform=^{[weakSelf editAccent];};}
     [self buildContent];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(lookChanged) name:WXGSettingsUIChanged object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(configLookChanged) name:WXGSettingsChanged object:nil];   // FIX113 O: the background colour
     // 截图比例微调 resizes the glass navigation buttons; these follow it.
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(integrationChanged) name:@"WXGIntegrationChanged" object:nil];
     [self applyLook];
@@ -509,6 +532,7 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
 - (void)dealloc {[NSNotificationCenter.defaultCenter removeObserver:self];[_link invalidate];}
 - (WXGSurface *)barSurface:(NSString *)role {
     WXGSurface *surface=[[WXGSurface alloc]initWithFrame:CGRectZero];surface.role=role;
+    surface.glass.glassScopeOverride=WXGGlassScopeCard;   // FIX113 O: the 设置页 range
     surface.glass.overlayHidden=YES;   // icons are UIKit images; no Metal canvas
     // The icon bitmaps already carry the accent colour; keep them as drawn.
     [surface setNativeIconSource:nil preservingColors:YES];
@@ -527,6 +551,13 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     label.textColor=WXGSettingsStore.shared.secondaryColor;[_content addSubview:label];return label;
 }
 - (void)lookChanged {[self applyLook];[self.view setNeedsLayout];}
+// FIX113 O: the plain background follows its colour setting (only the image; nothing else is rebuilt).
+- (void)configLookChanged {
+    WXGSettingsStore *store=WXGSettingsStore.shared;BOOL dark=self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark;
+    if(![store wallpaperForDark:dark])_wallpaper.image=WXGDefaultWallpaper(self.view.bounds.size,dark);
+    // FIX114 C: this page's own title row shows the row settings at once.
+    if(self.isViewLoaded && (fabs(WXGTitleRowEdge(1)-_rowEdge)>.01 || fabs(WXGTitleRowOffset(1)-_rowDown)>.01))[self.view setNeedsLayout];
+}
 - (void)applyLook {
     WXGSettingsStore *store=WXGSettingsStore.shared;
     BOOL dark=self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark;
@@ -556,7 +587,15 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     if(m.button>44)m=WXGMeasure(440,1);
     CGFloat centerY=MAX(safe.top+22,safe.top+m.button*.5);
     if(safe.top<20)centerY=MAX(centerY,10+m.button*.5);   // a sheet: no status bar above
-    CGFloat left=safe.left+m.edge,right=b.size.width-safe.right-m.edge,midX=b.size.width*.5;
+    // FIX114 C: the title row's margin and move down (顶部按钮离屏幕两边 / 往下移), as on WeChat's pages.
+    // (review) The cards below stay where they are (the row moves into the gap
+    // above them): the slider being dragged does not move under the finger.
+    CGFloat pixel=self.view.window.screen.scale?:UIScreen.mainScreen.scale;
+    _rowEdge=WXGTitleRowEdge(1);_rowDown=WXGTitleRowOffset(1);
+    CGFloat rowDown=round(WXGTitleRowOffset(m.scale)*pixel)/pixel,contentRowBottom=centerY+m.button*.5;
+    centerY+=rowDown;
+    CGFloat edge=WXGTitleRowEdge(m.scale);
+    CGFloat left=safe.left+edge,right=b.size.width-safe.right-edge,midX=b.size.width*.5;
     [_back placeMaterial:CGRectMake(left,centerY-m.button*.5,m.button,m.button) inParent:self.view];
     if(_accent)[_accent placeMaterial:CGRectMake(right-m.button,centerY-m.button*.5,m.button,m.button) inParent:self.view];
     _titleLabel.font=[UIFont systemFontOfSize:17*m.scale weight:UIFontWeightSemibold];
@@ -567,7 +606,7 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     [_titleGlass placeMaterial:titleRect inParent:self.view];
     _titleLabel.frame=CGRectInset(titleRect,12*m.scale,0);
     [self.view bringSubviewToFront:_titleLabel];
-    _sideMargin=m.edge;_contentTop=CGRectGetMaxY(titleRect)+18;
+    _sideMargin=m.edge;_contentTop=contentRowBottom+18;
     CGFloat width=b.size.width-safe.left-safe.right;
     CGFloat height=[self layoutContentForWidth:width];
     _content.frame=CGRectMake(safe.left,_contentTop,width,height);
@@ -731,7 +770,28 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
 
 #pragma mark - Home
 
-@interface WXGSettingsHome : WXGSettingsPage
+@interface WXGSettingsHome : WXGSettingsPage <UITextFieldDelegate>
+@end
+// FIX113 O: one search result (title over where it is).
+@interface WXGSearchResultRow : UIControl
+@property(nonatomic,strong,readonly) UIView *highlight;
+@property(nonatomic,strong,readonly) UILabel *title,*path;
+@end
+@implementation WXGSearchResultRow
+- (instancetype)initWithFrame:(CGRect)frame {
+    if((self=[super initWithFrame:frame])) {
+        _highlight=[UIView new];_highlight.userInteractionEnabled=NO;_highlight.alpha=0;[self addSubview:_highlight];
+        _title=[UILabel new];_title.font=[UIFont systemFontOfSize:16 weight:UIFontWeightMedium];
+        _path=[UILabel new];_path.font=[UIFont systemFontOfSize:12.5];
+        for(UILabel *label in @[_title,_path]){label.adjustsFontSizeToFitWidth=YES;label.minimumScaleFactor=.75;label.userInteractionEnabled=NO;[self addSubview:label];}
+    }
+    return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat w=self.bounds.size.width;_highlight.frame=self.bounds;
+    _title.frame=CGRectMake(16,_path.text.length?9:18,MAX(0,w-32),22);_path.frame=CGRectMake(16,32,MAX(0,w-32),17);
+}
 @end
 @implementation WXGSettingsHome {
     WXGSettingsCard *_header;
@@ -750,6 +810,16 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     // FIX104: an authorized account's "授权" card (重新检测 asks the server now).
     UILabel *_licenseSubtitle;
     BOOL _recheckPending,_recheckResultWaiting;   // waiting: the answer came while this page was not on screen
+    // FIX113 O: the settings search (user: a search box for all of the settings).
+    WXGSettingsCard *_searchCard,*_resultsCard;
+    UITextField *_searchField;
+    UIImageView *_searchIcon;
+    UILabel *_resultsLabel;
+    NSMutableArray<WXGSearchResultRow *> *_resultRows;
+    CGFloat _keyboardOverlap;
+    NSMutableArray<UIView *> *_resultLines;
+    NSArray<NSDictionary *> *_results;
+    NSMutableArray<NSArray *> *_searchModules;   // the home cards shown (module, title, subtitle, symbols)
 }
 - (instancetype)init {
     if((self=[super initWithNibName:nil bundle:nil])) {
@@ -783,9 +853,11 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     return @[
         @{@"title":@"通用",@"cards":@[@[@"basic",@"基本设置",@"适配开关 · 比例 · 诊断",@[@"gearshape",@"gear"]],
                                       @[@"dock",@"底栏",@"尺寸 · 搜索 · 透镜 · 胶囊",@[@"dock.rectangle",@"rectangle.bottomthird.inset.filled",@"rectangle.bottomthird.inset.fill",@"rectangle"]],
+                                      // FIX113 O: the chat list's segment bar (its own module).
+                                      @[@"segments",@"分组",@"小底栏 · 胶囊 · 透镜 · 悬浮",@[@"rectangle.split.3x1",@"square.split.2x1",@"rectangle.split.2x1",@"rectangle"]],
                                       @[@"tools",@"帧率与参数",@"帧率日志 · 参数导入导出",@[@"speedometer",@"gauge",@"chart.bar"]],
                                       @[@"bubble",@"液态气泡",@"文字气泡 · 单行圆角 · 颜色",@[@"bubble.left.and.bubble.right.fill",@"bubble.left.and.bubble.right",@"message"]]]},
-        @{@"title":@"玻璃 · 底栏与其余玻璃分别设置",@"cards":@[@[@"refraction",@"折射强度和色散",@"强度 · 色散 · 折射宽度",@[@"drop",@"drop.fill"]],
+        @{@"title":@"玻璃 · 底栏、其余玻璃、气泡、分组、设置页分别设置",@"cards":@[@[@"refraction",@"折射强度和色散",@"强度 · 色散 · 折射宽度",@[@"drop",@"drop.fill"]],
                                       @[@"blur",@"模糊强度与范围",@"半径 · 覆盖范围 · 清晰度",@[@"aqi.medium",@"sun.haze",@"circle.dashed"]],
                                       @[@"material",@"材质强度与范围",@"底色 · 遮盖 · 边缘减弱",@[@"circle.lefthalf.filled",@"circle.lefthalf.fill"]],
                                       @[@"border",@"边框与渐隐",@"颜色 · 宽度 · 亮度 · 渐隐",@[@"square.dashed",@"app",@"square"]]]},
@@ -812,6 +884,8 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     _sectionLabels=[NSMutableArray array];_sectionCards=[NSMutableArray array];
     _icons=[NSMutableArray array];_titles=[NSMutableArray array];_subtitles=[NSMutableArray array];
     _licenseCard=nil;_licenseTitle=_licenseText=nil;_copyAccount=_recheck=nil;_licenseSubtitle=nil;
+    _searchCard=_resultsCard=nil;_searchField=nil;_searchIcon=nil;_resultsLabel=nil;_results=nil;
+    _resultRows=[NSMutableArray array];_resultLines=[NSMutableArray array];_searchModules=[NSMutableArray array];
     _license=WXGLicenseCurrentState(YES);
     // FIX106: 未授权的普通用户根本进不到设置页（入口只在授权后出现，见 WXGHost 的启动器 /
     // 微信设置行 / 底栏长按），所以这里不再因未授权就只显示“复制账号发给作者”的提示卡。真能
@@ -822,6 +896,7 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     // FIX106: 曾授权但现在连不上 / 需更新的正当用户（能进到这页的入口只给这两种 + 已授权），
     // 只给一张极简“重新检测”卡；其余（绕过判定进来的）照常走下面的完整诱捕设置。
     if(_license==WXGLicenseUnreachable || _license==WXGLicenseOutdated){[self buildRecheckCard];return;}
+    [self buildSearch];
     NSArray<NSString *> *hidden=WXGHiddenSettingsModules();
     for(NSDictionary *section in WXGSettingsHome.sections) {
         NSMutableArray *specs=[NSMutableArray array];
@@ -837,7 +912,7 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
             WXGSettingsCard *card=[self addCard:YES];card.accessibilityLabel=spec[1];
             NSString *module=spec[0];BOOL license=[module isEqual:@"license"];
             if(license)card.action=^{[weakSelf recheckLicense];};
-            else card.action=^{[weakSelf openModule:module];};
+            else {card.action=^{[weakSelf openModule:module];};[_searchModules addObject:spec];}
             UIImageView *icon=[[UIImageView alloc]initWithImage:[WXGSymbol(spec[3],22,UIImageSymbolWeightMedium) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
             icon.contentMode=UIViewContentModeScaleAspectFit;
             UILabel *title=[UILabel new];title.text=spec[1];title.font=[UIFont systemFontOfSize:17 weight:UIFontWeightSemibold];
@@ -921,6 +996,7 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     for(UILabel *title in _titles)title.textColor=store.accentColor;
     for(UILabel *subtitle in _subtitles)subtitle.textColor=store.secondaryColor;
     for(UILabel *label in _sectionLabels)label.textColor=store.secondaryColor;
+    [self applySearchLook];
 }
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
@@ -953,6 +1029,22 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
         _licenseCard.frame=CGRectMake(side,y,inner,height);
         return y+height+24;
     }
+    if(_searchCard) {
+        CGFloat h=46;_searchCard.frame=CGRectMake(side,y,inner,h);
+        _searchIcon.frame=CGRectMake(15,(h-20)*.5,20,20);
+        _searchField.frame=CGRectMake(44,0,MAX(40,inner-44-8),h);
+        y+=h+24;
+        if(self.searching) {
+            _resultsLabel.frame=CGRectMake(side+6,y,inner-12,18);y+=18+8;
+            CGFloat rowY=0,hairline=1/MAX(1,UIScreen.mainScreen.scale);
+            for(NSUInteger i=0;i<_resultRows.count;i++) {
+                if(i && i-1<_resultLines.count)_resultLines[i-1].frame=CGRectMake(16,rowY-hairline*.5,inner-16,hairline);
+                CGFloat rh=58;_resultRows[i].frame=CGRectMake(0,rowY,inner,rh);rowY+=rh;
+            }
+            _resultsCard.frame=CGRectMake(side,y,inner,MAX(rowY,1));
+            return y+rowY+24;
+        }
+    }
     // Two cards a row, golden-ratio rectangles (at least 98 pt high, room for
     // the icon over the title and subtitle on a 320 pt screen).
     CGFloat column=(inner-gap)*.5,height=MAX(98,round(column/1.618));
@@ -974,6 +1066,103 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     return y;
 }
 - (void)toggleEnabled:(UISwitch *)sender {WXGPreferences.shared.enabled=sender.on;[WXGPreferences.shared save];}
+#pragma mark Search
+// FIX113 O: a search box under the header; while it holds text the cards
+// give way to the settings found (every page, group and row), a tap opens
+// the page at that row.
+- (void)buildSearch {
+    _searchCard=[self addCard:NO];
+    _searchIcon=[[UIImageView alloc]initWithImage:[WXGSymbol(@[@"magnifyingglass"],17,UIImageSymbolWeightMedium) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
+    _searchIcon.contentMode=UIViewContentModeScaleAspectFit;
+    _searchField=[UITextField new];_searchField.font=[UIFont systemFontOfSize:16];_searchField.delegate=self;
+    _searchField.clearButtonMode=UITextFieldViewModeWhileEditing;_searchField.returnKeyType=UIReturnKeySearch;
+    _searchField.autocorrectionType=UITextAutocorrectionTypeNo;_searchField.autocapitalizationType=UITextAutocapitalizationTypeNone;
+    _searchField.accessibilityLabel=@"搜索设置";
+    [_searchField addTarget:self action:@selector(searchChanged) forControlEvents:UIControlEventEditingChanged];
+    for(UIView *v in @[_searchIcon,_searchField])[_searchCard.contentView addSubview:v];
+    self.scrollView.keyboardDismissMode=UIScrollViewKeyboardDismissModeOnDrag;
+    [NSNotificationCenter.defaultCenter removeObserver:self name:UIKeyboardWillChangeFrameNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(keyboardChanged:) name:UIKeyboardWillChangeFrameNotification object:nil];
+}
+// The results can be scrolled out from under the keyboard.
+- (void)keyboardChanged:(NSNotification *)note {
+    if(!self.isViewLoaded || !self.view.window)return;
+    NSValue *value=note.userInfo[UIKeyboardFrameEndUserInfoKey];if(![value isKindOfClass:NSValue.class])return;
+    CGRect keyboard=[self.view convertRect:value.CGRectValue fromView:nil];
+    CGFloat overlap=MAX(0,CGRectGetMaxY(self.view.bounds)-CGRectGetMinY(keyboard));
+    if(CGRectGetMinY(keyboard)>=CGRectGetMaxY(self.view.bounds)-.5)overlap=0;
+    if(fabs(overlap-_keyboardOverlap)<.5)return;
+    _keyboardOverlap=overlap;
+    UIScrollView *scroll=self.scrollView;UIEdgeInsets inset=scroll.contentInset,bars=scroll.verticalScrollIndicatorInsets;
+    inset.bottom=overlap;bars.bottom=MAX(overlap,self.view.safeAreaInsets.bottom);
+    scroll.contentInset=inset;scroll.verticalScrollIndicatorInsets=bars;
+}
+- (BOOL)textFieldShouldReturn:(UITextField *)field {[field resignFirstResponder];return NO;}
+- (BOOL)searching {
+    return [_searchField.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length>0;
+}
+- (void)searchChanged {
+    BOOL searching=self.searching;
+    for(UILabel *label in _sectionLabels)label.hidden=searching;
+    for(NSArray<WXGSettingsCard *> *cards in _sectionCards)for(WXGSettingsCard *card in cards)card.hidden=searching;
+    for(UIView *v in _resultRows)[v removeFromSuperview];
+    for(UIView *v in _resultLines)[v removeFromSuperview];
+    [_resultRows removeAllObjects];[_resultLines removeAllObjects];
+    _results=searching?WXGSettingsSearch(_searchField.text,_searchModules):@[];
+    if(searching && !_resultsCard){_resultsLabel=[self sectionLabel:@""];_resultsCard=[self addCard:NO];}
+    _resultsCard.hidden=!searching;_resultsLabel.hidden=!searching;
+    if(searching) {
+        NSUInteger shown=MIN(_results.count,(NSUInteger)80);
+        _resultsLabel.text=!_results.count?@"没有找到":_results.count>shown?[NSString stringWithFormat:@"找到 %lu 项（显示前 %lu 项）",(unsigned long)_results.count,(unsigned long)shown]:
+                           [NSString stringWithFormat:@"找到 %lu 项",(unsigned long)_results.count];
+        for(NSUInteger i=0;i<MAX(shown,(NSUInteger)1);i++) {
+            NSDictionary *result=i<shown?_results[i]:nil;
+            WXGSearchResultRow *row=[WXGSearchResultRow new];row.tag=(NSInteger)i;
+            UILabel *title=row.title,*path=row.path;
+            if(result) {
+                title.text=result[@"title"];path.text=result[@"path"];
+                row.accessibilityLabel=[NSString stringWithFormat:@"%@，%@",result[@"title"],result[@"path"]];row.isAccessibilityElement=YES;
+                row.accessibilityTraits=UIAccessibilityTraitButton;
+                [row addTarget:self action:@selector(resultTapped:) forControlEvents:UIControlEventTouchUpInside];
+                [row addTarget:self action:@selector(resultPressed:) forControlEvents:UIControlEventTouchDown|UIControlEventTouchDragEnter];
+                [row addTarget:self action:@selector(resultReleased:) forControlEvents:UIControlEventTouchUpInside|UIControlEventTouchUpOutside|UIControlEventTouchCancel|UIControlEventTouchDragExit];
+            } else {
+                title.text=@"换个词试试，比如“边框”“透镜”“悬浮”";path.text=nil;row.userInteractionEnabled=NO;
+            }
+            if(_resultRows.count){UIView *line=[UIView new];line.userInteractionEnabled=NO;[_resultsCard.contentView addSubview:line];[_resultLines addObject:line];}
+            [_resultsCard.contentView addSubview:row];[_resultRows addObject:row];
+        }
+    }
+    [self applySearchLook];
+    [self.view setNeedsLayout];
+}
+- (void)resultPressed:(WXGSearchResultRow *)row {row.highlight.alpha=1;}
+- (void)resultReleased:(WXGSearchResultRow *)row {
+    UIView *highlight=row.highlight;
+    [UIView animateWithDuration:.25 delay:0 options:UIViewAnimationOptionAllowUserInteraction animations:^{highlight.alpha=0;} completion:nil];
+}
+- (void)resultTapped:(WXGSearchResultRow *)row {
+    NSInteger i=row.tag;if(i<0 || i>=(NSInteger)_results.count)return;
+    NSDictionary *result=_results[(NSUInteger)i];
+    [_searchField resignFirstResponder];
+    UIViewController *page=WXGSettingsModulePageFocused(result[@"module"],[result[@"group"] integerValue],[result[@"row"] integerValue]);
+    if(page)[self.navigationController pushViewController:page animated:YES];
+}
+- (void)applySearchLook {
+    if(!_searchCard)return;
+    WXGSettingsStore *store=WXGSettingsStore.shared;
+    _searchIcon.tintColor=store.secondaryColor;
+    _searchField.textColor=store.accentColor;_searchField.tintColor=store.controlTint?:UIColor.systemBlueColor;
+    _searchField.attributedPlaceholder=[[NSAttributedString alloc]initWithString:@"搜索设置" attributes:@{NSForegroundColorAttributeName:store.secondaryColor}];
+    _resultsLabel.textColor=store.secondaryColor;
+    UIColor *line=[UIColor.labelColor colorWithAlphaComponent:.12],*pressed=[UIColor.labelColor colorWithAlphaComponent:.08];
+    for(UIView *separator in _resultLines)separator.backgroundColor=line;
+    for(WXGSearchResultRow *row in _resultRows) {
+        row.highlight.backgroundColor=pressed;
+        row.title.textColor=row.userInteractionEnabled?store.accentColor:store.secondaryColor;
+        row.path.textColor=store.secondaryColor;
+    }
+}
 - (void)openModule:(NSString *)module {
     UIViewController *page=WXGSettingsModulePage(module);
     if(page)[self.navigationController pushViewController:page animated:YES];

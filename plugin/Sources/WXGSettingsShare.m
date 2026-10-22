@@ -21,7 +21,13 @@ static NSArray<NSString *> *WXGShareSkippedIntegration(void) {return @[@"enabled
 NSDictionary *WXGSharePayload(void) {
     WXGConfig *c=WXGConfig.shared;WXGPreferences *p=WXGPreferences.shared;WXGSettingsStore *ui=WXGSettingsStore.shared;
     NSMutableDictionary *config=[c.parameterValues mutableCopy];[config removeObjectForKey:@"enabled"];
-    for(NSString *key in config.allKeys)if(config[key]==NSNull.null)[config removeObjectForKey:key];
+    // FIX114 C: nothing JSON cannot hold (a value that is not a finite number
+    // would make the whole export fail).
+    for(NSString *key in config.allKeys) {
+        id value=config[key];
+        if(value==NSNull.null || ([value isKindOfClass:NSNumber.class] && !isfinite([value doubleValue])) ||
+           !([value isKindOfClass:NSNumber.class] || [value isKindOfClass:NSString.class]))[config removeObjectForKey:key];
+    }
     NSMutableDictionary *integration=[[p dictionaryWithValuesForKeys:p.keys] mutableCopy];
     [integration removeObjectsForKeys:WXGShareSkippedIntegration()];
     NSMutableDictionary *look=[NSMutableDictionary dictionaryWithObject:@(ui.cardRadius) forKey:@"cardRadius"];
@@ -166,16 +172,21 @@ static void WXGShareConfirm(UIViewController *from,NSString *text,void (^done)(v
         [presenter presentViewController:alert animated:YES completion:nil];
     });
 }
-static NSString *WXGShareJSON(BOOL pretty) {
+static NSString *WXGShareJSONOf(NSDictionary *payload,BOOL pretty) {
+    // (review) a value JSON cannot hold throws: nil (the caller says so) instead.
+    if(!payload || ![NSJSONSerialization isValidJSONObject:payload])return nil;
     NSJSONWritingOptions options=NSJSONWritingSortedKeys|(pretty?NSJSONWritingPrettyPrinted:0);
-    NSData *data=[NSJSONSerialization dataWithJSONObject:WXGSharePayload() options:options error:nil];
+    NSData *data=nil;@try {data=[NSJSONSerialization dataWithJSONObject:payload options:options error:nil];} @catch(__unused NSException *error) {data=nil;}
     return data?[[NSString alloc]initWithData:data encoding:NSUTF8StringEncoding]:nil;
 }
+static NSString *WXGShareJSON(BOOL pretty) {return WXGShareJSONOf(WXGSharePayload(),pretty);}
 void WXGShareCopy(UIViewController *from) {
-    NSString *json=WXGShareJSON(NO);
+    NSDictionary *payload=WXGSharePayload();
+    NSString *json=WXGShareJSONOf(payload,NO);
     if(!json){WXGShareTell(from,@"复制失败",@"参数无法转成 JSON。");return;}
     UIPasteboard.generalPasteboard.string=json;
-    WXGShareTell(from,@"已复制当前参数",[NSString stringWithFormat:@"%lu 个字符。发给别人后，对方复制整段文字，在这里点“从剪贴板导入参数”。",(unsigned long)json.length]);
+    WXGShareTell(from,@"已复制当前参数",[NSString stringWithFormat:@"玻璃参数 %lu 项、开关 %lu 项、界面 %lu 项，%lu 个字符。发给别人后，对方复制整段文字，在这里点“从剪贴板导入参数”。",
+        (unsigned long)[payload[@"config"] count],(unsigned long)[payload[@"integration"] count],(unsigned long)[payload[@"ui"] count],(unsigned long)json.length]);
 }
 void WXGShareExportFrom(UIViewController *from) {
     NSString *json=WXGShareJSON(YES);

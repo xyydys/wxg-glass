@@ -198,6 +198,27 @@ static inline float WXGOpticalOffset(float distance,float edgeWidth,float streng
     float amplitude=WXG_MIN(.32f*strength,.40f)+.32f*WXG_MAX(0.f,strength-2.f);
     return edgeWidth*amplitude*edge*edge;
 }
+/* FIX113 I (WXG_LENS_CANCEL; user: an offset that cancels the refraction
+   width): the lens' refraction with `cancel` (0..1) of its rim offset taken
+   away. 0 is WXGOpticalOffset: the rim shows what lies edge width x
+   amplitude further in, so whatever is under the rim (an icon) is skipped,
+   more the wider / stronger it is. 1: no offset at the rim nor at the
+   band's inner edge, the push in between (edge^2 x t: compressed at the rim
+   up to 2.55x, stretched past the middle of the band), capped at 1.55 so the
+   mapping never folds back (the slope stays >= 0.2): what is under the band
+   stays in the band, however wide it is, at most 0.29 band widths from where
+   it is. Between: a straight mix. */
+static inline float WXGLensRefractionOffset(float distance,float edgeWidth,float strength,float cancel) {
+    float full=WXGOpticalOffset(distance,edgeWidth,strength);
+    cancel=WXGOClamp(cancel,0.f,1.f);
+    if(!(cancel>0.f))return full;
+    float t=WXGOClamp(-distance/WXG_MAX(edgeWidth,1.f),0.f,1.f);
+    float edge=1.f-t*t*(3.f-2.f*t);
+    strength=WXGOClamp(strength,0.f,20.f);
+    float amplitude=WXG_MIN(.32f*strength,.40f)+.32f*WXG_MAX(0.f,strength-2.f);
+    float bump=edgeWidth*WXG_MIN(amplitude,1.55f)*edge*edge*t;
+    return full*(1.f-cancel)+bump*cancel;
+}
 static inline float WXGMaterialOpacity(float alpha,float clearMaterial,float edge,float fadeAtEdge) {
     float opacity=WXGOClamp(alpha*(1.22f-.22f*WXGOClamp(clearMaterial,0.f,1.f)),0.f,1.f);
     return opacity*(1.f-.82f*edge*edge*WXGOClamp(fadeAtEdge,0.f,1.f));

@@ -25,6 +25,10 @@ FOUNDATION_EXPORT BOOL WXGImageIsMonochrome(UIImage *image);
 FOUNDATION_EXPORT UIImage *WXGCropInk(UIImage *image,UIColor *tint);
 FOUNDATION_EXPORT UIImage *WXGButtonImage(UIControl *button);
 FOUNDATION_EXPORT NSDictionary *WXGRenderedInkEvidence(UIView *view);
+FOUNDATION_EXPORT CGRect WXGSearchFieldBox(UITextField *field);   // FIX114 E: the box a UISearchBar's field draws (null: its bounds)
+// FIX114 C: a title bar's content drawn lower by the title row's offset (顶部按钮往下移), and back.
+FOUNDATION_EXPORT NSUInteger WXGMoveBarContent(UINavigationBar *bar);   // the content views moved
+FOUNDATION_EXPORT void WXGRestoreBarContent(void);
 FOUNDATION_EXPORT NSArray<NSString *> *WXGActionNames(UIControl *control);
 FOUNDATION_EXPORT BOOL WXGCanForward(UIControl *control);
 FOUNDATION_EXPORT CGRect WXGCGRect(WXGRect r);
@@ -90,6 +94,14 @@ FOUNDATION_EXPORT void WXGEdgeFadeSyncController(UIViewController *controller);
 @property(nonatomic) BOOL bubbles;
 // FIX84: the frame-rate log and its on-screen capsule (WXGPerfMonitor.m).
 @property(nonatomic) BOOL perfMonitor,perfHUD;
+// FIX107: more of WeChat in glass (WXGLocalGlass.m): search fields, the plus
+// panel's tiles, the emoji board's keys and group selection, the share sheet.
+@property(nonatomic) BOOL localSearch,localPanel,localEmoji,localSheet;
+// FIX108: title capsules; glass for the title-bar buttons the host leaves native.
+@property(nonatomic) BOOL localTitle,localNavButtons;
+// FIX109: a theme's search field kept as the theme draws it (default: the glass
+// wins); the chat page's top-right button shows the chat's avatar.
+@property(nonatomic) BOOL localSearchThemeFirst,chatAvatarButton;
 - (NSArray *)keys;
 - (void)save;
 @end
@@ -100,6 +112,25 @@ FOUNDATION_EXPORT void WXGPerfNotePluginWork(double milliseconds);  // the plugi
 FOUNDATION_EXPORT BOOL WXGPerfActive(void);
 // Runs `work`, adding its time to the plugin's (unless inside the host's timed tick / refresh).
 FOUNDATION_EXPORT void WXGPerfTimePluginWork(void (NS_NOESCAPE ^work)(void));
+// FIX113 Z: the same, its time also kept under `label` for the page-switch log.
+FOUNDATION_EXPORT void WXGPerfTimePluginWorkAs(const char *label,void (NS_NOESCAPE ^work)(void));
+/* FIX113 Z: page-switch performance (WXGPerfMonitor.m): every push, pop,
+   presentation, dismissal and tab switch while the plugin is on (or the
+   frame-rate log is), from the call that started it to 0.3 s after its
+   animation ended: the first frame, frames missed, the worst frame and where
+   the main thread's time went (the plugin's parts, Core Animation's commit,
+   WeChat's own). Its own display link runs only during a switch. */
+FOUNDATION_EXPORT BOOL WXGTransitionPerfOn;   // a switch is being recorded (fast check for the notes below)
+FOUNDATION_EXPORT void WXGTransitionPerfNavigationCall(NSString *kind,BOOL began);   // outermost push / pop call starts / ends
+FOUNDATION_EXPORT void WXGTransitionPerfBegin(NSString *kind,UIViewController *from,UIViewController *to,id<UIViewControllerTransitionCoordinator> coordinator);
+FOUNDATION_EXPORT void WXGTransitionPerfAppearance(UIViewController *controller,BOOL appearing);   // from viewWillAppear: / viewWillDisappear:
+FOUNDATION_EXPORT void WXGTransitionPerfNoteSlot(NSInteger slot,double milliseconds,BOOL plugin);
+FOUNDATION_EXPORT void WXGTransitionPerfNoteIdle(double milliseconds);
+FOUNDATION_EXPORT void WXGTransitionPerfNoteMesh(void);
+FOUNDATION_EXPORT void WXGTransitionPerfCommitPhase(BOOL inside);   // Core Animation's commit starts / ends
+FOUNDATION_EXPORT void WXGTransitionPerfLabel(NSString *label,double milliseconds);   // the plugin's time by part
+FOUNDATION_EXPORT NSDictionary *WXGTransitionPerfEvidence(void);
+FOUNDATION_EXPORT void WXGTransitionPerfShowReport(UIViewController *from);
 FOUNDATION_EXPORT BOOL WXGHostTimingPlugin(void);                 // inside the host's timed tick / refresh
 FOUNDATION_EXPORT NSDictionary *WXGPerfEvidence(void);             // summary for the diagnostics
 FOUNDATION_EXPORT void WXGPerfShowReport(UIViewController *from);
@@ -110,11 +141,6 @@ FOUNDATION_EXPORT NSDictionary *WXGSettingsStorageEvidence(void);
 /* FIX85: keyboard trace for the diagnostics (WXGKeyboardTrace.m). */
 FOUNDATION_EXPORT void WXGKeyboardTraceStart(void);
 FOUNDATION_EXPORT NSDictionary *WXGKeyboardTraceEvidence(void);
-/* FIX85/88: how calm the background behind each glass is (WXGCalmBackdrop.m). */
-FOUNDATION_EXPORT void WXGCalmRegister(WXGGlassView *glass);
-FOUNDATION_EXPORT void WXGCalmApplyPreferences(void);
-FOUNDATION_EXPORT NSDictionary *WXGCalmEvidence(void);
-FOUNDATION_EXPORT NSString *WXGCalmSummaryText(void);
 /* FIX84: settings sharing (WXGSettingsShare.m). */
 FOUNDATION_EXPORT NSDictionary *WXGSharePayload(void);
 FOUNDATION_EXPORT void WXGShareCopy(UIViewController *from);
@@ -150,6 +176,13 @@ void WXGInstallNativeIconGuard(void);
 - (void)allowOverflow:(UIView *)view;
 - (void)clearImagePaint:(UIImageView *)view;
 - (BOOL)centerNativeImage:(UIImageView *)image inHost:(UIView *)host maximumInk:(CGFloat)maximum;
+// FIX113 E: everything inside a native view drawn `dx` points to the right
+// (its layer's sublayerTransform: no frame of WeChat's changes, so its own
+// layout never undoes it); 0 puts it back. Restored with the rest.
+- (void)shiftContents:(UIView *)view x:(CGFloat)dx;
+- (void)shiftContents:(UIView *)view x:(CGFloat)dx y:(CGFloat)dy;   // FIX114 C
+- (CGFloat)contentShiftOf:(UIView *)view;
+- (CGPoint)contentOffsetOf:(UIView *)view;   // FIX114 C: across and down
 - (void)stripChrome:(UIView *)root preserving:(NSArray<UIView *> *)content;
 - (void)reapply;
 - (void)restoreView:(UIView *)view;
@@ -191,6 +224,9 @@ void WXGInstallNativeIconGuard(void);
    keyboard was up); taps on the plain buttons that proxy to it press only
    their own icons. */
 @property(nonatomic) BOOL pressFixed;
+// FIX113: the icon at its own size (WeChat's artwork as WeChat draws it: the
+// glyph's points, not fitted to the plugin's icon box); smaller only to fit.
+@property(nonatomic) BOOL naturalIconSize;
 // FIX87: the icon's colour instead of the label colour (nil = as before).
 @property(nonatomic,strong) UIColor *iconTint;
 @property(nonatomic,copy) NSString *role;
@@ -215,6 +251,54 @@ void WXGInstallNativeIconGuard(void);
 - (void)restore;
 - (NSDictionary *)evidence;
 @end
+
+/* FIX107: more of WeChat in glass (WXGLocalGlass.m): material-only glass
+   in place of the paint of search fields (capsules), the plus panel's tiles,
+   the emoji board's 发送 / 删除 and group selection, and the share sheet's
+   background. Hosts are hooked by class (hostClassNames); it runs its own
+   display link while one of them is on screen. */
+@interface WXGLocalGlass : NSObject
++ (instancetype)shared;
++ (NSArray<NSString *> *)hostClassNames;
+- (void)hostLaidOut:(UIView *)view;
+- (void)controllerLaidOut:(UIViewController *)controller;
+- (void)navigationRouteChanged;   // FIX108: the host's page changed: title-bar buttons looked at again
+- (void)applyConfiguration;
+- (void)releaseTransientResources;   // memory warning
+- (void)restore;
+- (NSDictionary *)evidence;
+@end
+// FIX112: the page's title capsule (its title view's text, else the bar's own
+// title, as the local glass draws it) in the window; CGRectNull: no title text.
+FOUNDATION_EXPORT CGRect WXGLocalTitleCapsuleRect(UINavigationBar *bar,UIView *titleView,UIWindow *window);
+
+/* FIX113 N: the chat list's segment bar in place of its search field
+   (WXGChatSegments.m): over the list's search bar on the 微信 page, the
+   dock's lens on four segments (a demo grouping), WeChat's bar faded out and
+   given back while its own search uses it or when off. */
+@interface WXGChatSegments : NSObject
++ (instancetype)shared;
+- (BOOL)wanted;   // the switch, the plugin on and authorised, render-server mode
+- (void)updateOnPage:(UIViewController *)page;   // the host's refresh on the chat list
+- (void)searchBarLaidOut:(UIView *)view;         // a search bar laid out (follows the field)
+// FIX113 O: every host frame: the floating search (the segment bar, WeChat's
+// home / 通讯录 search bars) below the title row, in the navigation overlay.
+- (void)hostTick:(CFTimeInterval)time page:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning;
+- (void)suspendFloating;   // a page this host leaves native: nothing left floating, WeChat's bars back
+- (void)restore;           // the segment bar (WeChat's search bar back)
+- (void)restoreAll;        // the segment bar and the floating capsules (the plugin off)
+- (NSDictionary *)evidence;
+@end
+/* FIX113 R: the user's chat groups (WXGChatSegments.m): 1-6, each
+   {id, name, rule (0 全部 1 未读 2 单聊 3 群聊 4 自定义), members (user names)}. */
+FOUNDATION_EXPORT NSString * const WXGChatGroupsChanged;
+FOUNDATION_EXPORT NSArray<NSDictionary *> *WXGChatGroupList(void);
+FOUNDATION_EXPORT NSArray<NSDictionary *> *WXGChatGroupDefaults(void);
+FOUNDATION_EXPORT void WXGChatGroupSave(NSArray<NSDictionary *> *groups);
+// The chats of WeChat's whole home list, for choosing members: id, title, kind
+// (2 单聊 3 群聊 0 other); main thread.
+FOUNDATION_EXPORT NSArray<NSDictionary *> *WXGChatSessionChoices(void);
+FOUNDATION_EXPORT NSString *WXGChatNameSummary(void);   // FIX113 Z: where the names came from (counts only), after WXGChatSessionChoices
 
 /* FIX82: liquid chat bubbles (WXGBubbles.m, WXGBubbleRules.h): WeChat's
    text bubbles drawn as glass, the native bubble image hidden. */
@@ -259,6 +343,7 @@ void WXGInstallNativeIconGuard(void);
 - (void)layoutInput;
 - (void)presentSettings;
 - (NSString *)versionString;
+- (CGFloat)titleRowOffsetForPage:(UIViewController *)page;   // FIX114 C: 顶部按钮往下移 there (NAN when unknown)
 - (void)openSettingsFrom:(UIViewController *)controller;
 - (void)previewLens;
 - (NSDictionary *)runtimeMetrics;
@@ -267,6 +352,9 @@ void WXGInstallNativeIconGuard(void);
 - (NSString *)diagnostics;
 - (void)recordForward:(NSDictionary *)action;
 - (void)exportDiagnosticsFrom:(UIViewController *)controller;
+// FIX108: a title-bar button the host has no glass for and leaves native (web
+// pages, pages presented over the tabs) while the title-bar setting is on.
+- (BOOL)leavesNavigationControlNative:(UIView *)control;
 @end
 
 FOUNDATION_EXPORT UIViewController *WXGIntegrationSettings(void);

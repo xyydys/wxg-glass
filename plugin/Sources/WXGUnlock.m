@@ -64,7 +64,7 @@ static unsigned WXGFailures;
 static CFTimeInterval WXGNextAttempt,WXGOutdatedAt,WXGEvalAt;
 static double WXGClockOffset,WXGLastRequestMS;
 static NSInteger WXGLastStatus,WXGEndpointIndex;
-static NSUInteger WXGRequests,WXGTicketsIssued,WXGDenials,WXGBadSignatures,WXGCacheHits;
+static NSUInteger WXGRequests,WXGTicketsIssued,WXGDenials,WXGBadSignatures,WXGCacheHits,WXGLaunchRechecks;
 static NSString *WXGEvalAccount;
 static WXGUnlockState WXGEvalState;
 
@@ -516,6 +516,25 @@ static NSArray<WXGUnlockTicket *> *WXGReadTickets;     // taken by main after wa
 static double WXGReadMS,WXGReadAtMS;                   // likewise
 static double WXGCacheReadMS=-1,WXGCacheReadAtMS=-1,WXGCacheWaitMS=-1;   // main, for the diagnostics
 static BOOL WXGAdoptCache(double wait);
+// FIX109 E: the recheck a cached ticket is due for, sent as soon as the
+// tickets are read (the constructor), not at the first refresh once WeChat's
+// account is known: an account that was kicked or taken off the list since
+// its last check gets the 403 (ticket deleted) while WeChat is still starting,
+// before anything is drawn, instead of glass for a moment and then none. The
+// only ticket (the account that is logged in); the same request
+// the first evaluation would send a moment later; nothing waits for it.
+static void WXGLaunchRecheck(void) {   // main
+    // One account's ticket only: with several, the newest may not be the one
+    // logged in, and its request would hold that account's own back.
+    if(WXGInFlight || !WXGDeviceHash || WXGTickets.count!=1)return;
+    WXGUnlockTicket *newest=nil;
+    for(WXGUnlockTicket *ticket in WXGTickets.allValues)if(!newest || ticket.fetchedAt>newest.fetchedAt)newest=ticket;
+    if(!newest.account || [WXGDeniedAccounts containsObject:newest.account])return;
+    double now=WXGDeviceNow()+WXGClockOffset;
+    if(!WXGUnlockTicketUsable(now,(double)newest.expiresAt,newest.fetchedAt))return;   // asked anyway at the first evaluation
+    if(!WXGUnlockRefreshDue(now,(double)newest.expiresAt,newest.fetchedAt,WXGUnlockRecheckInterval(newest.recheckAfter)))return;
+    ++WXGLaunchRechecks;WXGRequest(newest.account,YES);
+}
 static void WXGStartCacheLoad(void) {   // main
     if(WXGCacheLoaded || WXGCacheLoading)return;
     WXGCacheLoading=YES;
@@ -535,7 +554,7 @@ static void WXGStartCacheLoad(void) {   // main
         WXGReadMS=(CACurrentMediaTime()-started)*1000;WXGReadAtMS=WXGSecondsSinceLoad()*1000;
         dispatch_group_leave(group);
         // Nobody has asked yet: take them over at main's next turn.
-        dispatch_async(dispatch_get_main_queue(),^{if(WXGAdoptCache(0))WXGChanged(YES);});
+        dispatch_async(dispatch_get_main_queue(),^{if(WXGAdoptCache(0)){WXGChanged(YES);WXGLaunchRecheck();}});
     });
     dispatch_async(WXGUnlockQueue(),read);
 }
@@ -641,7 +660,7 @@ NSDictionary *WXGUnlockEvidence(void) {
              // FIX104: when the cached tickets were read (ms after the plugin loaded), how long it took, how long main waited.
              @"cacheReadAtMS":@(round(WXGCacheReadAtMS)),@"cacheReadMS":@(round(WXGCacheReadMS*10)/10),@"cacheWaitMS":@(round(WXGCacheWaitMS*10)/10),
              @"ticket":ticketEvidence,@"shaderReady":@(shaderReady),@"shaderFrom":shaderFrom?:@"",
-             @"requests":@(WXGRequests),@"issued":@(WXGTicketsIssued),@"denied":@(WXGDenials),@"deniedAccounts":@(WXGDeniedAccounts.count),@"badSignatures":@(WXGBadSignatures),
+             @"requests":@(WXGRequests),@"launchRechecks":@(WXGLaunchRechecks),@"issued":@(WXGTicketsIssued),@"denied":@(WXGDenials),@"deniedAccounts":@(WXGDeniedAccounts.count),@"badSignatures":@(WXGBadSignatures),
              @"failuresInARow":@(WXGFailures),@"inFlight":@(WXGInFlight),@"lastStatus":@(WXGLastStatus),
              @"lastRequestMS":@(round(WXGLastRequestMS)),@"clockOffsetS":@(round(WXGClockOffset)),
              @"lastError":WXGLastError?:@"",@"serverShaderVersion":WXGOutdatedVer?:@""};

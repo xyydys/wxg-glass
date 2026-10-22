@@ -36,7 +36,41 @@ typedef struct {
        top / bottom ratio (iOS 26's lens disperses over its own band, which
        also narrows above and below, not only inside the refraction band). */
     float dispersionWidth,dispersionTopRatio;
+    /* FIX113 H (zero = off): the layer is the shape plus this margin on each
+       side (width / height include it), so an outward refraction (negative
+       offsetScale: the lens rim gathering what lies just outside it) samples
+       real content instead of the layer's clamped edge. The optical field is
+       the shape's; bar* above are in the layer's points. */
+    float padX,padY;
+    /* FIX113 I (zero = off): the share of the rim offset cancelled
+       (WXGLensRefractionOffset, as the shader's lens). */
+    float cancel;
+    /* FIX113 U (zero = off; user: the lens refracts the shrunk bar, its
+       background and its own border, nothing drawn again): the lens' backdrop
+       captures the bar itself, and the bar seen through the lens is that bar
+       made smaller. The bar in this layer's points (an end far from the lens
+       pushed far out), its corner radius (0 = capsule, as the shader's bar),
+       and the press and pinch of its inset (WXGInnerInsetAlong, exactly the
+       inset the shader's lens gave the bar it drew). */
+    float sbLeft,sbTop,sbRight,sbBottom,sbRadius,shrinkPress,shrinkPinch;
+    /* FIX113 Y (zero = none): added to the full inset (display points, may be
+       negative), ramped in the same way: the lens' elastic squash / stretch
+       otherwise widens / closes the strip between the smaller bar and the
+       lens' rim (the plugin passes keep x (resting half height - half height)). */
+    float shrinkExtra;
 } WXGMeshOptics;
+/* The full inset of the smaller bar, and the inset ramped by `along` (as
+   WXGInnerInsetAlong, either sign). */
+static inline float WXGMeshShrinkFull(WXGMeshOptics o) {
+    return (o.sbBottom-o.sbTop)*.5f*WXGOClamp(o.shrinkPress,0.f,1.f)*WXGOClamp(o.shrinkPinch,0.f,.30f)+o.shrinkExtra;
+}
+static inline float WXGMeshShrinkAlong(float full,float along) {
+    float f=WXG_ABS(full);if(!(f>1e-4f))return 0.f;
+    float u=WXGOClamp(along/(2.f*f),0.f,1.f);
+    return full*u*(2.f-u);
+}
+static inline float WXGMeshShapeWidth(WXGMeshOptics o) {float w=o.width-2.f*(o.padX>0.f?o.padX:0.f);return w>1.f?w:1.f;}
+static inline float WXGMeshShapeHeight(WXGMeshOptics o) {float h=o.height-2.f*(o.padY>0.f?o.padY:0.f);return h>1.f?h:1.f;}
 /* FIX88: the band width at a point for a side width and top / bottom ratio
    (FIX21 / FIX47 / FIX57 rules; ratio 0 = isotropic). */
 static inline float WXGMeshBandWidth(WXGMeshOptics o,WXGShapeSample f,float px,float py,float side,float topRatio) {
@@ -77,29 +111,76 @@ static inline float wxgEdgeC(float distance,float width) {
 static inline float WXGMeshUnit(float v,float length) {
     float u=v/WXG_MAX(length,1e-3f);return u<0.f?0.f:u>1.f?1.f:u;
 }
+/* On with a press and a bar, whatever the pinch: with no inset the bar's edge
+   still shows where it lies (the zoom does not magnify it, as the shader's
+   bar), so a pinch going to 0 never jumps. */
+static inline int WXGMeshShrinks(WXGMeshOptics o) {
+    return o.shrinkPress>0.f && o.sbRight-o.sbLeft>2.f && o.sbBottom-o.sbTop>2.f;
+}
+static inline WXGShapeSample WXGMeshBarField(WXGMeshOptics o,float x,float y) {
+    float bw=o.sbRight-o.sbLeft,bh=o.sbBottom-o.sbTop,dx=x-(o.sbLeft+bw*.5f),dy=y-(o.sbTop+bh*.5f);
+    return o.sbRadius>0.f?WXGRoundedOpticalField(dx,dy,bw,bh,o.sbRadius):WXGCapsuleOpticalField(dx,dy,bw,bh);
+}
+/* FIX113 U: the smaller bar. (yx, yy) is the displayed point bent by the
+   lens' band but not yet zoomed: there the shader's lens drew its bar inset
+   by d (WXGInnerInsetAlong at the nearest point of the bar's outline, by how
+   deep inside the lens that lies, so it still joins the bar outside at the
+   lens' ends). (sx, sy) is the source after the zoom. Along the bar's normal
+   the source is moved so that the zoomed image of that inset outline lands
+   on the bar's real edge: inside, the bar from its middle line out to its
+   edge (its veil, edge ring, rim: everything the bar draws) fills the smaller
+   bar; outside, the page beyond the bar's edge. Continuous (no move on the
+   middle line, the same move on both sides of the inset outline). */
+static inline void WXGMeshShrinkBar(WXGMeshOptics o,float yx,float yy,float za,float *sx,float *sy) {
+    float bw=o.sbRight-o.sbLeft,bh=o.sbBottom-o.sbTop,half=WXG_MIN(bw,bh)*.5f;
+    float cx=o.width*.5f,cy=o.height*.5f,s=o.fieldScale>0.f?o.fieldScale:1.f;
+    WXGShapeSample b=WXGMeshBarField(o,yx,yy);
+    float ox=yx-b.nx*b.distance,oy=yy-b.ny*b.distance;
+    WXGShapeSample l=o.radius>0.f?WXGRoundedOpticalField((ox-cx)/s,(oy-cy)/s,WXGMeshShapeWidth(o)/s,WXGMeshShapeHeight(o)/s,o.radius)
+                                 :WXGCapsuleOpticalField((ox-cx)/s,(oy-cy)/s,WXGMeshShapeWidth(o)/s,WXGMeshShapeHeight(o)/s);
+    /* FIX113 Y: with the extra (the lens squashed / swollen by the drag
+       speed), the depth is measured against the lens at rest (its rim that
+       much further out / in): measured against the squashed lens the ramp
+       never reached the full inset, and nothing once the lens was shorter
+       than the bar. The join at the lens' ends lies in its refraction band. */
+    float d=WXGMeshShrinkAlong(WXGMeshShrinkFull(o),WXGLensDepthAlongBar(l.distance*s-o.shrinkExtra,-b.ny,b.nx,l.nx,l.ny));
+    /* The zoom (about the layer's centre) moves that outline: before it,
+       the inset is h - (h - d) / zoom, h the centre's distance to the
+       outline along its normal. Swollen (a negative extra), the smaller
+       bar may come out past the real one (up to half its half height). */
+    float h=(ox-cx)*b.nx+(oy-cy)*b.ny;
+    float dz=WXGOClamp(h-(h-d)/WXG_MAX(za,.01f),o.shrinkExtra<0.f?-half*.5f:0.f,half*.9f);
+    if(!(WXG_ABS(dz)>0.f))return;
+    WXGShapeSample q=WXGMeshBarField(o,*sx,*sy);
+    float t=q.distance,t2=t<-dz?-half+(t+half)*half/(half-dz):t+dz;
+    if(t<-half)t2=t;
+    *sx+=q.nx*(t2-t);*sy+=q.ny*(t2-t);
+}
 static inline void WXGMeshSource(WXGMeshOptics o,float px,float py,float *sx,float *sy) {
     float cx=o.width*.5f,cy=o.height*.5f,s=o.fieldScale>0.f?o.fieldScale:1.f;
     float zb=o.zoomBefore>0.f?o.zoomBefore:1.f,za=o.zoomAfter>0.f?o.zoomAfter:1.f;
-    float x=(px-cx)/s,y=(py-cy)/s,w=o.width/s,h=o.height/s;
+    float x=(px-cx)/s,y=(py-cy)/s,w=WXGMeshShapeWidth(o)/s,h=WXGMeshShapeHeight(o)/s;
     WXGShapeSample f=o.radius>0.f?WXGRoundedOpticalField(x,y,w,h,o.radius):WXGCapsuleOpticalField(x,y,w,h);
     float width=WXGMeshBandWidth(o,f,px,py,o.edgeWidth,o.topRatio);
-    float off=WXGOpticalOffset(f.distance,width,o.refraction)*o.offsetScale;
+    float off=WXGLensRefractionOffset(f.distance,width,o.refraction,o.cancel)*o.offsetScale;   /* FIX113 I */
     /* Channel shift exactly as wxgRGB: red at source+chroma, blue at source-chroma.
        FIX88: over the colour split's own band. */
     float dwidth=o.dispersionWidth>0.f || o.dispersionTopRatio>0.f?WXGMeshBandWidth(o,f,px,py,WXGMeshDispersionSide(o),WXGMeshDispersionRatio(o)):width;
     float shift=o.channel*o.dispersion*wxgEdgeC(f.distance,dwidth);
     float rx=cx+(px-cx)/zb-f.nx*off+f.nx*shift,ry=cy+(py-cy)/zb-f.ny*off+f.ny*shift;
     *sx=cx+(rx-cx)/za;*sy=cy+(ry-cy)/za;
+    if(WXGMeshShrinks(o))WXGMeshShrinkBar(o,cx+(px-cx)/zb-f.nx*off,cy+(py-cy)/zb-f.ny*off,za,sx,sy);   /* FIX113 U */
 }
 /* Returns the vertex count (columns*rows), 0 when it does not fit. */
 static inline int WXGBuildRefractionMesh(WXGMeshOptics o,WXGMeshPoint *points,int capacity,int *columns,int *rows) {
     enum { WXGMeshAxisCapacity=96 };
     float xs[WXGMeshAxisCapacity],ys[WXGMeshAxisCapacity];
     float s=o.fieldScale>0.f?o.fieldScale:1.f;
-    float edge=WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),1.f)*s,radius=(o.radius>0.f?o.radius:WXG_MIN(o.width,o.height)*.5f/s)*s;
+    float edge=WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),1.f)*s,radius=(o.radius>0.f?o.radius:WXG_MIN(WXGMeshShapeWidth(o),WXGMeshShapeHeight(o))*.5f/s)*s;
     /* Curved ends need resolution over the whole corner, straight sides over the band. */
-    int cx=WXGMeshAxis(o.width,WXG_MAX(edge,radius)+2.f,8,24.f,xs,WXGMeshAxisCapacity);
-    int cy=WXGMeshAxis(o.height,WXG_MAX(edge,WXG_MIN(radius,o.height*.5f))+2.f,8,24.f,ys,WXGMeshAxisCapacity);
+    float px=o.padX>0.f?o.padX:0.f,py=o.padY>0.f?o.padY:0.f;   /* FIX113 H: the shape's edges lie that far in */
+    int cx=WXGMeshAxis(o.width,px+WXG_MAX(edge,radius)+2.f,8,24.f,xs,WXGMeshAxisCapacity);
+    int cy=WXGMeshAxis(o.height,py+WXG_MAX(edge,WXG_MIN(radius,WXGMeshShapeHeight(o)*.5f))+2.f,8,24.f,ys,WXGMeshAxisCapacity);
     if(cx<2 || cy<2 || cx*cy>capacity)return 0;
     int k=0;
     for(int j=0;j<cy;j++)for(int i=0;i<cx;i++) {
@@ -134,7 +215,7 @@ typedef struct { float cx,cy,nx,ny,u; int kind; } WXGContourSample; /* kind 0 st
    FIX88: the colour split over its own band width `dwidth`. */
 static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,float t,float channel) {
     float d=-t;
-    float off=WXGOpticalOffset(d,width,o.refraction)*o.offsetScale;
+    float off=WXGLensRefractionOffset(d,width,o.refraction,o.cancel)*o.offsetScale;   /* FIX113 I */
     return t+off-channel*o.dispersion*wxgEdgeC(d,dwidth);
 }
 static inline float WXGMeshCurvature(WXGMeshOptics o,float width,float dwidth,float t) {
@@ -163,8 +244,9 @@ static inline int WXGMeshRings(WXGMeshOptics o,float limit,float pad,WXGMeshQual
         t+=WXGOClamp(dt,.12f,1.5f);
     }
     if(t>=band && n<capacity-1) {
-        /* Beyond the band the mapping is linear (identity or zoom): coarse. */
-        float step=WXG_MAX(4.f,(limit-band)/4.f);
+        /* Beyond the band the mapping is linear (identity or zoom): coarse.
+           FIX113 U: not with the smaller bar, whose outline lies out there. */
+        float step=WXGMeshShrinks(o)?1.f:WXG_MAX(4.f,(limit-band)/4.f);
         for(t=band;t<limit-.01f && n<capacity-1;t+=step)rings[n++]=t;
     }
     if(n<capacity)rings[n++]=limit;
@@ -264,13 +346,22 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
     enum { WXGMeshMaxContour=512,WXGMeshMaxRings=160 };
     WXGContourSample contour[WXGMeshMaxContour];float rings[WXGMeshMaxRings];
     float innerX[WXGMeshMaxContour],innerY[WXGMeshMaxContour];int top[WXGMeshMaxContour],bottom[WXGMeshMaxContour];
-    float hx=o.width*.5f,hy=o.height*.5f,limit=WXG_MIN(hx,hy);
+    float hx=WXGMeshShapeWidth(o)*.5f,hy=WXGMeshShapeHeight(o)*.5f,limit=WXG_MIN(hx,hy);
+    float lx=o.width*.5f,ly=o.height*.5f;   /* FIX113 H: the layer's centre (the shape's, with a margin) */
     float R=o.radius>0.f?WXG_MIN(o.radius,limit):limit;
     float pad=R*.4143f+1.5f;
     /* Rings end 1.25 pt past the band (plain mapping there), never at the
        centre; a tiny shape stops 0.5 pt short of collapsing. */
     float band=WXG_MIN(WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),.5f)+.75f,limit);   // FIX88: and the colour split's band
     float stop=WXG_MIN(band+1.25f,limit-.5f);
+    /* FIX113 U: rings down past the smaller bar's outline (the bar's top /
+       bottom from the shape's edge, plus its full inset), so the straight
+       interior span never smooths that outline away. */
+    if(WXGMeshShrinks(o)) {
+        float py0=o.padY>0.f?o.padY:0.f,deep=WXG_MAX(o.sbTop-py0,(o.height-py0)-o.sbBottom);
+        float full=WXG_MAX(0.f,WXGMeshShrinkFull(o));
+        stop=WXG_MIN(WXG_MAX(stop,deep+full+2.f),limit-.5f);
+    }
     if(stop<.25f)stop=WXG_MAX(limit*.5f,.1f);
     int n=WXGMeshContour(hx,hy,R,q,contour,WXGMeshMaxContour);
     int m=WXGMeshRings(o,stop,pad,q,rings,WXGMeshMaxRings);
@@ -282,8 +373,8 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
     int k=0;
     for(int r=0;r<m;r++)for(int i=0;i<n;i++) {
         float x,y,sx,sy;WXGMeshContourPointC(contour[i],hx,hy,R,rings[r],capsule,&x,&y);
-        WXGMeshSource(o,x+hx,y+hy,&sx,&sy);
-        points[k++]=(WXGMeshPoint){WXGMeshUnit(sx,o.width),WXGMeshUnit(sy,o.height),(x+hx)/o.width,(y+hy)/o.height};
+        WXGMeshSource(o,x+lx,y+ly,&sx,&sy);
+        points[k++]=(WXGMeshPoint){WXGMeshUnit(sx,o.width),WXGMeshUnit(sy,o.height),(x+lx)/o.width,(y+ly)/o.height};
     }
     int f=0;
     for(int r=0;r<m-1;r++)for(int i=0;i<n;i++) {

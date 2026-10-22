@@ -146,7 +146,7 @@ static BOOL WXGBubbleOutgoing(UIView *host,UIView *image) {
         // a new one in) outside any layout we see; hide it before it is drawn.
         __weak WXGBubbles *weakManager=manager;
         CFRunLoopObserverRef observer=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,1999800,
-            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity activity){WXGPerfTimePluginWork(^{[weakManager reassert];});});   // FIX84: timed
+            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity activity){WXGPerfTimePluginWorkAs("bubbles",^{[weakManager reassert];});});   // FIX84: timed
         if(observer){CFRunLoopAddObserver(CFRunLoopGetMain(),observer,kCFRunLoopCommonModes);CFRelease(observer);}
     });
     return manager;

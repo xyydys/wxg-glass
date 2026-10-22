@@ -34,6 +34,8 @@ int main(void) {
     /* A band deeper than half the bar: top and bottom stop short of the middle, never cross. */
     WXGTravelVeilOutline(0,0,359,68,40,0,103,87,H,1,.18f,40,-40,120,N,pts,NULL);
     for(int i=0;i<N;i++)CHECK(pts[2*i+1]<0.f && pts[2*(2*N-1-i)+1]>0.f && pts[2*i+1]<pts[2*(2*N-1-i)+1],"deep band: no crossing (%d %.3f %.3f)",i,pts[2*i+1],pts[2*(2*N-1-i)+1]);
+    CHECK(WXGLensFlatCode(WXG_LENS_FLAT) && WXGLensFlatCode(-WXG_LENS_FLAT) && !WXGLensFlatCode(0) && !WXGLensFlatCode(-1) && !WXGLensFlatCode(3),"flat code: |w| = WXG_LENS_FLAT only");
+    CHECK(fabsf(WXGLensFullInset(H,1,.18f)-full)<1e-5f && fabsf(WXGLensFullInset(H,1,.5f)-H*.5f*.30f)<1e-5f && WXGLensFullInset(H,0,.18f)==0.f,"full inset: as WXGInnerInsetAlong's full");
     /* Fade bands: composited, each band's middle shows alpha * (1 - .82 edge^2); the last the full alpha. */
     float depth[8],band[8];int k=WXGTravelVeilBands(.6f,10,8,depth,band);
     CHECK(k==8 && depth[0]==0 && fabsf(depth[7]-10)<1e-5f,"8 bands over the width");
@@ -47,6 +49,6 @@ int main(void) {
     }
     CHECK(WXGTravelVeilBands(.6f,0,8,depth,band)==1 && band[0]==.6f && WXGTravelVeilBands(.6f,10,1,depth,band)==1,"no fade: one band");
     if(failures){printf("TravelVeilTests: %d failure(s)\n",failures);return 1;}
-    printf("PASS: tap animation veil (FIX88): the outline outside the lens, the shader's inset under it, the end cap detached inside it, extra inward offset, deep bands never crossing the middle, edge-fade bands composited to the shader's fade.\n");
+    printf("PASS: tap animation veil (FIX88): the outline outside the lens, the shader's inset under it, the end cap detached inside it, extra inward offset, deep bands never crossing the middle, edge-fade bands composited to the shader's fade; FIX113 M's shader helpers (flat code, full inset).\n");
     return 0;
 }

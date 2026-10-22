@@ -47,6 +47,14 @@ int main(void) {
         assert(still.lensX==demo.lensX && still.lensWidth==demo.lensWidth && still.lensHeight==demo.lensHeight);
         assert(g.lensX>=-WXGCanvasPaddingX && g.lensX+g.lensWidth<=w+WXGCanvasPaddingX);
         assert(g.lensY>=-WXGCanvasPaddingY && g.lensY+g.lensHeight<=h+WXGCanvasPaddingY);cases++;
+        /* FIX113 Y: share 1 is the old layout exactly; 0 keeps the height of no
+           deformation (the width still stretches); between, in between. */
+        s.stretch=j%2?log(WXG_ELASTIC_MIN):log(WXG_ELASTIC_MAX);
+        WXGDockGeometry one=WXGElasticLayoutLimited(w,h,6,anchor,p,1.28,0,s,1.08,10,1),none=WXGElasticLayoutLimited(w,h,6,anchor,p,1.28,0,s,1.08,10,0);
+        WXGDockGeometry half=WXGElasticLayoutLimited(w,h,6,anchor,p,1.28,0,s,1.08,10,.5f);
+        assert(one.lensHeight==g.lensHeight && one.lensWidth==g.lensWidth && one.lensX==g.lensX);
+        assert(fabsf(none.lensHeight-WXG_MIN(demo.lensHeight,h+2*(WXGCanvasPaddingY-4)))<1e-3f && none.lensWidth==g.lensWidth);
+        assert(half.lensHeight>=fminf(one.lensHeight,none.lensHeight)-1e-3f && half.lensHeight<=fmaxf(one.lensHeight,none.lensHeight)+1e-3f);
     }
-    printf("PASS: %u hybrid geometries; exact demo reveal below 65%% and all zero-speed shapes; fast/brake/reversal/drop/settling at 30/60/120/240 Hz (strain %.3f/%.3f/%.3f/%.3f).\n",cases,a,b,c,d);
+    printf("PASS: %u hybrid geometries; exact demo reveal below 65%% and all zero-speed shapes; fast/brake/reversal/drop/settling at 30/60/120/240 Hz (strain %.3f/%.3f/%.3f/%.3f); FIX113 Y height share 1 / 0 / between.\n",cases,a,b,c,d);
 }

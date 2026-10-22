@@ -122,7 +122,7 @@ BOOL WXGIsPluginView(UIView *view) {
     dispatch_once(&once,^{
         for(NSString *name in @[@"WXGGlassView",@"WXGSurface",@"WXGDemoBar",@"WXGDockSearch",@"WXGOverlay",@"WXGRimView",@"WXGMetalSurface",
                                 @"WXGSyncBackdropView",@"WXGSettingsCard",@"WXGSettingsRow",@"WXGSettingsScrollView",@"WXGEdgeBlurView",@"WXGEdgeCoverView",@"WXGEdgePlateView",
-                                @"WXGBubbleGlass",@"WXGPerfHUDView"]) {
+                                @"WXGBubbleGlass",@"WXGPerfHUDView",@"WXGSegmentBar"]) {
             Class cls=NSClassFromString(name);if(cls && count<20)classes[count++]=cls;
         }
     });
@@ -241,7 +241,10 @@ UIImage *WXGCropInk(UIImage *image,UIColor *tint) {
     if((CGImageGetBitmapInfo(cg)&kCGBitmapByteOrderMask)==kCGBitmapByteOrder32Little)ai=3-ai;
     CFDataRef data=CGDataProviderCopyData(CGImageGetDataProvider(cg));if(!data)return src;
     size_t minX=w,minY=h,maxX=0,maxY=0;BOOL found=NO;const uint8_t *p=CFDataGetBytePtr(data);
-    for(size_t y=0;y<h;y++)for(size_t x=0;x<w;x++)if(p[y*stride+x*4+ai]>=16) {
+    // FIX114 A (user: the top-right "+" looked cut at its edges): the faint
+    // antialiased edge pixels count as ink too (from 16/255 they were cut
+    // off, the glyph's ends lost their soft edge).
+    for(size_t y=0;y<h;y++)for(size_t x=0;x<w;x++)if(p[y*stride+x*4+ai]>=3) {
         minX=MIN(minX,x);minY=MIN(minY,y);maxX=MAX(maxX,x);maxY=MAX(maxY,y);found=YES;
     }
     CFRelease(data);
@@ -256,16 +259,67 @@ UIImage *WXGCropInk(UIImage *image,UIColor *tint) {
 }
 
 @implementation WXGPreferences
-+ (instancetype)shared {static WXGPreferences *p;static dispatch_once_t once;dispatch_once(&once,^{p=[self new];});return p;}
++ (instancetype)shared {static WXGPreferences *p;static dispatch_once_t once;dispatch_once(&once,^{p=[self new];[p adoptBuildDefaults];});return p;}
 - (NSArray *)keys {return @[@"enabled",@"nav",@"dock",@"input",@"avatarTitle",@"homeSearch",@"nativeInputTest",@"adaptiveIdle",@"sizeScale",
-                            @"dockSearch",@"dockSearchLeading",@"hideTopSearch",@"edgeFade",@"bubbles",@"perfMonitor",@"perfHUD"];}
+                            @"dockSearch",@"dockSearchLeading",@"hideTopSearch",@"edgeFade",@"bubbles",@"perfMonitor",@"perfHUD",
+                            @"localSearch",@"localPanel",@"localEmoji",@"localSheet",@"localTitle",@"localNavButtons",@"localSearchThemeFirst",@"chatAvatarButton"];}
+- (void)loadBuiltIn {
+    _enabled=_nav=_dock=_input=YES;_adaptiveIdle=YES;_homeSearch=NO;_avatarTitle=NO;_sizeScale=1;
+    _dockSearch=YES;_dockSearchLeading=NO;_hideTopSearch=NO;   // FIX60
+    _edgeFade=YES;   // FIX64
+    _bubbles=YES;    // FIX82
+    _perfMonitor=_perfHUD=NO;   // FIX84
+    _localSearch=_localPanel=_localEmoji=_localSheet=YES;   // FIX107
+    _localTitle=_localNavButtons=YES;   // FIX108
+    _localSearchThemeFirst=NO;_chatAvatarButton=YES;   // FIX109
+}
+// FIX114 G: the switches' built-in values only (nothing read or written).
+- (instancetype)initBuiltIn {
+    if((self=[super init]))[self loadBuiltIn];
+    return self;
+}
+// FIX114 G: as WXGConfig's adoptBuildDefaults: a switch (or 整体大小) still at
+// the previous build's default (its value there, else the built-in one)
+// moves to this build's; one the person changed stays. Not the main switch,
+// 首页搜索 or the frame-rate logs (never part of a build's defaults).
+- (void)adoptBuildDefaults {
+    NSUserDefaults *suite=[[NSUserDefaults alloc] initWithSuiteName:@"com.runyu.WeChatLiquidGlass"];
+    NSString *stamp=WXGBuildDefaultsStamp();
+    if(!stamp.length || [[suite stringForKey:@"defaultsStamp.integration"] isEqualToString:stamp])return;
+    NSDictionary *stored=nil;
+    NSDictionary *previous=WXGPreviousBuildDefaultSection(@"integration"),*current=WXGBuildDefaultSection(@"integration");
+    NSUInteger moved=0,kept=0;NSString *failure=nil;
+    @try {   // FIX114 G (review): inside +shared at launch: never throws out; the stamp written whatever happens
+        stored=[suite dictionaryForKey:@"integration.test1"];
+        // The previous defaults known (that build had a set); a section it
+        // lacked: the built-in switches were its defaults.
+        if(stored.count && WXGPreviousBuildDefaultSection(@"config").count) {
+            WXGPreferences *builtIn=[[WXGPreferences alloc] initBuiltIn];
+            id (^valid)(id)=^id(id v){return [v isKindOfClass:NSNumber.class] && isfinite([v doubleValue])?v:nil;};
+            for(NSString *k in [self keys]) {
+                if([@[@"enabled",@"homeSearch",@"perfMonitor",@"perfHUD"] containsObject:k])continue;
+                // A switch this phone never stored is at its built-in value (init
+                // applies a build's switches only to a fresh install).
+                id base=[builtIn valueForKey:k],old=valid(stored[k])?(valid(previous[k])?:base):base,now=valid(current[k])?:base;
+                if(!now || WXGSameSettingValue(old,now))continue;
+                if(WXGSameSettingValue([self valueForKey:k],old)){[self setValue:now forKey:k];++moved;}
+                else ++kept;
+            }
+            if(moved) {
+                _homeSearch=NO;if(!isfinite(_sizeScale))_sizeScale=1;_sizeScale=WXGBound(_sizeScale,.85,1.2);
+                [suite setObject:[self dictionaryWithValuesForKeys:[self keys]] forKey:@"integration.test1"];
+            }
+        }
+    }@catch(NSException *error) {
+        failure=error.reason?:error.name?:@"exception";
+    }@finally {
+        [suite setObject:stamp forKey:@"defaultsStamp.integration"];
+    }
+    WXGNoteDefaultsAdoption(@"integration",@{@"stored":@(stored.count>0),@"moved":@(moved),@"kept":@(kept),@"error":failure?:@""});
+}
 - (instancetype)init {
     if((self=[super init])) {
-        _enabled=_nav=_dock=_input=YES;_adaptiveIdle=YES;_homeSearch=NO;_avatarTitle=NO;_sizeScale=1;
-        _dockSearch=YES;_dockSearchLeading=NO;_hideTopSearch=NO;   // FIX60
-        _edgeFade=YES;   // FIX64
-        _bubbles=YES;    // FIX82
-        _perfMonitor=_perfHUD=NO;   // FIX84
+        [self loadBuiltIn];
         NSDictionary *d=[[[NSUserDefaults alloc] initWithSuiteName:@"com.runyu.WeChatLiquidGlass"] dictionaryForKey:@"integration.test1"];
         // FIX84: a fresh install starts from this build's switches, if it has
         // any (WXGBuildProfile.h); the main switch and the logs are not among them.
@@ -363,6 +417,11 @@ static void WXGReleaseImagePaint(UIImageView *view) {
 @property(nonatomic) UIViewContentMode alignmentMode;
 @property(nonatomic,weak) UIView *alignmentHost;
 @property(nonatomic) BOOL alignmentWriting;
+// FIX113 E: shiftContents:x:.
+@property(nonatomic) BOOL changedSublayerTransform;
+@property(nonatomic) CATransform3D originalSublayerTransform,appliedSublayerTransform;
+@property(nonatomic) CGFloat contentShift;
+@property(nonatomic) CGFloat contentShiftY;   // FIX114 C: the title row moved down (顶部按钮往下移)
 @end
 static char WXGNativeIconKey;
 @interface WXGIconBinding : NSObject
@@ -429,6 +488,7 @@ void WXGInstallNativeIconGuard(void) {
     if(_changedImage && [v isKindOfClass:UIImageView.class])WXGReleaseImagePaint((UIImageView *)v);
     if(_changedContents && !_changedImage)v.layer.contents=_contents;
     if(_restoreGeometry && !CGRectEqualToRect(v.frame,_originalFrame)) v.frame=_originalFrame;
+    if(_changedSublayerTransform){[CATransaction begin];[CATransaction setDisableActions:YES];v.layer.sublayerTransform=_originalSublayerTransform;[CATransaction commit];}
 }
 @end
 @interface WXGLayerState : NSObject
@@ -484,8 +544,28 @@ static BOOL WXGContainsContent(UIView *root,NSArray<UIView *> *protected) {
     if(![label.textColor isEqual:UIColor.labelColor])s.nativeLabelColor=label.textColor;
     s.changedLabelColor=YES;if(![label.textColor isEqual:UIColor.labelColor])label.textColor=UIColor.labelColor;
 }
+- (void)shiftContents:(UIView *)v x:(CGFloat)dx {[self shiftContents:v x:dx y:0];}
+// FIX114 C: across and down (the title row's margin and its offset).
+- (void)shiftContents:(UIView *)v x:(CGFloat)dx y:(CGFloat)dy {
+    if(!v)return;
+    WXGViewState *s=[_states objectForKey:v];
+    if(!s && fabs(dx)<.01 && fabs(dy)<.01)return;
+    s=[self remember:v];
+    if(!s.changedSublayerTransform){s.changedSublayerTransform=YES;s.originalSublayerTransform=v.layer.sublayerTransform;}
+    s.contentShift=fabs(dx)<.01?0:dx;s.contentShiftY=fabs(dy)<.01?0:dy;
+    s.appliedSublayerTransform=s.contentShift!=0 || s.contentShiftY!=0?CATransform3DTranslate(s.originalSublayerTransform,s.contentShift,s.contentShiftY,0):s.originalSublayerTransform;
+    if(!CATransform3DEqualToTransform(v.layer.sublayerTransform,s.appliedSublayerTransform)) {
+        [CATransaction begin];[CATransaction setDisableActions:YES];v.layer.sublayerTransform=s.appliedSublayerTransform;[CATransaction commit];
+    }
+}
+- (CGFloat)contentShiftOf:(UIView *)v {WXGViewState *s=v?[_states objectForKey:v]:nil;return s.changedSublayerTransform?s.contentShift:0;}
+- (CGPoint)contentOffsetOf:(UIView *)v {WXGViewState *s=v?[_states objectForKey:v]:nil;return s.changedSublayerTransform?CGPointMake(s.contentShift,s.contentShiftY):CGPointZero;}
 - (void)allowOverflow:(UIView *)v {
-    if(!v)return;WXGViewState *s=[self remember:v];s.changedClips=YES;if(v.clipsToBounds)v.clipsToBounds=NO;
+    if(!v)return;WXGViewState *s=[self remember:v];
+    // FIX114 C (review): the original taken when this bag first changes it, not
+    // when the bag first met the view (another bag may have opened it since).
+    if(!s.changedClips){s.clips=v.clipsToBounds;s.changedClips=YES;}
+    if(v.clipsToBounds)v.clipsToBounds=NO;
 }
 - (void)clear:(UIView *)v {
     if(!v)return;WXGViewState *s=[self remember:v];
@@ -538,6 +618,19 @@ static BOOL WXGContainsContent(UIView *root,NSArray<UIView *> *protected) {
         state.alignmentImage=image.image;state.alignmentMode=image.contentMode;
     }
     CGPoint center=[host convertPoint:CGPointMake(CGRectGetMidX(host.bounds),CGRectGetMidY(host.bounds)) toView:image.superview];
+    // FIX114 C (user: the home page's star stayed where it was when its glass
+    // moved to the title row's margin): the host's contents are drawn shifted
+    // (shiftContents: its layer's sublayerTransform), the image with them; but
+    // a point taken from the host into a view inside it comes back with that
+    // shift taken off (the layers' conversion counts the sublayerTransform),
+    // so the image was set back by the shift each time it was aligned. By
+    // frames alone while the host is shifted (the same point without it).
+    WXGViewState *hostState=[_states objectForKey:host];
+    if(hostState.changedSublayerTransform && (hostState.contentShift!=0 || hostState.contentShiftY!=0) && image.superview!=host) {
+        CGPoint offset=CGPointZero;UIView *p=image.superview;NSUInteger depth=0;
+        for(;p && p!=host && depth<16;p=p.superview,depth++){offset.x+=p.frame.origin.x-p.bounds.origin.x;offset.y+=p.frame.origin.y-p.bounds.origin.y;}
+        if(p==host)center=CGPointMake(CGRectGetMidX(host.bounds)-offset.x,CGRectGetMidY(host.bounds)-offset.y);
+    }
     CGRect f=state.originalFrame,n=state.normalizedInk;
     WXGRect result=WXGAlignedImageFrame((WXGRect){f.origin.x,f.origin.y,f.size.width,f.size.height},
         (WXGRect){n.origin.x,n.origin.y,n.size.width,n.size.height},center.x,center.y,maximum);
@@ -610,6 +703,9 @@ static BOOL WXGContainsContent(UIView *root,NSArray<UIView *> *protected) {
             UIVisualEffectView *v=(id)view;if(v.effect){s.effect=v.effect;v.effect=nil;}
         }
         if(s.changedContents && view.layer.contents){s.contents=view.layer.contents;view.layer.contents=nil;}
+        if(s.changedSublayerTransform && !CATransform3DEqualToTransform(view.layer.sublayerTransform,s.appliedSublayerTransform)) {
+            [CATransaction begin];[CATransaction setDisableActions:YES];view.layer.sublayerTransform=s.appliedSublayerTransform;[CATransaction commit];
+        }
     }
     for(WXGLayerState *s in _layers.objectEnumerator){CALayer *layer=s.layer;if(layer && !layer.hidden)layer.hidden=YES;}
     }@finally {_reapplying=NO;}

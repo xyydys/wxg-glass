@@ -16,13 +16,20 @@ struct WXGUniforms {
     float4 rim;        // directional fade, dark gain, lens stroke width, optional maximum corner radius
     float4 tintColor;  // independent material veil, including opacity
     float4 sync;       // FIX18 x: 0 readback optics, 1 hybrid edge band, 2 render-server body; FIX21 y: lens top/bottom width ratio, z: narrowing sharpness
-    float4 style;      // FIX27 x: material veil fade width in pt (0 = refraction width), y: rim top-left fade, z: rim bottom-right fade
+    float4 style;      // FIX27 x: material veil fade width in pt (0 = refraction width), y: rim top-left fade, z: rim bottom-right fade; FIX113 I w: WXG_LENS_CANCEL (the lens' rim offset cancelled, 0..1)
     float4 glow;       // FIX86 x: iOS 27-like rim on (optics.y is then its width; FIX87: x = 1 + the highlight's angle in radians), y: end level, z: sharpness, w: inward curve
-    float4 extra;      // FIX88 y: lens dispersion range (pt), z: its top / bottom ratio; FIX89 x: the second highlight's width; FIX94 w: the bar-follows-the-rim margin (0 off)
+    float4 extra;      // FIX88 y: lens dispersion range (pt), z: its top / bottom ratio; FIX89 x: the second highlight's width; FIX94 w: the bar-follows-the-rim margin (0 off); FIX113 H w < 0: WXG_LENS_OUTWARD; FIX113 M |w| = WXG_LENS_FLAT: the bar in the lens flat
     float4 glow2;      // FIX89: the iOS 27-like rim's second highlight, as glow
     float4 glowColor2; // FIX89: its colour, alpha = opacity (the first's is borderColor)
     float4 extra2;     // FIX97 x: the colour split of the bar seen through the lens (pt), y: its share of the lens' own split, z: the page behind (0 black .. 1 white); FIX98 w: 1 + the selection colour's weight (0: by the press)
 };
+// FIX113 H (WXG_LENS_OUTWARD): the lens' refraction direction. With extra.w
+// below zero the rim gathers what lies just outside the lens (iOS 26: a
+// neighbouring icon comes into the rim, compressed) instead of what lies
+// further in (an icon under the rim was skipped: the band showed what is up
+// to edge width x amplitude further in). Older plugins send 0 (inward, as
+// before); older shaders read extra.w only above zero (FIX94, off).
+float wxgLensDirection(constant WXGUniforms &u) {return u.extra.w<0.?-1.:1.;}
 // FIX86: the bar outline drawn by the shader (inside the dock's lens) as the
 // iOS 27-like rim of the CA rim view (WXGRimGlow.h): full at the outline,
 // fading inward over `width` (depth = points inside the outline), and along
@@ -144,11 +151,13 @@ WXGLensBar wxgLensBar(float2 p,float press,WXGOpticalValues optical,constant WXG
     float endLeft=WXGLensEndReach(barMid.x-barHalf,barMid.x+barHalf,u.lens.x,u.lens.x+u.lens.z,-1);
     float endRight=WXGLensEndReach(barMid.x-barHalf,barMid.x+barHalf,u.lens.x,u.lens.x+u.lens.z,1);
     float barBand=WXGLensEndRelax(lensWidth,lens.nx,optical.edgeWidth,u.sync.y,endLeft,endRight);
-    float2 bend=wxgBasePoint(p-n*(WXGOpticalOffset(lens.distance,barBand,optical.refraction)*press),u);
+    // FIX113 M (WXG_LENS_FLAT): flat, the bar as it lies (not bent), inset in full.
+    bool flat=WXGLensFlatCode(u.extra.w)!=0;
+    float2 bend=flat?wxgBasePoint(p,u):wxgBasePoint(p-n*(WXGLensRefractionOffset(lens.distance,barBand,optical.refraction,u.style.w)*press*wxgLensDirection(u)),u);
     // FIX94 (extra.w = the margin, 0 off): the bar follows the lens' rim,
     // magnified vertically per column (WXGLensBarZoom), not bent.
     float zf=1.;
-    if(u.extra.w>0.) {
+    if(u.extra.w>0. && !flat) {
         zf=WXGLensBarZoom(p.x,barMid.x,barMid.y,u.bar.z*u.motion.x,u.bar.w*u.motion.x,center.x,center.y,u.lens.z,u.lens.w,
                           u.bar.w*u.motion.x,press,u.optics.z,optical.edgeWidth,u.sync.y,u.sync.z,u.extra.w);
         bend=wxgBasePoint(float2(p.x,barMid.y+(p.y-barMid.y)/zf),u);
@@ -159,7 +168,7 @@ WXGLensBar wxgLensBar(float2 p,float press,WXGOpticalValues optical,constant WXG
     // ratio above and below); the direction.
     r.rim=wxgEdge(lens.distance,barBand)*clamp(barBand/max(optical.edgeWidth,1.),0.,1.);r.n=n;
     r.s=wxgShape(bend,u.bar,u.rim.w);
-    r.insetBent=wxgLensInset(bend,press,u);   // FIX88: the slope first, then refracted
+    r.insetBent=flat?WXGLensFullInset(u.bar.w*u.motion.x,press,u.optics.z):wxgLensInset(bend,press,u);   // FIX88: the slope first, then refracted
     // The magnified bar's distance on screen: vertical stretch only, so by its
     // normal (the top / bottom zf times, the ends' sides 1).
     r.dd=(r.s.distance*u.motion.x+r.insetBent)/max(length(float2(r.s.nx,r.s.ny/zf)),1./zf);
@@ -257,7 +266,7 @@ fragment float4 wxgFragment(WXGOut in [[stage_in]],constant WXGUniforms &u [[buf
     // FIX21: the lens rim is widest at its rounded ends and thin above/below the bar.
     // FIX47: a lens end past the bar's end narrows to the top/bottom width.
     float lensWidth=WXGLensEdgeWidthAtBar(lens.nx,lens.ny,optical.edgeWidth,u.sync.y,u.sync.z,wxgShape(base,u.bar,u.rim.w).distance*u.motion.x);
-    float offset=WXGOpticalOffset(lens.distance,lensWidth,optical.refraction)*press;
+    float offset=WXGLensRefractionOffset(lens.distance,lensWidth,optical.refraction,u.style.w)*press*wxgLensDirection(u);   // FIX113 I
     float2 refracted=p-n*offset;
     float2 ray=center+(refracted-center)/zoom;
     // FIX88: the colour split over its own band (u.extra.y, its own top /
@@ -275,7 +284,7 @@ fragment float4 wxgFragment(WXGOut in [[stage_in]],constant WXGUniforms &u [[buf
     WXGShapeSample body=wxgShape(base,u.bar,u.rim.w);
     float nativeDistance=body.distance;
     if(u.appearance.z>.5) nativeDistance=bodyField.sample(wxgSampler,base/u.viewport.xy).r;
-    float inset=wxgLensInset(base,press,u);   // FIX88 (was WXGInnerInset by the lens distance)
+    float inset=WXGLensFlatCode(u.extra.w)?WXGLensFullInset(u.bar.w*u.motion.x,press,u.optics.z):wxgLensInset(base,press,u);   // FIX88 (was WXGInnerInset by the lens distance); FIX113 M flat
     float d=nativeDistance*u.motion.x+inset;
     float coverage=wxgMask(d,aa),stroke=max(0.,coverage-wxgMask(d+u.optics.y,aa));
     if(u.sync.x>1.5) {

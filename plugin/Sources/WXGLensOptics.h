@@ -121,4 +121,19 @@ static inline float WXGLensBarZoom(float x,float bx,float by,float bw,float bh,f
     float k=(z-1.f)/.04f;   // a smooth max(1, z)
     return k>20.f?z:1.f+.04f*WXG_LOG(1.f+WXG_EXP(k));
 }
+/* ---- FIX113 M (WXG_LENS_FLAT): the bar in the lens, small and flat ---------
+   User: take away the slanted line that joins the inner outline to the outer
+   one; cut it off from the magnified outside, small and flat inside. The bar
+   seen through the dock's lens is then not bent by the lens' refraction and
+   is inset by its full amount everywhere (no FIX47 / FIX88 45-degree join to
+   the bar outside): where it meets the lens' rim it just ends there, a step.
+   The plugin asks for it with |extra.w| = WXG_LENS_FLAT (the sign is still
+   FIX113 H's direction). Older shaders read +WXG_LENS_FLAT as FIX94's
+   margin, which that far from the rim leaves the bar unbent (only the join's
+   slope stays), and -WXG_LENS_FLAT as outward. */
+#define WXG_LENS_FLAT 1000.f
+static inline int WXGLensFlatCode(float w) {return WXG_ABS(w)>=WXG_LENS_FLAT*.5f;}
+static inline float WXGLensFullInset(float barHeight,float press,float reduction) {
+    return WXGInnerInsetAlong(barHeight,press,reduction,1e6f);
+}
 #endif

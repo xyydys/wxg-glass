@@ -62,20 +62,27 @@ int main(int argc, char **argv) {
     u.extra = mk_float4(glowOn ? V("glow2Width", 2.04) : 0, V("lensDispersionWidth", 31.2), V("lensDispersionTopRatio", .4965), V("margin", .5));
     float selA = V("selectionAlpha", .5) * (V("selectionOpacity", .611) + (V("pressedOpacity", .4) - V("selectionOpacity", .611)) * press);
     u.selectionColor = mk_float4(.36f, .36f, .36f, selA);
+    // FIX113 N: the segment bar's pill (selectionOverride: its own colour, opaque).
+    if (V("pill", -1) >= 0) u.selectionColor = mk_float4((float)V("pill", 1), (float)V("pill", 1), (float)V("pill", 1), (float)V("pillAlpha", 1));
     u.borderColor = glowOn ? mk_float4(0, 0, 0, V("glow1Alpha", .74)) : mk_float4(1, 1, 1, .23f);
     u.motion = mk_float4(g.scale, 0, V("dockBlurCoverage", 71.65) * .01, barX + g.anchorX);
     u.rim = mk_float4(0, 1, V("lensBorderWidth", .689), 0);
     float tint = V("tint", .133);   // FIX97: light mode-ish with page 1, tint ~.9
     u.tintColor = mk_float4(tint, tint, tint, V("tintAlpha", .748));
     u.sync = mk_float4(2, V("ratio", .3327), V("sharp", 3.254), 1);
-    u.style = mk_float4(V("edgeFadeRange", 3.54), 0, 0, 0);
+    u.style = mk_float4(V("edgeFadeRange", 3.54), 0, 0, V("cancel", 0));   // FIX113 I
     // FIX97: lensBarDispersion, lensBarDispersionNearRim (0 0 = FIX96), the page the shader assumes behind.
     u.extra2 = mk_float4(V("barDisp", .6), V("barDispRim", .35), V("pageGuess", V("page", 0)), 0);
     // Icons: a ring (unselected) / a filled disc (selected) and a title bar per tab.
     int W = (int)(viewW * S), H = (int)(viewH * S);
     Img normal(W, H), selected(W, H);
     float cy = barY + barH * .5f;
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < 4 && V("segment", 0) > .5; i++) {   // FIX113 N: a title-like bar per segment, dark ink
+        float cx = barX + WXGSelectionCenter(barW, gap, i), ink = (float)V("ink", .14);
+        rect(normal, cx - 13, cy - 7, cx + 13, cy + 7, mk_float4(ink, ink, ink, 1), S);
+        rect(selected, cx - 13, cy - 7, cx + 13, cy + 7, mk_float4(ink * .8f, ink * .8f, ink * .8f, 1), S);
+    }
+    for (int i = 0; i < 4 && V("segment", 0) < .5; i++) {
         float cx = barX + WXGSelectionCenter(barW, gap, i);
         disc(normal, cx, cy - 7, 11, 1.4f, mk_float4(.75f, .75f, .75f, 1), S);
         rect(normal, cx - 12, cy + 10, cx + 12, cy + 15, mk_float4(.75f, .75f, .75f, 1), S);
@@ -86,7 +93,7 @@ int main(int argc, char **argv) {
     // The composite: black page; the bar's render-server veil and the body
     // pass (icons) outside the lens; inside the lens's clip the lens pass over
     // the (black) refracted page.
-    float veilA = clamp(.748f * 1.22f, 0.f, 1.f);
+    float veilA = clamp((float)V("veilAlpha", .748f * 1.22f), 0.f, 1.f);   // FIX113 N: the render-server veil's own alpha
     std::vector<unsigned char> out((size_t)W * H * 3);
     WXGShapeSample tmp;
     // fwidth (the one in the lens pass): a first pass records its argument per
@@ -121,7 +128,9 @@ int main(int argc, char **argv) {
         float lensCov = clamp(.5f - l.distance * S, 0.f, 1.f);
         if (lensCov > 0) {
             wxgSimFwidth = fw[(size_t)y * W + x];
-            float4 lens = wxgFragment(in, u, none, ni, si, none, none, none);
+            WXGUniforms lu = u;   // FIX113 L: lensStroke 0 = no bar outline drawn inside the lens (the plugin's lens pass uniforms)
+            if (V("lensStroke", 1) < .5) { lu.borderColor.w = 0; lu.glowColor2.w = 0; }
+            float4 lens = wxgFragment(in, lu, none, ni, si, none, none, none);
             float3 inside = lens.xyz + mk_float3((float)V("page", 0)) * (1 - lens.w);   // over the page (FIX97; black before)
             c = c * (1 - lensCov) + inside * lensCov;
             // the lens rim (CA layer): a thin light line

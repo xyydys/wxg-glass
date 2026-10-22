@@ -230,7 +230,14 @@ static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
     _glass.maximumCornerRadius=radius;[self setNeedsLayout];
 }
 
+// FIX108 C: the same artwork handed over as a new image object (the home
+// "+" got one every frame of a pull-down: cropped and re-tinted every frame).
+static BOOL WXGSameArtwork(UIImage *a,UIImage *b) {
+    if(a==b)return YES;if(!a || !b)return NO;
+    return a.imageAsset && a.imageAsset==b.imageAsset && CGSizeEqualToSize(a.size,b.size) && a.scale==b.scale && a.renderingMode==b.renderingMode;
+}
 - (void)setImage:(UIImage *)image title:(NSString *)title count:(NSString *)count {
+    if(image && _sourceImage && image!=_sourceImage && WXGSameArtwork(_sourceImage,image))image=_sourceImage;
     BOOL imageChanged=_sourceImage!=image || _sourceStyle!=self.traitCollection.userInterfaceStyle;
     if(imageChanged){_sourceImage=image;[self resolveSourceImage];}
     if(!imageChanged && [_label.text?:@"" isEqual:title?:@""] && [_countLabel.text?:@"" isEqual:count?:@""] && _iconView.hidden==!image)return;
@@ -240,6 +247,8 @@ static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
     self.accessibilityLabel=count.length?[NSString stringWithFormat:@"返回，%@ 条未读",count]:title.length?title:self.role;
     [self setNeedsLayout];
 }
+// FIX109: a photo, not an icon: the title's avatar and the chat page's avatar button.
+static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [role isEqual:@"chatAvatarButton"];}
 - (void)resolveSourceImage {
     _sourceStyle=self.traitCollection.userInterfaceStyle;
     UITraitCollection *traits=_preservesNativeIconColors && _nativeIconSource?_nativeIconSource.traitCollection:self.traitCollection;
@@ -247,14 +256,14 @@ static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
     UIColor *tint=_preservesNativeIconColors?(_nativeIconSource.tintColor?:UIColor.labelColor):UIColor.labelColor;
     _resolvedNativeTint=[tint resolvedColorWithTraitCollection:traits];
     [traits performAsCurrentTraitCollection:^{
-        UIImage *cropped=image && ![self.role isEqual:@"avatar"]?WXGCropInk(image,tint):image;
+        UIImage *cropped=image && !WXGPhotoRole(self.role)?WXGCropInk(image,tint):image;
         // Video uses native original artwork or its actual template tint;
         // a white glyph is not evidence that it should become labelColor.
-        BOOL adaptive=!self.preservesNativeIconColors && ![self.role isEqual:@"avatar"] && WXGImageIsMonochrome(image);
+        BOOL adaptive=!self.preservesNativeIconColors && !WXGPhotoRole(self.role) && WXGImageIsMonochrome(image);
         self.iconView.image=adaptive?[cropped imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]:cropped;
     }];
     _label.textColor=UIColor.labelColor;_iconView.tintColor=_iconTint?:_resolvedNativeTint;
-    if([_role isEqual:@"avatar"] && _plain)[self styleAvatarRing];
+    if(([_role isEqual:@"avatar"] && _plain) || [_role isEqual:@"chatAvatarButton"])[self styleAvatarRing];
 }
 // FIX94: about 1.5 pt of translucent grey at the avatar's edge, drawn over the
 // photo inside its circle (a mid grey reads on light and dark photos alike).
@@ -305,7 +314,15 @@ static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
     if([_role isEqual:@"emoji"])iconMax=MIN(19,h*.67);
     if([_role isEqual:@"avatar"])iconMax=MAX(24,h-10);
     BOOL photo=[_role isEqual:@"avatar"] && _plain;
-    if(photo && _iconView.image) {
+    if([_role isEqual:@"chatAvatarButton"] && _iconView.image) {
+        // FIX109: the chat's avatar in the button's glass, a circle inset by
+        // the setting (0 = the whole glass), aspect-filled, with the avatar ring.
+        CGFloat side=MIN(w,h),inset=WXGClamp([WXGConfig.shared extraNumber:@"chatAvatarInset"],0,side*.3),d=MAX(8,side-2*inset);
+        _iconView.contentMode=UIViewContentModeScaleAspectFill;
+        _iconView.frame=CGRectMake(CGRectGetMidX(_materialRect)-d*.5,CGRectGetMidY(_materialRect)-d*.5,d,d);_iconView.clipsToBounds=YES;
+        _iconView.layer.cornerCurve=kCACornerCurveCircular;_iconView.layer.cornerRadius=d*.5;
+        [self styleAvatarRing];
+    } else if(photo && _iconView.image) {
         // FIX94: the title's avatar is the photo itself at the glass's size
         // (no glass): it fills the whole circle, aspect-filled so it never
         // shows an edge or a notch, with a thin grey translucent ring.
@@ -316,8 +333,17 @@ static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
     } else if(_iconView.image) {
         _iconView.contentMode=UIViewContentModeScaleAspectFit;_iconView.layer.borderWidth=0;
         WXGRect r=WXGCenteredInk(w,h,_iconView.image.size.width,_iconView.image.size.height,iconMax);
+        if(_naturalIconSize) {   // FIX113: the glyph's own size (cropped to its ink: WeChat's own size on screen)
+            CGFloat iw=_iconView.image.size.width,ih=_iconView.image.size.height,fit=MIN(1,MIN(w*.92/MAX(iw,.01),h*.92/MAX(ih,.01)));
+            r=(WXGRect){(w-iw*fit)*.5,(h-ih*fit)*.5,iw*fit,ih*fit};
+        }
         if(_countLabel.text.length)r.x=(h-r.w)*.5;
-        _iconView.frame=CGRectOffset(WXGCGRect(r),_materialRect.origin.x,_materialRect.origin.y);
+        CGRect iconFrame=CGRectOffset(WXGCGRect(r),_materialRect.origin.x,_materialRect.origin.y);
+        if(_naturalIconSize) {   // FIX113 C: at its own size, on whole device pixels (not resampled between them)
+            CGFloat px=self.traitCollection.displayScale>0?self.traitCollection.displayScale:UIScreen.mainScreen.scale;
+            iconFrame.origin=CGPointMake(round(iconFrame.origin.x*px)/px,round(iconFrame.origin.y*px)/px);
+        }
+        _iconView.frame=iconFrame;
         _iconView.clipsToBounds=[_role isEqual:@"avatar"];
         _iconView.layer.cornerRadius=_iconView.clipsToBounds?MIN(r.w,r.h)*.5:0;
     }

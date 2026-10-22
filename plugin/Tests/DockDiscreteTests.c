@@ -24,6 +24,16 @@ int main(void) {
     // Too narrow: the cell shrinks so the row fills the width exactly.
     WXGDiscreteMetrics tight = WXGDiscreteFit(250, 62, 1, 8, 2, 0);
     assert(tight.cell < 62 && fabsf(tight.total - 250) < .01f && fabsf(tight.originX) < .01f);
+    // FIX113 E: a little too narrow: the balls keep their height, the selected tab narrows.
+    WXGDiscreteMetrics narrow = WXGDiscreteFit(330, 62, 1, 8, 2, 0);
+    assert(fabsf(narrow.cell - 62) < .01f && narrow.wide < 2 && narrow.wide >= 1.6f && fabsf(narrow.gap - 8) < .01f && fabsf(narrow.total - 330) < .05f);
+    // Narrower: the selected tab at its floor, then the gaps (not under half).
+    WXGDiscreteMetrics squeezed = WXGDiscreteFit(300, 62, 1, 8, 2, 0);
+    assert(fabsf(squeezed.cell - 62) < .01f && fabsf(squeezed.wide - 1.6f) < .001f && squeezed.gap < 8 && squeezed.gap >= 4 && fabsf(squeezed.total - 300) < .05f);
+    // What the host widens the search row to: exactly enough for that.
+    float need = WXGDiscreteNeededWidth(62, 1, 8, 2);
+    WXGDiscreteMetrics enough = WXGDiscreteFit(need, 62, 1, 8, 2, 0);
+    assert(fabsf(need - (4.6f * 62 + 3.6f * 8)) < .01f && fabsf(enough.cell - 62) < .01f && fabsf(enough.gap - 8) < .01f && fabsf(enough.wide - 1.6f) < .001f);
     // Alignment toward the search button.
     WXGDiscreteMetrics left = WXGDiscreteFit(354, 62, .9f, 8, 2, -1), right = WXGDiscreteFit(354, 62, .9f, 8, 2, 1);
     assert(left.originX == 0.f && fabsf(right.originX + right.total - 354) < .01f);

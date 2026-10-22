@@ -47,6 +47,57 @@ NSDictionary *WXGBuildDefaultSection(NSString *section) {
     return @{};
 }
 NSDictionary *WXGBuildDefaultOptics(void) {return WXGBuildDefaultSection(@"config");}
+// FIX114 G: the defaults this build's replace (tools/bake_defaults.py keeps
+// them), and a stamp of this build's: a phone's setting still at the previous
+// default (never changed) moves to the new one, once per new set of defaults.
+#ifndef WXG_PREVIOUS_DEFAULT_OPTICS_JSON
+#define WXG_PREVIOUS_DEFAULT_OPTICS_JSON ""
+#endif
+static NSDictionary *WXGPreviousDefaultsRoot(void) {
+    static NSDictionary *defaults;static dispatch_once_t once;
+    dispatch_once(&once,^{
+        NSData *data=[@WXG_PREVIOUS_DEFAULT_OPTICS_JSON dataUsingEncoding:NSUTF8StringEncoding];
+        id root=data.length?[NSJSONSerialization JSONObjectWithData:data options:0 error:nil]:nil;
+        defaults=[root isKindOfClass:NSDictionary.class]?root:@{};
+    });
+    return defaults;
+}
+NSDictionary *WXGPreviousBuildDefaultSection(NSString *section) {
+    NSDictionary *root=WXGPreviousDefaultsRoot();
+    id value=root[section];
+    if([value isKindOfClass:NSDictionary.class])return value;
+    if([section isEqual:@"config"] && root.count && ![root[@"integration"] isKindOfClass:NSDictionary.class] && ![root[@"ui"] isKindOfClass:NSDictionary.class])return root;
+    return @{};
+}
+NSString *WXGBuildDefaultsStamp(void) {
+    static NSString *stamp;static dispatch_once_t once;
+    dispatch_once(&once,^{
+        const char *json=[@WXG_DEFAULT_OPTICS_JSON UTF8String]?:"";size_t n=strlen(json);uint64_t h=1469598103934665603ULL;   // FNV-1a (the same literal as the defaults: one copy in the binary)
+        for(size_t i=0;i<n;i++){h^=(uint8_t)json[i];h*=1099511628211ULL;}
+        stamp=n?[NSString stringWithFormat:@"%016llx-%zu",(unsigned long long)h,n]:@"";
+    });
+    return stamp;
+}
+// Two stored setting values the same: colours by their normalised hex,
+// numbers (switches too) within rounding of the exported values.
+BOOL WXGSameSettingValue(id a,id b) {
+    if([a isKindOfClass:NSString.class] && [b isKindOfClass:NSString.class])return [(WXGNormalizeHex(a)?:a) isEqualToString:(WXGNormalizeHex(b)?:b)];
+    if([a isKindOfClass:NSNumber.class] && [b isKindOfClass:NSNumber.class]) {
+        double x=[a doubleValue],y=[b doubleValue];
+        if(!isfinite(x) || !isfinite(y))return NO;
+        return fabs(x-y)<=1e-5*MAX(1.0,MAX(fabs(x),fabs(y)));
+    }
+    return (!a || a==NSNull.null) && (!b || b==NSNull.null);
+}
+static NSMutableDictionary *WXGAdoptionLog;
+static NSObject *WXGAdoptionLock(void) {static NSObject *lock;static dispatch_once_t once;dispatch_once(&once,^{lock=[NSObject new];});return lock;}
+void WXGNoteDefaultsAdoption(NSString *section,NSDictionary *info) {
+    @synchronized(WXGAdoptionLock()){if(!WXGAdoptionLog)WXGAdoptionLog=[NSMutableDictionary dictionary];if(section && info)WXGAdoptionLog[section]=info;}
+}
+NSDictionary *WXGDefaultsAdoption(void) {
+    @synchronized(WXGAdoptionLock()){return @{@"stamp":WXGBuildDefaultsStamp(),@"previousKeys":@(WXGPreviousBuildDefaultSection(@"config").count),
+        @"sections":WXGAdoptionLog?[WXGAdoptionLog copy]:@{}};}
+}
 
 #pragma mark - Reading the account
 

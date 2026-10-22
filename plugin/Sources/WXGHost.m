@@ -3,8 +3,10 @@
 #import "WXGDockInteraction.h"
 #import "WXGDockPresentation.h"
 #import "WXGDockSearchLayout.h"
+#import "WXGDockDiscrete.h"
 // FIX30: WeChat Settings entry state (defined with the hooks at the end of the file).
 static BOOL WXGSettingsEntryReady;
+static BOOL WXGSurfaceInNativeView(WXGSurface *surface);   // FIX113 D
 static NSUInteger WXGSettingsEntryInsertions;
 // FIX31: main-thread attribution during dock taps. Each slot accumulates the
 // milliseconds our code spent since the last display tick; the run-loop idle
@@ -44,8 +46,12 @@ void WXGProfileAdd(WXGProfileSlot slot,double milliseconds) {
     // The whole tick; a refresh (reported after it ended) or a tab switch
     // only outside a tick, which already holds them.
     if(slot==WXGProfileTick || (WXGHostTimedDepth==0 && (slot==WXGProfileRefresh || slot==WXGProfileSwitch)))WXGPerfNotePluginWork(milliseconds);
+    // FIX113 Z: the page-switch log; the plugin's own time as above, and its
+    // hooks outside a tick (inside one, the tick holds them).
+    if(WXGTransitionPerfOn)
+        WXGTransitionPerfNoteSlot(slot,milliseconds,slot==WXGProfileTick || (WXGHostTimedDepth==0 && (slot==WXGProfileRefresh || slot==WXGProfileHooks)));   // (a tab switch's forward is WeChat loading the tab)
 }
-void WXGProfileMeshBuilt(void) {++WXGProfileMeshBuilds;}
+void WXGProfileMeshBuilt(void) {++WXGProfileMeshBuilds;WXGTransitionPerfNoteMesh();}
 double WXGProfileOursTotal(void) {
     return WXGProfileTotals[WXGProfileTick]+WXGProfileTotals[WXGProfileRefresh]+WXGProfileTotals[WXGProfileSwitch]+WXGProfileTotals[WXGProfileHooks];
 }
@@ -58,7 +64,8 @@ static void WXGInstallIdleClock(void) {
             ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity a){WXGIdleSince=CACurrentMediaTime();});
         CFRunLoopObserverRef wake=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopAfterWaiting,YES,LONG_MIN,
             ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity a){
-                if(WXGIdleSince>0){WXGIdleTotal+=CACurrentMediaTime()-WXGIdleSince;WXGIdleSince=0;}
+                if(WXGIdleSince>0){double slept=CACurrentMediaTime()-WXGIdleSince;WXGIdleTotal+=slept;WXGIdleSince=0;
+                    if(WXGTransitionPerfOn)WXGTransitionPerfNoteIdle(slept*1000);}   // FIX113 Z
             });
         if(sleep){CFRunLoopAddObserver(CFRunLoopGetMain(),sleep,kCFRunLoopCommonModes);CFRelease(sleep);}
         if(wake){CFRunLoopAddObserver(CFRunLoopGetMain(),wake,kCFRunLoopCommonModes);CFRelease(wake);}
@@ -89,7 +96,13 @@ static BOOL WXGPresentedChatStack(WXGRoute *r,UIViewController *root,UIWindow *w
     if(!r.nav || !r.nav.presentingViewController)return NO;
     // Full screen and settled: sheets and a presentation still sliding stay covers.
     CGRect f=WXGWindowRect(root.view,w);
-    return fabs(f.origin.x)<1 && fabs(f.origin.y)<1 && fabs(f.size.width-w.bounds.size.width)<1 && fabs(f.size.height-w.bounds.size.height)<1;
+    if(!(fabs(f.origin.x)<1 && fabs(f.origin.y)<1 && fabs(f.size.width-w.bounds.size.width)<1 && fabs(f.size.height-w.bounds.size.height)<1))return NO;
+    // FIX114 E: the chat itself the whole window too (WeChat's half-screen chat
+    // sits in a full-screen container: a sheet, the page under it stays the
+    // host's, covered; its input bar is adapted on its own: WXGSideChatInput).
+    if(!r.leaf.isViewLoaded)return NO;
+    CGRect c=WXGWindowRect(r.leaf.view,w);
+    return fabs(c.origin.y)<1 && fabs(c.size.height-w.bounds.size.height)<1;
 }
 static WXGRoute *WXGRouteForWindow(UIWindow *w) {
     WXGRoute *r=[WXGRoute new];UIViewController *vc=w.rootViewController;
@@ -130,6 +143,45 @@ static void WXGResetOwnedTransform(UIView *view) {
         view.transform=CGAffineTransformIdentity;[CATransaction commit];
     }];
 }
+// FIX108 C/E: WeChat's own "+" artwork cut off: one colour, a ring drawn
+// edge to edge (ink on three or more edges, on the ring's diagonals, none in
+// the corners). A theme's tile, disc or plain "+" is left alone. Cached by
+// the artwork (the button gets a new image object for it every frame of a pull).
+static BOOL WXGInkTouchesEdges(UIImage *image) {
+    if(!image || image.size.width<4 || image.size.height<4 || fabs(image.size.width-image.size.height)>1)return NO;
+    static NSMutableDictionary<NSString *,NSNumber *> *cache;if(!cache)cache=[NSMutableDictionary dictionary];
+    NSString *key=[NSString stringWithFormat:@"%p/%.1f/%.1f/%ld",(__bridge void *)(image.imageAsset?:(id)image),image.size.width,image.scale,(long)image.renderingMode];
+    NSNumber *known=cache[key];if(known)return known.boolValue;
+    enum {N=24};uint8_t px[N*N*4]={0};
+    CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
+    CGContextRef context=CGBitmapContextCreate(px,N,N,8,N*4,space,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(space);BOOL ring=NO;
+    if(context) {
+        UIGraphicsPushContext(context);[image drawInRect:CGRectMake(0,0,N,N)];UIGraphicsPopContext();CGContextRelease(context);
+        #define A(x,y) px[((y)*N+(x))*4+3]
+        BOOL top=NO,bottom=NO,left=NO,right=NO;
+        for(int i=0;i<N;i++){if(A(i,0)>96)top=YES;if(A(i,N-1)>96)bottom=YES;if(A(0,i)>96)left=YES;if(A(N-1,i)>96)right=YES;}
+        BOOL edges=(top?1:0)+(bottom?1:0)+(left?1:0)+(right?1:0)>=3;
+        BOOL corners=A(0,0)<64 && A(N-1,0)<64 && A(0,N-1)<64 && A(N-1,N-1)<64;
+        // the ring on its diagonals (about 0.16 of the size in from each corner)
+        int d=4,hits=0;int pts[4][2]={{d,d},{N-1-d,d},{d,N-1-d},{N-1-d,N-1-d}};
+        for(int k=0;k<4;k++){int m=0;for(int dy=-1;dy<=1;dy++)for(int dx=-1;dx<=1;dx++)m=MAX(m,(int)A(pts[k][0]+dx,pts[k][1]+dy));if(m>64)hits++;}
+        #undef A
+        extern BOOL WXGImageIsMonochrome(UIImage *image);
+        BOOL hole=px[((7)*N+7)*4+3]<64 && px[((7)*N+N-8)*4+3]<64 && px[((N-8)*N+7)*4+3]<64 && px[((N-8)*N+N-8)*4+3]<64;   // a ring, not a disc
+        ring=edges && corners && hole && hits==4 && WXGImageIsMonochrome(image);
+    }
+    cache[key]=@(ring);if(cache.count>64)[cache removeAllObjects];
+    return ring;
+}
+static UIImage *WXGHomePlusSymbol(void) {
+    static UIImage *symbol;static dispatch_once_t once;
+    dispatch_once(&once,^{
+        UIImageSymbolConfiguration *c=[UIImageSymbolConfiguration configurationWithPointSize:20 weight:UIImageSymbolWeightLight];
+        symbol=[[UIImage systemImageNamed:@"plus.circle" withConfiguration:c] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    });
+    return symbol;
+}
 // A page owns its views; it does not reuse a different page's sized canvases.
 static char WXGPageStateKey;
 @interface WXGPageState : NSObject
@@ -159,8 +211,25 @@ static char WXGPageStateKey;
 @property(nonatomic,weak) WXGIntegrationHost *owner;
 - (void)tick:(CADisplayLink *)link;
 @end
+@class WXGSideChatInput;
 @interface WXGIntegrationHost () <UIAdaptivePresentationControllerDelegate,UIGestureRecognizerDelegate>
 @property(nonatomic,strong) WXGOverlay *overlay,*navigationOverlay;
+@property(nonatomic,weak) UIControl *chatAvatarControl;   // FIX114 B: the chat's top-right button the avatar is drawn in (host-owned)
+@property(nonatomic,strong) NSMutableDictionary<NSString *,NSDictionary *> *navSnapshots;   // FIX114 B: diagnostics
+// FIX114 C: the title row's move down now (the home page's "+" follows it),
+// the views opened for it (class names, diagnostics), the home page's title
+// view when WeChat keeps it out of the bar, the home icon's alignment.
+@property(nonatomic) CGFloat rowOffset;
+@property(nonatomic,weak) UIView *homeTitleView;
+@property(nonatomic) CFTimeInterval homeTitleSearchedAt;
+@property(nonatomic,weak) UIView *homeIconHost;
+@property(nonatomic,weak) WXGSurface *homeIconSurface;
+@property(nonatomic) NSUInteger rowBarContents;   // the bar content views moved (0: none found, or not moved)
+@property(nonatomic,strong) WXGSideChatInput *sideChat;   // FIX114 E
+- (void)endSideChat:(NSString *)reason;
+- (BOOL)adaptsChat:(UIViewController *)chat;   // FIX114 E (review): the host's own page, adapted by it
+// FIX113 Q / FIX114 C: the page the title row was last laid out for (its offset is for it).
+@property(nonatomic,weak) UIViewController *navCapsuleLeaf;
 @property(nonatomic,strong) NSArray<WXGSurface *> *departingButtons;
 @property(nonatomic,strong) WXGInputAdapter *departingInput;
 @property(nonatomic,strong) id<UIViewControllerTransitionCoordinator> nativeTransition;
@@ -275,6 +344,7 @@ static char WXGPageStateKey;
 @property(nonatomic) CGFloat searchGap,keyboardTop,keyboardLift;
 @property(nonatomic) CGFloat homePanel;   // FIX67: mini-program panel progress, 0 .. 1
 @property(nonatomic,weak) UIControl *homeSearchControl;
+@property(nonatomic,weak) UIControl *homeSearchHidden;   // FIX107: hidden by us (the dock's search stands in)
 @property(nonatomic,weak) UISearchBar *homeSearchBarRef;
 @property(nonatomic,weak) UITextField *handoffField;
 @property(nonatomic,weak) UIResponder *handoffResponder;
@@ -311,6 +381,11 @@ static char WXGPageStateKey;
 @property(nonatomic,copy) NSString *avatarDownloadStatus;
 @property(nonatomic) NSUInteger avatarDownloads,avatarDiskHits;   // FIX100: photos shown from the disk cache
 @property(nonatomic) BOOL avatarRetryPending;
+// FIX109 B: the chat's pinned module (置顶) moved down with the avatar title.
+@property(nonatomic) CGFloat pinnedShift;
+@property(nonatomic,weak) UIView *pinnedBar;
+@property(nonatomic) BOOL pinnedApplied;
+@property(nonatomic) NSUInteger pinnedMoves;
 @property(nonatomic,strong) UILongPressGestureRecognizer *dockLongPress;   // FIX89: the settings fallback
 // FIX92: the title bar's glass kept above the page (keepNavigationOnTop).
 @property(nonatomic) NSUInteger navigationRaises,navigationCovers;
@@ -319,6 +394,9 @@ static char WXGPageStateKey;
 // FIX93: the home list pulled down past its top (pt), and a trace of the title
 // bar while it is (diagnostics: what WeChat does to its own title bar).
 @property(nonatomic) CGFloat homePull;
+@property(nonatomic,strong) NSMutableDictionary<NSNumber *,NSArray *> *badgeArtCache;   // FIX108 D
+@property(nonatomic) CGFloat homeFloorHold;            // FIX108 C: the floor while pulled, held a moment after
+@property(nonatomic) CFTimeInterval homePullSeenAt;
 @property(nonatomic) CFTimeInterval homePullTraceAt,homePullTraceStart;
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *homePullTrace;
 @property(nonatomic,copy) NSArray *homePullHosts;
@@ -331,6 +409,14 @@ static char WXGPageStateKey;
 @property(nonatomic) BOOL homeTopBarAtRest;
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *paintEvidence;
 @property(nonatomic,strong) NSDictionary *lastSceneEvidence;
+@property(nonatomic) BOOL titleAlignedButtons;   // FIX112: this page's buttons at its title's height
+@property(nonatomic) CGFloat discreteRowGrowth;
+// FIX113 E: 视频号: the native views whose contents are drawn shifted, and what the last pass did.
+@property(nonatomic,strong) NSHashTable<UIView *> *finderShiftHosts;
+@property(nonatomic,copy) NSDictionary *finderEvidence;   // FIX113 E: how much wider the row is for the discrete dock's balls (pt)
+@property(nonatomic) CGFloat titleOffset,titleOffsetBar;   // the title's middle from the bar's, for a bar this tall
+@property(nonatomic,weak) UIViewController *titleRetryLeaf;
+@property(nonatomic) NSUInteger titleRetries;
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *sceneHistory;
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *actionHistory;
 @property(nonatomic) CFTimeInterval lastEvidence;
@@ -360,6 +446,8 @@ static char WXGPageStateKey;
 - (NSArray *)navigationChromeMetrics;
 - (BOOL)isDockRoot:(UIViewController *)controller;
 - (void)applyDockPresentation:(WXGDockPresentation)presentation;
+- (void)alignPinnedModule;
+- (BOOL)chatBar:(UIView *)bar extendsTo:(CGPoint)point;
 @end
 // FIX62: whatever is first responder (a text field, or a web page's input:
 // WeChat's search page focuses neither a UITextField nor a UITextView).
@@ -379,6 +467,231 @@ static UIResponder *WXGFirstResponder(void) {
 }
 @implementation WXGHostTickProxy
 - (void)tick:(CADisplayLink *)link {[self.owner tick:link];}
+@end
+// FIX114 C: the views around the moved title row that would cut it off at
+// their bounds (WeChat's bar content clips on some pages) let it show,
+// restorably, in a bag of their own (closed again as soon as the row is not
+// moved there); only bar-sized ones (never a list, a page or the window).
+static NSMutableOrderedSet<NSString *> *WXGRowOpenedClips;
+static WXGStateBag *WXGRowClipBag;
+static void WXGOpenRowClips(UIView *view,UIView *stop,WXGMetrics m) {
+    CGFloat limit=MAX(64,m.button*2);NSUInteger depth=0;
+    for(UIView *p=view;p && p!=stop && depth<8;p=p.superview,depth++) {
+        if([p isKindOfClass:UIScrollView.class] || [p isKindOfClass:UIWindow.class])break;
+        if(!p.clipsToBounds || p.bounds.size.height>limit)continue;
+        if(!WXGRowClipBag)WXGRowClipBag=[WXGStateBag new];
+        [WXGRowClipBag allowOverflow:p];
+        if(!WXGRowOpenedClips)WXGRowOpenedClips=[NSMutableOrderedSet orderedSet];
+        if(WXGRowOpenedClips.count<12)[WXGRowOpenedClips addObject:NSStringFromClass(p.class)];
+    }
+}
+static void WXGCloseRowClips(UIView *view,UIView *stop) {
+    if(!WXGRowClipBag)return;NSUInteger depth=0;
+    for(UIView *p=view;p && p!=stop && depth<8;p=p.superview,depth++) {
+        if([p isKindOfClass:UIScrollView.class] || [p isKindOfClass:UIWindow.class])break;
+        [WXGRowClipBag restoreView:p];
+    }
+}
+// FIX114 C: a title bar's content (_UINavigationBarContentView: WeChat's
+// title and buttons and the local glass behind them) drawn lower by the
+// title row's offset. Only a bar the host lays out (its pages: WeChat's bar
+// background is cleared there); a web page's or a sheet's bar, with WeChat's
+// own background and line, stays as it is (review). One bag for every bar,
+// used by the host and by the local glass (before each commit), so a bar is
+// moved the same whoever looks at it; 0 (the setting at 0, the title-bar
+// adaptation off, 视频号 on top, a page the host leaves) puts it back.
+static WXGStateBag *WXGRowBag;
+static NSHashTable<UINavigationBar *> *WXGRowHostBars;
+static CGFloat WXGRowDownForBar(UINavigationBar *bar) {
+    UIWindow *w=bar.window;
+    if(!w || ![WXGRowHostBars containsObject:bar] || !WXGPluginEnabled() || !WXGPreferences.shared.nav)return 0;
+    id owner=bar.delegate;
+    if([owner isKindOfClass:UINavigationController.class] &&
+       [NSStringFromClass(((UINavigationController *)owner).topViewController.class) hasPrefix:@"WCFinder"])return 0;
+    WXGMetrics m=WXGMeasure(w.bounds.size.width-w.safeAreaInsets.left-w.safeAreaInsets.right,WXGPreferences.shared.sizeScale);
+    CGFloat h=bar.bounds.size.height;if(m.button>MAX(36,h))m=WXGMeasure(440*MAX(36,h)/44,1);
+    CGFloat pixel=w.screen.scale?:3;return round(WXGTitleRowOffset(m.scale)*pixel)/pixel;
+}
+// The views of a bar that hold its content: _UINavigationBarContentView;
+// (review) a bar without one (another system's layout): every subview but
+// its background.
+static NSArray<UIView *> *WXGBarContentViews(UINavigationBar *bar) {
+    static Class content;static dispatch_once_t once;dispatch_once(&once,^{content=NSClassFromString(@"_UINavigationBarContentView");});
+    NSMutableArray *found=[NSMutableArray array],*others=[NSMutableArray array];
+    for(UIView *v in bar.subviews) {
+        if(content && [v isKindOfClass:content])[found addObject:v];
+        else if(!WXGIsPluginView(v) && ![NSStringFromClass(v.class) containsString:@"Background"])[others addObject:v];
+    }
+    return found.count?found:others;
+}
+NSUInteger WXGMoveBarContent(UINavigationBar *bar) {
+    if(!bar)return 0;
+    CGFloat dy=WXGRowDownForBar(bar);
+    if(!WXGRowBag){if(dy<.01)return 0;WXGRowBag=[WXGStateBag new];}
+    UIWindow *w=bar.window;NSUInteger moved=0;
+    WXGMetrics m=WXGMeasure(w.bounds.size.width-w.safeAreaInsets.left-w.safeAreaInsets.right,WXGPreferences.shared.sizeScale);
+    for(UIView *v in WXGBarContentViews(bar)) {
+        [WXGRowBag shiftContents:v x:0 y:dy];
+        if(dy>.01){WXGOpenRowClips(v,bar.superview,m);++moved;}
+        else WXGCloseRowClips(v,bar.superview);
+    }
+    return moved;
+}
+// The host lays this bar out (its title row moves) or leaves it (back to WeChat's).
+static void WXGRowAdoptBar(UINavigationBar *bar,BOOL adopt) {
+    if(!bar)return;
+    if(adopt){if(!WXGRowHostBars)WXGRowHostBars=[NSHashTable weakObjectsHashTable];[WXGRowHostBars addObject:bar];return;}
+    if(![WXGRowHostBars containsObject:bar])return;
+    [WXGRowHostBars removeObject:bar];WXGMoveBarContent(bar);
+}
+void WXGRestoreBarContent(void) {[WXGRowBag restore];WXGRowBag=nil;[WXGRowClipBag restore];WXGRowClipBag=nil;[WXGRowHostBars removeAllObjects];}
+// (review) A native view's place on screen without the row's own move (the
+// bar's content drawn lower): by frames up to the bar.
+static CGRect WXGUnmovedWindowRect(UIView *v,UINavigationBar *bar,UIWindow *w) {
+    if(!v || !w)return CGRectZero;
+    if(bar && [v isDescendantOfView:bar]) {
+        CGRect r=v.bounds;UIView *p=v;NSUInteger depth=0;
+        for(;p && p!=bar && depth<16;p=p.superview,depth++){r.origin.x+=p.frame.origin.x-p.bounds.origin.x;r.origin.y+=p.frame.origin.y-p.bounds.origin.y;}
+        if(p==bar)return [bar convertRect:r toView:w];
+    }
+    return WXGWindowRect(v,w);
+}
+// (review) The bar's buttons drawn below its bounds still take their
+// touches there: a touch in that band goes to the control drawn under it
+// (when the layers' hit-testing follows the moved content; otherwise there
+// is none and nothing changes).
+static UIView *WXGRowExtendedHit(UINavigationBar *bar,CGPoint point,UIEvent *event) {
+    if(!WXGRowBag || bar.hidden || bar.alpha<.01 || !bar.userInteractionEnabled)return nil;
+    CGRect b=bar.bounds;
+    if(point.x<CGRectGetMinX(b) || point.x>CGRectGetMaxX(b) || point.y<CGRectGetMaxY(b))return nil;
+    for(UIView *v in bar.subviews.reverseObjectEnumerator) {
+        CGFloat dy=[WXGRowBag contentOffsetOf:v].y;
+        if(dy<.01 || point.y>CGRectGetMaxY(b)+dy || v.hidden || v.alpha<.01 || !v.userInteractionEnabled)continue;
+        for(UIView *sub in v.subviews.reverseObjectEnumerator) {
+            if(sub.hidden || sub.alpha<.01 || !sub.userInteractionEnabled)continue;
+            UIView *hit=[sub hitTest:[sub convertPoint:point fromView:bar] withEvent:event];
+            for(UIView *c=hit;c && c!=v;c=c.superview)if([c isKindOfClass:UIControl.class] || c.gestureRecognizers.count)return hit;
+        }
+    }
+    return nil;
+}
+static void WXGHookBarHits(Class c) {
+    if(!c)return;SEL selector=@selector(hitTest:withEvent:);Method m=class_getInstanceMethod(c,selector);if(!m)return;
+    IMP original=method_getImplementation(m);
+    IMP replacement=imp_implementationWithBlock(^UIView *(UINavigationBar *bar,CGPoint point,UIEvent *event){
+        UIView *hit=((UIView *(*)(id,SEL,CGPoint,UIEvent *))original)(bar,selector,point,event);
+        if(hit || !WXGRowBag)return hit;
+        @try {return WXGRowExtendedHit(bar,point,event);} @catch(__unused NSException *error) {return nil;}
+    });
+    if(!class_addMethod(c,selector,replacement,method_getTypeEncoding(m)))class_replaceMethod(c,selector,replacement,method_getTypeEncoding(m));
+}
+// FIX114 E (user: the half-screen chat a message's notification opens over
+// another page keeps WeChat's own input bar): a chat on screen that is not
+// the host's page (WeChat's half-screen chat: a sheet over the page, or a
+// chat in a window of its own) has its input bar adapted by an adapter of
+// its own, ticked by its own display link; the page under it keeps what it
+// shows (the host stays on it, covered). Render-server glass only (it reads
+// nothing from this process); stopped as soon as the chat is gone, is the
+// host's page, or the plugin / the input adaptation is off.
+@class WXGSideChatInput;
+@interface WXGSideChatTick : NSObject
+@property(nonatomic,weak) WXGSideChatInput *owner;
+@end
+@interface WXGSideChatInput : NSObject
+@property(nonatomic,weak) UIViewController *chat;
+@property(nonatomic,weak) UIWindow *window;
+@property(nonatomic,strong) WXGInputAdapter *adapter;
+@property(nonatomic,strong) CADisplayLink *link;
+@property(nonatomic) BOOL pending;
+@property(nonatomic) CGRect lastFrame;
+@property(nonatomic) CFTimeInterval movedAt,triedAt,startedAt;
+@property(nonatomic,copy) NSString *status;
+@property(nonatomic) NSUInteger installs,ticks,layouts,attempts;
+- (void)tick:(CADisplayLink *)link;
+- (void)layoutNow;
+- (void)stop:(NSString *)reason;
+@end
+@implementation WXGSideChatTick
+- (void)tick:(CADisplayLink *)link {[self.owner tick:link];}
+@end
+static NSMutableArray<NSDictionary *> *WXGSideChatLog;   // diagnostics: what was seen and decided
+static void WXGSideChatNote(NSDictionary *entry) {
+    if(!WXGSideChatLog)WXGSideChatLog=[NSMutableArray array];
+    [WXGSideChatLog addObject:entry];if(WXGSideChatLog.count>16)[WXGSideChatLog removeObjectAtIndex:0];
+}
+static BOOL WXGSideChatWanted(void) {
+    return WXGPluginEnabled() && WXGPreferences.shared.input && WXGEffectiveRenderMode()>=2;
+}
+// (review) Full width, below the top, down to the window's bottom: a sheet the
+// input bar's layout (window width, bottom-anchored) fits.
+static BOOL WXGSideChatSheetFrame(CGRect f,UIWindow *w) {
+    CGSize s=w.bounds.size;
+    return fabs(f.origin.x)<1 && fabs(f.size.width-s.width)<1 && f.origin.y>=1 && CGRectGetMaxY(f)>=s.height-2 && f.size.height>=s.height*.3;
+}
+@implementation WXGSideChatInput
+- (void)start {
+    if(_link)return;
+    WXGSideChatTick *proxy=[WXGSideChatTick new];proxy.owner=self;
+    _link=[CADisplayLink displayLinkWithTarget:proxy selector:@selector(tick:)];
+    WXGConfigureDisplayLink(_link,_window.screen?:UIScreen.mainScreen);
+    [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    _startedAt=CACurrentMediaTime();
+    NSNotificationCenter *n=NSNotificationCenter.defaultCenter;
+    for(NSString *name in @[UIKeyboardWillChangeFrameNotification,UIKeyboardDidChangeFrameNotification,UIKeyboardDidHideNotification])
+        [n addObserver:self selector:@selector(keyboardChanged:) name:name object:nil];
+}
+- (void)keyboardChanged:(NSNotification *)note {(void)note;_pending=YES;}
+- (void)stop:(NSString *)reason {
+    [NSNotificationCenter.defaultCenter removeObserver:self];
+    [_link invalidate];_link=nil;
+    @try {[_adapter restore];} @catch(__unused NSException *error) {}
+    _adapter=nil;_status=reason;
+}
+- (void)dealloc {[NSNotificationCenter.defaultCenter removeObserver:self];[_link invalidate];}
+- (void)tick:(CADisplayLink *)link {
+    UIViewController *chat=_chat;UIWindow *w=chat.viewIfLoaded.window;
+    NSString *why=!chat?@"聊天已关闭":!w?@"聊天不在窗口里":!WXGSideChatWanted()?@"插件或输入栏适配关闭":
+        [WXGIntegrationHost.shared adaptsChat:chat]?@"已是宿主的页面":nil;
+    if(why){[WXGIntegrationHost.shared endSideChat:why];return;}
+    // (review) A system interruption (控制中心, a call banner): wait, as the host's own input bar does.
+    if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return;
+    @try {
+        _window=w;
+        if(!WXGVisible(chat.view,w))return;   // covered or hidden: nothing to draw
+        ++_ticks;
+        BOOL eligible=!WXGNativeInputLayoutInProgress() && !WXGBackdropCaptureInProgress() && !WXGNavigationCallDepth;
+        // (review) Installed when something laid out, backing off, at most 30 tries.
+        if(!_adapter.installed && _pending && eligible && _attempts<30 && link.timestamp-_triedAt>MIN(2.,.25*pow(1.4,_attempts))) {
+            _triedAt=link.timestamp;++_attempts;_pending=NO;if(!_adapter)_adapter=[WXGInputAdapter new];
+            if([_adapter installInController:chat window:w]){++_installs;_attempts=0;_status=@"输入栏已适配";}
+            else _status=[_adapter.evidence[@"status"] description]?:@"等待输入栏布局";
+        }
+        if(!_adapter.installed)return;
+        CALayer *shown=chat.view.layer.presentationLayer;
+        CGRect frame=shown?[w convertRect:shown.frame fromView:chat.view.superview]:[chat.view convertRect:chat.view.bounds toView:nil];
+        if(!CGRectEqualToRect(frame,_lastFrame)){_lastFrame=frame;_movedAt=link.timestamp;}   // the glass moves with the sheet: no new layout
+        if(_pending && eligible)[self layoutNow];
+        BOOL moving=link.timestamp-_movedAt<.3;
+        for(WXGSurface *surface in _adapter.surfaces) {
+            if(!surface.active || surface.plain)continue;
+            [surface layoutIfNeeded];[surface.glass layoutIfNeeded];
+            surface.glass.backgroundMoving=moving || surface.glass.pressAmount>.001;
+            [surface tick:link.timestamp];
+        }
+    } @catch(NSException *error) {
+        [WXGIntegrationHost.shared endSideChat:[NSString stringWithFormat:@"异常：%@",error.reason]];
+    }
+}
+- (void)layoutNow {
+    if(!_adapter.installed)return;
+    _pending=NO;++_layouts;[_adapter layout];
+}
+- (NSDictionary *)evidence {
+    UIViewController *chat=_chat;UIWindow *w=chat.viewIfLoaded.window;
+    return @{@"status":_status?:@"",@"chat":chat?NSStringFromClass(chat.class):@"none",@"window":w?NSStringFromClass(w.class):@"none",
+             @"frame":NSStringFromCGRect(_lastFrame),@"installs":@(_installs),@"attempts":@(_attempts),@"layouts":@(_layouts),@"ticks":@(_ticks),
+             @"adapter":_adapter.evidence?:@{}};
+}
 @end
 @implementation WXGIntegrationHost
 + (instancetype)shared {static WXGIntegrationHost *h;static dispatch_once_t once;dispatch_once(&once,^{h=[self new];});return h;}
@@ -424,10 +737,12 @@ static UIResponder *WXGFirstResponder(void) {
     // layout and drawing of everything on screen, WeChat's pages included.
     static CFTimeInterval commitStart;
     CFRunLoopObserverRef beforeCommit=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,true,1999999,
-        ^(__unused CFRunLoopObserverRef observer,__unused CFRunLoopActivity activity){commitStart=CACurrentMediaTime();});
+        ^(__unused CFRunLoopObserverRef observer,__unused CFRunLoopActivity activity){commitStart=CACurrentMediaTime();if(WXGTransitionPerfOn)WXGTransitionPerfCommitPhase(YES);});
     CFRunLoopObserverRef afterCommit=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,true,2000001,
         ^(__unused CFRunLoopObserverRef observer,__unused CFRunLoopActivity activity){
-            if(commitStart>0){WXGProfileTotals[WXGProfileCommit]+=(CACurrentMediaTime()-commitStart)*1000;commitStart=0;}
+            WXGTransitionPerfCommitPhase(NO);
+            if(commitStart>0){double ms=(CACurrentMediaTime()-commitStart)*1000;WXGProfileTotals[WXGProfileCommit]+=ms;commitStart=0;
+                if(WXGTransitionPerfOn)WXGTransitionPerfNoteSlot(WXGProfileCommit,ms,NO);}   // FIX113 Z
         });
     if(beforeCommit){CFRunLoopAddObserver(CFRunLoopGetMain(),beforeCommit,kCFRunLoopCommonModes);CFRelease(beforeCommit);}
     if(afterCommit){CFRunLoopAddObserver(CFRunLoopGetMain(),afterCommit,kCFRunLoopCommonModes);CFRelease(afterCommit);}
@@ -441,6 +756,7 @@ static UIResponder *WXGFirstResponder(void) {
             for(WXGSurface *surface in page.input.surfaces)[surface.glass releaseTransientResources];
         }
         for(WXGGlassView *glass in _dockView.allGlasses)[glass releaseTransientResources];   // 离散底栏: the pieces too
+        [WXGLocalGlass.shared releaseTransientResources];   // FIX107
         WXGInvalidateSharedBackdrop();return;
     }
     if([n.name isEqual:UITextViewTextDidChangeNotification])[self layoutInput];
@@ -449,6 +765,7 @@ static UIResponder *WXGFirstResponder(void) {
         _dockStyleKey=nil;_navigationDirty=YES;
         [WXGDecorations.shared applyConfiguration];
         [WXGBubbles.shared applyConfiguration];   // FIX82
+        [WXGLocalGlass.shared applyConfiguration];   // FIX107
         for(WXGPageState *page in _pages) {
             if(!WXGPluginEnabled() || !WXGPreferences.shared.input)[page.input restore];
             for(WXGSurface *surface in page.pool.allValues)[surface applyConfig];
@@ -553,6 +870,7 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
 // effects) for an unlicensed account, so nothing of the plugin is present.
 // ensureOverlay puts them back when the account becomes authorized.
 - (void)detachOverlays {
+    self.navCapsuleLeaf=nil;   // FIX113 Q
     if(_overlay.superview)[_overlay removeFromSuperview];
     if(_navigationOverlay.superview)[_navigationOverlay removeFromSuperview];
     _launcher.hidden=YES;
@@ -562,6 +880,7 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
     _launcher.center=CGPointMake(WXGClamp(p.x,14,_overlay.bounds.size.width-14),WXGClamp(p.y,_window.safeAreaInsets.top+14,_overlay.bounds.size.height-_window.safeAreaInsets.bottom-14));
 }
 - (void)resetRoute {
+    self.navCapsuleLeaf=nil;   // FIX113 Q: no title row of ours now
     if(!_routeToken && !_buttons.count && !_inputAdapter.installed && !_dockView.active && !_navStates && !_dockStates)return;
     for(WXGSurface *b in _buttons){b.active=NO;b.original=nil;b.motionHost=nil;b.followsNative=NO;WXGResetOwnedTransform(b);b.alpha=1;b.perform=nil;b.glass.backdropExclusions=@[];b.hidden=YES;}[_buttons removeAllObjects];
     if(!_preserveDockDuringReset)[self applyDockPresentation:WXGDockHidden];
@@ -599,6 +918,9 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
 }
 - (void)controllerLaidOut:(UIViewController *)controller {
     if(WXGBackdropCaptureInProgress()){++_samplingLayoutSkips;return;}
+    // FIX114 E: a chat on screen that is not this host's page (the half-screen chat).
+    static Class chatClass;static dispatch_once_t chatOnce;dispatch_once(&chatOnce,^{chatClass=NSClassFromString(@"BaseMsgContentViewController");});
+    if(chatClass && [controller isKindOfClass:chatClass])[self noteSideChat:controller];
     if(_needsEarlyLayout && controller==_pendingController && controller.view.window && !_refreshing){
         _needsEarlyLayout=NO;[self schedule];
     }
@@ -663,6 +985,71 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
         ++_scopedChromeRepairs;
     }@finally {_clearingNavigationChrome=NO;}
 }
+// FIX108: WXGLocalGlass puts a glass behind the title-bar buttons this host
+// leaves native: never one it has its own glass for, nothing while the
+// title-bar setting is off. FIX108 B: decided from the button's own
+// navigation (its top page, whether it is presented), by the same rules as
+// WXGRouteForWindow, not from `_route`: a page presented over the tabs never
+// becomes `_route` (the host suspends under covers), and `_route` follows a
+// push or pop only after the buttons of the new page have laid out.
+// FIX114 B (user: a chat without the avatar title: WeChat's own back button
+// and icons, only a capsule of the right size behind them): its title-bar
+// controls (all but the avatar button, when that is on) and its title stay
+// WeChat's; the local glass puts capsules behind them.
+- (BOOL)chatBarNativeFor:(UIViewController *)leaf {
+    static Class chat;static dispatch_once_t once;dispatch_once(&once,^{chat=NSClassFromString(@"BaseMsgContentViewController");});
+    return chat && [leaf isKindOfClass:chat] && !WXGPreferences.shared.avatarTitle && [WXGConfig.shared extraNumber:@"chatNativeBar"]>.5;
+}
+// FIX114 B: 顶部按钮保持微信原生 (every page but the home page and 视频号):
+// the buttons stay WeChat's (icon, text, place), capsules behind them.
+- (BOOL)navButtonsNativeFor:(UIViewController *)leaf {
+    if([self chatBarNativeFor:leaf])return YES;
+    if([WXGConfig.shared extraNumber:@"navNativeButtons"]<=.5 || !leaf)return NO;
+    NSString *name=NSStringFromClass(leaf.class);
+    return ![name isEqual:@"NewMainFrameViewController"] && ![name hasPrefix:@"WCFinder"];
+}
+// FIX114 B (review): the page whose bar items hold this control (in a push /
+// pop both pages' items are in the bar; the top page alone made a chat's
+// buttons lose their capsules as the chat slid out).
+static UIViewController *WXGNavItemOwner(UINavigationController *nav,UIView *control) {
+    for(UIViewController *vc in nav.viewControllers.reverseObjectEnumerator) {
+        UINavigationItem *item=vc.navigationItem;
+        NSMutableArray<UIView *> *views=[NSMutableArray array];
+        for(UIBarButtonItem *b in item.leftBarButtonItems?:@[])if(b.customView)[views addObject:b.customView];
+        for(UIBarButtonItem *b in item.rightBarButtonItems?:@[])if(b.customView)[views addObject:b.customView];
+        if(item.titleView)[views addObject:item.titleView];
+        for(UIView *v in views)if(v==control || [control isDescendantOfView:v])return vc;
+    }
+    return nav.topViewController;
+}
+- (BOOL)leavesNavigationControlNative:(UIView *)control {
+    if(!control || !WXGPluginEnabled() || !WXGPreferences.shared.nav)return NO;
+    for(WXGSurface *surface in _buttons)if(surface.original==control)return NO;
+    UINavigationBar *bar=nil;NSUInteger depth=0;
+    for(UIView *p=control.superview;p && depth<12;p=p.superview,depth++)if([p isKindOfClass:UINavigationBar.class]){bar=(UINavigationBar *)p;break;}
+    id delegate=bar.delegate;if(![delegate isKindOfClass:UINavigationController.class])return NO;
+    UINavigationController *nav=delegate;UIViewController *leaf=nav.topViewController;
+    if(!leaf || !control.window)return NO;
+    if([self navButtonsNativeFor:WXGNavItemOwner(nav,control)] && !(WXGPreferences.shared.chatAvatarButton && control==_chatAvatarControl))return YES;   // FIX114 B
+    NSUInteger guard=0;
+    for(UIViewController *c=leaf;c && guard<16;c=(c==nav?nav.parentViewController:c.parentViewController),guard++) {
+        NSString *name=NSStringFromClass(c.class);
+        if([name containsString:@"Flutter"] || [name containsString:@"WebView"] || [name hasPrefix:@"WAUINavigation"] || [name hasPrefix:@"WXG"])return YES;
+    }
+    UIViewController *root=nav;guard=0;
+    while(root.parentViewController && guard<16){root=root.parentViewController;guard++;}
+    if(!root.presentingViewController)return NO;
+    // A chat presented full screen is the host's own (WXGPresentedChatStack).
+    static Class chat;static dispatch_once_t once;
+    dispatch_once(&once,^{chat=NSClassFromString(@"BaseMsgContentViewController");});
+    UIWindow *w=control.window;
+    if(chat && [leaf isKindOfClass:chat] && root.isViewLoaded && root.view.window==w) {
+        CGRect f=WXGWindowRect(root.view,w),c=leaf.isViewLoaded?WXGWindowRect(leaf.view,w):CGRectNull;
+        BOOL sheet=!CGRectIsNull(c) && !(fabs(c.origin.y)<1 && fabs(c.size.height-w.bounds.size.height)<1);   // FIX114 E: a half-screen chat: WeChat's buttons, capsules behind
+        if(!sheet && fabs(f.origin.x)<1 && fabs(f.origin.y)<1 && fabs(f.size.width-w.bounds.size.width)<1 && fabs(f.size.height-w.bounds.size.height)<1)return NO;
+    }
+    return YES;
+}
 - (void)navigationControlLaidOut:(UIView *)view {
     if(WXGBackdropCaptureInProgress()){++_samplingLayoutSkips;return;}
     if(WXGNavigationCallDepth){[_navStates reapply];_navigationBindingPending=YES;return;}
@@ -685,7 +1072,7 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
        !WXGPluginEnabled() || !WXGPreferences.shared.nav)return;
     BOOL missing=_navigationBindingPending || ![_navigationBindingKey isEqual:[self currentNavigationBindingKey]];
     for(WXGSurface *surface in _buttons) {
-        if(surface.motionOwner!=_route.leaf || [surface.role isEqual:@"nativeGesture"])continue;
+        if(surface.motionOwner!=_route.leaf || WXGSurfaceInNativeView(surface))continue;
         if(surface.followsNative && surface.motionHost.window!=_window){missing=YES;break;}
     }
     if(!missing || CACurrentMediaTime()-_lastBindingRepair<1./30)return;
@@ -753,9 +1140,122 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
     CGRect material=CGRectMake(CGRectGetMidX(host.bounds)-diameter*.5,CGRectGetMidY(host.bounds)-diameter*.5,diameter,diameter);
     [_navStates allowOverflow:host];[self alignHomeGestureIcon:host diameter:diameter];
     [surface placeMaterial:material inParent:host];
+    // FIX114 B (user: the home page's two top buttons sit at different
+    // distances from the screen's edges): the right one is placed at the
+    // title row's margin (safe area + m.edge), this one was centred on
+    // WeChat's own view. Its contents (WeChat's icon and this glass, its
+    // subview) are drawn shifted to the same margin; the view itself and its
+    // gesture stay where WeChat put them.
+    {
+        UIWindow *w=_window;
+        WXGMetrics m=WXGMeasure(w.bounds.size.width-w.safeAreaInsets.left-w.safeAreaInsets.right,WXGPreferences.shared.sizeScale);
+        CGFloat h=_route.nav.navigationBar.bounds.size.height;
+        if(m.button>MAX(36,h))m=WXGMeasure(440*MAX(36,h)/44,1);
+        CGFloat scale=w.screen.scale?:3,centre=[host convertPoint:CGPointMake(CGRectGetMidX(host.bounds),0) toView:w].x;
+        // FIX114 C: the margin and the row's move down are settings.
+        CGFloat dx=round((w.safeAreaInsets.left+WXGTitleRowEdge(m.scale)+diameter*.5-centre)*scale)/scale;
+        // (In a title bar, the bar's content is moved down already.)
+        CGFloat dy=[host isDescendantOfView:_route.nav.navigationBar]?0:round(WXGTitleRowOffset(m.scale)*scale)/scale;
+        [_navStates shiftContents:host x:fabs(dx)>=.5 && fabs(dx)<=32?dx:0 y:dy];
+        if(dy>.01)[self openRowClipsFrom:host upTo:nil metrics:m];else WXGCloseRowClips(host,nil);
+        _homeIconHost=host;_homeIconSurface=surface;   // (review) measured when the diagnostics are exported
+    }
     if(host.subviews.firstObject!=surface)[host insertSubview:surface atIndex:0];
     [surface observeTouchesInView:host];   // FIX70: the button's own view takes the touches
     surface.hidden=NO;surface.alpha=1;return surface;
+}
+// FIX114 C (user: the top buttons' distance to the screen's top set by
+// hand): WeChat's own views of the title row drawn lower by the row's
+// offset (their layers' sublayerTransform, restorable): the bar's content
+// (WXGMoveBarContent: the title and native buttons with the glass behind
+// them; the host's own glass is placed lower itself), and the home page's
+// title when WeChat keeps it outside the bar. 0 puts them back.
+- (void)moveNativeRow:(UINavigationBar *)bar by:(CGFloat)dy metrics:(WXGMetrics)m home:(BOOL)home {
+    static Class homeTitle;static dispatch_once_t once;dispatch_once(&once,^{homeTitle=NSClassFromString(@"MFTitleView");});
+    WXGRowAdoptBar(bar,YES);_rowBarContents=WXGMoveBarContent(bar);
+    if(!home || !homeTitle)return;
+    UIView *title=_homeTitleView;
+    if((!title || title.window!=_window) && CACurrentMediaTime()-_homeTitleSearchedAt>1) {
+        _homeTitleSearchedAt=CACurrentMediaTime();
+        title=nil;UIView *item=_route.leaf.navigationItem.titleView;
+        if([item isKindOfClass:homeTitle])title=item;
+        else for(UIView *host in _homeGestureHosts) {
+            if(host.window!=_window)continue;
+            UIView *row=host;for(NSUInteger i=0;i<4 && row.superview;i++)row=row.superview;
+            for(UIView *v in WXGViews(row,160))if([v isKindOfClass:homeTitle]){title=v;break;}
+            if(title)break;
+        }
+        _homeTitleView=title;
+    }
+    if(!title || title.window!=_window)return;
+    // In the bar: moved with its content (review: a shift of its own from a
+    // pull-down, when WeChat had it in the list, goes back to 0).
+    BOOL inBar=[title isDescendantOfView:bar];
+    [_navStates shiftContents:title x:0 y:inBar?0:dy];
+    if(dy>.01 && !inBar)[self openRowClipsFrom:title upTo:nil metrics:m];else WXGCloseRowClips(title,nil);
+}
+- (void)openRowClipsFrom:(UIView *)view upTo:(UIView *)stop metrics:(WXGMetrics)m {
+    WXGOpenRowClips(view,stop,m);
+}
+// FIX114 C: where the home page's left icon is drawn against its glass (the
+// user saw the glass move to the margin and the star stay): their centres on
+// screen, the shift, how deep the image is in the button's view.
+- (NSDictionary *)homeIconEvidenceNow {
+    UIView *host=_homeIconHost;WXGSurface *surface=_homeIconSurface;
+    UIWindow *w=_window;if(!w || !surface || !host || host.window!=w)return @{};
+    UIImageView *image=nil;
+    for(UIView *v in WXGViews(host,32))if([v isKindOfClass:UIImageView.class] && ((UIImageView *)v).image && WXGVisible(v,w) && v.bounds.size.width>4 && v.bounds.size.width<80){image=(UIImageView *)v;break;}
+    NSUInteger depth=0;for(UIView *p=image.superview;p && p!=host && depth<16;p=p.superview)++depth;
+    CGRect glass=[surface convertRect:surface.materialRect toView:w],icon=CGRectNull;
+    if(image) {   // the drawn glyph (its ink), as WeChat's image has it off-centre
+        NSDictionary *ink=WXGRenderedInkEvidence(image);NSArray *r=ink[@"windowRect"];
+        icon=[ink[@"available"] boolValue] && r.count==4?CGRectMake([r[0] doubleValue],[r[1] doubleValue],[r[2] doubleValue],[r[3] doubleValue]):[image convertRect:image.bounds toView:w];
+    }
+    CGPoint shift=[_navStates contentOffsetOf:host];
+    return @{@"glassMidX":@(round(CGRectGetMidX(glass)*100)/100),@"glassMidY":@(round(CGRectGetMidY(glass)*100)/100),
+        @"iconMidX":CGRectIsNull(icon)?@(-1):@(round(CGRectGetMidX(icon)*100)/100),@"iconMidY":CGRectIsNull(icon)?@(-1):@(round(CGRectGetMidY(icon)*100)/100),
+        @"shiftX":@(shift.x),@"shiftY":@(shift.y),@"imageDepth":@(image?(NSInteger)depth:-1)};
+}
+// FIX114 E: a chat laid out that is on screen but not the page the host
+// adapts: in a window of its own, or presented over the page without
+// covering it whole (a sheet: the host stays on the page under it, covered).
+- (BOOL)adaptsChat:(UIViewController *)chat {return chat && chat==_route.leaf && !_route.unsupported;}
+- (void)noteSideChat:(UIViewController *)chat {
+    UIWindow *w=chat.viewIfLoaded.window;
+    if(_sideChat.chat==chat){_sideChat.pending=YES;return;}
+    if(!w || [self adaptsChat:chat])return;
+    if(!WXGSideChatWanted() || !WXGVisible(chat.view,w))return;
+    // (review) Not a chat on its way in or out (a push, a swipe back), nor one
+    // of the host's own stack: the host takes those.
+    if(chat.navigationController.transitionCoordinator || [_route.nav.viewControllers containsObject:chat])return;
+    CGRect f=[chat.view convertRect:chat.view.bounds toView:nil];
+    UIViewController *root=chat;NSUInteger guard=0;
+    while(root.parentViewController && guard<16){root=root.parentViewController;guard++;}
+    BOOL otherWindow=_window && w!=_window,presented=root.presentingViewController!=nil;
+    BOOL full=fabs(f.origin.y)<1 && fabs(f.size.height-w.bounds.size.height)<1;   // the route's own test (WXGPresentedChatStack)
+    BOOL side=(otherWindow || (presented && !full)) && WXGSideChatSheetFrame(f,w);
+    // (diagnostics) once per chat and decision every 2 s: layouts come many a second
+    static NSString *lastKey;static CFTimeInterval lastAt;
+    NSString *key=[NSString stringWithFormat:@"%p/%d/%d/%d/%.0f",chat,otherWindow,presented,full,f.origin.y];
+    BOOL noted=[key isEqual:lastKey] && CACurrentMediaTime()-lastAt<2;
+    if(!noted){lastKey=key;lastAt=CACurrentMediaTime();}
+    if(!noted)WXGSideChatNote(@{@"time":@(round(WXGSecondsSinceLoad()*10)/10),@"window":NSStringFromClass(w.class),@"level":@(w.windowLevel),
+                      @"hostWindow":@(w==_window),@"root":NSStringFromClass(root.class),@"presented":@(presented),@"frame":NSStringFromCGRect(f),
+                      @"routeLeaf":_route.leaf?NSStringFromClass(_route.leaf.class):@"none",@"route":_route.path?:@"",@"side":@(side)});
+    if(!side)return;
+    __weak WXGIntegrationHost *weakSelf=self;__weak UIViewController *weakChat=chat;
+    dispatch_async(dispatch_get_main_queue(),^{   // not inside WeChat's layout pass
+        WXGIntegrationHost *host=weakSelf;UIViewController *c=weakChat;
+        if(!host || !c || !c.viewIfLoaded.window || [host adaptsChat:c] || host.sideChat.chat==c || !WXGSideChatWanted())return;
+        if(host.sideChat)[host endSideChat:@"换了一个聊天"];
+        WXGSideChatInput *side=[WXGSideChatInput new];side.chat=c;side.window=c.view.window;side.pending=YES;side.status=@"开始";
+        host.sideChat=side;[side start];
+    });
+}
+- (void)endSideChat:(NSString *)reason {
+    WXGSideChatInput *side=_sideChat;if(!side)return;
+    _sideChat=nil;[side stop:reason];
+    WXGSideChatNote(@{@"time":@(round(WXGSecondsSinceLoad()*10)/10),@"ended":reason?:@"",@"installs":@(side.installs),@"layouts":@(side.layouts)});
 }
 - (void)followHomeSurfaces {
     if(![NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"])return;
@@ -768,8 +1268,8 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
             if(surface.superview!=native)[self bindHomeGesture:native diameter:surface.materialRect.size.height slot:@"nativeLeft0"];
         }else if(surface.original && surface.superview.window==_window) {
             // Preserve TEST4's corrected x grid and raster-centered icon, follow native y.
-            CGRect r=WXGWindowRect(native,_window);
-            CGPoint center=[_window convertPoint:CGPointMake(0,CGRectGetMidY(r)) toView:surface.superview];
+            CGRect r=WXGUnmovedWindowRect(native,_route.nav.navigationBar,_window);   // FIX114 C (review): without the row's own move
+            CGPoint center=[_window convertPoint:CGPointMake(0,CGRectGetMidY(r)+_rowOffset) toView:surface.superview];
             CGRect frame=surface.followsNative?surface.restingFrame:surface.frame;
             frame.origin.y=center.y-frame.size.height*.5;
             [CATransaction begin];[CATransaction setDisableActions:YES];
@@ -1003,6 +1503,9 @@ static BOOL WXGLooksLikeTabBarHairline(UIView *v,UIWindow *w,CGFloat barHeight) 
     if(_nativeTransition && (_dockTransitionToRoot || _dockTransitionFromRoot))root=_dockTransitionToRoot?_transitionTo:_transitionFrom;
     if(!root && _rootReturnTarget && CACurrentMediaTime()<_rootReturnUntil)root=_rootReturnTarget;
     if(!root || !root.isViewLoaded || !_dockView)return;
+    // FIX109 E: WeChat's own tab bar pictures stay while the plugin is off or
+    // was withdrawn (the dock view is kept, hidden, once made).
+    if(!WXGPluginEnabled() || !WXGPreferences.shared.dock)return;
     // FIX29: every frame; the chat-return bar background is created by UIKit
     // after the pop starts, and must be gone by the next frame. FIX30: once
     // something was concealed in this transition, every third frame suffices.
@@ -1128,9 +1631,30 @@ static BOOL WXGLooksLikeTabBarHairline(UIView *v,UIWindow *w,CGFloat barHeight) 
         if(!WXGVisible(v.superview,_window))continue;
         BOOL existing=NO;for(WXGSurface *s in _buttons)if(s.original==v){existing=YES;break;}
         BOOL home=[NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"];
-        if(home && [WXGActionNames((id)v) containsObject:@"onSearchButtonTapped"]){[_navStates hide:v];_homeSearchControl=(UIControl *)v;continue;}
-        if(home && ![WXGActionNames((id)v) containsObject:@"showRightTopMenuBtn"])continue;
-        if(!existing && !WXGVisible(v,_window))continue;
+        // FIX107: the search button WeChat (8.0.78) puts next to the title bar's
+        // right button (通讯录, and the home page in a grey test): one bar item
+        // holds both, the search one at alpha 0 while the list's search bar is
+        // on screen and faded in once it scrolls away. It gets its glass even
+        // at alpha 0, the glass following WeChat's alpha (no glass left empty,
+        // none missing while it fades in). The home page keeps hiding it while
+        // the dock's own search button stands in (since FIX10).
+        BOOL fadingSearch=[WXGActionNames((id)v) containsObject:@"onSearchButtonTapped"];
+        if(home && fadingSearch) {
+            _homeSearchControl=(UIControl *)v;
+            if([self dockSearchAvailable]){[_navStates hide:v];_homeSearchHidden=(UIControl *)v;continue;}
+            if(_homeSearchHidden==v) {
+                // Hidden while the dock search was on: WeChat's own rule for its
+                // alpha (shown once the list's search bar is off screen), not
+                // whatever it was when we hid it.
+                [_navStates restoreView:v];_homeSearchHidden=nil;
+                UISearchBar *listBar=[self homeSearchBar];
+                CGFloat barBottom=CGRectGetMaxY(WXGWindowRect(_route.nav.navigationBar,_window));
+                BOOL listBarShown=listBar && WXGVisible(listBar,_window) && CGRectGetMaxY(WXGWindowRect(listBar,_window))>barBottom+1;
+                v.alpha=listBarShown?0:1;
+            }
+        }
+        if(home && !fadingSearch && ![WXGActionNames((id)v) containsObject:@"showRightTopMenuBtn"])continue;
+        if(!existing && !fadingSearch && !WXGVisible(v,_window))continue;
         CGRect r=WXGWindowRect(v,_window),nr=WXGWindowRect(bar,_window);
         if(r.size.height<16 || r.size.height>80 || r.size.width<4 || r.size.width>180 || (!home && fabs(CGRectGetMidY(r)-CGRectGetMidY(nr))>24))continue;
         // Only extra corner actions qualify outside the actual navigation bar.
@@ -1141,6 +1665,8 @@ static BOOL WXGLooksLikeTabBarHairline(UIView *v,UIWindow *w,CGFloat barHeight) 
         CGFloat width=self.window.bounds.size.width;
         CGFloat x=ai==NSNotFound?CGRectGetMidX(WXGWindowRect(a,self.window)):(ai>=900?width-1-(1000-ai)*44:1+ai*44);
         CGFloat y=bi==NSNotFound?CGRectGetMidX(WXGWindowRect(b,self.window)):(bi>=900?width-1-(1000-bi)*44:1+bi*44);
+        // FIX107: two controls of one bar item (通讯录's add + search): by their own x.
+        if(x==y){x=CGRectGetMidX(WXGWindowRect(a,self.window));y=CGRectGetMidX(WXGWindowRect(b,self.window));}
         return x<y?NSOrderedAscending:x>y?NSOrderedDescending:NSOrderedSame;}];
     return out;
 }
@@ -1458,7 +1984,7 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(MAX(.05,delay)*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
         WXGIntegrationHost *host=weakSelf;if(!host)return;
         host.avatarRetryPending=NO;
-        if(!WXGPreferences.shared.avatarTitle || !host.route.chat || host.route.leaf!=host.avatarLookupPage)return;
+        if(!(WXGPreferences.shared.avatarTitle || WXGPreferences.shared.chatAvatarButton) || !host.route.chat || host.route.leaf!=host.avatarLookupPage)return;   // FIX109: also for the avatar button
         host.navigationDirty=YES;[host schedule];
     });
 }
@@ -1660,6 +2186,7 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     for(WXGSurface *surface in _departingButtons){surface.active=NO;surface.hidden=YES;WXGResetOwnedTransform(surface);}
     for(WXGSurface *surface in _departingInput.surfaces)surface.active=NO;
     _departingButtons=nil;_departingInput=nil;_completedTransition=coordinator;_nativeTransition=nil;
+    if(![NSStringFromClass(_route.leaf.class) hasPrefix:@"WCFinder"])[self clearFinderShifts];   // FIX113 E (a page whose bar may never be built)
     WXGResetOwnedTransform(_dockView);_dockView.layer.mask=nil;_pendingController=nil;_needsEarlyLayout=NO;_navigationDirty=YES;
     // A completed push is already bound to its incoming page. Restoring all
     // masks here briefly exposed native artwork and discarded those bindings.
@@ -1667,6 +2194,81 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     BOOL dockAvailable=WXGPluginEnabled() && WXGPreferences.shared.dock && !_suspendedByCover && !_settings.presentingViewController;
     [self applyDockPresentation:WXGDockPresentationAfterTransition(dockAvailable,_dockTransitionFromRoot,_dockTransitionToRoot,cancelled)];
     [_navStates reapply];[self schedule];
+}
+// FIX109 B: the chat's pinned module (置顶; the probe's TEST6 on the XS Max,
+// WeChat 8.0.73): MMNewMsgContentNavBar, a child of the chat page's view, 155
+// pt tall with the module (88 + 67), holds the bar's own background (from the
+// top), the collapsed module's container (y 88: MMMsgCommonTipsView, a tap
+// recogniser → onTapMixedList), the expanded list's container (y 88, hidden
+// until expanded: MMMsgTipsMixedListExpandView, then the bar is full screen)
+// and a dimming button; the message list's top inset is the bar's height.
+// With the avatar title the containers move down by pinnedShift, the list's
+// top inset grows by it while the module shows, and the bar takes touches in
+// the moved containers below its own bounds. WeChat's own frames and inset
+// are remembered (what it set last) and come back when the shift is 0.
+static char WXGPinnedKey,WXGPinnedInsetKey;
+static BOOL WXGShowsPinnedTips(UIView *container) {
+    static Class tips;static dispatch_once_t once;dispatch_once(&once,^{tips=NSClassFromString(@"MMMsgCommonTipsView");});
+    if(!tips || container.hidden || container.alpha<.01 || container.bounds.size.height<1)return NO;
+    for(UIView *v in container.subviews)if([v isKindOfClass:tips] && !v.hidden && v.alpha>.01)return YES;
+    return NO;
+}
+static BOOL WXGShiftListInset(UIScrollView *list,CGFloat shift) {
+    NSArray *rec=objc_getAssociatedObject(list,&WXGPinnedInsetKey);
+    UIEdgeInsets inset=list.contentInset,indicator=list.verticalScrollIndicatorInsets;
+    CGFloat native=rec && fabs(inset.top-[rec[0] doubleValue])<.01?[rec[1] doubleValue]:inset.top;
+    CGFloat nativeIndicator=rec && fabs(indicator.top-[rec[2] doubleValue])<.01?[rec[3] doubleValue]:indicator.top;
+    CGFloat wanted=native+shift,wantedIndicator=nativeIndicator+shift;
+    if(fabs(inset.top-wanted)>.01) {
+        BOOL atTop=!list.dragging && !list.decelerating && list.contentOffset.y<=-list.adjustedContentInset.top+1;
+        inset.top=wanted;list.contentInset=inset;
+        if(atTop)list.contentOffset=CGPointMake(list.contentOffset.x,-list.adjustedContentInset.top);
+    }
+    if(fabs(indicator.top-wantedIndicator)>.01){indicator.top=wantedIndicator;list.verticalScrollIndicatorInsets=indicator;}
+    objc_setAssociatedObject(list,&WXGPinnedInsetKey,shift>.01?@[@(wanted),@(native),@(wantedIndicator),@(nativeIndicator)]:nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return shift>.01;
+}
+- (void)alignPinnedModule {
+    UIView *bar=_pinnedBar;
+    if(!bar){_pinnedApplied=NO;_pinnedShift=0;return;}   // its page is gone
+    if(!bar.window)return;   // its page is away: done when it is back (buildNavigation)
+    CGFloat shift=_pinnedShift;BOOL applied=NO,tips=NO;
+    for(UIView *v in bar.subviews) {
+        if(WXGIsPluginView(v) || [v isKindOfClass:UIControl.class])continue;
+        NSArray *rec=objc_getAssociatedObject(v,&WXGPinnedKey);CGRect f=v.frame;
+        CGFloat native=rec && fabs(f.origin.y-[rec[0] doubleValue])<.01?[rec[1] doubleValue]:f.origin.y;
+        if(native<20){if(rec)objc_setAssociatedObject(v,&WXGPinnedKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);continue;}   // the bar's background
+        CGFloat wanted=native+shift;
+        if(fabs(f.origin.y-wanted)>.01){f.origin.y=wanted;v.frame=f;++_pinnedMoves;}
+        objc_setAssociatedObject(v,&WXGPinnedKey,shift>.01?@[@(wanted),@(native)]:nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if(shift>.01)applied=YES;
+        if(WXGShowsPinnedTips(v))tips=YES;
+    }
+    UIView *page=bar.superview;UIScrollView *list=nil;
+    for(UIView *v in page.subviews)if([v isKindOfClass:UITableView.class] && v.bounds.size.height>=page.bounds.size.height*.6){list=(UIScrollView *)v;break;}
+    if(list && WXGShiftListInset(list,tips?shift:0))applied=YES;
+    _pinnedApplied=applied;
+}
+- (BOOL)chatBar:(UIView *)bar extendsTo:(CGPoint)point {
+    if(_pinnedShift<=.01 || bar!=_pinnedBar)return NO;
+    for(UIView *v in bar.subviews)
+        if(objc_getAssociatedObject(v,&WXGPinnedKey) && !v.hidden && v.alpha>.01 && v.userInteractionEnabled && CGRectContainsPoint(v.frame,point))return YES;
+    return NO;
+}
+// FIX94: a grey disc with a white figure (fills the circle like a photo), while
+// no photo of the chat has been found.
+static UIImage *WXGAvatarPlaceholder(void) {
+    static UIImage *placeholder;static dispatch_once_t placeholderOnce;
+    dispatch_once(&placeholderOnce,^{
+        CGFloat d=120;
+        placeholder=[[[UIGraphicsImageRenderer alloc]initWithSize:CGSizeMake(d,d)] imageWithActions:^(UIGraphicsImageRendererContext *context){
+            (void)context;[[UIColor colorWithWhite:.78 alpha:1] setFill];UIRectFill(CGRectMake(0,0,d,d));
+            UIImageSymbolConfiguration *size=[UIImageSymbolConfiguration configurationWithPointSize:d*.46 weight:UIImageSymbolWeightRegular];
+            UIImage *figure=[[UIImage systemImageNamed:@"person.fill" withConfiguration:size] imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+            CGSize s=figure.size;[figure drawInRect:CGRectMake((d-s.width)*.5,(d-s.height)*.5+d*.04,s.width,s.height)];
+        }];
+    });
+    return placeholder;
 }
 - (void)buildNavigation {
     ++_navigationRepairs;
@@ -1688,17 +2290,78 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     WXGMetrics m=WXGMeasure(w.bounds.size.width-w.safeAreaInsets.left-w.safeAreaInsets.right,WXGPreferences.shared.sizeScale);
     if(m.button>MAX(36,nr.size.height))m=WXGMeasure(440*MAX(36,nr.size.height)/44,1);
     centerY=MAX(centerY,w.safeAreaInsets.top+m.button*.5);
-    CGFloat left=w.safeAreaInsets.left+m.edge,right=w.bounds.size.width-w.safeAreaInsets.right-m.edge;
+    // FIX112: at the title's height. WeChat's title text sits above the bar's
+    // middle (设置, 通讯录 ...) and its capsule follows the text, so the buttons
+    // were lower than the title beside them. The page's own title when it can
+    // be measured (a chat's too: the plugin's title capsule comes from here);
+    // until then (its title not laid out yet, or none) the offset measured on
+    // an earlier page with this bar, so pages never jump; the first page ever
+    // looks again shortly. The home page keeps its own (WeChat's buttons).
+    _titleAlignedButtons=NO;
+    if(!home) {
+        CGFloat barMid=CGRectGetMidY(nr),offset=NAN;
+        CGRect title=WXGLocalTitleCapsuleRect(bar,_route.leaf.navigationItem.titleView,w);
+        if(!CGRectIsNull(title) && fabs(CGRectGetMidY(title)-barMid)<m.button*.5){offset=CGRectGetMidY(title)-barMid;_titleOffset=offset;_titleOffsetBar=nr.size.height;}
+        else if(_titleOffsetBar>0 && fabs(_titleOffsetBar-nr.size.height)<1)offset=_titleOffset;
+        if(isfinite(offset)){centerY=barMid+offset;_titleAlignedButtons=YES;}
+        else {
+            if(_titleRetryLeaf!=_route.leaf){_titleRetryLeaf=_route.leaf;_titleRetries=0;}
+            if(_titleRetries<3) {
+                ++_titleRetries;__weak WXGIntegrationHost *weakSelf=self;
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(.15*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+                    WXGIntegrationHost *host=weakSelf;if(!host || host->_titleOffsetBar>0)return;
+                    host->_navigationDirty=YES;[host schedule];
+                });
+            }
+        }
+    }
+    // FIX114 C (user: the top buttons' distance to the screen's edges set by
+    // hand): the whole row moved down by 顶部按钮往下移 (not on 视频号's pages:
+    // WeChat's buttons over the video stay), its margin 顶部按钮离屏幕两边.
+    CGFloat rowPixel=w.screen.scale?:3,centerY0=centerY;
+    CGFloat rowDY=[NSStringFromClass(_route.leaf.class) hasPrefix:@"WCFinder"]?0:round(WXGTitleRowOffset(m.scale)*rowPixel)/rowPixel;
+    CGFloat edge=WXGTitleRowEdge(m.scale);
+    centerY+=rowDY;_rowOffset=rowDY;
+    self.navCapsuleLeaf=_route.leaf;   // FIX113 Q; FIX114 C: the page the title row's offset is for
+    CGFloat left=w.safeAreaInsets.left+edge,right=w.bounds.size.width-w.safeAreaInsets.right-edge;
     NSMutableArray *leftButtons=[NSMutableArray array],*rightButtons=[NSMutableArray array];
     NSUInteger leftSlot=0,rightSlot=0;
-    for(UIControl *b in controls) {
+    // FIX109: the chat page's top-right button (聊天信息, the outermost on the
+    // right) shows the chat's avatar in its glass: the same button, the same
+    // action; the photo inset by a setting (头像按钮内边距).
+    UIControl *avatarControl=nil;UIImage *chatAvatar=nil;
+    if(_route.chat && WXGPreferences.shared.chatAvatarButton) {
+        for(UIControl *c in controls)if(![self controlOnLeft:c] && ![self isBack:c])avatarControl=c;
+        if(avatarControl) {
+            UIView *titleView=_route.leaf.navigationItem.titleView;
+            NSString *title=[self fullTitleFromView:titleView fallback:_route.leaf.navigationItem.title?:_route.leaf.title];
+            chatAvatar=[self avatarImageForTitle:title]?:WXGAvatarPlaceholder();
+        }
+    }
+    // FIX113 D: 视频号 (WCFinder pages): WeChat's own buttons as they are (not
+    // moved, not hidden, no glass button of the plugin's), a capsule of glass
+    // under them (bindFinderCapsules); none of the buttons below.
+    BOOL finderPage=[NSStringFromClass(_route.leaf.class) hasPrefix:@"WCFinder"];
+    if(finderPage)[self bindFinderCapsules:controls metrics:m alive:alive];
+    else if(!_nativeTransition)[self clearFinderShifts];   // FIX113 E: the bar's views may be reused for this page
+    // FIX114 B: a chat without the avatar title keeps WeChat's buttons (but the avatar one).
+    BOOL chatNative=_route.chat && [self chatBarNativeFor:_route.leaf],nativeButtons=[self navButtonsNativeFor:_route.leaf];
+    _chatAvatarControl=avatarControl && chatAvatar?avatarControl:nil;
+    for(UIControl *b in finderPage?@[]:controls) {
+        if(nativeButtons && !(b==avatarControl && chatAvatar))continue;
         BOOL onLeft=[self controlOnLeft:b];
         NSString *slot=[NSString stringWithFormat:@"%@%lu",onLeft?@"left":@"right",(unsigned long)(onLeft?leftSlot++:rightSlot++)];
         WXGSurface *s=[self pooledSurface:slot];s.original=b;s.motionHost=[self motionInkForControl:b];WXGResetOwnedTransform(s);[alive addObject:s];
         BOOL back=[self isBack:b];NSString *count=back?[self backCount:b]:nil;
         UIImage *image=WXGButtonImage(b);NSString *title=image?nil:[self titleForControl:b];
+        // FIX108 C: the home "+": the artwork WeChat hands the button there (a
+        // 20 pt ring drawn edge to edge) is cut off on its sides; drawn in the
+        // glass, the ring showed flat sides. The same shape as a symbol then.
+        if(home && image && [WXGActionNames(b) containsObject:@"showRightTopMenuBtn"] && WXGInkTouchesEdges(image))image=WXGHomePlusSymbol();
         if(back && !image)image=[UIImage systemImageNamed:@"chevron.left"];
-        s.role=back?@"back":title.length?@"textAction":@"navigationAction";
+        BOOL avatarButton=b==avatarControl && chatAvatar;
+        if(avatarButton){image=chatAvatar;title=nil;}
+        s.role=avatarButton?@"chatAvatarButton":back?@"back":title.length?@"textAction":[WXGActionNames(b) containsObject:@"onSearchButtonTapped"]?@"navigationSearch":@"navigationAction";
         // Video artwork can keep its native contrast while material selection
         // follows the same WeChat window appearance and shared TEST9 settings.
         s.overrideUserInterfaceStyle=[NSStringFromClass(_route.leaf.class) hasPrefix:@"WCFinder"]?w.traitCollection.userInterfaceStyle:UIUserInterfaceStyleUnspecified;
@@ -1719,7 +2382,7 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     }
     // UIBarButtonItem target/action is valid even without a discoverable
     // MMBarButton. Preserve the real item as sender rather than invent actions.
-    NSArray *groups=@[_route.leaf.navigationItem.leftBarButtonItems?:@[],(_route.leaf.navigationItem.rightBarButtonItems.reverseObjectEnumerator.allObjects?:@[])];
+    NSArray *groups=finderPage || nativeButtons?@[@[],@[]]:@[_route.leaf.navigationItem.leftBarButtonItems?:@[],(_route.leaf.navigationItem.rightBarButtonItems.reverseObjectEnumerator.allObjects?:@[])];
     for(NSUInteger side=0;side<2;side++)for(UIBarButtonItem *item in groups[side]) {
         if([NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"] && ![(item.action?NSStringFromSelector(item.action):@"") isEqual:@"showRightTopMenuBtn"])continue;
         id raw=WXGRead(item,@"view");UIView *native=item.customView?:([raw isKindOfClass:UIView.class]?raw:nil);
@@ -1751,21 +2414,29 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
         CGFloat width=s.bounds.size.width-2*WXGCanvasPaddingX;right-=width;
         CGFloat y=centerY;
         if([NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"] && s.original)
-            y=CGRectGetMidY(WXGWindowRect(s.original,w));
+            y=CGRectGetMidY(WXGUnmovedWindowRect(s.original,bar,w))+rowDY;   // (review) without the bar content's own move
         [s placeMaterial:CGRectMake(right,y-m.button*.5,width,m.button) inParent:_navigationOverlay];right-=m.gap;
         [_navStates conceal:s.original];
     }
+    CGFloat pinnedShift=_route.chat?rowDY:0;   // FIX109 B; FIX114 C: the module moves down with the row
     if(_route.chat) {
         UILabel *nativeLabel=nil;UIView *titleView=_route.leaf.navigationItem.titleView;
         for(UIView *v in WXGViews(titleView,80))if([v isKindOfClass:UILabel.class] && ((UILabel *)v).text.length && !v.hidden) {
             if(!nativeLabel || v.bounds.size.width*((UILabel *)v).font.pointSize>nativeLabel.bounds.size.width*nativeLabel.font.pointSize)nativeLabel=(id)v;
         }
         NSString *title=[self fullTitleFromView:titleView fallback:_route.leaf.navigationItem.title?:_route.leaf.title];
+        if(chatNative && titleView){[_navStates restoreView:titleView];title=nil;}   // FIX114 B: WeChat's own title (the local glass's capsule behind it)
         if(title.length) {
             WXGSurface *t=nil,*a=nil;
             for(WXGSurface *s in _buttons){if([s.role isEqual:@"chatTitle"])t=s;if([s.role isEqual:@"avatar"])a=s;}
             if(!t){t=[self pooledSurface:@"chatTitle"];t.role=@"chatTitle";}
-            [alive addObject:t];t.label.font=[UIFont systemFontOfSize:17*m.scale weight:UIFontWeightSemibold];
+            // FIX109: the capsule under the avatar has its own height (头像下小胶囊高度);
+            // its text follows it (17 pt at the default 30).
+            CGFloat avatarCapsule=WXGClamp([WXGConfig.shared extraNumber:@"avatarCapsuleHeight"],22,48);
+            // FIX109 C: a taller capsule keeps 17 pt text (more room around it);
+            // only a smaller one than the default 30 shrinks it to fit.
+            CGFloat titleSize=WXGPreferences.shared.avatarTitle?MIN(17.,round(avatarCapsule*17/30*2)/2):17;
+            [alive addObject:t];t.label.font=[UIFont systemFontOfSize:titleSize*m.scale weight:UIFontWeightSemibold];
             [t setImage:nil title:title count:nil];
             UIControl *detail=rightButtons.count?((WXGSurface *)rightButtons.lastObject).original:nil;
             t.motionHost=nativeLabel?:titleView;WXGResetOwnedTransform(t);t.original=detail;t.enabled=detail!=nil;t.glass.sourceView=_route.leaf.view;
@@ -1774,20 +2445,9 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
                 if(!a){a=[self pooledSurface:@"avatar"];a.role=@"avatar";}
                 // FIX88: looked up until found (kept per chat page); the title tells groups apart.
                 UIImage *avatar=[self avatarImageForTitle:title];
-                // FIX94: a grey disc with a white figure (fills the circle like a photo).
-                static UIImage *placeholder;static dispatch_once_t placeholderOnce;
-                dispatch_once(&placeholderOnce,^{
-                    CGFloat d=120;
-                    placeholder=[[[UIGraphicsImageRenderer alloc]initWithSize:CGSizeMake(d,d)] imageWithActions:^(UIGraphicsImageRendererContext *context){
-                        (void)context;[[UIColor colorWithWhite:.78 alpha:1] setFill];UIRectFill(CGRectMake(0,0,d,d));
-                        UIImageSymbolConfiguration *size=[UIImageSymbolConfiguration configurationWithPointSize:d*.46 weight:UIImageSymbolWeightRegular];
-                        UIImage *figure=[[UIImage systemImageNamed:@"person.fill" withConfiguration:size] imageWithTintColor:UIColor.whiteColor renderingMode:UIImageRenderingModeAlwaysOriginal];
-                        CGSize s=figure.size;[figure drawInRect:CGRectMake((d-s.width)*.5,(d-s.height)*.5+d*.04,s.width,s.height)];
-                    }];
-                });
                 // FIX94: no glass: the photo itself, the glass's former size.
                 if(!a.plain)a.plain=YES;
-                [a setImage:avatar?:placeholder title:nil count:nil];   // the same image: no work
+                [a setImage:avatar?:WXGAvatarPlaceholder() title:nil count:nil];   // the same image: no work
                 [alive addObject:a];a.motionHost=nativeLabel?:titleView;WXGResetOwnedTransform(a);a.original=detail;a.enabled=detail!=nil;a.glass.sourceView=_route.leaf.view;
                 a.glass.backdropExclusions=t.glass.backdropExclusions;
                 // FIX95: size and height are settings; the title capsule stays
@@ -1797,8 +2457,16 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
                 CGFloat diameter=WXGClamp(WXGConfig.shared.avatarSize,32,88)*m.scale;
                 CGFloat avatarMid=y+nominal*.5+WXGClamp(WXGConfig.shared.avatarOffsetY,-24,24)*m.scale;
                 [a placeMaterial:CGRectMake(midX-diameter*.5,avatarMid-diameter*.5,diameter,diameter) inParent:_navigationOverlay];
-                CGFloat th=30*m.scale,tw=WXGCapsuleWidth([title sizeWithAttributes:@{NSFontAttributeName:t.label.font}].width,0,th,14*m.scale,w.bounds.size.width*.70);
+                CGFloat th=avatarCapsule*m.scale,tw=WXGCapsuleWidth([title sizeWithAttributes:@{NSFontAttributeName:t.label.font}].width,0,th,14*m.scale,w.bounds.size.width*.70);
                 [t placeMaterial:CGRectMake(midX-tw*.5,y+nominal-5*m.scale,tw,th) inParent:_navigationOverlay];
+                // FIX109 B: the pinned module keeps the gap it has under the
+                // default title capsule (bottom centerY + m.button / 2) below
+                // the avatar mode's lowest part (the small capsule, or the
+                // avatar when it is set lower / larger).
+                CGFloat lowest=MAX(y+nominal-5*m.scale+th,avatarMid+diameter*.5),scale=w.screen.scale?:3;
+                // FIX109 B: the gap itself adjustable (置顶与小胶囊间距, pt; negative closer).
+                CGFloat gapAdjust=WXGClamp([WXGConfig.shared extraNumber:@"pinnedGapAdjust"],-16,16)*m.scale;
+                pinnedShift=MAX(0,round((lowest-(centerY0+m.button*.5)+gapAdjust)*scale)/scale);   // FIX114 C: from where WeChat has it
                 // FIX94: the avatar one layer above the title capsule (its lower
                 // edge overlaps the capsule; the capsule must never cut into it).
                 if(a.superview==_navigationOverlay && t.superview==_navigationOverlay &&
@@ -1806,7 +2474,7 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
                     [_navigationOverlay insertSubview:a aboveSubview:t];
             } else {
                 CGFloat limit=2*MAX(0,MIN(midX-left,right-midX));
-                if(!leftButtons.count)limit=2*MAX(0,MIN(midX-(w.safeAreaInsets.left+m.edge),right-midX));
+                if(!leftButtons.count)limit=2*MAX(0,MIN(midX-(w.safeAreaInsets.left+edge),right-midX));
                 limit=MAX(0,limit);
                 if(limit>=m.button) {
                     CGFloat tw=WXGCapsuleWidth([title sizeWithAttributes:@{NSFontAttributeName:t.label.font}].width,0,m.button,14*m.scale,limit);
@@ -1816,7 +2484,14 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
             if([alive containsObject:t] && titleView)[_navStates conceal:titleView];
             else if(titleView)[_navStates restoreView:titleView];
         }
+        static Class chatBarClass;static dispatch_once_t chatBarOnce;
+        dispatch_once(&chatBarOnce,^{chatBarClass=NSClassFromString(@"MMNewMsgContentNavBar");});
+        if(chatBarClass && _route.leaf.isViewLoaded)for(UIView *v in _route.leaf.view.subviews)if([v isKindOfClass:chatBarClass]){_pinnedBar=v;break;}
     }
+    // FIX109 C: only a chat page sets it: leaving (back to the list, the
+    // module's page sliding away) keeps the module where it is (B put it back
+    // at once and it overlapped the title again while the page left).
+    if(_route.chat){_pinnedShift=pinnedShift;[self alignPinnedModule];}
     if(_route.primary) {
         NSUInteger slot=0;
         NSMutableArray *candidates=[WXGViews(bar,200) mutableCopy];[candidates addObjectsFromArray:_pageViews?:@[]];
@@ -1846,9 +2521,31 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
         s.active=NO;s.hidden=YES;if(s.original && ![s.role isEqual:@"chatTitle"] && ![s.role isEqual:@"avatar"])[_navStates restoreView:s.original];[_buttons removeObject:s];
     }
     [self styleFinderButtons];
+    [self moveNativeRow:bar by:rowDY metrics:m home:home];   // FIX114 C
+    // FIX114 B: what each page's title row looked like last (exported from the
+    // settings page the scene there is the settings'): every glass's place on
+    // screen, its button's, and the outer margins.
+    @try {
+        NSMutableArray *rows=[NSMutableArray array];CGFloat minX=CGFLOAT_MAX,maxX=-CGFLOAT_MAX;
+        for(WXGSurface *s in _buttons) {
+            if(!s.window || s.hidden)continue;
+            CGRect glass=[s convertRect:s.materialRect toView:w];
+            CGRect native=s.original?WXGWindowRect(s.original,w):(s.motionHost?WXGWindowRect(s.motionHost,w):CGRectNull);
+            [rows addObject:@{@"role":s.role?:@"",@"glass":NSStringFromCGRect(glass),@"native":CGRectIsNull(native)?@"-":NSStringFromCGRect(native),
+                              @"shift":@([_navStates contentShiftOf:s.motionHost])}];
+            if(![s.role isEqual:@"chatTitle"] && ![s.role isEqual:@"avatar"]){minX=MIN(minX,CGRectGetMinX(glass));maxX=MAX(maxX,CGRectGetMaxX(glass));}
+        }
+        if(!_navSnapshots)_navSnapshots=[NSMutableDictionary dictionary];
+        NSString *page=NSStringFromClass(_route.leaf.class)?:@"?";
+        if(_navSnapshots.count>=12 && !_navSnapshots[page])[_navSnapshots removeObjectForKey:_navSnapshots.allKeys.firstObject];
+        _navSnapshots[page]=@{@"glasses":rows,@"leftMargin":@(minX<CGFLOAT_MAX?round((minX-w.safeAreaInsets.left)*10)/10:-1),
+                              @"rightMargin":@(maxX>-CGFLOAT_MAX?round((w.bounds.size.width-w.safeAreaInsets.right-maxX)*10)/10:-1),
+                              @"nativeButtons":@(nativeButtons),@"edge":@(round(edge*10)/10),@"rowOffset":@(rowDY),@"rowBarContents":@(_rowBarContents),@"homeTitleOutsideBar":@(home && _homeTitleView && ![_homeTitleView isDescendantOfView:bar]),
+                              @"openedClips":WXGRowOpenedClips.array?:@[]};
+    } @catch(__unused NSException *error) {}
     for(WXGSurface *surface in _buttons) {
         surface.nativeTransitionActive=_nativeTransition!=nil;
-        if(![surface.role isEqual:@"nativeGesture"]){[surface bindMotionHost:surface.motionHost owner:_route.leaf];[surface followNativePresentation];}
+        if(!WXGSurfaceInNativeView(surface)){[surface bindMotionHost:surface.motionHost owner:_route.leaf];[surface followNativePresentation];}
     }
     // A reused native control has exactly one glass representation. Different
     // from/to controls still follow their own native presentation animations.
@@ -1866,8 +2563,136 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     [self clearNavigationPaint];[_overlay bringSubviewToFront:_launcher];
     _navigationBindingKey=[self currentNavigationBindingKey];
 }
-// FIX85/86: 视频号 (WCFinder pages, over video): each button keeps its own
-// glass (FIX86: no shared capsule any more), with no material tint (blur and
+// Glass the plugin put inside WeChat's own views (the home page's left icon,
+// 视频号's capsules): it moves with them, nothing to follow.
+static BOOL WXGSurfaceInNativeView(WXGSurface *surface) {
+    return [surface.role isEqual:@"nativeGesture"] || [surface.role isEqual:@"finderCapsule"];
+}
+// FIX113 D: 视频号 (WCFinder pages): the user's choice after FIX85 (one
+// capsule per side, the plugin's icons on it) and FIX86 (a glass button
+// each, at the plugin's places): WeChat's own buttons stay exactly as WeChat
+// lays them out (not moved, not hidden, not drawn again), and one capsule of
+// glass goes under each group of them (a side's buttons next to each other):
+// a slot of a button's height about each icon (wider for a text), joined.
+// It lives in WeChat's own view, under the buttons (as the home page's left
+// icon, bindHomeGesture), so it moves and fades with them and never takes a
+// touch (material only).
+- (void)bindFinderCapsules:(NSArray<UIControl *> *)controls metrics:(WXGMetrics)m alive:(NSMutableSet *)alive {
+    UIWindow *w=_window;UINavigationBar *bar=_route.nav.navigationBar;
+    if(!w || !bar)return;
+    // FIX113 E: measured where WeChat has them (the last pass's shift undone
+    // first, in this same pass: nothing is drawn in between).
+    if(!_finderShiftHosts)_finderShiftHosts=[NSHashTable weakObjectsHashTable];
+    for(UIView *host in _finderShiftHosts.allObjects)[_navStates shiftContents:host x:0];
+    [_finderShiftHosts removeAllObjects];
+    NSMutableArray<UIView *> *natives=[NSMutableArray array];
+    for(UIControl *c in controls)if(WXGVisible(c,w))[natives addObject:c];
+    UINavigationItem *item=_route.leaf.navigationItem;
+    for(UIBarButtonItem *button in [item.leftBarButtonItems?:@[] arrayByAddingObjectsFromArray:item.rightBarButtonItems?:@[]]) {
+        id raw=WXGRead(button,@"view");UIView *native=button.customView?:([raw isKindOfClass:UIView.class]?raw:nil);
+        if(!native || !WXGVisible(native,w))continue;
+        BOOL bound=NO;for(UIView *v in natives)if(v==native || [v isDescendantOfView:native] || [native isDescendantOfView:v]){bound=YES;break;}
+        if(!bound)[natives addObject:native];
+    }
+    // Each one's ink (the icon, else the view), in the window.
+    NSMutableArray<NSDictionary *> *marks=[NSMutableArray array];
+    for(UIView *native in natives) {
+        UIView *ink=[native isKindOfClass:UIControl.class]?[self motionInkForControl:(UIControl *)native]:native;
+        CGRect r=WXGWindowRect(ink,w);
+        if(CGRectIsEmpty(r) || r.size.width<4 || r.size.height<4 || r.size.width>w.bounds.size.width*.4 || r.size.height>m.button*1.5)continue;
+        [marks addObject:@{@"view":native,@"rect":[NSValue valueWithCGRect:r]}];
+    }
+    [marks sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){
+        CGFloat x=CGRectGetMidX([a[@"rect"] CGRectValue]),y=CGRectGetMidX([b[@"rect"] CGRectValue]);
+        return x<y?NSOrderedAscending:x>y?NSOrderedDescending:NSOrderedSame;}];
+    // Groups: same side, next to each other (centres at most 1.75 buttons apart, level).
+    NSMutableArray<NSMutableArray<NSDictionary *> *> *groups=[NSMutableArray array];
+    CGFloat mid=CGRectGetMidX(w.bounds);
+    for(NSDictionary *mark in marks) {
+        CGRect r=[mark[@"rect"] CGRectValue];NSDictionary *last=groups.lastObject.lastObject;
+        CGRect p=last?[last[@"rect"] CGRectValue]:CGRectNull;
+        BOOL join=last && (CGRectGetMidX(p)<mid)==(CGRectGetMidX(r)<mid) && CGRectGetMidX(r)-CGRectGetMidX(p)<=m.button*1.75 &&
+            fabs(CGRectGetMidY(r)-CGRectGetMidY(p))<m.button*.5;
+        if(join)[groups.lastObject addObject:mark];else [groups addObject:[NSMutableArray arrayWithObject:mark]];
+    }
+    // Each group's capsule (window), its views and where it goes.
+    NSMutableArray<NSDictionary *> *capsules=[NSMutableArray array];
+    CGFloat rightMargin=NAN,leftEdge=CGFLOAT_MAX;
+    for(NSArray<NSDictionary *> *group in groups) {
+        NSMutableArray<UIView *> *views=[NSMutableArray array];
+        CGFloat x0=CGFLOAT_MAX,x1=-CGFLOAT_MAX,y=0;
+        for(NSDictionary *mark in group) {
+            CGRect r=[mark[@"rect"] CGRectValue];[views addObject:mark[@"view"]];
+            // The same margin at the sides as above and below (an icon: a round slot of a button's height).
+            CGFloat half=MAX(m.button*.5,r.size.width*.5+(m.button-MIN(r.size.height,m.button))*.5);
+            x0=MIN(x0,CGRectGetMidX(r)-half);x1=MAX(x1,CGRectGetMidX(r)+half);y+=CGRectGetMidY(r)/group.count;
+        }
+        // Into their nearest common view, just under the branch holding them.
+        UIView *parent=views.firstObject.superview;
+        for(;parent;parent=parent.superview){BOOL all=YES;for(UIView *v in views)if(![v isDescendantOfView:parent]){all=NO;break;}if(all)break;}
+        if(!parent || parent.window!=w || !(parent==bar || [parent isDescendantOfView:bar]))continue;   // only in the bar's own views
+        UIView *below=nil;
+        for(UIView *child in parent.subviews) {
+            if(WXGIsPluginView(child))continue;
+            BOOL holds=NO;for(UIView *v in views)if(v==child || [v isDescendantOfView:child]){holds=YES;break;}
+            if(holds){below=child;break;}   // the lowest of them
+        }
+        if(!below)continue;
+        BOOL left=(x0+x1)*.5<mid;
+        if(left)leftEdge=MIN(leftEdge,x0);
+        else rightMargin=isnan(rightMargin)?CGRectGetMaxX(w.bounds)-x1:MIN(rightMargin,CGRectGetMaxX(w.bounds)-x1);
+        [capsules addObject:@{@"views":views,@"parent":parent,@"below":below,@"left":@(left),
+                              @"rect":[NSValue valueWithCGRect:CGRectMake(x0,y-m.button*.5,x1-x0,m.button)]}];
+    }
+    // FIX113 E (user: the left two sit too close to the edge; as the right two
+    // are, it is fine): the left side as far from its edge as the right side's
+    // capsule is from its own. Only inward, at most one button.
+    CGFloat shift=0;
+    if(isfinite(rightMargin) && leftEdge<CGFLOAT_MAX)shift=WXGClamp(CGRectGetMinX(w.bounds)+rightMargin-leftEdge,0,m.button);
+    if(shift<.5)shift=0;
+    NSMutableArray *evidence=[NSMutableArray array];
+    NSUInteger slot=0;
+    for(NSDictionary *capsule in capsules) {
+        UIView *parent=capsule[@"parent"],*below=capsule[@"below"];NSArray<UIView *> *views=capsule[@"views"];
+        CGRect rect=[capsule[@"rect"] CGRectValue];BOOL left=[capsule[@"left"] boolValue];
+        NSString *how=@"none";
+        if(left && shift>0) {
+            // Their own view when it holds only this side (a stack or container of
+            // the left buttons): it and the capsule in it drawn further right.
+            // Otherwise each button's contents, and the capsule placed shifted.
+            CGRect area=WXGWindowRect(parent,w);
+            if(parent!=bar && CGRectGetMaxX(area)<=mid+1){[_navStates shiftContents:parent x:shift];[_finderShiftHosts addObject:parent];how=@"container";}
+            else {
+                for(UIView *v in views){[_navStates shiftContents:v x:shift];[_finderShiftHosts addObject:v];}
+                rect=CGRectOffset(rect,shift,0);how=@"buttons";
+            }
+        }
+        WXGSurface *s=[self pooledSurface:[NSString stringWithFormat:@"finderCapsule%lu",(unsigned long)slot++]];
+        s.role=@"finderCapsule";s.motionHost=nil;s.motionOwner=_route.leaf;s.followsNative=NO;s.materialOnly=YES;
+        WXGResetOwnedTransform(s);[s setNativeIconSource:nil preservingColors:NO];[s setImage:nil title:nil count:nil];
+        s.overrideUserInterfaceStyle=w.traitCollection.userInterfaceStyle;
+        s.glass.sourceView=_route.leaf.view;
+        s.glass.backdropExclusions=_inputAdapter.tool?@[_inputAdapter.tool,bar]:@[bar];
+        [_navStates allowOverflow:parent];
+        // In the parent's own space (its contents' shift is not part of it: the
+        // capsule, inside, is drawn shifted with the buttons).
+        [s placeMaterial:[parent convertRect:rect fromView:nil] inParent:parent];
+        NSUInteger at=[parent.subviews indexOfObjectIdenticalTo:s],under=[parent.subviews indexOfObjectIdenticalTo:below];
+        if(at==NSNotFound || under==NSNotFound || at>under)[parent insertSubview:s belowSubview:below];
+        s.hidden=NO;s.alpha=1;[alive addObject:s];
+        [evidence addObject:@{@"side":left?@"left":@"right",@"buttons":@(views.count),@"parent":NSStringFromClass(parent.class),
+                              @"x":@(round(CGRectGetMinX(rect)*10)/10),@"w":@(round(rect.size.width*10)/10),@"shift":left?@(round(shift*10)/10):@0,@"shiftedBy":how}];
+    }
+    _finderEvidence=@{@"capsules":evidence,@"rightMargin":isfinite(rightMargin)?@(round(rightMargin*10)/10):NSNull.null,
+                      @"leftEdge":leftEdge<CGFLOAT_MAX?@(round(leftEdge*10)/10):NSNull.null};
+}
+- (void)clearFinderShifts {
+    if(!_finderShiftHosts.count)return;
+    for(UIView *host in _finderShiftHosts.allObjects)[_navStates shiftContents:host x:0];
+    [_finderShiftHosts removeAllObjects];_finderEvidence=nil;
+}
+// FIX85/86: 视频号 (WCFinder pages, over video): the glass there (FIX113 D:
+// the capsules under WeChat's own buttons) has no material tint (blur and
 // refraction only) and the rim always in its dark-appearance settings (the
 // page is video whatever the system appearance). Every other page: both
 // reset. Each value is assigned only when it differs (no glass relaid out on
@@ -1903,6 +2728,87 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
         }[out addObject:badge?:@""];
     }return out;
 }
+// FIX108 D (probe TEST4b: the native MMTabBar with ThemeBox off / on): each
+// tab's badge as WeChat draws it there (MMBadgeView: its red image and the
+// count label; a theme empties that image and puts its own image view in
+// it, at its own size and place), pictured, with where its centre sits from
+// the tab icon's: the dock shows that instead of its own red label, so a
+// theme's badge comes through and WeChat's own looks like WeChat's.
+- (NSArray *)tabBadgeArt {
+    NSMutableArray *out=[NSMutableArray arrayWithObjects:NSNull.null,NSNull.null,NSNull.null,NSNull.null,nil];
+    UITabBar *bar=_route.tabs.tabBar;if(!bar || bar.bounds.size.width<1 || !bar.window)return out;
+    NSMutableArray<UIView *> *items=[NSMutableArray array];
+    for(UIView *v in bar.subviews)if([NSStringFromClass(v.class) containsString:@"TabBarItemView"])[items addObject:v];
+    if(items.count!=4) {   // FIX108 E: nested one level deeper on another build
+        [items removeAllObjects];
+        for(UIView *v in WXGViews(bar,80))if(v!=bar && [NSStringFromClass(v.class) containsString:@"TabBarItemView"] && ![NSStringFromClass(v.superview.class) containsString:@"TabBarItemView"])[items addObject:v];
+    }
+    if(items.count!=4)return out;
+    // Left to right, as tabBadges orders the badges (FIX108 E: not reversed for
+    // right-to-left: each picture goes with the label its visibility comes from).
+    [items sortUsingComparator:^NSComparisonResult(UIView *a,UIView *b){
+        CGFloat x=CGRectGetMidX([a convertRect:a.bounds toView:bar]),y=CGRectGetMidX([b convertRect:b.bounds toView:bar]);
+        return x<y?NSOrderedAscending:NSOrderedDescending;}];
+    if(!_badgeArtCache)_badgeArtCache=[NSMutableDictionary dictionary];
+    CGFloat scale=bar.window.screen.scale?:UIScreen.mainScreen.scale;
+    for(NSUInteger i=0;i<4;i++) {
+        UIView *item=items[i],*badge=nil;
+        // FIX108 E: called from the tab bar's own layout, before its items'
+        // (a count going from 9 to 10 was pictured in the old frame).
+        [item layoutIfNeeded];
+        for(UIView *v in WXGViews(item,40)) {
+            NSString *n=NSStringFromClass(v.class).lowercaseString;
+            if(([n containsString:@"badge"] || [n containsString:@"reddot"]) && !v.hidden && v.alpha>.01){badge=v;break;}
+        }
+        if(!badge)continue;
+        UIImageView *icon=nil;CGFloat best=0;
+        for(UIView *v in WXGViews(item,40)) {
+            if(![v isKindOfClass:UIImageView.class] || [v isDescendantOfView:badge] || v.hidden || !((UIImageView *)v).image)continue;
+            CGSize size=v.bounds.size;if(size.width<14 || size.height<14 || size.width>72 || size.height>72)continue;
+            if(size.width*size.height>best){best=size.width*size.height;icon=(UIImageView *)v;}
+        }
+        if(!icon)continue;
+        // What the badge draws: itself (an image, a fill) and its shown children
+        // (a theme's image view, the count), nothing of its empty frame.
+        CGRect ink=CGRectNull;
+        NSMutableString *key=[NSMutableString stringWithFormat:@"%p/%ld/%.0f",(__bridge void *)badge,(long)bar.traitCollection.userInterfaceStyle,scale];
+        for(UIView *v in WXGViews(badge,12)) {
+            BOOL shown=YES;for(UIView *p=v;p && p!=badge.superview;p=p.superview)if(p.hidden || p.alpha<.01){shown=NO;break;}
+            if(!shown)continue;
+            BOOL draws=NO;
+            if([v isKindOfClass:UIImageView.class])draws=((UIImageView *)v).image.size.width>0;
+            else if([v isKindOfClass:UILabel.class])draws=((UILabel *)v).text.length>0;
+            if(!draws && v.backgroundColor && CGColorGetAlpha(v.backgroundColor.CGColor)>.05)draws=YES;
+            if(!draws && ![v isKindOfClass:UILabel.class] && v.layer.contents)draws=YES;
+            if(!draws)continue;
+            CGRect r=[v convertRect:v.bounds toView:badge];
+            ink=CGRectIsNull(ink)?r:CGRectUnion(ink,r);
+            [key appendFormat:@"|%p:%.1f,%.1f,%.1f,%.1f:%p:%@:%.2f:%@:%@:%@:%@",(__bridge void *)v,r.origin.x,r.origin.y,r.size.width,r.size.height,
+                [v isKindOfClass:UIImageView.class]?(__bridge void *)((UIImageView *)v).image:NULL,[v isKindOfClass:UILabel.class]?((UILabel *)v).text:@"",v.alpha,
+                [v isKindOfClass:UILabel.class]?((UILabel *)v).textColor:@"",[v isKindOfClass:UILabel.class]?((UILabel *)v).font.fontName:@"",v.backgroundColor?:@"",v.tintColor?:@""];
+        }
+        if(CGRectIsNull(ink) || ink.size.width<3 || ink.size.height<3 || ink.size.width>80 || ink.size.height>60)continue;
+        CGRect inItem=[badge convertRect:ink toView:item],iconRect=[icon convertRect:icon.bounds toView:item];
+        // FIX108 E: pictured at the dock's size (its icon box is 26 pt), pixel
+        // sharp, not scaled afterwards; the offset in the dock's points.
+        CGFloat k=WXGClamp(26/MAX(iconRect.size.height,1),.6,1.4);
+        CGPoint offset=CGPointMake((CGRectGetMidX(inItem)-CGRectGetMidX(iconRect))*k,(CGRectGetMidY(inItem)-CGRectGetMidY(iconRect))*k);
+        CGSize size=CGSizeMake(round(ink.size.width*k*scale)/scale,round(ink.size.height*k*scale)/scale);
+        [key appendFormat:@"|k%.3f",k];
+        NSArray *cached=_badgeArtCache[@(i)];UIImage *image=nil;
+        if([cached.firstObject isEqual:key])image=cached[1];
+        else {
+            UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];format.scale=scale;format.opaque=NO;
+            image=[[[UIGraphicsImageRenderer alloc] initWithSize:size format:format] imageWithActions:^(UIGraphicsImageRendererContext *context){
+                CGContextScaleCTM(context.CGContext,size.width/ink.size.width,size.height/ink.size.height);
+                CGContextTranslateCTM(context.CGContext,-ink.origin.x,-ink.origin.y);[badge.layer renderInContext:context.CGContext];
+            }];
+            if(image)_badgeArtCache[@(i)]=@[key.copy,image];
+        }
+        if(image)out[i]=@{@"image":image,@"offset":[NSValue valueWithCGPoint:offset],@"icon":@26};
+    }
+    return out;
+}
 - (BOOL)isDockRoot:(UIViewController *)controller {
     UINavigationController *nav=controller.navigationController;
     UITabBarController *tabs=nav.tabBarController;
@@ -1932,6 +2838,9 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
 }
 - (void)buildDock {
     if(!_route.primary || _route.tabs.viewControllers.count!=4)return;
+    // FIX109 E: the tab bar's own layout calls this before any refresh has
+    // looked at the switch and the licence: nothing is made, nothing masked.
+    if(!WXGPluginEnabled() || !WXGPreferences.shared.dock || !_overlay.superview)return;
     if(_suppressedTabBar && _suppressedTabBar!=_route.tabs.tabBar){WXGRestoreDockTouchDelegates(_suppressedTabBar);[_dockStates restore];_dockStates=nil;}
     _suppressedTabBar=_route.tabs.tabBar;_dockPrimaryOwner=_route.leaf;
     if(!_dockView) {
@@ -1969,6 +2878,20 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     // dock's canvas, so the search row is at most 72 pt wider than the dock.
     CGFloat usable=bounds.size.width-_window.safeAreaInsets.left-_window.safeAreaInsets.right;
     CGFloat gap=search?c.dockSearchGap:0,openH=round(c.height*c.dockSearchHeightRatio*2)/2;
+    // FIX113 E: 离散底栏 beside the search button: the round button and its gap
+    // leave too little of the row for balls as tall as asked (with the default
+    // width, about 0.7 of the bar at most: the size setting did nothing past
+    // that). The row grows as far as they need (selected tab at its floor),
+    // never wider than the search field's own row; past that they shrink.
+    _discreteRowGrowth=0;
+    if(search && c.dockDiscrete) {
+        CGFloat need=WXGDiscreteNeededWidth((float)c.height,(float)c.dockDiscreteBall,(float)c.dockDiscreteGap,(float)c.dockDiscreteWide)+c.height+gap;
+        CGFloat grown=ceil(MIN(MAX(rowWidth,need),MAX(rowWidth,usable*c.dockSearchWidthFraction)));
+        if(grown>rowWidth+.5) {
+            _discreteRowGrowth=grown-rowWidth;rowWidth=grown;
+            rowX=bounds.origin.x+_window.safeAreaInsets.left+(usable-rowWidth)*.5;
+        }
+    }
     // FIX68: on the search button's side the bar's end stretch stays in the gap.
     CGFloat room=search?MAX(2,gap*.75):0;
     _dockView.endStretchRoomLeft=search && leading?room:0;_dockView.endStretchRoomRight=search && !leading?room:0;
@@ -2004,6 +2927,7 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     // purpose; syncing back would snap the lens to the old tab and cancel it.
     if(_pendingTabIndex<0)[_dockView syncSelectedIndex:_route.tabs.selectedIndex];
     [_dockView updateBadges:[self tabBadges]];
+    [_dockView updateBadgeArt:[self tabBadgeArt]];   // FIX108 D
     NSString *style=[NSString stringWithFormat:@"%@/%ld",NSStringFromCGSize(_dockView.bounds.size),(long)_window.traitCollection.userInterfaceStyle];
     if(![_dockStyleKey isEqual:style]){_dockStyleKey=style;[_dockView applyConfig];[_searchView applyConfig];}
     [self applyDockPresentation:WXGDockPresentationForState(YES,YES,_nativeTransition!=nil,_dockTransitionToRoot)];
@@ -2363,6 +3287,8 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
 // plugin is off.
 - (void)updateTopSearchHiding {
     if(!(WXGPreferences.shared.hideTopSearch && [self dockSearchAvailable])){[self restoreTopSearch];return;}
+    // FIX113 N: the segment bar takes the search bar's place: the header stays.
+    if([WXGChatSegments.shared wanted]){[self restoreTopSearch];_topSearchStatus=@"分组栏取代了搜索栏，不再收起表头";return;}
     if(_pendingSearchText)return;
     if(!_route.primary || ![NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"])return;
     UISearchBar *bar=[self homeSearchBar];
@@ -2415,6 +3341,10 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
 }
 - (void)suppressNativeDockPaint {
     UITabBar *bar=_suppressedTabBar;if(!bar || !_dockStates)return;
+    // FIX109 E: never while the plugin is off / not authorised (a cold start
+    // of an account that is not, or no longer, authorised hid WeChat's tab bar
+    // on every tab bar layout until the next refresh gave it back).
+    if(!WXGPluginEnabled() || !WXGPreferences.shared.dock){WXGRestoreDockTouchDelegates(bar);[_dockStates restore];_dockStates=nil;_suppressedTabBar=nil;return;}
     // The replacement is outside the native bar. Mask its paint once, including
     // future native children/snapshots, without altering UIKit geometry or alpha.
     [_dockStates conceal:bar];
@@ -2528,15 +3458,20 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     [_visitedTabs addIndex:(NSUInteger)index];
     CFTimeInterval forwardStart=CACurrentMediaTime();
     [self recordForward:@{@"role":@"tab",@"index":@(index),@"nativeBindingAvailable":@(index<(NSInteger)native.count && WXGCanForward(native[index]))}];
-    if(index<(NSInteger)native.count && WXGCanForward(native[index])) {
-        UIControl *button=native[index];[button sendActionsForControlEvents:UIControlEventTouchDown];
-        [button sendActionsForControlEvents:UIControlEventTouchUpInside];
-    }else {
-        UIViewController *vc=tabs.viewControllers[index];id<UITabBarControllerDelegate> delegate=tabs.delegate;
-        if([delegate respondsToSelector:@selector(tabBarController:shouldSelectViewController:)] && ![delegate tabBarController:tabs shouldSelectViewController:vc])return;
-        tabs.selectedViewController=vc;
-        if([delegate respondsToSelector:@selector(tabBarController:didSelectViewController:)])[delegate tabBarController:tabs didSelectViewController:vc];
-    }
+    // FIX113 Z: one timed pass (the hooks it runs inside are part of it, not
+    // counted a second time by WXGPerfTimePluginWork).
+    ++WXGHostTimedDepth;
+    @try {
+        if(index<(NSInteger)native.count && WXGCanForward(native[index])) {
+            UIControl *button=native[index];[button sendActionsForControlEvents:UIControlEventTouchDown];
+            [button sendActionsForControlEvents:UIControlEventTouchUpInside];
+        }else {
+            UIViewController *vc=tabs.viewControllers[index];id<UITabBarControllerDelegate> delegate=tabs.delegate;
+            if([delegate respondsToSelector:@selector(tabBarController:shouldSelectViewController:)] && ![delegate tabBarController:tabs shouldSelectViewController:vc])return;
+            tabs.selectedViewController=vc;
+            if([delegate respondsToSelector:@selector(tabBarController:didSelectViewController:)])[delegate tabBarController:tabs didSelectViewController:vc];
+        }
+    } @finally {--WXGHostTimedDepth;}
     double switchMS=(CACurrentMediaTime()-forwardStart)*1000;WXGProfileAdd(WXGProfileSwitch,switchMS);
     _lastSwitchAt=CACurrentMediaTime();_profileUntil=MAX(_profileUntil,_lastSwitchAt+1.5);
     [self finishTabTrace];
@@ -2724,8 +3659,19 @@ BOOL WXGHomeTopBarInList(UIView *list) {
 // panel actually opens (then they follow WeChat out).
 - (void)updateHomePullFloor {
     _homePull=[self currentHomePull];
-    CGFloat floor=_homePull>1?WXGClamp(1-_homePanel,0,1):0;
-    for(WXGSurface *surface in _buttons)if(![surface.role isEqual:@"nativeGesture"])surface.alphaFloor=floor;
+    // FIX108 C (probe TEST5, 盯选中 on the "+": the frame the list came back to
+    // rest its glass had a shown opacity of 0, every pull): the floor dropped
+    // to 0 the moment the pull did, while WeChat's title bar was still at 0 on
+    // its way back. The last floor is held for 0.45 s after the pull ends.
+    CFTimeInterval now=CACurrentMediaTime();CGFloat floor;
+    // FIX108 E: only on the home page itself, not during a push / pop (the
+    // next page's glass is not lifted), never above what the panel allows.
+    BOOL homePage=[NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"];
+    if(_homePull>1){floor=WXGClamp(1-_homePanel,0,1);_homeFloorHold=floor;_homePullSeenAt=now;}
+    else floor=homePage && !_nativeTransition && now-_homePullSeenAt<.45?MIN(_homeFloorHold,WXGClamp(1-_homePanel,0,1)):0;
+    // FIX107: the search button WeChat fades in and out keeps its own alpha (the
+    // list pulled down shows the search bar: WeChat's button is at 0 then).
+    for(WXGSurface *surface in _buttons)if(!WXGSurfaceInNativeView(surface))surface.alphaFloor=[surface.role isEqual:@"navigationSearch"]?0:floor;
     for(WXGSurface *surface in _departingButtons)surface.alphaFloor=0;
 }
 // FIX93: what the title bar does while the home list is pulled (every 0.1 s,
@@ -2867,7 +3813,10 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         steps[@"routeMS"]=@((CACurrentMediaTime()-stepMark)*1000);stepMark=CACurrentMediaTime();
         // FIX67: back from a presented chat to the page that presented it
         // (WeChat's search): that chat's glass goes, the page stays native.
-        if(r.presented && WXGPluginEnabled() && _route && !_route.presentedStack) {
+        // FIX114 E (review): also a sheet over a chat presented full screen (that
+        // chat still on screen under it): it stays the host's, covered.
+        BOOL overStack=_route.presentedStack && r.leaf!=_route.leaf && _route.leaf.viewIfLoaded.window==w;
+        if(r.presented && WXGPluginEnabled() && _route && (!_route.presentedStack || overStack)) {
             if(!_suspendedByCover){_dockView.userInteractionEnabled=NO;_searchView.userInteractionEnabled=NO;[_dockView cancelInteraction];}
             _suspendedByCover=YES;
             // Keep the retained scene's optical pixels live while a sheet
@@ -2891,17 +3840,36 @@ BOOL WXGHomeTopBarInList(UIView *list) {
             WXGInvalidateSharedBackdrop();
         }else if(switching){[self resetRoute];_navigationDirty=YES;}
         steps[@"transitionAndResetMS"]=@((CACurrentMediaTime()-stepMark)*1000);stepMark=CACurrentMediaTime();
-        WXGConfigureDisplayLink(_displayLink,w.screen);_window=w;_route=r;[self selectPage:r.leaf];[self ensureOverlay:w];
+        BOOL nativeBarChanged=switching || _route.unsupported!=r.unsupported;   // FIX108
+        if(switching)_homePullSeenAt=0;   // FIX108 E: no held floor on another page
+        WXGConfigureDisplayLink(_displayLink,w.screen);_window=w;_route=r;[self selectPage:r.leaf];
+        // FIX59: only for the accounts this build is made for (WXGLicense.m).
+        // FIX109 E: read before the overlays go in (the main interface noted
+        // first, or the first pass reads the launch's "unknown"): an account
+        // that is not authorised (or not yet / no longer) never gets them.
+        if(r.tabs)WXGLicenseNoteMainInterface();
+        BOOL licensed=WXGLicenseCurrentState(NO)==WXGLicenseAuthorized;
+        if(licensed)[self ensureOverlay:w];else [self detachOverlays];
+        // FIX108: the title-bar buttons of a page this host leaves native get
+        // the local glass (their layout may have come before this route).
+        if(nativeBarChanged)[WXGLocalGlass.shared navigationRouteChanged];
         [self matchPageAppearance:r];
         steps[@"selectPageMS"]=@((CACurrentMediaTime()-stepMark)*1000);stepMark=CACurrentMediaTime();
         WXGDecorations.shared.source=r.leaf.view;
         WXGPreferences *p=WXGPreferences.shared;
-        // FIX59: only for the accounts this build is made for (WXGLicense.m).
-        if(r.tabs)WXGLicenseNoteMainInterface();
-        BOOL licensed=WXGLicenseCurrentState(NO)==WXGLicenseAuthorized;
         BOOL available=p.enabled && licensed && !r.unsupported && !_settings.presentingViewController;
         // FIX60: the chat list's search bar comes back only when the plugin is off here.
-        if(!p.enabled || !licensed){[self restoreTopSearch];[WXGBubbles.shared restore];}
+        if(!p.enabled || !licensed){[self restoreTopSearch];[WXGBubbles.shared restore];[WXGLocalGlass.shared restore];[WXGChatSegments.shared restoreAll];}   // FIX107: the local glass too; FIX113 N: the segment bar (O: and the floating search)
+        // FIX114 C: the title bars' content back where WeChat draws it (review:
+        // the plugin's own switch-and-licence state, and the chat's pinned
+        // module, which the row moved too).
+        if(!WXGPluginEnabled() || !licensed || !p.input)[self endSideChat:@"插件或输入栏适配关闭"];   // FIX114 E
+        if(!WXGPluginEnabled() || !licensed || !p.nav) {
+            WXGRestoreBarContent();
+            if(!p.nav && (_pinnedShift>0 || _pinnedApplied)){_pinnedShift=0;[self alignPinnedModule];}
+        }
+        // A page the host leaves (a web page pushed in this bar): the bar back to WeChat's.
+        if(r.unsupported)WXGRowAdoptBar(r.nav.navigationBar,NO);
         // FIX73: an unsupported destination (this plugin's own settings, a
         // Flutter / web page) pauses the display link below, so the buttons of
         // the page being left froze where they were, on top of the new page's
@@ -2909,6 +3877,11 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         // the page being left shows its native buttons while it slides out.
         if(!available)[self dropDepartingButtons];
         if(!available){[self resetRoute];[_inputAdapter restore];[WXGDecorations.shared restore];
+            [WXGChatSegments.shared suspendFloating];   // FIX113 O: nothing floats over a web / Flutter page (the display link stops below)
+            // FIX109 E: the dock and the masked tab bar back to WeChat's at once
+            // whatever resetRoute's shortcut decided.
+            if(!p.enabled || !licensed){[self applyDockPresentation:WXGDockHidden];WXGRestoreDockTouchDelegates(_suppressedTabBar);[_dockStates restore];_dockStates=nil;_suppressedTabBar=nil;[_snapshotStates restore];_snapshotStates=nil;[_snapshotViews removeAllObjects];
+                if(_pinnedShift>0 || _pinnedApplied){_pinnedShift=0;[self alignPinnedModule];}}   // the pinned module back where WeChat put it
             // FIX105: 未授权（含验证中、未读到账号）时整块撤出插件的图层，而不只是隐藏
             // 效果——overlay 从视图树移走、悬浮入口藏起，微信任何地方都看不出装过插件。
             // 只针对本来就没授权的账号；被踢的账号手机里还有有效票据，冷启动会先凭票据
@@ -2925,8 +3898,8 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         }
         if(_displayLink.paused){_lastFrame=0;_frameStart=CACurrentMediaTime();_frames=_slowFrames=0;}_displayLink.paused=appState!=UIApplicationStateActive;
         steps[@"appearanceMS"]=@((CACurrentMediaTime()-stepMark)*1000);stepMark=CACurrentMediaTime();
-        NSString *token=[NSString stringWithFormat:@"%p:%ld:%.0fx%.0f:%d%d%d%d%d%d%d%d",r.leaf,(long)r.tabs.selectedIndex,w.bounds.size.width,w.bounds.size.height,p.nav,p.dock,p.input,p.avatarTitle,p.homeSearch,
-            p.dockSearch,p.dockSearchLeading,p.hideTopSearch];
+        NSString *token=[NSString stringWithFormat:@"%p:%ld:%.0fx%.0f:%d%d%d%d%d%d%d%d%d",r.leaf,(long)r.tabs.selectedIndex,w.bounds.size.width,w.bounds.size.height,p.nav,p.dock,p.input,p.avatarTitle,p.homeSearch,
+            p.dockSearch,p.dockSearchLeading,p.hideTopSearch,p.chatAvatarButton];
         if(![_routeToken isEqual:token]){if(!_nativeTransition)[self resetRoute];_routeToken=token;_navigationDirty=YES;}
         steps[@"routeTokenMS"]=@((CACurrentMediaTime()-stepMark)*1000);stepMark=CACurrentMediaTime();
         if(!_pageViews || CACurrentMediaTime()-_lastTreeScan>.75) {
@@ -2938,7 +3911,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
             static NSSet *hosts;static dispatch_once_t once;
             dispatch_once(&once,^{
                 NSMutableSet *classes=[NSMutableSet set];
-                for(NSString *name in @[@"MMMsgCommonTipsView",@"MMMsgTipsMixedListExpandView",@"MainFrameActionFloatView",@"MMMenuContentView"]) {
+                for(NSString *name in @[@"MMMsgCommonTipsView",@"MMMsgTipsMixedListExpandView",@"MainFrameActionFloatView",@"MMMenuContentView",@"WCOperateFloatView"]) {
                     Class cls=NSClassFromString(name);if(cls)[classes addObject:cls];
                 }
                 hosts=classes;
@@ -2971,6 +3944,9 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         }
         // FIX60: the chat list's own search bar, and a search handed to WeChat.
         [self updateTopSearchHiding];
+        // FIX113 N: the segment bar in its place (or WeChat's bar back when off).
+        if(![WXGChatSegments.shared wanted])[WXGChatSegments.shared restore];
+        else if(r.primary && [NSStringFromClass(r.leaf.class) isEqual:@"NewMainFrameViewController"])[WXGChatSegments.shared updateOnPage:r.leaf];
         [self continueSearchHandoff];
         phases[@"dockMS"]=@((CACurrentMediaTime()-phaseMark)*1000);phaseMark=CACurrentMediaTime();
         [WXGDecorations.shared refresh];
@@ -3090,6 +4066,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     for(WXGSurface *surface in _departingButtons){surface.nativeTransitionActive=_nativeTransition!=nil;[surface followNativePresentation];}
     [self updateHomePullFloor];   // FIX93: before the glass follows WeChat's title bar
     [self followHomeTopBar];      // FIX94
+    if(!_suspendedByCover)[WXGChatSegments.shared hostTick:link.timestamp page:_route.leaf overlay:_navigationOverlay transitioning:_nativeTransition!=nil];   // FIX113 O
     for(WXGSurface *surface in _buttons){surface.nativeTransitionActive=_nativeTransition!=nil;[surface followNativePresentation];}
     if(_nativeTransition || _suspendedByCover)moving=YES;
     NSMutableArray *glass=[NSMutableArray array];
@@ -3170,6 +4147,13 @@ BOOL WXGHomeTopBarInList(UIView *list) {
 }
 - (void)layoutInput {
     if(!NSThread.isMainThread){dispatch_async(dispatch_get_main_queue(),^{[self layoutInput];});return;}
+    // FIX114 E (review): the half-screen chat's bar in this same pass when it
+    // can be (its own link's next tick otherwise).
+    if(_sideChat) {
+        _sideChat.pending=YES;
+        if(!_refreshing && !WXGNativeInputLayoutInProgress() && !WXGBackdropCaptureInProgress() && !WXGNavigationCallDepth &&
+           UIApplication.sharedApplication.applicationState==UIApplicationStateActive)[_sideChat layoutNow];
+    }
     if(_inputRepairsSuspended || UIApplication.sharedApplication.applicationState!=UIApplicationStateActive || _suspendedByCover){++_inputInactiveSkips;return;}
     if(WXGBackdropCaptureInProgress()){++_samplingLayoutSkips;return;}
     if(!WXGPluginEnabled() || !WXGPreferences.shared.input || (!_route.chat && !_departingInput))return;
@@ -3205,7 +4189,11 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     UINavigationController *nav=[[UINavigationController alloc]initWithRootViewController:WXGIntegrationSettings()];
     _settings=nav;[presenter presentViewController:nav animated:YES completion:^{nav.presentationController.delegate=self;}];
 }
-- (NSString *)versionString {return @"0.4.105 · TEST4 FIX105";}
+// FIX114 C: how far the title row is moved down on `page` (NAN: not laid out for it).
+- (CGFloat)titleRowOffsetForPage:(UIViewController *)page {
+    return page && page==self.navCapsuleLeaf?_rowOffset:NAN;
+}
+- (NSString *)versionString {return @"0.4.114 · TEST4 FIX114 G";}
 - (void)openSettingsFrom:(UIViewController *)controller {
     UINavigationController *nav=controller.navigationController;
     if(nav){[nav pushViewController:WXGIntegrationSettings() animated:YES];return;}
@@ -3228,7 +4216,8 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     return @{@"version":@"0.4.105-test4fix105",@"pageID":[NSString stringWithFormat:@"%p",_route.leaf],@"page":_route.leaf?NSStringFromClass(_route.leaf.class):@"none",@"primary":@(_route.primary),
       @"tickCPUms":@(_tickCost),@"sharedCaptureCPUms":@(_backdropCost),@"drawAndDockCaptureCPUms":@(_drawCost),@"refreshCPUms":@(_refreshCost),@"maxTickCPUms":@(_maxTickCost),
       @"navigationPaintRescans":@(_navigationPaintRescans),@"tabBarSnapshotsConcealed":@(_snapshotsConcealed),
-      @"coldStartLayersCleared":@(_coldStartLayersCleared),@"tabBarSnapshotLog":_snapshotLog?:@[],@"pageTopPaintCleared":@(_pageTopPaintCleared),@"pageTopRepairs":@(WXGPageTopRepairs),@"settingsEntryReady":@(WXGSettingsEntryReady),@"navigationRaises":@(_navigationRaises),@"navigationCovers":@(_navigationCovers),@"lastNavigationCover":_lastNavigationCover?:@"none",@"homePullTrace":_homePullTrace?:@[],@"homeTopBarInList":@(_homeTopBarInList),@"homeTopBarMoves":@(_homeTopBarMoves),@"landedSwitches":@(_landedSwitches),@"homeTopBarInListAtRest":@(_homeTopBarAtRest),@"homePullHosts":_homePullHosts?:@[],@"coldStartLog":WXGColdStartLog?:@[],
+      @"coldStartLayersCleared":@(_coldStartLayersCleared),@"tabBarSnapshotLog":_snapshotLog?:@[],@"pageTopPaintCleared":@(_pageTopPaintCleared),@"pageTopRepairs":@(WXGPageTopRepairs),@"settingsEntryReady":@(WXGSettingsEntryReady),@"navigationRaises":@(_navigationRaises),@"navigationCovers":@(_navigationCovers),@"lastNavigationCover":_lastNavigationCover?:@"none",@"homePullTrace":_homePullTrace?:@[],@"navSnapshots":_navSnapshots?:@{},@"homeIcon":[self homeIconEvidenceNow],
+      @"sideChat":@{@"now":_sideChat?[_sideChat evidence]:@{},@"log":WXGSideChatLog?:@[]},@"homeTopBarInList":@(_homeTopBarInList),@"homeTopBarMoves":@(_homeTopBarMoves),@"landedSwitches":@(_landedSwitches),@"homeTopBarInListAtRest":@(_homeTopBarAtRest),@"homePullHosts":_homePullHosts?:@[],@"coldStartLog":WXGColdStartLog?:@[],
       @"appearances":@(_appearances),@"stalePendingClears":@(_stalePendingClears),@"appearanceMatches":@(_appearanceMatches),
       @"dockProfile":@{@"windows":@(_profileWindows),@"frames":@(_profileFrames),@"slowFrames":@(_profileSlowFrames),@"worst":_profileWorst?:@[]},@"settingsEntryInsertions":@(WXGSettingsEntryInsertions),@"prewarmedTabPages":_prewarmed?:@[],
       @"tabSwitches":_tabTraces?:@[],@"currentTabTrace":_tabTrace?:@{},@"lastSlowRefresh":_lastSlowRefreshPhases?:@{},
@@ -3236,7 +4225,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
       @"postCommit":@{@"observer":@(_commitObserver!=NULL),@"order":@1999500,@"phase":@"beforeCoreAnimationCommit",@"frames":@(_postCommitFrames),@"inlineFallbacks":@(_postCommitFallbacks),@"dropped":@(_droppedPendingFrames),
         @"delayFromCallbackMS":@(_postCommitDelayMS),@"presentScheduleWaitMS":@(WXGGlassScheduleWaitMS()),@"costMS":@(_postCommitCost),@"maxCostMS":@(_maxPostCommitCost)},
       @"callbackIntervalms":@(_lastTickTime*1000),@"callbackCount":@(_frames),@"refreshCount":@(_refreshes),@"covered":@(_suspendedByCover),
-      @"navigationRepairs":@(_navigationRepairs),@"homeReattachments":@(_homeReattachments),@"decorations":WXGDecorations.shared.evidence,@"bubbles":WXGBubbles.shared.evidence,
+      @"navigationRepairs":@(_navigationRepairs),@"homeReattachments":@(_homeReattachments),@"decorations":WXGDecorations.shared.evidence,@"bubbles":WXGBubbles.shared.evidence,@"localGlass":WXGLocalGlass.shared.evidence,@"chatSegments":WXGChatSegments.shared.evidence,
       @"bindingRecoveries":@(_bindingRecoveries),@"samplingLayoutSkips":@(_samplingLayoutSkips),@"navigationSetupDeferrals":@(_navigationSetupDeferrals),@"transitionSamplingSkips":@(_transitionSamplingSkips),@"navigationRequests":_navigationRequests?:@[],
       @"transition":@{ @"active":@(_nativeTransition!=nil),@"interactive":@(_nativeTransition.isInteractive),@"percent":@(_nativeTransition.percentComplete),
         @"serial":@(_transitionSerial),@"cancelled":@(_transitionCancellations),@"completed":@(_transitionCompletions),@"events":_transitionLog?:@[]},
@@ -3287,7 +4276,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         @"transitionToRoot":@(_dockTransitionToRoot),@"acceptsTouches":@(_dockView.userInteractionEnabled),
         @"returnPolicy":@"foreground_readonly_until_complete",
         @"screenBottomGap":@(MAX(0,_window.safeAreaInsets.bottom+WXGConfig.shared.lift))};
-    return @{@"revision":@"FIX103",@"edgeFade":WXGEdgeFadeEvidence(),@"rims":WXGRimSummary(),@"calm":WXGCalmEvidence(),@"keyboard":WXGKeyboardTraceEvidence(),@"settingsStorage":WXGSettingsStorageEvidence(),@"inputRepair":self.inputRepairMetrics,@"glassFrames":frames,@"backdrop":WXGBackdropEvidence(),@"dockOwnership":dock,
+    return @{@"revision":@"FIX103",@"edgeFade":WXGEdgeFadeEvidence(),@"rims":WXGRimSummary(),@"keyboard":WXGKeyboardTraceEvidence(),@"settingsStorage":WXGSettingsStorageEvidence(),@"inputRepair":self.inputRepairMetrics,@"glassFrames":frames,@"backdrop":WXGBackdropEvidence(),@"dockOwnership":dock,
         @"covered":@(_suspendedByCover),@"displayLinkPaused":@(_displayLink.paused),@"coveredRenderFrames":@(_coveredRenderFrames),
         @"dockInteraction":_dockView.dockInteractionMetrics?:@{},@"dockGestureProtection":WXGDockTouchProtectionMetrics(_suppressedTabBar),
         @"navigationChrome":self.navigationChromeMetrics,
@@ -3318,18 +4307,21 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         @"system":UIDevice.currentDevice.systemVersion,@"wechat":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]?:@"",
         @"window":@[@(_window.bounds.size.width),@(_window.bounds.size.height)],@"scale":@(_window.screen.scale),
         @"safeArea":@[@(_window.safeAreaInsets.top),@(_window.safeAreaInsets.left),@(_window.safeAreaInsets.bottom),@(_window.safeAreaInsets.right)],
-        @"buttons":buttons,@"input":_inputAdapter.evidence,@"clearedPaint":_paintEvidence.copy,
+        @"buttons":buttons,@"titleAlignedButtons":@(_titleAlignedButtons),@"discreteRowGrowth":@(round(_discreteRowGrowth*10)/10),@"finderCapsules":_finderEvidence?:@{},@"titleOffset":@(_titleOffset),@"input":_inputAdapter.evidence,@"clearedPaint":_paintEvidence.copy,
         @"navigationPaint":_navStates.evidence?:@[],@"tabBarPaint":_dockStates.evidence?:@[],
         @"materialParameters":WXGConfig.shared.parameterValues,@"license":WXGLicenseEvidence(),@"dockLayers":_dockView.hidden?@{}:_dockView.glass.layerEvidence?:@{},
         @"dock":_dockView.hidden?@"当前页不显示":_dockView.diagnostics?:@"尚未创建",
-        @"avatarStatus":_avatarStatus?:@"标题胶囊模式",@"avatarLookups":@(_avatarLookups),@"avatarProbe":_avatarProbe?:@{},@"avatarDownload":_avatarDownloadStatus?:@"none",@"avatarDownloads":@(_avatarDownloads),@"avatarDiskHits":@(_avatarDiskHits),@"kindaProbe":_kindaProbe?:@[],@"sharedParametersDomain":@"com.runyu.WeChatLiquidGlass/optics.test4",@"log":WXGLogText()};
+        @"avatarStatus":_avatarStatus?:@"标题胶囊模式",@"pinnedModule":@{@"shift":@(_pinnedShift),@"applied":@(_pinnedApplied),@"moves":@(_pinnedMoves),@"bar":_pinnedBar?@YES:@NO},@"avatarLookups":@(_avatarLookups),@"avatarProbe":_avatarProbe?:@{},@"avatarDownload":_avatarDownloadStatus?:@"none",@"avatarDownloads":@(_avatarDownloads),@"avatarDiskHits":@(_avatarDiskHits),@"kindaProbe":_kindaProbe?:@[],@"sharedParametersDomain":@"com.runyu.WeChatLiquidGlass/optics.test4",@"defaultsAdoption":WXGDefaultsAdoption(),@"log":WXGLogText()};   // FIX114 G
 }
 - (NSString *)diagnostics {
     NSDictionary *payload=@{@"currentOrLastScene":_settings.presentingViewController?(_lastSceneEvidence?:@{}):self.evidence,@"history":_sceneHistory.copy?:@[],@"actionDispatches":_actionHistory.copy?:@[],@"log":WXGLogText(),
         @"liveSamplingAtExport":self.samplingMetrics,
         // FIX84: every setting (importable as is) and the frame-rate log's summary.
-        @"settingsShare":WXGSharePayload(),@"frameRate":WXGPerfEvidence()};
-    NSData *d=[NSJSONSerialization dataWithJSONObject:payload options:NSJSONWritingPrettyPrinted error:nil];return [[NSString alloc]initWithData:d encoding:NSUTF8StringEncoding]?:@"诊断暂不可用";
+        @"settingsShare":WXGSharePayload(),@"frameRate":WXGPerfEvidence(),
+        @"pageSwitches":WXGTransitionPerfEvidence()};   // FIX113 Z
+    NSData *d=nil;   // FIX114 D (review): a value JSON cannot hold throws
+    @try {d=[NSJSONSerialization isValidJSONObject:payload]?[NSJSONSerialization dataWithJSONObject:payload options:NSJSONWritingPrettyPrinted error:nil]:nil;} @catch(__unused NSException *error) {d=nil;}
+    return d?[[NSString alloc]initWithData:d encoding:NSUTF8StringEncoding]?:@"诊断暂不可用":@"诊断暂不可用（有写不成 JSON 的值）";
 }
 - (void)recordForward:(NSDictionary *)action {
     NSMutableDictionary *e=[action mutableCopy];e[@"time"]=@(CACurrentMediaTime());e[@"page"]=_route.path?:@"";
@@ -3414,6 +4406,7 @@ static void WXGInstallSettingsEntry(void (^hook)(Class,SEL,void (^)(id))) {
 static void WXGHookVoid(Class c,SEL selector,void (^after)(id)) {
     if(!c)return;Method m=class_getInstanceMethod(c,selector);if(!m)return;
     IMP original=method_getImplementation(m);
+    NSString *label=[NSString stringWithFormat:@"%@.%@",NSStringFromClass(c),NSStringFromSelector(selector)];   // FIX113 Z
     IMP replacement=imp_implementationWithBlock(^(id object){
         ((void (*)(id,SEL))original)(object,selector);
         if(WXGBackdropCaptureInProgress()) {++WXGIntegrationHost.shared.samplingLayoutSkips;return;}
@@ -3422,7 +4415,21 @@ static void WXGHookVoid(Class c,SEL selector,void (^after)(id)) {
         CFTimeInterval begin=CACurrentMediaTime();double inner=WXGProfileOursTotal();
         [WXGIntegrationHost.shared start];after(object);
         double spent=(CACurrentMediaTime()-begin)*1000-(WXGProfileOursTotal()-inner);
-        if(spent>0)WXGProfileTotals[WXGProfileHooks]+=spent;
+        if(spent>0) {
+            WXGProfileAdd(WXGProfileHooks,spent);   // FIX113 Z: through WXGProfileAdd (the page-switch log too)
+            // FIX114 A: inside a timed pass (a tab switch's forward, a refresh) too, marked.
+            if(WXGTransitionPerfOn)WXGTransitionPerfLabel(WXGHostTimingPlugin()?[label stringByAppendingString:@" ⊂"]:label,spent);
+        }
+    });
+    if(!class_addMethod(c,selector,replacement,method_getTypeEncoding(m)))class_replaceMethod(c,selector,replacement,method_getTypeEncoding(m));
+}
+// FIX109 B: the chat bar also takes a touch in a container it moved below its bounds.
+static void WXGHookChatBarTouches(Class c) {
+    if(!c)return;SEL selector=@selector(pointInside:withEvent:);Method m=class_getInstanceMethod(c,selector);if(!m)return;
+    IMP original=method_getImplementation(m);
+    IMP replacement=imp_implementationWithBlock(^BOOL(UIView *view,CGPoint point,UIEvent *event){
+        if(((BOOL (*)(id,SEL,CGPoint,UIEvent *))original)(view,selector,point,event))return YES;
+        return [WXGIntegrationHost.shared chatBar:view extendsTo:point];
     });
     if(!class_addMethod(c,selector,replacement,method_getTypeEncoding(m)))class_replaceMethod(c,selector,replacement,method_getTypeEncoding(m));
 }
@@ -3463,9 +4470,10 @@ static void WXGObserveNavigationPop(void) {
         IMP original=method_getImplementation(method);
         IMP replacement=imp_implementationWithBlock(^id(UINavigationController *nav,BOOL animated){
             WXGRecordNativePop(nav,selector,animated);
+            if(!WXGNavigationCallDepth)WXGTransitionPerfNavigationCall(@"pop",YES);   // FIX113 Z
             ++WXGNavigationCallDepth;
             @try {return ((id(*)(id,SEL,BOOL))original)(nav,selector,animated);}
-            @finally {--WXGNavigationCallDepth;if(!WXGNavigationCallDepth)[WXGIntegrationHost.shared schedule];}
+            @finally {--WXGNavigationCallDepth;if(!WXGNavigationCallDepth){WXGTransitionPerfNavigationCall(@"pop",NO);[WXGIntegrationHost.shared schedule];}}
         });
         class_replaceMethod(UINavigationController.class,selector,replacement,method_getTypeEncoding(method));
     }
@@ -3473,17 +4481,20 @@ static void WXGObserveNavigationPop(void) {
     IMP original=method_getImplementation(method);
     IMP replacement=imp_implementationWithBlock(^id(UINavigationController *nav,UIViewController *destination,BOOL animated){
         WXGRecordNativePop(nav,selector,animated);
+        if(!WXGNavigationCallDepth)WXGTransitionPerfNavigationCall(@"pop",YES);   // FIX113 Z
         ++WXGNavigationCallDepth;
         @try {return ((id(*)(id,SEL,id,BOOL))original)(nav,selector,destination,animated);}
-        @finally {--WXGNavigationCallDepth;if(!WXGNavigationCallDepth)[WXGIntegrationHost.shared schedule];}
+        @finally {--WXGNavigationCallDepth;if(!WXGNavigationCallDepth){WXGTransitionPerfNavigationCall(@"pop",NO);[WXGIntegrationHost.shared schedule];}}
     });
     class_replaceMethod(UINavigationController.class,selector,replacement,method_getTypeEncoding(method));
     selector=@selector(pushViewController:animated:);method=class_getInstanceMethod(UINavigationController.class,selector);
     IMP pushOriginal=method_getImplementation(method);SEL pushSelector=selector;
     replacement=imp_implementationWithBlock(^(UINavigationController *nav,UIViewController *destination,BOOL animated){
-        WXGRecordNativePop(nav,pushSelector,animated);++WXGNavigationCallDepth;
+        WXGRecordNativePop(nav,pushSelector,animated);
+        if(!WXGNavigationCallDepth)WXGTransitionPerfNavigationCall(@"push",YES);   // FIX113 Z
+        ++WXGNavigationCallDepth;
         @try {((void(*)(id,SEL,id,BOOL))pushOriginal)(nav,pushSelector,destination,animated);}
-        @finally {--WXGNavigationCallDepth;if(!WXGNavigationCallDepth)[WXGIntegrationHost.shared schedule];}
+        @finally {--WXGNavigationCallDepth;if(!WXGNavigationCallDepth){WXGTransitionPerfNavigationCall(@"push",NO);[WXGIntegrationHost.shared schedule];}}
     });
     class_replaceMethod(UINavigationController.class,selector,replacement,method_getTypeEncoding(method));
 }
@@ -3618,9 +4629,29 @@ static void WXGNotePageAppeared(UIViewController *controller) {
         if(pushed || shown)WXGCheckPageTop(c,0);
     });
 }
+/* FIX111: FIX110 (the iOS 26 system-glass attempts, all taken out again) may
+   have left values in WeChat's own preferences. Exactly what it changed, by
+   its own records in the plugin's suite, is put back once; its records go.
+   Nothing else is read or written (keys of other tweaks stay as they are). */
+static void WXGRemoveFix110Leftovers(void) {
+    @try {
+        NSUserDefaults *suite=[[NSUserDefaults alloc]initWithSuiteName:@"com.runyu.WeChatLiquidGlass"],*app=NSUserDefaults.standardUserDefaults;
+        NSArray<NSString *> *records=@[@"design.addedIgnore",@"design.removedCompat",@"design.overrideInfo",@"nativeGlass.wroteDefaults",
+            @"nativeGlass.design",@"nativeGlass.strategy",@"nativeGlass.testing",@"nativeGlass.banned",@"nativeGlass.armed",@"nativeGlass.os"];
+        BOOL any=NO;for(NSString *key in records)if([suite objectForKey:key]){any=YES;break;}
+        if(!any)return;
+        if([suite boolForKey:@"nativeGlass.wroteDefaults"])   // FIX110 B's three keys
+            for(NSString *key in @[@"UIDesignRequiresCompatibility",@"com.apple.SwiftUI.IgnoreSolariumLinkedOnCheck",@"com.apple.SwiftUI.EnableLiquidGlass"])[app removeObjectForKey:key];
+        if([suite boolForKey:@"design.addedIgnore"])[app removeObjectForKey:@"com.apple.SwiftUI.IgnoreSolariumLinkedOnCheck"];   // F added it
+        if([suite boolForKey:@"design.removedCompat"])[app setBool:YES forKey:@"UIDesignRequiresCompatibility"];                // F removed it
+        for(NSString *key in records)[suite removeObjectForKey:key];
+        WXGColdLog(@"FIX111：FIX110 留在微信偏好里的设计设置已按原样还原");
+    } @catch(__unused NSException *error) {}
+}
 __attribute__((constructor)) static void WXGInitialize(void) {
     WXGLoadTime=CACurrentMediaTime();WXGColdLog(@"插件加载");
     if(![NSBundle.mainBundle.bundleIdentifier isEqual:@"com.tencent.xin"])return;
+    WXGRemoveFix110Leftovers();
     void (^install)(void)=^{
         // FIX104: the unlock ticket first of all, here rather than on the next
         // main turn (which waits for WeChat's launch): the cached tickets are
@@ -3633,30 +4664,50 @@ __attribute__((constructor)) static void WXGInitialize(void) {
             IMP original=method_getImplementation(method);BOOL will=[name isEqual:@"viewWillAppear:"];
             IMP replacement=imp_implementationWithBlock(^(UIViewController *controller,BOOL animated){
                 ((void (*)(id,SEL,BOOL))original)(controller,selector,animated);
+                if(will)WXGTransitionPerfAppearance(controller,YES);   // FIX113 Z: a page switch starts being recorded
                 if(WXGBackdropCaptureInProgress()){++WXGIntegrationHost.shared.samplingLayoutSkips;return;}
-                WXGEdgeFadeNoteController(controller,YES);   // FIX64 (FIX65: our own settings pages too)
-                if(!will)WXGNotePageAppeared(controller);   // FIX106 I: 聊天信息 / 设置 rest at their top
-                if([NSStringFromClass(controller.class) hasPrefix:@"WXG"])return;
-                WXGIntegrationHost *host=WXGIntegrationHost.shared;[host start];
-                if(will)[host prepareController:controller];
-                else {
-                    if(host.nativeTransition) {
-                        if(controller==host.transitionFrom || controller==host.transitionTo)
-                            [host logTransition:@"view_did_appear" cancelled:NO];
-                        [host schedule];
-                    }else {
-                        if(controller==host.pendingController){host.pendingController=nil;host.needsEarlyLayout=NO;}
-                        [host schedule];
+                // FIX113 Z: timed (the page-switch log's "appear"; also the hooks' total).
+                WXGPerfTimePluginWorkAs(will?"appear":"didAppear",^{
+                    WXGEdgeFadeNoteController(controller,YES);   // FIX64 (FIX65: our own settings pages too)
+                    if(!will)WXGNotePageAppeared(controller);   // FIX106 I: 聊天信息 / 设置 rest at their top
+                    if([NSStringFromClass(controller.class) hasPrefix:@"WXG"])return;
+                    WXGIntegrationHost *host=WXGIntegrationHost.shared;[host start];
+                    if(will)[host prepareController:controller];
+                    else {
+                        if(host.nativeTransition) {
+                            if(controller==host.transitionFrom || controller==host.transitionTo)
+                                [host logTransition:@"view_did_appear" cancelled:NO];
+                            [host schedule];
+                        }else {
+                            if(controller==host.pendingController){host.pendingController=nil;host.needsEarlyLayout=NO;}
+                            [host schedule];
+                        }
                     }
-                }
+                });
             });
             class_replaceMethod(UIViewController.class,selector,replacement,method_getTypeEncoding(method));
         }
+        // FIX113 Z: a dismissal seen from the page leaving (a sheet's presenting
+        // page does not appear again); only for the page-switch log.
+        {
+            SEL selector=@selector(viewWillDisappear:);Method method=class_getInstanceMethod(UIViewController.class,selector);
+            IMP original=method?method_getImplementation(method):NULL;
+            if(original) {
+                IMP replacement=imp_implementationWithBlock(^(UIViewController *controller,BOOL animated){
+                    ((void (*)(id,SEL,BOOL))original)(controller,selector,animated);
+                    WXGTransitionPerfAppearance(controller,NO);
+                });
+                class_replaceMethod(UIViewController.class,selector,replacement,method_getTypeEncoding(method));
+            }
+        }
         WXGHookVoid(UIViewController.class,@selector(viewDidLayoutSubviews),^(UIViewController *controller){
             [WXGIntegrationHost.shared controllerLaidOut:controller];
-            WXGEdgeFadeNoteController(controller,NO);   // FIX64/65: only the chat page and the other pages (WXGEdgeFade.m)
+            // FIX114 A: each part under its own name in the page-switch log.
+            WXGPerfTimePluginWorkAs("localGlass.controller",^{[WXGLocalGlass.shared controllerLaidOut:controller];});   // FIX107: the emoji search sheet's field (fallback)
+            WXGPerfTimePluginWorkAs("edgeFade.layout",^{WXGEdgeFadeNoteController(controller,NO);});   // FIX64/65: only the chat page and the other pages (WXGEdgeFade.m)
         });
         WXGHookVoid(NSClassFromString(@"MMUINavigationBar"),@selector(layoutSubviews),^(__unused id object){[WXGIntegrationHost.shared nativeNavigationLaidOut];});
+        WXGHookBarHits(UINavigationBar.class);WXGHookBarHits(NSClassFromString(@"MMUINavigationBar"));   // FIX114 C (review)
         for(NSString *name in @[@"_UIBarBackground",@"FakeNavigationBar"])
             for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToWindow"])
                 WXGHookVoid(NSClassFromString(name),NSSelectorFromString(selectorName),^(UIView *view){
@@ -3665,28 +4716,46 @@ __attribute__((constructor)) static void WXGInitialize(void) {
         WXGHookVoid(NSClassFromString(@"MMTabBar"),@selector(layoutSubviews),^(__unused id object){
             WXGIntegrationHost *host=WXGIntegrationHost.shared;[host suppressNativeDockPaint];if(!host.refreshing && host.route.primary && !WXGNavigationCallDepth){host.refreshing=YES;@try {[host buildDock];}@finally {host.refreshing=NO;}}else [host schedule];
         });
-        WXGHookVoid(NSClassFromString(@"MMNewMsgContentNavBar"),@selector(layoutSubviews),^(__unused id object){
-            WXGIntegrationHost *host=WXGIntegrationHost.shared;if(host.refreshing)return;
+        WXGHookVoid(NSClassFromString(@"MMNewMsgContentNavBar"),@selector(layoutSubviews),^(id object){
+            WXGIntegrationHost *host=WXGIntegrationHost.shared;
+            if(object==host.pinnedBar && (host.pinnedShift>0 || host.pinnedApplied))[host alignPinnedModule];   // FIX109 B: after WeChat placed them
+            if(host.refreshing)return;
             [host.navStates reapply];[host schedule];
         });
-        for(NSString *name in @[@"MMInputToolView",@"InputToolViewBar",@"MMGrowTextView"])
+        // FIX109 B: touches in the pinned module moved below the bar's bounds;
+        // and before every commit the module put back where it belongs (WeChat
+        // can place its containers outside the bar's layout).
+        WXGHookChatBarTouches(NSClassFromString(@"MMNewMsgContentNavBar"));
+        CFRunLoopObserverRef pinnedObserver=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,1999700,
+            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity activity){
+                WXGIntegrationHost *host=WXGIntegrationHost.shared;
+                if(host.pinnedShift>0 || host.pinnedApplied)[host alignPinnedModule];
+            });
+        if(pinnedObserver){CFRunLoopAddObserver(CFRunLoopGetMain(),pinnedObserver,kCFRunLoopCommonModes);CFRelease(pinnedObserver);}
+        for(NSString *name in @[@"MMInputToolView",@"InputToolViewBar",@"MMGrowTextView",@"MMGrowDictationIconView"])   // FIX113: the dictation icon too
             WXGHookInputLayout(NSClassFromString(name));
         WXGHookVoid(NSClassFromString(@"MainFrameLeftBarView"),@selector(layoutSubviews),^(UIView *view){[WXGIntegrationHost.shared homeGestureLaidOut:view];});
         for(NSString *selectorName in @[@"didMoveToSuperview",@"didMoveToWindow"])
             WXGHookVoid(NSClassFromString(@"MainFrameLeftBarView"),NSSelectorFromString(selectorName),^(UIView *view){[WXGIntegrationHost.shared homeGestureLaidOut:view];});
         for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToSuperview",@"didMoveToWindow"])
-            WXGHookVoid(NSClassFromString(@"MMBarButton"),NSSelectorFromString(selectorName),^(UIView *view){[WXGIntegrationHost.shared navigationControlLaidOut:view];});
-        for(NSString *name in @[@"MMMsgCommonTipsView",@"MMMsgTipsMixedListExpandView",@"MainFrameActionFloatView",@"MMMenuContentView"])
+            WXGHookVoid(NSClassFromString(@"MMBarButton"),NSSelectorFromString(selectorName),^(UIView *view){WXGPerfTimePluginWorkAs("navButtons",^{[WXGIntegrationHost.shared navigationControlLaidOut:view];});});
+        for(NSString *name in @[@"MMMsgCommonTipsView",@"MMMsgTipsMixedListExpandView",@"MainFrameActionFloatView",@"MMMenuContentView",@"WCOperateFloatView"])
             for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToWindow"])
-                WXGHookVoid(NSClassFromString(name),NSSelectorFromString(selectorName),^(UIView *view){[WXGDecorations.shared nativeHostLaidOut:view];});
+                WXGHookVoid(NSClassFromString(name),NSSelectorFromString(selectorName),^(UIView *view){WXGPerfTimePluginWorkAs("decorations.host",^{[WXGDecorations.shared nativeHostLaidOut:view];});});
+        // FIX107: more of WeChat in glass (WXGLocalGlass.m).
+        for(NSString *name in WXGLocalGlass.hostClassNames)
+            for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToWindow"])
+                WXGHookVoid(NSClassFromString(name),NSSelectorFromString(selectorName),^(UIView *view){
+                    WXGPerfTimePluginWorkAs("localGlass+segments",^{[WXGLocalGlass.shared hostLaidOut:view];[WXGChatSegments.shared searchBarLaidOut:view];});   // FIX113 N: the segment bar follows its search bar
+                });
         // FIX82: liquid chat bubbles (WXGBubbles.m).
         for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToWindow"])
             WXGHookVoid(NSClassFromString(@"TextMessageCellView"),NSSelectorFromString(selectorName),^(UIView *view){
-                WXGPerfTimePluginWork(^{[WXGBubbles.shared textCellLaidOut:view];});   // FIX84: counted in the frame-rate log
+                WXGPerfTimePluginWorkAs("bubbles",^{[WXGBubbles.shared textCellLaidOut:view];});   // FIX84: counted in the frame-rate log
             });
         WXGObserveNavigationPop();
         WXGInstallSettingsEntry(^(Class c,SEL selector,void (^after)(id)){WXGHookVoid(c,selector,after);});
-        dispatch_async(dispatch_get_main_queue(),^{[WXGIntegrationHost.shared start];WXGPerfApplyPreferences();WXGCalmApplyPreferences();WXGKeyboardTraceStart();});   // FIX84: the frame-rate log (FIX85: the keyboard trace; FIX88: the calm background again; FIX103: the unlock ticket first, so the shader compiles while WeChat starts; FIX104: that moved to the top of install)
+        dispatch_async(dispatch_get_main_queue(),^{[WXGIntegrationHost.shared start];WXGPerfApplyPreferences();WXGKeyboardTraceStart();});   // FIX84: the frame-rate log (FIX85: the keyboard trace; FIX88: the calm background again; FIX103: the unlock ticket first, so the shader compiles while WeChat starts; FIX104: that moved to the top of install)
     };
     // Register before the first native view pass, without constructing UIKit
     // surfaces inside the dyld initializer. Start runs on a native callback or

@@ -21,6 +21,7 @@
 @property(nonatomic) BOOL lastEditorVisible;
 @property(nonatomic) CGFloat singleLineHeight;
 @property(nonatomic) NSUInteger lastPanelChildCount,lastGrowChildCount;
+@property(nonatomic) NSUInteger dictationBackings;   // FIX113: dictation backings concealed (diagnostics)
 @property(nonatomic,copy) NSString *status;
 @end
 
@@ -132,16 +133,7 @@ static NSArray *WXGInputRectEvidence(CGRect rect) {
             if(content)[_states stripChrome:paint preserving:protected];else [_states hide:paint];
         }
     }
-    // The recorded dictation host has a 52x40 static backing wrapper with a
-    // 72x72 image, beside 24/32pt green animation views and a loading spinner.
-    // Preserve the whole dictation subtree above, then remove only that wrapper.
-    for(UIView *view in _dictation.subviews) {
-        if([view isKindOfClass:UIControl.class] || view.gestureRecognizers.count ||
-           ![NSStringFromClass(view.class) isEqual:@"UIView"] || view.bounds.size.width<=_dictation.bounds.size.width+8)continue;
-        if(view.subviews.count!=1 || ![view.subviews.firstObject isKindOfClass:UIImageView.class])continue;
-        UIImageView *paint=(id)view.subviews.firstObject;
-        if(paint.bounds.size.width>=_dictation.bounds.size.width*1.5 && !paint.animationImages.count && !paint.layer.animationKeys.count)[_states hide:view];
-    }
+    [self concealDictationBacking];
     UIView *record=[self viewValue:@"_recordButton" on:_tool];
     UIImageView *recordPaint=(id)[self viewValue:@"_backgroundView" on:record];
     if([recordPaint isKindOfClass:UIImageView.class] && [recordPaint isDescendantOfView:record])[_states clearImagePaint:recordPaint];
@@ -153,6 +145,27 @@ static NSArray *WXGInputRectEvidence(CGRect rect) {
         if([name containsString:@"background"] || [name containsString:@"separator"] ||
            (view.bounds.size.height<=2 && view.bounds.size.width>_panel.bounds.size.width*.8))
             [_states stripChrome:view preserving:protected];
+    }
+}
+// The recorded dictation host has a 52x40 static backing wrapper with a
+// 72x72 image, beside 24/32pt green animation views and a loading spinner.
+// Preserve the whole dictation subtree above, then remove only that wrapper.
+// FIX113: looked at on every layout pass (a few subviews), not with the
+// 0.35 s paint scan, and as soon as WeChat lays the dictation icon out (the
+// host hooks it): WeChat puts a new wrapper in or shows it again as the
+// icon changes state, and it showed for a moment before going. Masked, not
+// faded: WeChat's own alpha changes cannot bring it back between passes.
+- (void)concealDictationBacking {
+    if(!_dictation || !_states)return;
+    for(UIView *view in _dictation.subviews) {
+        if([view isKindOfClass:UIControl.class] || view.gestureRecognizers.count ||
+           ![NSStringFromClass(view.class) isEqual:@"UIView"] || view.bounds.size.width<=_dictation.bounds.size.width+8)continue;
+        if(view.subviews.count!=1 || ![view.subviews.firstObject isKindOfClass:UIImageView.class])continue;
+        UIImageView *paint=(id)view.subviews.firstObject;
+        if(paint.bounds.size.width>=_dictation.bounds.size.width*1.5 && !paint.animationImages.count && !paint.layer.animationKeys.count) {
+            if(!view.layer.mask)++_dictationBackings;
+            [_states conceal:view];
+        }
     }
 }
 - (void)placeNative:(UIView *)view windowRect:(CGRect)rect {
@@ -261,6 +274,7 @@ static NSArray *WXGInputRectEvidence(CGRect rect) {
         }
         _centerHost=center;
         if(bindingChanged || CACurrentMediaTime()-_lastPaintScan>.35)[self clearPaint];
+        else [self concealDictationBacking];   // FIX113: every pass
         [_states reapply];
         CGRect native=WXGWindowRect(center,_window);
         if(!WXGInputUsableRect(native))return;
@@ -336,7 +350,7 @@ static NSArray *WXGInputRectEvidence(CGRect rect) {
     }
     return @{@"installed":@(_installed),@"suspended":@(_suspended),@"status":_status?:@"等待聊天页",@"surfaces":surfaces,
         @"geometryPolicy":@"compact host width and native control origins; untouched TextKit, bounds and actions",@"nativeEditorGeometryUntouched":@YES,
-        @"dictationAnimationRetained":@YES,@"leftCircle":@YES,@"rightGlyphGapsEqual":@YES,
+        @"dictationAnimationRetained":@YES,@"dictationBackingsConcealed":@(_dictationBackings),@"leftCircle":@YES,@"rightGlyphGapsEqual":@YES,
         @"centerHostClass":_centerHost?NSStringFromClass(_centerHost.class):@"none",
         @"growRect":WXGInputRectEvidence(WXGWindowRect(_grow,_window)),@"editor":editor,@"nativeControls":controls,
         @"paintAndLayout":_states.evidence?:@[]};

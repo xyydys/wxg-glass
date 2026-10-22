@@ -8,9 +8,7 @@
 
 FOUNDATION_EXPORT NSString * const WXGSettingsChanged;
 // FIX113: 对外发布包（CI 的 build-obf 传 -DWXG_RELEASE=1）里 WXGLog 的函数体为空——
-// 不再在运行时往 syslog 打授权/流程日志（否则连上设备用 Console 就能看实时授权流程）。
-// 保持为真函数（不是空操作宏），调用点的变量照常算“已用”，-Werror 不会误报未使用。
-// 自测 / 调试包（普通 build，无此宏）照常打全量日志。
+// 不再在运行时往 syslog 打授权/流程日志。保持真函数（非空操作宏），-Werror 不误报未使用。
 FOUNDATION_EXPORT void WXGLog(NSString *format, ...) NS_FORMAT_FUNCTION(1,2);
 FOUNDATION_EXPORT CFTimeInterval WXGSecondsSinceLoad(void);   // FIX99: since the plugin loaded
 FOUNDATION_EXPORT NSString *WXGLogText(void);
@@ -48,17 +46,54 @@ FOUNDATION_EXPORT NSString *WXGUnlockServerShaderVersion(void);   // the server'
 FOUNDATION_EXPORT NSDate *WXGUnlockExpiry(NSString *licenseCode);
 FOUNDATION_EXPORT NSDictionary *WXGUnlockEvidence(void);
 FOUNDATION_EXPORT NSString *WXGBuildLabel(void);
+// FIX114 C: the title row's margin to the screen's sides (顶部按钮离屏幕两边)
+// and its move down (顶部按钮往下移), in points for a metrics scale.
+FOUNDATION_EXPORT CGFloat WXGTitleRowEdge(double scale);
+FOUNDATION_EXPORT CGFloat WXGTitleRowOffset(double scale);
 FOUNDATION_EXPORT NSArray<NSString *> *WXGHiddenSettingsModules(void);
 FOUNDATION_EXPORT NSDictionary *WXGBuildDefaultOptics(void);
 // FIX84: a section of the build's defaults ("config", "integration", "ui"), {} if none.
 FOUNDATION_EXPORT NSDictionary *WXGBuildDefaultSection(NSString *section);
+// FIX114 G: the defaults the build replaced (same sections, {} if none), a
+// stamp of this build's, the value test, and what moved on this phone.
+FOUNDATION_EXPORT NSDictionary *WXGPreviousBuildDefaultSection(NSString *section);
+FOUNDATION_EXPORT NSString *WXGBuildDefaultsStamp(void);
+FOUNDATION_EXPORT BOOL WXGSameSettingValue(id a,id b);
+FOUNDATION_EXPORT void WXGNoteDefaultsAdoption(NSString *section,NSDictionary *info);
+FOUNDATION_EXPORT NSDictionary *WXGDefaultsAdoption(void);
 
 // FIX58: what the dock and the other glass set separately.
 typedef struct { CGFloat refraction,dispersion,edgeWidth,blur,blurCoverage; } WXGScopeOptics;
 typedef struct { CGFloat opacity,width,brightness,fade; } WXGScopeRim;
 // FIX85: the three groups of glass with their own optics and rims (the
 // liquid chat bubbles are the third), and the three rim styles.
-typedef NS_ENUM(NSInteger,WXGGlassScope) {WXGGlassScopeOther=0,WXGGlassScopeDock=1,WXGGlassScopeBubble=2};
+typedef NS_ENUM(NSInteger,WXGGlassScope) {WXGGlassScopeOther=0,WXGGlassScopeDock=1,WXGGlassScopeBubble=2,
+    WXGGlassScopeSegment=3,WXGGlassScopeCard=4,   // FIX113 O: 分组 (the chat list's segment bar), 设置页 (these settings)
+    WXGGlassScopeLens=5,   // FIX113 X: 透镜 (the lens' border of the dock; 边框与渐隐 only)
+    WXGGlassScopeSegmentLens=6};   // FIX114 C: 分组透镜 (the segment bar's lens border, its own since)
+// FIX113 O: a lens's parameters (the dock's, or the segment bar's own); the
+// rim and tint values of the appearance asked for.
+typedef struct {
+    CGFloat refraction,dispersion,edgeWidth,topRatio,sharpness,dispersionWidth,dispersionTopRatio;
+    CGFloat zoom,growth,barGrowth,endWrap,pinch,blur,blurCoverage,cancelSetting;
+    CGFloat rimOpacity,borderWidth,rimAtRest;
+    BOOL tintOn;CGFloat tintOpacity;
+    BOOL barDispersionOn;CGFloat barDispersion,barDispersionNearRim;
+    CGFloat selectionInset;
+    CGFloat iconRefraction,iconEdgeWidth;   // FIX113 X: the icons and titles in the lens (the rest: refraction, edgeWidth)
+    CGFloat iconTopRatio,iconSharpness;     // FIX113 Y: and their top / bottom band ratio and narrowing curve
+    BOOL elasticOn;CGFloat elasticHeight;   // FIX113 Y: the drag-speed deformation, the share of its height change kept
+    CGFloat elasticKeepStrip;               // FIX113 Y: how much of the strip inside the lens is kept as it deforms
+} WXGLensSettings;
+// FIX113: Telegram's tab icons for the dock (WXGTelegramIcons.m): on, the
+// frames of a tab (0 Chats, 1 Contacts, 2 Calls, 3 Settings; template
+// images, 60 fps), one frame tinted (0 = resting).
+FOUNDATION_EXPORT BOOL WXGTelegramTabIconsOn(void);
+FOUNDATION_EXPORT NSInteger WXGTelegramFrameCount(NSInteger tab);
+FOUNDATION_EXPORT NSArray<UIImage *> *WXGTelegramFrames(NSInteger tab);
+FOUNDATION_EXPORT UIImage *WXGTelegramTabImage(NSInteger tab,NSInteger frame,UIColor *color);
+// FIX113 F: the resting glyph's ink width as a share of the frame's (main thread).
+FOUNDATION_EXPORT CGFloat WXGTelegramRestInkWidth(NSInteger tab);
 typedef NS_ENUM(NSInteger,WXGRimStyle) {WXGRimStyleClassic=0,WXGRimStyleSampled=1,WXGRimStyleGlow=2};
 // FIX86: the iOS 27-like rim (WXGRimGlow.h): a light that fades inward from
 // the outline over `width` (its curve `falloff`), brightest along the top and
@@ -206,9 +241,23 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (WXGScopeOptics)opticsForScope:(WXGGlassScope)scope;
 - (WXGScopeRim)rimForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (NSString *)rimHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
-- (WXGRimGlowShape)rimGlowForScope:(WXGGlassScope)scope index:(NSInteger)index;   // FIX89: highlight 0 or 1
+- (WXGRimGlowShape)rimGlowForScope:(WXGGlassScope)scope index:(NSInteger)index dark:(BOOL)dark;   // FIX89: highlight 0 or 1 (FIX113 Z: of that appearance)
+- (CGFloat)rimSoftWidthForScope:(WXGGlassScope)scope dark:(BOOL)dark;   // FIX109 B: the 普通 line's soft glow (0 = off)
+- (CGFloat)rimSoftLevelForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (WXGRimStyle)rimStyleValue;                                // the other glass's
 - (WXGRimStyle)rimStyleForScope:(WXGGlassScope)scope;        // FIX86: each range its own
+// FIX113 O: a range's material, its edge weakening, and a lens's parameters.
+- (NSString *)materialHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
+- (CGFloat)materialOpacityForScope:(WXGGlassScope)scope dark:(BOOL)dark;
+- (BOOL)materialEdgeFadeOnForScope:(WXGGlassScope)scope;
+- (CGFloat)materialEdgeFadeForScope:(WXGGlassScope)scope;
+- (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark;
+- (NSString *)lensRimHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
+// FIX113 X: the 透镜 range's border as one line (the tap animation's lens,
+// a plain layer border): its colour with opacity, and width.
+- (UIColor *)lensRimLineColorDark:(BOOL)dark width:(CGFloat *)width;
+- (NSString *)lensTintHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
+- (BOOL)knowsKey:(NSString *)key;
 - (BOOL)bubbleFullGlass;
 // FIX88: the dock lens's colour split: its own band (pt) and top / bottom ratio.
 // FIX89: the dock's icons and titles: the gap between them (pt, from the
@@ -220,10 +269,6 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (CGFloat)dockTitleSize;
 - (NSInteger)dockTitleWeight;
 - (BOOL)dockTitleBolderSelected;
-// FIX94: the bar seen in the lens follows the lens' rim (WXGLensBarZoom), at
-// this share of the refraction band from it.
-- (BOOL)lensBarFollow;
-- (CGFloat)lensBarMargin;
 // FIX97: the colour split of the bar seen through the dock's lens: on / off,
 // everywhere in the lens (pt at its rim, growing from 0 at its centre), and
 // near its ends (a share of the lens' own split, where it refracts the bar).
@@ -267,12 +312,6 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (NSString *)avatarBorderHexDark:(BOOL)dark;
 - (CGFloat)lensDispersionWidth;
 - (CGFloat)lensDispersionTopRatio;
-// FIX85/88: 平稳背景时加强材质: the switch, the coverage used on a calm
-// background (dock / other glass, per appearance) and the calm test.
-- (BOOL)calmMaterialEnabled;
-- (CGFloat)calmMaterialOpacityForDock:(BOOL)dock dark:(BOOL)dark;
-- (CGFloat)calmThreshold;
-- (CGFloat)calmRange;
 // FIX85: keys stored in a table (WXGConfig.m), read by name.
 - (double)extraNumber:(NSString *)key;
 - (NSString *)extraHex:(NSString *)key;
@@ -281,6 +320,7 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (void)save;
 - (void)reset;
 - (void)resetKeys:(NSArray<NSString *> *)keys;   // FIX81: one settings page
+- (void)segmentFromDock;   // FIX113 P: the segment bar's glass, lens, pill and titles from the dock's values now (saved)
 - (BOOL)reloadSharedParameters;
 - (NSDictionary *)parameterValues;
 - (NSArray *)keys;   // FIX84: every stored key (sharing, build defaults)
@@ -294,7 +334,11 @@ FOUNDATION_EXPORT CALayer *WXGMakeTravelBackdropLayer(CGFloat blurRadius);
 // as a mesh for `size`. Their layers go into the animated lens.
 // FIX88: in `group` (the dock glass's backdrop group: the page without the
 // dock's veil, which the tap animation then draws itself); nil = its own capture.
-FOUNDATION_EXPORT NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString *group);
+FOUNDATION_EXPORT NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString *group,BOOL seesBar,CGFloat barHeight);
+// FIX113 I: the share of the lens' rim offset cancelled (0 unless the
+// server's shader knows it).
+FOUNDATION_EXPORT BOOL WXGLensCancelAvailable(void);
+FOUNDATION_EXPORT CGFloat WXGLensCancel(void);
 // FIX40: bumped whenever the configuration changes (save or reload).
 FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 @interface WXGGlassView : UIView
@@ -313,6 +357,9 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 @property(nonatomic,copy) NSArray<UIView *> *backdropExclusions;
 @property(nonatomic) CGRect glassRect;
 @property(nonatomic) CGRect lensRect;
+// FIX113 Y: the lens' height without the drag-speed deformation (0 unknown):
+// the strip between the smaller bar and the lens' rim is kept against it.
+@property(nonatomic) CGFloat lensRestHeight;
 @property(nonatomic) CGFloat pressAmount;
 // FIX98: how much of the resting selection colour the lens shows, 0..1 (a
 // tap's scripted fade); < 0 (the default): by the press (WXGRestingSelectionWeight).
@@ -325,9 +372,6 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 // FIX85: a liquid chat bubble: its own optics and rim (the "气泡" range).
 @property(nonatomic) BOOL bubbleSurface;
 @property(nonatomic,readonly) WXGGlassScope glassScope;
-// FIX85/88: how calm the background behind this glass is, 0..1 (WXGCalmBackdrop.m);
-// with 平稳背景时加强材质 on, the material coverage moves toward the calm value.
-@property(nonatomic) CGFloat calmFactor;
 // FIX59: one backdrop at most 2x, no RGB channels or clear ring (the settings
 // cards: many large glass on one page). The optics are otherwise the same.
 @property(nonatomic) BOOL lightweight;
@@ -347,6 +391,9 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 // outline its lens last drew: one line, or (FIX89, the iOS 27-like rim) one
 // per highlight, colour and width each.
 @property(nonatomic,readonly,copy) NSString *backdropGroupName;
+// FIX113 U: the lens' backdrop captures the bar beneath it (its own group)
+// and refracts it; the tap animation's lens does the same.
+@property(nonatomic,readonly) BOOL lensSeesBar;
 @property(nonatomic,readonly) UIColor *veilColor;
 @property(nonatomic,readonly) NSArray<UIColor *> *lensOutlineColors;
 @property(nonatomic,readonly) NSArray<NSNumber *> *lensOutlineWidths;
@@ -360,6 +407,18 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 @property(nonatomic) BOOL deferShapeField;
 // Ordinary controls use optical deformation in their single body, never a second lens.
 @property(nonatomic) BOOL buttonPressEffect;
+// FIX113 O: this glass's range instead of its surface's (-1, the default:
+// the dock / bubble / other glass by its surface): 分组 for the chat list's
+// segment bar (a dock surface: the lens, but its own range and lens
+// parameters), 设置页 for the settings pages' cards and buttons.
+@property(nonatomic) NSInteger glassScopeOverride;
+// FIX113 N: the resting selection (the segment bar's pill): this colour with
+// its opacity instead of the selection colour of the settings.
+@property(nonatomic,strong) UIColor *selectionOverride;
+// FIX113 P: its alpha while pressed (as the dock's selection fades into the
+// lens); < 0: the colour's own alpha throughout.
+@property(nonatomic) CGFloat selectionOverridePressedAlpha;
+@property(nonatomic,readonly) BOOL needsDraw;   // FIX113 N: a frame still to draw (the segment bar's idle pause waits for it)
 @property(nonatomic,readonly) BOOL needsBackdropCapture,directDemoCapture;
 @property(nonatomic,readonly) BOOL wantsBackdropCopy;
 @property(nonatomic,readonly) CFTimeInterval lastBackdropCopyTime;
@@ -374,6 +433,11 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 @property(nonatomic,readonly) NSDictionary *layerEvidence;
 - (void)setNormalIcons:(UIImage *)normal selectedIcons:(UIImage *)selected;
 - (void)setNormalIconTexture:(id<MTLTexture>)normal selectedIconTexture:(id<MTLTexture>)selected;
+// FIX113: a rectangle of an icon atlas texture redrawn in place: `pixels`
+// (the texture's pixels, top-left origin) cleared and `draw` run in the
+// atlas's own points (UIKit drawing, as the atlas was drawn at `scale`).
+// NO when that texture cannot be written.
+- (BOOL)drawIconPatchAtPixels:(CGRect)pixels scale:(CGFloat)scale selected:(BOOL)selected drawing:(void (^)(void))draw;
 - (void)tick:(CFTimeInterval)time;
 - (void)invalidateBackdrop;
 - (void)applyStyle;
@@ -411,6 +475,7 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 - (void)syncSelectedIndex:(NSInteger)index;
 - (void)prewarmTravel;   // FIX39: build the tap animation's layers and backdrop while idle
 - (void)updateBadges:(NSArray<NSString *> *)badges;
+- (void)updateBadgeArt:(NSArray *)art;   // FIX108 D: WeChat's / a theme's own badge pictures (NSNull = the dock's label)
 - (void)applyConfig;
 - (void)cancelInteraction;
 - (void)previewLens;

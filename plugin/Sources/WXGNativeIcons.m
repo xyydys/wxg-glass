@@ -49,6 +49,36 @@ static NSString *WXGCleanTabTitle(NSString *title) {
     NSRegularExpression *count=[NSRegularExpression regularExpressionWithPattern:@"\\s*[(（]\\s*[0-9]+\\+?\\s*[)）]\\s*$" options:0 error:nil];
     return [count stringByReplacingMatchesInString:title options:0 range:NSMakeRange(0,title.length) withTemplate:@""];
 }
+// FIX108 D/E: what an icon looks like: an 8x8 brightness / coverage shape
+// and its mean colour (a theme's tinted copy of the same outline), the same
+// for the same artwork whatever image object carries it.
+typedef struct {uint64_t shape;double r,g,b;BOOL valid;} WXGArtLook;
+static WXGArtLook WXGArtLookOf(UIImage *image) {
+    WXGArtLook look={0,0,0,0,NO};
+    if(!WXGUsableNativeImage(image))return look;
+    static NSMapTable<UIImage *,NSArray *> *cache;if(!cache)cache=[NSMapTable weakToStrongObjectsMapTable];
+    NSArray *known=[cache objectForKey:image];
+    if(known.count==4){look.shape=[known[0] unsignedLongLongValue];look.r=[known[1] doubleValue];look.g=[known[2] doubleValue];look.b=[known[3] doubleValue];look.valid=YES;return look;}
+    uint8_t px[8*8*4]={0};CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
+    CGContextRef context=CGBitmapContextCreate(px,8,8,8,32,space,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(space);if(!context)return look;
+    UIGraphicsPushContext(context);[image drawInRect:CGRectMake(0,0,8,8)];UIGraphicsPopContext();CGContextRelease(context);
+    double v[64],mean=0,a=0;
+    for(int i=0;i<64;i++){v[i]=px[i*4+3]*2+(px[i*4]+px[i*4+1]+px[i*4+2])/3.0;mean+=v[i];look.r+=px[i*4];look.g+=px[i*4+1];look.b+=px[i*4+2];a+=px[i*4+3];}
+    mean/=64;for(int i=0;i<64;i++)if(v[i]>mean)look.shape|=1ull<<i;
+    if(a>0){look.r/=a;look.g/=a;look.b/=a;}   // premultiplied sums over coverage: the straight mean colour
+    look.valid=YES;
+    [cache setObject:@[@(look.shape),@(look.r),@(look.g),@(look.b)] forKey:image];
+    return look;
+}
+// Clearly another artwork: more than 10 of 64 shape cells or the mean colour.
+static BOOL WXGArtDiffers(UIImage *a,UIImage *b) {
+    if(a==b)return NO;
+    WXGArtLook x=WXGArtLookOf(a),y=WXGArtLookOf(b);if(!x.valid || !y.valid)return NO;
+    int bits=__builtin_popcountll(x.shape^y.shape);
+    double colour=fabs(x.r-y.r)+fabs(x.g-y.g)+fabs(x.b-y.b);
+    return bits>10 || colour>.25;
+}
 static NSString *WXGHexOf(UIColor *color) {
     CGFloat r=0,g=0,b=0,a=0;
     if(!color || ![color getRed:&r green:&g blue:&b alpha:&a])return nil;
@@ -130,6 +160,7 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
 @property(nonatomic) CFTimeInterval nextSample;
 @property(nonatomic) NSUInteger unlaidScans;
 @property(nonatomic,copy) NSString *titleFont;   // FIX91: WeChat's own tab title font, for the diagnostics
+@property(nonatomic) NSUInteger artworkChanges;  // FIX108 D
 @end
 
 @implementation WXGNativeIcons
@@ -162,6 +193,7 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
     if(nativeIndex!=NSNotFound && bar.items.count) selected=(NSInteger)nativeIndex;
     CFTimeInterval now=CACurrentMediaTime();
     if(bar==_lastBar && selected==_lastSelection && style==_lastStyle && now<_nextSample) return NO;
+    NSInteger previousSelection=_lastSelection;   // FIX108 E
     _lastBar=bar; _lastSelection=selected; _lastStyle=style; _nextSample=now+.8;
     @try {
         NSArray<UITabBarItem *> *nativeItems=bar.items;
@@ -267,6 +299,32 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
                 }
             }
         }
+        // FIX108 D/E: a theme switched on / off (another set of icons): the
+        // tabs that are neither selected now nor were at the last read (their
+        // views settled: a tab being switched can show its old state for a
+        // read) show, in their unselected state, artwork clearly different from
+        // what was seen there before (in a view, or last launch's cache), on
+        // every such tab (two at least). Never compared with a state the plugin
+        // made up itself (the selected one from the outline, D compared those
+        // and fired on nearly every switch). Then everything kept is stale: it
+        // is dropped and made again from what is seen until each tab is visited.
+        NSArray<WXGNativeIconPair *> *priors=_items;BOOL artworkChanged=NO;NSUInteger compared=0,differ=0;
+        for(NSUInteger i=0;i<4 && i<_items.count;i++) {
+            if((NSInteger)i==selected || (NSInteger)i==previousSelection)continue;
+            WXGNativeIconPair *pair=pairs[i],*prior=_items[i];
+            BOOL seenBefore=prior.normalRank>=60 || prior.normalRank==1;   // a view's, or the launch cache's
+            if(pair.normalRank<100 || !prior.normalImage || !seenBefore)continue;
+            ++compared;if(WXGArtDiffers(pair.normalImage,prior.normalImage))++differ;
+        }
+        artworkChanged=compared>=2 && differ==compared;
+        if(artworkChanged) {
+            NSMutableArray *kept=[NSMutableArray array];
+            for(WXGNativeIconPair *prior in _items) {
+                // The title colours went with the old artwork too (the accent / rest colour stand in).
+                WXGNativeIconPair *p=[WXGNativeIconPair new];p.title=prior.title;p.traits=prior.traits;[kept addObject:p];
+            }
+            priors=kept;++_artworkChanges;sameIdentity=NO;
+        }
         // Keep an observed custom state when this scan only offers a generic
         // tab-item fallback. Fresh observations of the same class always win,
         // even if the icon's bounds became slightly smaller since the last scan.
@@ -280,8 +338,8 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
         // FIX38: a read replaces only what it actually saw. At launch WeChat's
         // items have no images yet; that read used to replace the cached set
         // from the last launch, so the built-in symbols showed anyway.
-        for(NSUInteger i=0;i<4 && i<_items.count;i++) {
-            WXGNativeIconPair *pair=pairs[i],*prior=_items[i];
+        for(NSUInteger i=0;i<4 && i<priors.count;i++) {
+            WXGNativeIconPair *pair=pairs[i],*prior=priors[i];
             if(!pair.normalImage && prior.normalImage) {
                 pair.normalImage=prior.normalImage;pair.normalTint=prior.normalTint;pair.normalTemplate=prior.normalTemplate;
                 pair.normalRank=prior.normalRank;pair.normalSource=prior.normalSource;
@@ -299,8 +357,18 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
         UIColor *rest=normalTint?:[UIColor.labelColor resolvedColorWithTraitCollection:traits];
         for(WXGNativeIconPair *pair in pairs) {
             if(pair.selectedRank<=20 && pair.normalRank>=60) {
-                pair.selectedImage=pair.normalImage;pair.selectedTemplate=YES;pair.selectedTint=accent;
-                pair.selectedSource=@"现有轮廓和原生选中色（未访问状态）";
+                // FIX108 D: a theme's coloured artwork as it is (tinting it made
+                // a flat green silhouette); a one-colour outline in the accent.
+                BOOL mono=WXGImageIsMonochrome(pair.normalImage);
+                pair.selectedImage=pair.normalImage;pair.selectedTemplate=mono;pair.selectedTint=mono?accent:nil;
+                pair.selectedSource=mono?@"现有轮廓和原生选中色（未访问状态）":@"现有图（主题彩色图，未访问状态）";
+            }
+            // FIX108 D: the selected tab's other state unknown (dropped above,
+            // or never seen): its selected artwork, the rest colour if one-colour.
+            if(!pair.normalImage && pair.selectedImage && pair.selectedRank>=60) {
+                BOOL mono=WXGImageIsMonochrome(pair.selectedImage);
+                pair.normalImage=pair.selectedImage;pair.normalTemplate=mono;pair.normalTint=mono?rest:nil;pair.normalRank=10;
+                pair.normalSource=@"选中图（未选中状态未见过）";
             }
             if(!pair.selectedTextColor)pair.selectedTextColor=accent;
             if(!pair.normalTextColor)pair.normalTextColor=rest;
@@ -316,8 +384,8 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
             WXGNativeIconPair *p=pairs[i]; normals+=p.normalImage!=nil; selecteds+=p.selectedImage!=nil;
             [sources addObject:[NSString stringWithFormat:@"%lu：%@ / %@",(unsigned long)i+1,p.normalSource?:@"未选中回退",p.selectedSource?:@"选中回退"]];
         }
-        _diagnostics=[NSString stringWithFormat:@"微信图标：未选中 %lu/4，选中 %lu/4；按钮%@布局（未布局扫描 %lu 次）；微信标题字体 %@\n%@",(unsigned long)normals,(unsigned long)selecteds,
-            laidOut?@"已":@"未",(unsigned long)_unlaidScans,_titleFont?:@"未读到",[sources componentsJoinedByString:@"\n"]];
+        _diagnostics=[NSString stringWithFormat:@"微信图标：未选中 %lu/4，选中 %lu/4；按钮%@布局（未布局扫描 %lu 次）；图标换过 %lu 次（主题）；微信标题字体 %@\n%@",(unsigned long)normals,(unsigned long)selecteds,
+            laidOut?@"已":@"未",(unsigned long)_unlaidScans,(unsigned long)_artworkChanges,_titleFont?:@"未读到",[sources componentsJoinedByString:@"\n"]];
         return changed;
     } @catch(NSException *e) {
         _diagnostics=[NSString stringWithFormat:@"微信图标读取回退：%@",e.reason?:e.name]; return NO;

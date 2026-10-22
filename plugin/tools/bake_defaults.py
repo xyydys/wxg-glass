@@ -13,10 +13,19 @@ and writes them as WXG_DEFAULT_OPTICS_JSON into Sources/WXGBuildProfile.h:
 
 A fresh install then starts from these values (glass parameters, switches,
 settings-page look), and 恢复本版默认参数 / 恢复本页默认 return to the glass
-parameters. Settings people already have on their phones are not touched.
-The main switches, the account, the frame-rate log switches, wallpapers and
-the avatar are never part of it."""
-import json, math, pathlib, re, sys
+parameters. The main switches, the account, the frame-rate log switches, wallpapers and
+the avatar are never part of it.
+
+FIX114 G: the defaults being replaced are kept as
+WXG_PREVIOUS_DEFAULT_OPTICS_JSON. On the first launch of the new build a
+phone's setting still equal to that previous default (never changed) moves to
+the new default; a setting the person changed stays (WXGConfig,
+WXGPreferences, WXGSettingsStore: adoptBuildDefaults). The previous set is
+the one committed (git HEAD): baking again before committing (the same file
+or another) keeps it, so it stays the set phones actually have. With
+--keep-previous the previous set is never changed; without git, the set
+being replaced becomes the previous one."""
+import json, math, pathlib, re, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 SKIP_CONFIG = {"enabled"}
@@ -127,9 +136,35 @@ def main():
         return
     profile = ROOT / "Sources/WXGBuildProfile.h"
     s = profile.read_text(encoding="utf-8")
-    new, n = re.subn(r'#define WXG_DEFAULT_OPTICS_JSON(?:[^\n]*\\\n)*[^\n]*', lambda m: define, s)
-    if n != 1:
+    pattern = r'#define WXG_DEFAULT_OPTICS_JSON(?:[^\n]*\\\n)*[^\n]*'
+    current = re.findall(pattern, s)
+    if len(current) != 1:
         sys.exit("WXG_DEFAULT_OPTICS_JSON not found exactly once in WXGBuildProfile.h")
+    previous_pattern = r'#define WXG_PREVIOUS_DEFAULT_OPTICS_JSON(?:[^\n]*\\\n)*[^\n]*'
+    committed = None
+    try:
+        prefix = subprocess.run(["git", "-C", str(ROOT), "rev-parse", "--show-prefix"], capture_output=True, text=True, check=True).stdout.strip()
+        head = subprocess.run(["git", "-C", str(ROOT), "show", f"HEAD:{prefix}Sources/WXGBuildProfile.h"], capture_output=True, text=True, check=True).stdout
+        committed = re.findall(pattern, head)
+        committed = committed[0] if len(committed) == 1 else None
+    except (OSError, subprocess.CalledProcessError):
+        committed = None
+    # Rotate only from the committed set (a second bake before committing
+    # would otherwise make "previous" a set no phone ever had).
+    rotate = current[0] != define and "--keep-previous" not in sys.argv and (committed is None or committed == current[0])
+    if current[0] != define and not rotate:
+        print("previous defaults kept as they are (the set being replaced was never committed, or --keep-previous)")
+    if rotate:
+        # FIX114 G: the defaults being replaced, for adopting the new ones
+        # where a phone still has the old (see the docstring).
+        previous = current[0].replace("#define WXG_DEFAULT_OPTICS_JSON", "#define WXG_PREVIOUS_DEFAULT_OPTICS_JSON", 1)
+        if re.search(previous_pattern, s):
+            s = re.sub(previous_pattern, lambda m: previous, s, count=1)
+        else:
+            s = s.replace(current[0], current[0] + "\n// FIX114 G: the defaults before this set (tools/bake_defaults.py keeps them):\n"
+                          "// a phone's setting still at one of these moves to the new default once.\n" + previous, 1)
+        print("previous defaults kept as WXG_PREVIOUS_DEFAULT_OPTICS_JSON")
+    new = s.replace(current[0], define, 1)
     profile.write_text(new, encoding="utf-8")
     print(f"written: {profile.relative_to(ROOT)}")
 

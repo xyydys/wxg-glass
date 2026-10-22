@@ -57,7 +57,40 @@ int main(void) {
     n=WXGRimGlowBands(1,1,3,WXG_RIM_GLOW_MAX_BANDS,inset,width,alpha);
     CHECK(n==3,"whole pixels: 1 pt at 3x is 3 steps (%d)",n);
 
+    /* FIX109 B: the 普通 line with a soft glow (WXGRimSoftBands): the line
+       itself one band at full level, the glow's steps each at the curve's
+       average, never brighter inward, the edge between line and glow kept,
+       at most the maximum, the total light the line plus the glow's
+       integral; then the opacity taken into the alphas. */
+    double cases[][4]={{1,.8,.5,3},{.75,1.5,.35,3},{.5,.6,.7,2},{0,1,.6,3},{2,4,1,3},{1,0,.5,3},{.3,.1,.2,3}};
+    for(size_t c=0;c<sizeof cases/sizeof *cases;c++) {
+        double core=cases[c][0],soft=cases[c][1],level=cases[c][2],sc=cases[c][3];
+        n=WXGRimSoftBands(core,soft,level,sc,WXG_RIM_GLOW_MAX_BANDS,inset,width,alpha);
+        CHECK(n>=1 && n<=WXG_RIM_GLOW_MAX_BANDS,"soft %.2f/%.2f: count %d",core,soft,n);
+        CHECK(fabs(width[n-1]-(core+soft))<1e-9 && WXGRimGlowComposite(width,alpha,n,core+soft+.01)==0,"soft %.2f/%.2f: covers line and glow only",core,soft);
+        if(core>0 && level<.999)CHECK(fabs(WXGRimGlowComposite(width,alpha,n,core*.5)-1)<1e-9 && fabs(width[0]-core)<1e-9,"soft %.2f/%.2f: the line is solid and its own band",core,soft);
+        double previous=2,sum=0,start=0;
+        for(int j=0;j<n;j++) {
+            CHECK(inset[j]==0 && width[j]>start && alpha[j]>=0 && alpha[j]<=1,"soft band %d",j);
+            double shown=WXGRimGlowComposite(width,alpha,n,(start+width[j])*.5);
+            double expect=((width[j]<core?width[j]:core)-(start<core?start:core))+(width[j]>core?WXGRimSoftIntegral(start>core?start:core,width[j],core,soft,level):0);
+            CHECK(fabs(shown-expect/(width[j]-start))<1e-9,"soft %.2f/%.2f: step %d shows its average (%.4f %.4f)",core,soft,j,shown,expect/(width[j]-start));
+            CHECK(shown<=previous+1e-12,"soft: not brighter inward (%d)",j);
+            previous=shown;sum+=shown*(width[j]-start);start=width[j];
+        }
+        CHECK(fabs(sum-(core+WXGRimSoftIntegral(core,core+soft,core,soft,level)))<1e-9,"soft %.2f/%.2f: total light",core,soft);
+    }
+    n=WXGRimSoftBands(1,.8,.5,3,WXG_RIM_GLOW_MAX_BANDS,inset,width,alpha);
+    CHECK(n>=8 && width[1]-width[0]<.1 && WXGRimGlowComposite(width,alpha,n,1.04)<.55 && WXGRimGlowComposite(width,alpha,n,1.04)>.4,"the glow starts at its level in quarter-pixel steps");
+    CHECK(WXGRimGlowComposite(width,alpha,n,1.75)<.02,"and is nearly gone at its end");
+    double before[WXG_RIM_GLOW_MAX_BANDS];
+    for(int j=0;j<n;j++)before[j]=WXGRimGlowComposite(width,alpha,n,(j?width[j-1]:0)+(width[j]-(j?width[j-1]:0))*.5);
+    WXGRimScaleBands(alpha,n,.6);
+    for(int j=0;j<n;j++)CHECK(fabs(WXGRimGlowComposite(width,alpha,n,(j?width[j-1]:0)+(width[j]-(j?width[j-1]:0))*.5)-.6*before[j])<1e-9,"scaled step %d",j);
+    CHECK(WXGRimSoftBands(0,0,.5,3,4,inset,width,alpha)==0 && WXGRimSoftBands(0,1,0,3,4,inset,width,alpha)==0 && WXGRimSoftBands(1,1,.5,3,0,inset,width,alpha)==0,"soft: nothing");
+    CHECK(WXGRimSoftBands(1,0,.5,3,20,inset,width,alpha)==1 && alpha[0]==1,"no glow: the plain line");
+
     if(failures){printf("RimGlowTests: %d failure(s)\n",failures);return 1;}
-    printf("PASS: iOS 27-like rim (FIX86/87): along the outline full where it faces the highlight angle (0 top / bottom, 90 ends, diagonals), end level across it, monotonic, sharpness, symmetric; across the edge about 1 px steps as nested bands from the outline, composited to the curve at each step's middle, fading inward, scale independent, capped.\n");
+    printf("PASS: iOS 27-like rim (FIX86/87): along the outline full where it faces the highlight angle (0 top / bottom, 90 ends, diagonals), end level across it, monotonic, sharpness, symmetric; across the edge about 1 px steps as nested bands from the outline, composited to the curve at each step's middle, fading inward, scale independent, capped. FIX109 B soft line: the line solid, a Gaussian glow inside it in quarter-pixel steps, each its average, total light exact, opacity folded into the alphas.\n");
     return 0;
 }

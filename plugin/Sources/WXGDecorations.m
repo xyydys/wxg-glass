@@ -33,7 +33,7 @@ static char WXGDecorationKey;
         // in this run-loop pass is undone before it can be drawn.
         __weak WXGDecorations *weakManager=manager;
         CFRunLoopObserverRef observer=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,1999800,
-            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity activity){WXGPerfTimePluginWork(^{[weakManager reassertVisiblePaint];});});   // FIX102: timed
+            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity activity){WXGPerfTimePluginWorkAs("decorations",^{[weakManager reassertVisiblePaint];});});   // FIX102: timed
         if(observer){CFRunLoopAddObserver(CFRunLoopGetMain(),observer,kCFRunLoopCommonModes);CFRelease(observer);}
     });
     return manager;
@@ -49,6 +49,7 @@ static char WXGDecorationKey;
     if([name isEqual:@"MMMsgCommonTipsView"])return @"pinnedRow";
     if([name isEqual:@"MainFrameActionFloatView"])return @"homeMenu";
     if([name isEqual:@"MMMenuContentView"])return @"messageMenu";
+    if([name isEqual:@"WCOperateFloatView"])return @"momentsMenu";   // FIX108 C: 朋友圈的 赞 / 评论
     return nil;
 }
 - (UIView *)bodyForHost:(UIView *)host kind:(NSString *)kind {
@@ -57,7 +58,7 @@ static char WXGDecorationKey;
             [WXGActionNames((id)v) containsObject:@"performBgAction"] && v.bounds.size.width>100)return v.superview;
         return nil;
     }
-    NSString *item=[kind isEqual:@"homeMenu"]?@"RightTopMenuItemBtn":@"MMMenuItemView";
+    NSString *item=[kind isEqual:@"homeMenu"]?@"RightTopMenuItemBtn":[kind isEqual:@"momentsMenu"]?@"WCLikeButton":@"MMMenuItemView";
     for(UIView *v in WXGViews(host,160))if([NSStringFromClass(v.class) isEqual:item] &&
         v.superview!=host && v.superview.bounds.size.width>60)return v.superview;
     return nil;
@@ -90,6 +91,8 @@ static char WXGDecorationKey;
         if(![v isKindOfClass:UIControl.class] && ![v isKindOfClass:UILabel.class] && !v.gestureRecognizers.count && !v.subviews.count) {
             CGRect rect=[v convertRect:v.bounds toView:body];
             BOOL divider=rect.size.height<=1 && rect.size.width>body.bounds.size.width*.35;
+            // FIX108 C: the Moments bar's upright line between 赞 and 评论 (black on glass: too hard).
+            if([entry.kind isEqual:@"momentsMenu"] && rect.size.width<=1.5 && rect.size.height>body.bounds.size.height*.35)divider=YES;
             BOOL pointer=[entry.kind isEqual:@"messageMenu"] && [v isKindOfClass:UIImageView.class] &&
                 rect.size.height<=22 && rect.size.width<=50 && CGRectGetMidY(rect)>CGRectGetMaxY(body.bounds);
             if(divider || pointer)[states hide:v];
@@ -142,10 +145,22 @@ static char WXGDecorationKey;
             // buttons. Its own background must not render meanwhile: clear the
             // host's paint now and look again on the next main-queue turn.
             if(![kind isEqual:@"pinnedRow"]) {
-                [entry.states stripChrome:view preserving:@[]];
-                for(UIView *v in WXGViews(view,80))
-                    if([v isKindOfClass:UIImageView.class] && v.bounds.size.width>60)[entry.states clearImagePaint:(id)v];
-                [entry.states reapply];
+                // FIX108 E: not for the Moments bar: its dark plate is what
+                // keeps its white 赞 / 评论 readable until the glass is there
+                // (stripped with no body found, it stayed bare on the white feed).
+                if(![kind isEqual:@"momentsMenu"]) {
+                    [entry.states stripChrome:view preserving:@[]];
+                    for(UIView *v in WXGViews(view,80))
+                        if([v isKindOfClass:UIImageView.class] && v.bounds.size.width>60)[entry.states clearImagePaint:(id)v];
+                    [entry.states reapply];
+                }else {
+                    // FIX108 F: the same bar collapsing for a pass (opening from
+                    // zero width, a quick close and reopen): its glass stays as it
+                    // is; a new one never found: WeChat's plate back, and the
+                    // paint cleared again in full once its body turns up.
+                    if(entry.body && [entry.body isDescendantOfView:view] && entry.lastPaint>0){entry.validBody=YES;entry.surface.hidden=NO;return;}
+                    [entry.states restore];entry.lastPaint=0;
+                }
                 if(entry.earlyRetries<6) {
                     ++entry.earlyRetries;__weak UIView *weakHost=view;
                     dispatch_async(dispatch_get_main_queue(),^{if(weakHost)[self nativeHostLaidOut:weakHost];});
@@ -159,7 +174,8 @@ static char WXGDecorationKey;
         WXGSurface *surface=entry.surface;
         // FIX27: the message long-press menu radius is a setting; the plus menu keeps 18.
         surface.maximumCornerRadius=[kind isEqual:@"pinnedRow"]?MIN(body.bounds.size.height*.5,32):
-            [kind isEqual:@"messageMenu"]?WXGConfig.shared.messageMenuCornerRadius:18;
+            [kind isEqual:@"messageMenu"]?WXGConfig.shared.messageMenuCornerRadius:
+            [kind isEqual:@"momentsMenu"]?body.bounds.size.height*.5:18;   // FIX108 C: the Moments bar is a capsule
         surface.glass.sourceView=[kind isEqual:@"pinnedRow"]?WXGContentSourceForView(view):(_source?:WXGContentSourceForView(view));
         surface.glass.backdropExclusions=@[view];
         UIView *parent=body;CGRect material=body.bounds;

@@ -5,6 +5,31 @@
 #import <objc/runtime.h>
 
 static WXGRect WXGInputRect(CGRect r) {return (WXGRect){r.origin.x,r.origin.y,r.size.width,r.size.height};}
+/* FIX113: the two-ended bar's icons: the plugin's set (SF Symbols, the emoji
+   key as Face ID) or, switched off, WeChat's own artwork of the control each
+   button stands in for (the set's symbol where WeChat shows none). */
+static BOOL WXGInputSystemIcons(void) {return [WXGConfig.shared extraNumber:@"inputSystemIcons"]>.5;}
+static UIImage *WXGInputSymbol(NSString *name) {
+    static NSMutableDictionary<NSString *,UIImage *> *cache;if(!cache)cache=[NSMutableDictionary dictionary];
+    UIImage *image=cache[name];
+    if(!image){image=[UIImage systemImageNamed:name];if(image)cache[name]=image;}
+    return image;
+}
+// WeChat's own artwork: only a button's image (never a background picture
+// found among its subviews: the send key's green plate, the dictation host's backing).
+static UIImage *WXGInputNativeArtwork(UIControl *native) {
+    return [native isKindOfClass:UIButton.class]?((UIButton *)native).currentImage:nil;
+}
+static UIImage *WXGInputIcon(NSString *symbol,UIControl *native) {
+    if(!WXGInputSystemIcons()){UIImage *own=WXGInputNativeArtwork(native);if(own)return own;}
+    return WXGInputSymbol(symbol);
+}
+// FIX113: WeChat's artwork at WeChat's own size; the set's symbols in the plugin's boxes.
+static void WXGInputSetIcon(WXGSurface *surface,UIImage *image,UIControl *native) {
+    BOOL own=image && image==WXGInputNativeArtwork(native);
+    if(surface.naturalIconSize!=own){surface.naturalIconSize=own;[surface setNeedsLayout];}
+    [surface setImage:image title:nil count:nil];
+}
 
 /* FIX87: the emoji button's shape, to tell WeChat's two images apart (a
    smiley; a keyboard while its expression panel is up): 16 x 16 alpha, so
@@ -181,7 +206,7 @@ static NSData *WXGEmojiFacePrint;
 - (instancetype)init {
     if((self=[super init])) {
         WXGSurface *plus=[WXGSurface new],*pill=[WXGSurface new],*mic=[WXGSurface new],*emoji=[WXGSurface new];
-        plus.role=@"attachment";[plus setImage:[UIImage systemImageNamed:@"plus"] title:nil count:nil];
+        plus.role=@"attachment";[plus setImage:WXGInputSymbol(@"plus") title:nil count:nil];
         plus.accessibilityLabel=@"微信附件菜单";
         pill.role=@"input";pill.materialOnly=YES;pill.isAccessibilityElement=NO;pill.pressFixed=YES;   // FIX87
         mic.role=@"dictation";mic.plain=YES;mic.pressProxy=pill;
@@ -356,13 +381,16 @@ static NSData *WXGEmojiFacePrint;
         __weak WXGInputAdapter *weakSelf=self;
         mic.perform=dictating?^{[weakSelf dictationTapped];}:nil;
         mic.enabled=WXGCanForward(mic.original);plus.original=_attachment;
+        WXGInputSetIcon(plus,WXGInputIcon(@"plus",_attachment),_attachment);   // FIX113
         mic.hidden=!mic.enabled;plus.enabled=WXGCanForward(_attachment);plus.hidden=!plus.enabled;pill.hidden=NO;
         for(WXGSurface *surface in _surfaces)surface.active=!surface.hidden;
         NSString *role=sending?@"send":listening?@"dictating":dictating?@"dictation":keyboard?@"keyboardMode":@"voiceMode";
-        if(![mic.role isEqual:role] || !mic.iconView.image) {
-            mic.role=role;[mic setImage:[UIImage systemImageNamed:sending?@"arrow.up.circle.fill":listening?@"waveform":dictating?@"mic":keyboard?@"keyboard":@"waveform"] title:nil count:nil];
+        if(![mic.role isEqual:role]) {
+            mic.role=role;
             mic.accessibilityLabel=sending?@"微信发送消息":listening?@"结束语音转文字":dictating?@"微信语音转文字":keyboard?@"切换到文字输入":@"切换到按住说话";
         }
+        // FIX113: the set's symbol, or WeChat's own artwork of that control.
+        WXGInputSetIcon(mic,WXGInputIcon(sending?@"arrow.up.circle.fill":listening?@"waveform":dictating?@"mic":keyboard?@"keyboard":@"waveform",mic.original),mic.original);
         [self showListening:listening mic:mic pill:pill editor:editor actionsFrom:firstAction];
         if(mic.enabled && WXGCanForward(_sendButton))[_states hide:_sendButton];else [_states restoreView:_sendButton];
         // Do not resize/reposition the native button: its internal layout runs
@@ -371,12 +399,14 @@ static NSData *WXGEmojiFacePrint;
         WXGSurface *emoji=_surfaces[3];emoji.original=hasEmoji?_emojiButton:nil;
         emoji.hidden=!hasEmoji;emoji.active=hasEmoji;emoji.enabled=hasEmoji;
         if(hasEmoji) {
-            // FIX87: Apple's smiley (SF Symbols), or the keyboard while
-            // WeChat's expression panel is up (as WeChat's own button does).
+            // FIX87: Apple's symbol, or the keyboard while WeChat's expression
+            // panel is up (as WeChat's own button does). FIX113: Face ID in
+            // place of the smiley; or WeChat's own artwork (its smiley /
+            // keyboard as it shows them) when the set is switched off.
             [self updateEmojiState];
-            static UIImage *smiley,*keys;static dispatch_once_t once;
-            dispatch_once(&once,^{smiley=[UIImage systemImageNamed:@"face.smiling.fill"]?:[UIImage systemImageNamed:@"face.smiling"];keys=[UIImage systemImageNamed:@"keyboard"];});   // FIX88: the filled smiley
-            [emoji setImage:_emojiPanel?keys:smiley title:nil count:nil];
+            UIImage *face=WXGInputSymbol(@"faceid")?:WXGInputSymbol(@"face.smiling.fill");
+            UIImage *own=WXGInputSystemIcons()?nil:WXGInputNativeArtwork(_emojiButton);
+            WXGInputSetIcon(emoji,own?:(_emojiPanel?WXGInputSymbol(@"keyboard"):face),_emojiButton);
             emoji.accessibilityLabel=_emojiPanel?@"切换到键盘":@"微信表情";
             [emoji placeMaterial:[w convertRect:emojiRect toView:_panel] inParent:_panel];
             [_states conceal:_emojiButton];

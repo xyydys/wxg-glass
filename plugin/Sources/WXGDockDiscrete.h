@@ -40,8 +40,15 @@ static inline float WXGDiscreteClampf(float x, float lo, float hi) {
 }
 
 /* The row inside a material `width` x `height`: balls `ballRatio` x the
-   height, shrunk to fit the width if needed. align: -1 left, 0 centre, 1
-   right (the side of the search button, so the row stays beside it). */
+   height. align: -1 left, 0 centre, 1 right (the side of the search button,
+   so the row stays beside it).
+   FIX113 E: too narrow for those balls (the search button takes its share
+   of the row), the balls keep the height asked for as long as they can: the
+   selected tab narrows first (down to WXGDiscreteWideFloor cells), then the
+   gaps (down to half, never under 3 pt), and only then the balls shrink
+   (before, they shrank at once: past about 0.7 of the bar with the search
+   button the setting did nothing). */
+static inline float WXGDiscreteWideFloor(float wide) {return wide < 1.6f ? wide : 1.6f;}
 static inline WXGDiscreteMetrics WXGDiscreteFit(float width, float height, float ballRatio,
                                                 float gap, float wide, int align) {
     WXGDiscreteMetrics m;
@@ -51,10 +58,23 @@ static inline WXGDiscreteMetrics WXGDiscreteFit(float width, float height, float
     if (!(ballRatio > 0.f)) ballRatio = 1.f;
     if (!(width > 0.f)) width = 1.f;
     if (!(height > 0.f)) height = 1.f;
+    float want = height * ballRatio;
+    if (want < 8.f) want = 8.f;
+    if ((float)(n - 1 + wide) * want + (float)(n - 2 + wide) * gap > width) {
+        float floorWide = WXGDiscreteWideFloor(wide);
+        float fitWide = (width - (float)(n - 1) * want - (float)(n - 2) * gap) / (want + gap);
+        if (fitWide >= floorWide) wide = fitWide < wide ? fitWide : wide;
+        else {
+            wide = floorWide;
+            float floorGap = gap < 3.f ? gap : (gap * .5f > 3.f ? gap * .5f : 3.f);
+            float fitGap = (width - (float)(n - 1 + wide) * want) / (float)(n - 2 + wide);
+            gap = fitGap > floorGap ? (fitGap < gap ? fitGap : gap) : floorGap;
+        }
+    }
     float cells = (float)(n - 1) + wide;          // 5 cells with a 2-cell selection
     float gaps = (float)(n - 1) + (wide - 1.f);   // 4 gaps: 3 between, 1 inside the wide tab
     float fit = (width - gaps * gap) / cells;
-    float cell = fminf(height * ballRatio, fit);
+    float cell = fminf(want, fit);
     if (cell < 8.f) cell = 8.f;
     m.cell = cell; m.gap = gap; m.wide = wide;
     m.total = cells * cell + gaps * gap;
@@ -62,6 +82,18 @@ static inline WXGDiscreteMetrics WXGDiscreteFit(float width, float height, float
     m.originX = align < 0 ? 0.f : (align > 0 ? spare : spare * .5f);
     m.originY = (height - cell) * .5f;
     return m;
+}
+/* FIX113 E: the material width the row needs for balls `ballRatio` x the
+   height with the selected tab at its floor and the gaps as set (the host
+   widens the dock's row with the search button up to this). */
+static inline float WXGDiscreteNeededWidth(float height, float ballRatio, float gap, float wide) {
+    const int n = WXGDiscreteTabs;
+    wide = (wide == wide) ? WXGDiscreteClampf(wide, 1.f, 3.f) : 2.f;
+    gap = (gap == gap) ? WXGDiscreteClampf(gap, 0.f, 40.f) : 8.f;
+    if (!(ballRatio > 0.f)) ballRatio = 1.f;
+    float want = height * ballRatio, w = WXGDiscreteWideFloor(wide);
+    if (want < 8.f) want = 8.f;
+    return (float)(n - 1 + w) * want + (float)(n - 2 + w) * gap;
 }
 
 /* A tab's width at expansion e. An overshoot below a ball is floored at
