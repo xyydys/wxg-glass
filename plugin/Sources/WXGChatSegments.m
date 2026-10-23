@@ -532,7 +532,7 @@ static BOOL WXGProbeScanned(const uint8_t *layout,ptrdiff_t offset) {
 // references by hand: a value is taken only when, read as memory (never
 // messaged), it is a live heap block whose class is exactly the ivar's
 // declared class (a string: one of the string classes).
-static Class (*WXGProbeIsa)(const void *)=(Class (*)(const void *))object_getClass;   // no ARC on the pointer
+static Class WXGProbeIsa(const void *p){return object_getClass((__bridge id)(void *)p);}   // no ARC on the pointer（薄包装代替函数指针强转，避开 clang20 -Wcast-function-type-mismatch）
 static BOOL WXGProbeStringClass(Class c) {
     static Class known[3];static dispatch_once_t once;
     dispatch_once(&once,^{
