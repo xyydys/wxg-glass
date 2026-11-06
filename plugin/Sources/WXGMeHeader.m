@@ -205,6 +205,11 @@ static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
         CAMetalLayer *layer=(CAMetalLayer *)self.layer;
         layer.opaque=NO;layer.pixelFormat=MTLPixelFormatBGRA8Unorm;layer.framebufferOnly=YES;layer.presentsWithTransaction=YES;
         layer.contentsScale=UIScreen.mainScreen.scale;
+        // FIX120 F (user: a little pull flickers the avatar, one frame squashed / stretched): the canvas changes
+        // height as the banner opens and closes; a frame the new drawable was not up yet showed the last one scaled
+        // to the new bounds (UIKit's default, scale to fill). Pinned to the top unscaled it stays where it was (the
+        // canvas grows and shrinks only at its bottom); with the drawable the bounds' size, as always, no change.
+        self.contentMode=UIViewContentModeTop;
     }
     return self;
 }
@@ -276,7 +281,7 @@ static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
 }
 @end
 
-static char WXGMeNativeCenterKey,WXGMeAppliedCenterKey;
+static char WXGMeNativeCenterKey,WXGMeAppliedCenterKey,WXGMeFadedKey,WXGMeNativeAlphaKey;
 
 @interface WXGMeHeader () <PHPickerViewControllerDelegate,UIGestureRecognizerDelegate>
 - (void)update;
@@ -317,6 +322,7 @@ static char WXGMeNativeCenterKey,WXGMeAppliedCenterKey;
     AVPlayer *_player;AVPlayerItemVideoOutput *_videoOut;CVMetalTextureCacheRef _textureCache;CVMetalTextureRef _videoRef,_videoRefOld;
     CVPixelBufferRef _videoBuffer,_videoBufferOld;BOOL _videoPlaying;NSUInteger _videoFrames;NSString *_videoNote;id _loopObserver;
     NSString *_status_;CGFloat _shift,_collapse,_travel;WXGCutout _cutout;BOOL _merge,_banner;NSUInteger _snaps,_renders,_passes;
+    NSUInteger _statusMoves;CGFloat _statusMovedY;   // FIX120 F: WeChat moving its status row after us (diagnostics)
 }
 + (instancetype)shared {
     static WXGMeHeader *header;static dispatch_once_t once;
@@ -549,18 +555,24 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     [self snapIfResting:table];
 }
 // WeChat's status buttons: their row centred under the ID, its top at L.statusTop (both still inside the header).
-- (void)placeStatusWith:(WXGMeLayout)L {
-    UIControl *header=_header;if(!header)return;
+// (in a container of their own inside the header: the container is what moves, so they stay inside its bounds and take touches)
+- (NSArray<UIView *> *)statusMoversIn:(UIControl *)header {
     NSArray<UIView *> *views=[self statusViews];
-    // (in a container of their own inside the header: the container is what moves, so they stay inside its bounds and take touches)
     UIView *common=views.firstObject.superview;
     for(UIView *v in views)if(v.superview!=common)common=nil;
     if(common && common!=header && [common isDescendantOfView:header] && common.bounds.size.height<header.bounds.size.height*.6)views=@[common];
+    return views;
+}
+- (void)placeStatusWith:(WXGMeLayout)L {
+    UIControl *header=_header;if(!header)return;
+    NSArray<UIView *> *views=[self statusMoversIn:header];
     // where WeChat has put each (a centre not ours is WeChat's: its place)
     for(UIView *v in views) {
         NSValue *applied=objc_getAssociatedObject(v,&WXGMeAppliedCenterKey);
-        if(!applied || !CGPointEqualToPoint(applied.CGPointValue,v.center))
+        if(!applied || !CGPointEqualToPoint(applied.CGPointValue,v.center)) {
+            if(applied && v.superview){++_statusMoves;_statusMovedY=[v.superview convertPoint:v.center toView:nil].y;}   // FIX120 F
             objc_setAssociatedObject(v,&WXGMeNativeCenterKey,[NSValue valueWithCGPoint:v.center],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
     }
     // the row's extent there, in the header
     CGFloat minX=CGFLOAT_MAX,maxX=-CGFLOAT_MAX,minY=CGFLOAT_MAX;
@@ -579,6 +591,26 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
         if(!CGPointEqualToPoint(v.center,want))v.center=want;
         objc_setAssociatedObject(v,&WXGMeAppliedCenterKey,[NSValue valueWithCGPoint:v.center],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
+    [self fadeStatus:views header:header layout:L];
+}
+// FIX120 F (user: "往上滑到状态靠近屏幕顶部的时候，那片区域整个在闪"): WeChat's status row fades out over its own height as it
+// goes under the bar, and stays out up there, so a frame in which WeChat has put it back somewhere of its own (its layout
+// before ours) shows nothing under the island. (WeChat's own alpha is kept: ours is that times the fade.)
+- (void)fadeStatus:(NSArray<UIView *> *)views header:(UIControl *)header layout:(WXGMeLayout)L {
+    UIWindow *window=header.window;if(!window || !views.count)return;
+    UINavigationBar *bar=_page.navigationController.navigationBar;
+    CGRect barRect=bar && !bar.hidden && bar.window?[bar convertRect:bar.bounds toView:nil]:CGRectMake(0,window.safeAreaInsets.top,window.bounds.size.width,44);
+    CGFloat rowH=1;for(UIView *v in views)rowH=MAX(rowH,v.bounds.size.height);
+    CGFloat top=[header convertPoint:CGPointMake(0,L.statusTop) toView:nil].y;
+    CGFloat fade=MIN(MAX((top+rowH-CGRectGetMaxY(barRect))/rowH,0),1);fade=round(fade*64)/64;
+    for(UIView *v in views) {
+        NSNumber *applied=objc_getAssociatedObject(v,&WXGMeFadedKey),*native=objc_getAssociatedObject(v,&WXGMeNativeAlphaKey);
+        if(!native || !applied || fabs(applied.doubleValue-v.alpha)>.001)   // (an alpha not ours is WeChat's)
+            objc_setAssociatedObject(v,&WXGMeNativeAlphaKey,native=@(v.alpha),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        CGFloat want=native.doubleValue*fade;
+        if(fabs(v.alpha-want)>.001)v.alpha=want;
+        objc_setAssociatedObject(v,&WXGMeFadedKey,@(v.alpha),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
 }
 - (void)statusLaidOut:(UIView *)view {
     if(!_insetsApplied || !_haveLayout || !_header || ![view isDescendantOfView:_header] || !WXGMeOn())return;
@@ -593,6 +625,10 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
         if(native && applied && CGPointEqualToPoint(v.center,applied.CGPointValue))v.center=native.CGPointValue;
         objc_setAssociatedObject(v,&WXGMeNativeCenterKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         objc_setAssociatedObject(v,&WXGMeAppliedCenterKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        NSNumber *faded=objc_getAssociatedObject(v,&WXGMeFadedKey),*alpha=objc_getAssociatedObject(v,&WXGMeNativeAlphaKey);   // FIX120 F
+        if(faded && alpha && fabs(v.alpha-faded.doubleValue)<.001)v.alpha=alpha.doubleValue;
+        objc_setAssociatedObject(v,&WXGMeFadedKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(v,&WXGMeNativeAlphaKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
 }
 // The bar: QR on the left, 设置 on the right.
@@ -729,6 +765,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
                                     animations:^{band.alpha=alpha;} completion:nil];
         else [UIView performWithoutAnimation:^{band.alpha=alpha;}];
     }
+    if(_insetsApplied)[self fadeStatus:[self statusMoversIn:header] header:header layout:L];   // FIX120 F (every pass: it follows the list)
     [self drawAvatarIn:o header:header layout:L travel:t width:W];
 }
 - (void)drawAvatarIn:(UIView *)o header:(UIControl *)header layout:(WXGMeLayout)L travel:(CGFloat)t width:(CGFloat)W {
@@ -1051,6 +1088,7 @@ static NSString *WXGMeVideoPath(void) {
              @"video":@{@"file":[self bannerVideoName],@"note":_videoNote?:@"",@"frames":@(_videoFrames),@"playing":@(_videoPlaying)},
              @"photoSource":WXGSelfAvatarState(),@"avatarTaps":@(_avatarTaps),@"edgeStyle":@(WXGMeEdgeStyle()),@"dripRoom":@(round(_dripRoom)),@"renders":@(_renders),@"snaps":@(_snaps),@"passes":@(_passes),
              @"fullPasses":@(_fullPasses),@"skippedPasses":@(_skips),@"canvasHeight":@(round(_canvasHeight)),   // FIX119 B
+             @"statusMovedByWeChat":@(_statusMoves),@"statusMovedToY":@(round(_statusMovedY)),   // FIX120 F
              @"title":@{@"collapse":@(round(_titleCollapse*10)/10),@"end":@(round(_collapseAll*10)/10),@"fraction":@(round(_titlePose.fraction*100)/100),
                         @"locked":@(_titlePose.locked),@"band":@(_bandOn)}};
 }
