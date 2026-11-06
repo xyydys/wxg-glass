@@ -112,22 +112,6 @@ float3 wxgBody(texture2d<float> raw,texture2d<float> soft,texture2d<float> lensS
     float opacity=WXGMaterialOpacity(u.tintColor.a,u.appearance.y,wxgEdge(shape.distance,wxgVeilWidth(optical.edgeWidth,u)),u.motion.y);
     return saturate(mix(face,u.tintColor.rgb,opacity));
 }
-/* FIX114 Z (user: the dock's Telegram icons and the group bar's text in a
-   colour of their own (green) got fringes of other colours at the lens edge,
-   read as "the old blue"): splitting a coloured glyph into its red, green and
-   blue copies leaves, where only one copy covers, that one channel of the
-   glyph's colour over the others of what is under it (green: cyan on one
-   side, yellow on the other). A coloured glyph's fringes now keep its own
-   colour: the copy on the red side lighter, on the blue side deeper; grey,
-   black and white artwork (the resting icons, dark text) keeps the classic
-   split. Samples are premultiplied. */
-float wxgIconColourWeight(float4 r,float4 g,float4 b,thread float3 &colour) {
-    float4 c=g.a>=max(r.a,b.a)?g:(r.a>=b.a?r:b);
-    if(c.a<.004){colour=float3(0.);return 0.;}
-    colour=saturate(c.rgb/c.a);
-    float spread=max(colour.r,max(colour.g,colour.b))-min(colour.r,min(colour.g,colour.b));
-    return smoothstep(.12,.35,spread);
-}
 float3 wxgIcons(texture2d<float> icons,float2 source,float2 chroma,float3 face,
                  constant WXGUniforms &u) {
     float4 r=icons.sample(wxgSampler,(source+chroma)/u.viewport.xy);
@@ -152,8 +136,18 @@ float4 wxgIconsOver(texture2d<float> icons,float2 source,float2 chroma,float4 ac
     float4 r=icons.sample(wxgSampler,(source+chroma)/u.viewport.xy);
     float4 g=icons.sample(wxgSampler,source/u.viewport.xy);
     float4 b=icons.sample(wxgSampler,(source-chroma)/u.viewport.xy);
-    // FIX120 D：回退 FIX114 Z——经典 RGB 色散拆分。
-    return float4(r.r+acc.r*(1.-r.a),g.g+acc.g*(1.-g.a),b.b+acc.b*(1.-b.a),g.a+acc.a*(1.-g.a));
+    // FIX120 E: each colour copy over what is under it with its own coverage.
+    // Core Animation lays this layer over the live page with ONE alpha; taking
+    // the green copy's dropped the red / blue copies wherever green did not
+    // cover, so over a transparent lens (the lens seeing the real bar, FIX113 U)
+    // the icons and titles lost their colour split. As the lens bar's spectrum
+    // (FIX97): the most covered copy's alpha, and the page behind (extra2.z:
+    // white in light mode, black in dark) added back for the copies covering
+    // less. Unchanged where the copies coincide (no split; the body's icons).
+    float3 own=float3(r.a,g.a,b.a),cover=own+acc.a*(float3(1.)-own);
+    float most=max(cover.x,max(cover.y,cover.z));
+    float3 rgb=float3(r.r+acc.r*(1.-r.a),g.g+acc.g*(1.-g.a),b.b+acc.b*(1.-b.a));
+    return float4(rgb+saturate(u.extra2.z)*(float3(most)-cover),most);
 }
 // FIX97: the bar seen through the render-server lens at screen point p: its
 // signed distance on screen (inset contour; < 0 inside), the bent sample and
