@@ -35,8 +35,9 @@
    - with the banner on: WeChat's drag recognizer is switched off and the list
      bounces (both given back).
    Drawn by the plugin, in a view above the list (no touches): the name and ID
-   centred (FIX119 B: one name, collapsing into the bar's title as Telegram's,
-   the bar's background coming in as a step once it has), and the avatar, the
+   centred (FIX119 B: one name, collapsing into the bar's title as Telegram's;
+   FIX120 H: no bar background of our own, the bar stays the plugin's glass over
+   the list as on every other page), and the avatar, the
    cut-out and the banner in one Metal pass (the shader below, after
    expo-scroll-metaball's), its layer only as tall as what it draws. */
 
@@ -314,14 +315,14 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
     NSHashTable<UIView *> *_status;       // WeChat's status buttons (weakly)
     __weak UIPanGestureRecognizer *_dragPan,*_tablePan;
     WXGStateBag *_states;
-    UIView *_overlay,*_labels,*_band,*_bandLine;
+    UIView *_overlay,*_labels;
     UILabel *_bigName,*_bigID;UIFont *_bigFont,*_idFont;
     WXGMetaballView *_metal;
     // FIX119 B: Telegram's segments (the title locks in the bar, then the bar's background comes in as a step)
-    CGFloat _titleCollapse,_collapseAll;BOOL _bandOn,_bandSet;WXGMeTitlePose _titlePose;
+    CGFloat _titleCollapse,_collapseAll;WXGMeTitlePose _titlePose;
     // FIX119 B: a pass with nothing changed does nothing (diagnostics, 16 Pro Max: 3 ms on every pass, standing still)
-    double _sig[28];BOOL _haveSig;CFTimeInterval _auditAt,_cellColorAt;NSUInteger _skips,_fullPasses;
-    UIColor *_cellColor;UIUserInterfaceStyle _cellStyle;CGFloat _canvasHeight;
+    double _sig[28];BOOL _haveSig;CFTimeInterval _auditAt;NSUInteger _skips,_fullPasses;
+    CGFloat _canvasHeight;
     UIImage *_shownPhoto;CFTimeInterval _photoAt,_findAt,_snapUntil,_start,_partsTriedAt,_renderedAt;
     UIEdgeInsets _baseInsets,_appliedInsets;BOOL _insetsApplied;
     BOOL _bouncesWas,_alwaysBounceWas,_bounceTouched,_dragWasEnabled,_dragTouched,_qrTouchWas,_qrTouched;
@@ -342,7 +343,7 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
     NSUInteger _statusMoves;CGFloat _statusMovedY;   // FIX120 F: WeChat moving its status row after us (diagnostics)
     // FIX120 G (user, diagnostics_7: "灵动岛也闪，头像也闪，名字也闪 … 滑到顶部区域之后就会开始闪"): what each pass did
     NSMutableArray<NSString *> *_trace;NSString *_traceLast,*_coveredBy;__weak UIView *_coveredView;NSUInteger _traceRepeat;char _renderNote;
-    NSUInteger _restores,_insetRetakes,_overlayCovered,_bandToggles,_gateSkips;double _worstRenderMS;
+    NSUInteger _restores,_insetRetakes,_overlayCovered,_gateSkips;double _worstRenderMS;
 }
 + (instancetype)shared {
     static WXGMeHeader *header;static dispatch_once_t once;
@@ -579,9 +580,8 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     [self snapIfResting:table];
 #if WXGME_TRACE
     {UIView *container=table.superview,*top=container.subviews.lastObject,*mover=[self statusMoversIn:header].firstObject;
-     CALayer *shown=_band.layer.presentationLayer;
-     [self tracePass:[NSString stringWithFormat:@"t%.1f o%.1f in%.1f/%.1f tc%.1f end%.1f 带%d a%.2f/%.2f %@ 表y%.1f 层y%.1f 画布%.0f %c 状%.2f%@%@",
-         t,table.contentOffset.y,table.contentInset.top,_baseInsets.top,_titleCollapse,_collapseAll,_bandOn,_band.alpha,shown?shown.opacity:-1.f,
+     [self tracePass:[NSString stringWithFormat:@"t%.1f o%.1f in%.1f/%.1f tc%.1f end%.1f 名y%.1f %@ 表y%.1f 层y%.1f 画布%.0f %c 状%.2f%@%@",
+         t,table.contentOffset.y,table.contentInset.top,_baseInsets.top,_titleCollapse,_collapseAll,_titlePose.titleY,
          top==_overlay?@"顶":NSStringFromClass(top.class),[container convertPoint:table.frame.origin toView:nil].y,[_overlay convertPoint:CGPointZero toView:nil].y,
          _metal.bounds.size.height,_renderNote?:'?',mover?mover.alpha:-1,slow?@" 慢":@"",table.isTracking?@" 按":table.isDecelerating?@" 惯":@""]];}
 #endif
@@ -716,9 +716,6 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     UIView *container=table.superview;if(!container)return;
     if(!_overlay) {
         _overlay=[UIView new];_overlay.userInteractionEnabled=NO;_overlay.backgroundColor=UIColor.clearColor;
-        // (FIX119 B: the bar's background under the name, which is the bar's title once it has gone up; the avatar over both)
-        _band=[UIView new];_band.alpha=0;[_overlay addSubview:_band];
-        _bandLine=[UIView new];_bandLine.backgroundColor=UIColor.separatorColor;[_band addSubview:_bandLine];
         _labels=[UIView new];_labels.userInteractionEnabled=NO;[_overlay addSubview:_labels];
         _bigName=[UILabel new];_bigName.textAlignment=NSTextAlignmentCenter;_bigName.lineBreakMode=NSLineBreakByTruncatingTail;
         _bigID=[UILabel new];_bigID.textAlignment=NSTextAlignmentCenter;_idFont=[UIFont systemFontOfSize:15];_bigID.font=_idFont;
@@ -738,10 +735,6 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     }
     if(!CGRectEqualToRect(_overlay.frame,table.frame))_overlay.frame=table.frame;   // (the list is never transformed by us)
 }
-static UIColor *WXGMeOpaque(UIColor *color) {
-    if(!color || CGColorGetAlpha(color.CGColor)<.5)return nil;
-    return color;
-}
 // FIX119 B: set only what changed (the same text, font or colour set again on every pass redraws a label)
 static void WXGMeSetText(UILabel *l,NSString *text) {if(l.text!=text && ![l.text isEqualToString:text?:@""])l.text=text;}
 static void WXGMeSetInk(UILabel *l,UIColor *color) {if(l.textColor!=color && ![l.textColor isEqual:color])l.textColor=color;}
@@ -758,28 +751,17 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
 - (void)layoutOverlayFor:(UITableView *)table header:(UIControl *)header layout:(WXGMeLayout)L travel:(CGFloat)t width:(CGFloat)W {
     [self ensureOverlayOver:table];
     UIView *o=_overlay;UIWindow *window=table.window;
-    CFTimeInterval now=CACurrentMediaTime();
-    // colours from WeChat: its cells (looked at once a second, or when the look changes), its name
-    UIUserInterfaceStyle style=table.traitCollection.userInterfaceStyle;
-    if(!_cellColor || style!=_cellStyle || now-_cellColorAt>1) {
-        UIColor *cellColor=nil;
-        for(UITableViewCell *cell in table.visibleCells){cellColor=WXGMeOpaque(cell.backgroundColor)?:WXGMeOpaque(cell.contentView.backgroundColor);if(cellColor)break;}
-        _cellColor=cellColor?:WXGMeOpaque(header.backgroundColor)?:UIColor.secondarySystemGroupedBackgroundColor;
-        _cellStyle=style;_cellColorAt=now;
-    }
-    UIColor *cellColor=_cellColor,*ink=_name.textColor?:UIColor.labelColor,*grey=_wxid.textColor?:UIColor.secondaryLabelColor;
+    // colours from WeChat: its name's
+    UIColor *ink=_name.textColor?:UIColor.labelColor,*grey=_wxid.textColor?:UIColor.secondaryLabelColor;
     CGFloat px=window.screen.scale?:UIScreen.mainScreen.scale;
     CGFloat up=MAX(t,0);
-    __block BOOL bandOn=_bandOn;
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
         WXGMeSetFrame(self->_labels,o.bounds);
         CGPoint (^at)(CGFloat)=^CGPoint(CGFloat y){return [header convertPoint:CGPointMake(W*.5,y) toView:o];};
-        // the bar: its centre (where the name stops) and its bottom
+        // the bar: its centre (where the name stops)
         UINavigationBar *bar=self->_page.navigationController.navigationBar;
         CGRect barRect=bar && !bar.hidden && bar.window?[bar convertRect:bar.bounds toView:nil]:CGRectMake(0,window.safeAreaInsets.top,W,44);
-        CGRect barInOverlay=[o convertRect:CGRectMake(0,0,window.bounds.size.width,CGRectGetMaxY(barRect)) fromView:nil];
-        barInOverlay.origin.x=0;barInOverlay.size.width=W;
         CGFloat lockY=[o convertPoint:CGPointMake(0,CGRectGetMidY(barRect)) fromView:nil].y;
         // FIX119 B (user: "两个昵称同时存在 … Telegram … 分了段，不会乱跳"): one name. It goes up with the page, shrinking to
         // the bar title's size (17 pt) on the way, until its centre is the bar's, and stays there; the ID under it shrinks
@@ -803,21 +785,13 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
         WXGMeSetScale(self->_bigID,tp.idScale);
         WXGMeSetAlpha(self->_bigID,tp.idAlpha);
         WXGMeSetHidden(self->_bigID,!self->_wxid || tp.idAlpha<.004);
-        // the bar's background: in as a step once the name is the bar's title (Telegram's), out again a little lower
-        WXGMeSetFrame(self->_band,barInOverlay);
-        if(![self->_band.backgroundColor isEqual:cellColor])self->_band.backgroundColor=cellColor;
-        WXGMeSetFrame(self->_bandLine,CGRectMake(0,barInOverlay.size.height-1/px,W,1/px));
-        bandOn=WXGMeBandOn(self->_bandOn,up,self->_titleCollapse)!=0;
+        // FIX120 H (user, 11-06 screenshot: "你挡住还有条黑线这不是自欺欺人吗"): no bar background of our own. FIX119 B's (an
+        // opaque block of the cells' colour over 0..the bar's bottom, a separator under it) hid the page under the bar instead
+        // of letting it pass under the plugin's glass bar as everywhere else; the host's page-top cleaning had been clearing
+        // it every quarter second (the flashing at the top). What goes under the bar now: the list, as on every other page;
+        // the status row fading out first (FIX120 F); the name and the avatar drawn over it.
         [CATransaction commit];
     }];
-    if(bandOn!=_bandOn || !_bandSet) {
-        if(_bandSet)++_bandToggles;   // FIX120 G (diagnostics)
-        BOOL animate=_bandSet;_bandOn=bandOn;_bandSet=YES;
-        UIView *band=_band;CGFloat alpha=bandOn?1:0;
-        if(animate)[UIView animateWithDuration:.2 delay:0 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionCurveEaseInOut
-                                    animations:^{band.alpha=alpha;} completion:nil];
-        else [UIView performWithoutAnimation:^{band.alpha=alpha;}];
-    }
     if(_insetsApplied)[self fadeStatus:[self statusMoversIn:header] header:header layout:L];   // FIX120 F (every pass: it follows the list)
     [self drawAvatarIn:o header:header layout:L travel:t width:W];
 }
@@ -1052,7 +1026,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     [self dropVideo];
     [_avatarTap.view removeGestureRecognizer:_avatarTap];
     [_overlay removeFromSuperview];[self pauseLink];_haveLast=NO;
-    _haveSig=NO;_bandSet=NO;_bandOn=NO;_band.alpha=0;_cellColor=nil;
+    _haveSig=NO;
 }
 
 #pragma mark - The banner's video (FIX118 B)
@@ -1158,10 +1132,10 @@ static NSString *WXGMeVideoPath(void) {
              @"fullPasses":@(_fullPasses),@"skippedPasses":@(_skips),@"canvasHeight":@(round(_canvasHeight)),   // FIX119 B
              @"statusMovedByWeChat":@(_statusMoves),@"statusMovedToY":@(round(_statusMovedY)),   // FIX120 F
              @"flicker":@{@"restores":@(_restores),@"insetRetakes":@(_insetRetakes),@"overlayCovered":@(_overlayCovered),@"coveredBy":_coveredBy?:@"",
-                          @"bandToggles":@(_bandToggles),@"gateSkips":@(_gateSkips),@"worstRenderMS":@(round(_worstRenderMS*10)/10),
-                          @"traceKey":@"t 行程 o 偏移 in 当前/微信 inset.top tc 标题收起点 end 终点 带 底带开 a 底带 alpha 模型/屏上 顶=层在最上 表y/层y 窗口坐标 画布高 R画了 g闸门跳过 s没变 m静止 f失败 -没画 状 状态行 alpha 慢=整套 按/惯"},
+                          @"gateSkips":@(_gateSkips),@"worstRenderMS":@(round(_worstRenderMS*10)/10),
+                          @"traceKey":@"t 行程 o 偏移 in 当前/微信 inset.top tc 标题收起点 end 终点 名y 名字中心 顶=层在最上 表y/层y 窗口坐标 画布高 R画了 g闸门跳过 s没变 m静止 f失败 -没画 状 状态行 alpha 慢=整套 按/惯"},
              @"trace":[_trace copy]?:@[],   // FIX120 G
              @"title":@{@"collapse":@(round(_titleCollapse*10)/10),@"end":@(round(_collapseAll*10)/10),@"fraction":@(round(_titlePose.fraction*100)/100),
-                        @"locked":@(_titlePose.locked),@"band":@(_bandOn)}};
+                        @"locked":@(_titlePose.locked)}};
 }
 @end
