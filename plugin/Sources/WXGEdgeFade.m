@@ -319,8 +319,7 @@ static void WXGEdgeHookListClass(Class cls) {
             ((void (*)(id,SEL,CGRect))imp)(list,selector,rect);
             WXGEdgeListChanged(list);
         });
-        if(owns)method_setImplementation(method,replacement);
-        else class_addMethod(cls,selector,replacement,method_getTypeEncoding(method));
+        WXGInstallOverride(cls,selector,replacement,method_getTypeEncoding(method));   // FIX115 A: listed
     }
     {
         SEL selector=@selector(setCenter:);Method method=class_getInstanceMethod(cls,selector);
@@ -331,8 +330,7 @@ static void WXGEdgeHookListClass(Class cls) {
                 ((void (*)(id,SEL,CGPoint))imp)(list,selector,point);
                 WXGEdgeListChanged(list);
             });
-            if(owns)method_setImplementation(method,replacement);
-            else class_addMethod(cls,selector,replacement,method_getTypeEncoding(method));
+            WXGInstallOverride(cls,selector,replacement,method_getTypeEncoding(method));   // FIX115 A: listed
         }
     }
     {
@@ -344,8 +342,7 @@ static void WXGEdgeHookListClass(Class cls) {
                 ((void (*)(id,SEL))imp)(list,selector);
                 WXGEdgeListChanged(list);
             });
-            if(owns)method_setImplementation(method,replacement);
-            else class_addMethod(cls,selector,replacement,method_getTypeEncoding(method));
+            WXGInstallOverride(cls,selector,replacement,method_getTypeEncoding(method));   // FIX115 A: listed
         }
     }
 }

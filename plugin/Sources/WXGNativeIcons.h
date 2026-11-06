@@ -8,6 +8,10 @@
 @property(nonatomic,copy) NSString *title, *normalSource, *selectedSource;
 @property(nonatomic) BOOL normalTemplate, selectedTemplate;
 @property(nonatomic) CGFloat normalRank, selectedRank;
+// FIX115 D: the size WeChat (or a theme) shows that state's picture at in its
+// own tab bar (the image view's box, by its content mode); zero when the
+// picture only came from the tab item (no view seen showing it).
+@property(nonatomic) CGSize normalDisplaySize, selectedDisplaySize;
 @end
 
 // Reads the existing native bar only. Never changes its selected state, sends

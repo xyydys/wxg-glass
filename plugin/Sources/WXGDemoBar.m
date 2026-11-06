@@ -33,6 +33,8 @@
 @property(nonatomic) CGFloat titleSize;              // FIX91
 @property(nonatomic) NSInteger titleWeight;          // FIX91: 0 light .. 4 bold
 @property(nonatomic) BOOL nativeSize;                // FIX114 B: WeChat's own artwork at its own size (not Telegram's, whose animation frames are 26 pt)
+@property(nonatomic) BOOL themeFirst;                // FIX115 D: 底栏主题优先
+@property(nonatomic,copy) NSArray<NSValue *> *normalShown,*selectedShown;   // FIX115 D: the size WeChat / the theme shows each at (CGSize; zero: unknown)
 @property(nonatomic) BOOL bolderSelected;
 // FIX113 G: the unread badges / red dots, ready to draw over the icons
 // ({image, rect: NSValue}): part of the icon layer, so the lens magnifies and
@@ -86,8 +88,12 @@ static UIImage *WXGTravelHoleImage(void) {
 // MAIN THREAD ONLY (FIX106 D): it reads -[UIImage imageAsset].
 // The plugin's own icons' colours (SF symbols, FIX113's Telegram set).
 // FIX113 C: the selected one the accent colour of the settings (green by default).
+// FIX115 D: with 底栏主题优先 the accent colour is not used (WeChat's green
+// where nothing of WeChat's / the theme's is known yet).
+static BOOL WXGDockNativeIcons(void) {return WXGConfig.shared.useWeChatIcons || WXGDockThemeFirst();}
 static UIColor *WXGDockTabColor(BOOL selected,BOOL darkInk) {
-    if(selected)return WXGColor([WXGConfig.shared extraHex:@"dockAccentHex"])?:[UIColor colorWithRed:.03 green:.72 blue:.38 alpha:1];
+    // FIX115 I: the accent always at 100 % (its stored opacity is not used).
+    if(selected)return [(WXGDockThemeFirst()?nil:WXGColor([WXGConfig.shared extraHex:@"dockAccentHex"])) colorWithAlphaComponent:1]?:[UIColor colorWithRed:.03 green:.72 blue:.38 alpha:1];
     return darkInk?[UIColor colorWithWhite:.10 alpha:.92]:[UIColor colorWithWhite:.97 alpha:.97];
 }
 static UIImage *WXGDockTabArtwork(WXGNativeIconPair *pair,NSInteger i,BOOL selected,BOOL darkInk,CGFloat iconSize,UIColor **textColor) {
@@ -140,6 +146,11 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
             // only larger ones fitted to 30 x 30 (was always fitted to 28 x 26:
             // WeChat's 28 pt icons were drawn smaller).
             CGFloat ratio=job.nativeSize?MIN(1,MIN(30/MAX(icon.size.width,1),30/MAX(icon.size.height,1))):MIN(28/MAX(icon.size.width,1),26/MAX(icon.size.height,1));
+            // FIX115 D: 底栏主题优先: at the size WeChat / the theme shows it (any
+            // size; a PNG's own size depends on the scale it was loaded at).
+            NSArray<NSValue *> *shownSizes=useSelected?job.selectedShown:job.normalShown;
+            CGSize shown=job.themeFirst && i<(NSInteger)shownSizes.count?shownSizes[(NSUInteger)i].CGSizeValue:CGSizeZero;
+            if(shown.width>=4 && shown.height>=4)ratio=MIN(shown.width/MAX(icon.size.width,1),shown.height/MAX(icon.size.height,1));
             CGSize sz=CGSizeMake(icon.size.width*ratio,icon.size.height*ratio);
             [icon drawInRect:CGRectMake(cx-sz.width/2,cy-sz.height/2,sz.width,sz.height)];
             // FIX91: size and weight from the settings (10.5 pt, medium /
@@ -374,9 +385,10 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
         self.backgroundColor=UIColor.clearColor; self.opaque=NO; self.clipsToBounds=NO;
-        self.layer.shadowColor=UIColor.blackColor.CGColor;self.layer.shadowOpacity=.10;self.layer.shadowRadius=20;self.layer.shadowOffset=CGSizeMake(0,8);
+        self.layer.shadowColor=UIColor.blackColor.CGColor;self.layer.shadowOpacity=0;   /* FIX114 K: the glass draws its own (边框与渐隐 › 外阴影, 底栏) */
+        self.layer.shadowRadius=20;self.layer.shadowOffset=CGSizeMake(0,8);
         self.isAccessibilityElement=NO; _darkInk=YES; _resumeIndex=-1; _selectionShown=1; _earlyIndex=-1;
-        _nativeIcons=[WXGNativeIcons new]; _previousNativeIcons=WXGConfig.shared.useWeChatIcons;
+        _nativeIcons=[WXGNativeIcons new]; _previousNativeIcons=WXGDockNativeIcons();
         _telegramSettled=-1;_telegramTab=-1;_previousTelegram=WXGTelegramTabIconsOn();   // FIX113
         _fallback=[[UIVisualEffectView alloc] initWithEffect:[UIBlurEffect effectWithStyle:UIBlurEffectStyleSystemUltraThinMaterial]];
         _fallback.userInteractionEnabled=NO; _fallback.clipsToBounds=YES;
@@ -520,8 +532,8 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 - (void)applyConfig {
     [self setNeedsLayout]; [self layoutIfNeeded]; [_glass invalidateBackdrop]; [_glass applyStyle];
     CGFloat scale=WXGCaptureScale(self.window.screen.scale?:UIScreen.mainScreen.scale)*WXGConfig.shared.lensZoom*WXGConfig.shared.barGrowth;
-    BOOL nativeChanged=_previousNativeIcons!=WXGConfig.shared.useWeChatIcons || _previousTelegram!=WXGTelegramTabIconsOn();   // FIX113
-    _previousNativeIcons=WXGConfig.shared.useWeChatIcons;
+    BOOL nativeChanged=_previousNativeIcons!=WXGDockNativeIcons() || _previousTelegram!=WXGTelegramTabIconsOn();   // FIX113 (FIX115 D: 主题优先 too)
+    _previousNativeIcons=WXGDockNativeIcons();
     if(_previousTelegram!=WXGTelegramTabIconsOn()){_previousTelegram=WXGTelegramTabIconsOn();[self stopTelegramAnimation];}
     if(nativeChanged || !CGRectEqualToRect(_iconMaterialRect,_materialRect) || fabs(_iconScale-scale)>.001 || ![_iconLayout isEqual:[self iconLayoutKey]]){[self rebuildIcons];[self layoutBadges];}
     // 离散底栏: on / off, the pieces' glass style, titles (sizes may have changed).
@@ -536,13 +548,13 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 }
 - (void)updateNativeIconsFromTabController:(UITabBarController *)tabs {
     _nativeTabs=tabs;
-    if(WXGConfig.shared.useWeChatIcons && [_nativeIcons updateFromTabController:tabs]) [self rebuildIcons];
+    if(WXGDockNativeIcons() && [_nativeIcons updateFromTabController:tabs]) [self rebuildIcons];
 }
 - (WXGIconJob *)iconJob {
     if(self.bounds.size.width<1 || self.bounds.size.height<1)return nil;
     WXGIconJob *job=[WXGIconJob new];job.size=self.bounds.size;
     job.scale=WXGCaptureScale(self.window.screen.scale ?: UIScreen.mainScreen.scale)*WXGConfig.shared.lensZoom*WXGConfig.shared.barGrowth;
-    job.materialRect=_materialRect;job.darkInk=_darkInk;job.useNative=WXGConfig.shared.useWeChatIcons;job.nativeSize=job.useNative && [WXGConfig.shared extraNumber:@"dockTelegramIcons"]<=.5;job.selectedIndex=_selectedIndex;
+    job.materialRect=_materialRect;job.darkInk=_darkInk;job.useNative=WXGDockNativeIcons();job.nativeSize=job.useNative && !WXGTelegramTabIconsOn();job.themeFirst=WXGDockThemeFirst();   // FIX115 Djob.selectedIndex=_selectedIndex;
     NSMutableArray<NSNumber *> *centers=[NSMutableArray array];
     for(NSInteger i=0;i<4;i++)[centers addObject:@([self centerForIndex:i])];
     job.centers=centers;
@@ -552,6 +564,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     NSArray *names=@[@"微信",@"通讯录",@"发现",@"我"];
     NSArray<WXGNativeIconPair *> *items=_nativeIcons.items;
     NSMutableArray *normalArt=[NSMutableArray array],*selectedArt=[NSMutableArray array],*normalColors=[NSMutableArray array],*selectedColors=[NSMutableArray array],*titles=[NSMutableArray array];
+    NSMutableArray *normalShown=[NSMutableArray array],*selectedShown=[NSMutableArray array];   // FIX115 D
     for(NSInteger i=0;i<4;i++) {
         WXGNativeIconPair *pair=job.useNative && i<(NSInteger)items.count?items[(NSUInteger)i]:nil;
         UIColor *normalColor=nil,*selectedColor=nil;
@@ -559,8 +572,11 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
         [normalArt addObject:normal?:(id)NSNull.null];[selectedArt addObject:selected?:(id)NSNull.null];
         [normalColors addObject:normalColor?:UIColor.grayColor];[selectedColors addObject:selectedColor?:UIColor.grayColor];
         [titles addObject:pair.title.length?pair.title:names[(NSUInteger)i]];
+        [normalShown addObject:[NSValue valueWithCGSize:pair.normalImage?pair.normalDisplaySize:CGSizeZero]];
+        [selectedShown addObject:[NSValue valueWithCGSize:pair.selectedImage?pair.selectedDisplaySize:CGSizeZero]];
     }
     job.normalArt=normalArt;job.selectedArt=selectedArt;job.normalColors=normalColors;job.selectedColors=selectedColors;job.titles=titles;
+    job.normalShown=normalShown;job.selectedShown=selectedShown;
     job.iconShift=[self iconShift];job.titleShift=[self titleShift];
     WXGConfig *c=WXGConfig.shared;job.titleSize=c.dockTitleSize;job.titleWeight=c.dockTitleWeight;job.bolderSelected=c.dockTitleBolderSelected;
     job.badges=[self atlasBadgesForCenters:centers iconShift:job.iconShift scale:job.scale];
@@ -635,7 +651,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 - (CGFloat)titleShift {WXGConfig *c=WXGConfig.shared;return c.dockIconOffset+(c.dockIconTitleGap-5)*.5;}
 - (NSString *)iconLayoutKey {
     WXGConfig *c=WXGConfig.shared;
-    return [NSString stringWithFormat:@"%.2f/%.2f/%.2f/%ld/%d/%@",[self iconShift],[self titleShift],c.dockTitleSize,(long)c.dockTitleWeight,c.dockTitleBolderSelected,
+    return [NSString stringWithFormat:@"%.2f/%.2f/%.2f/%ld/%d/%d/%@",[self iconShift],[self titleShift],c.dockTitleSize,(long)c.dockTitleWeight,c.dockTitleBolderSelected,WXGDockThemeFirst(),   // FIX115 D
         [[c extraHex:@"dockAccentHex"] stringByAppendingString:[self badgeLayoutKey]]];   // FIX113 C: a new accent redraws the icons; G: so do the badges
 }
 - (UIImage *)iconImageSelected:(BOOL)selected fallback:(BOOL)fallback {
@@ -676,7 +692,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     NSArray *names=@[@"微信",@"通讯录",@"发现",@"我"];
     for(NSInteger i=0;i<4;i++) {
         _a11yItems[i].accessibilityTraits=UIAccessibilityTraitButton|(i==_selectedIndex?UIAccessibilityTraitSelected:0);
-        NSString *title=WXGConfig.shared.useWeChatIcons && i<(NSInteger)_nativeIcons.items.count?_nativeIcons.items[i].title:nil;
+        NSString *title=WXGDockNativeIcons() && i<(NSInteger)_nativeIcons.items.count?_nativeIcons.items[i].title:nil;
         _a11yItems[i].accessibilityLabel=title.length?title:names[i];
     }
     [self loadDiscreteContent];   // 离散底栏: same artwork, theme and titles
@@ -686,7 +702,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 // 0.35 and 0.75 s instead of waiting for the 0.8 s sampling interval, so the
 // accent in the lens follows the switch; the newest selection cancels older.
 - (void)rescanNativeIconsAfterSelection {
-    if(!WXGConfig.shared.useWeChatIcons || WXGTelegramTabIconsOn())return;   // FIX113 C: the atlas does not use them then
+    if(!WXGDockNativeIcons() || WXGTelegramTabIconsOn())return;   // FIX113 C: the atlas does not use them then
     NSUInteger token=++_rescanToken;
     // FIX32: after the lens animation (~0.4 s), not during it: a rescan that
     // finds a changed icon ends in an icon-atlas upload on the main thread.
@@ -1928,7 +1944,7 @@ static const CGFloat WXGDiscreteReturnProgress=.15;
     UIFont *en=[UIFont systemFontOfSize:c.dockDiscreteSubtitleSize weight:weights[step]];
     CGFloat iconSize=c.dockDiscreteIconSize;
     for(NSInteger i=0;i<4;i++) {
-        WXGNativeIconPair *pair=c.useWeChatIcons && i<(NSInteger)_nativeIcons.items.count?_nativeIcons.items[(NSUInteger)i]:nil;
+        WXGNativeIconPair *pair=WXGDockNativeIcons() && i<(NSInteger)_nativeIcons.items.count?_nativeIcons.items[(NSUInteger)i]:nil;
         UIColor *accent=nil;
         _tabIcons[(NSUInteger)i].image=WXGDockTabArtwork(pair,i,NO,_darkInk,iconSize,NULL);
         _tabSelectedIcons[(NSUInteger)i].image=WXGDockTabArtwork(pair,i,YES,_darkInk,iconSize,&accent);

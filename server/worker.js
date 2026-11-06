@@ -16,7 +16,7 @@ const ALLOWLIST = [];
 const VER = "1";
 // 复查间隔(秒):授权用户在线时多久联网核对一次 = 踢人多久生效;离线仍按 expiresAt(7 天)。
 // 只影响在线核对频率与负载,不碰签名有效期。想调快 / 调慢改这一个数即可(上限 7 天)。
-const RECHECK_AFTER = 4 * 3600;   // FIX114G：4 小时（踢人在线最坏生效 / 联网频率的折中；离线仍按票据 7 天）
+const RECHECK_AFTER = 3 * 24 * 3600;   // FIX120：3 天（放宽在线核对频率——断网/重启按缓存票据照用；离线仍按 expiresAt 7 天）
 // ──────────────────────────────────
 // 着色器水印站点(FIX107 升级):挪到"二进制里没有参照"的 8 个 Metal-only 常数——AA 半宽、glow 下限、
 // 按压光学增益、smoothstep 边界,全是"动了也看不出来"的保护/边界值,且散布多处。去掉了旧版 5 系数全挤在
@@ -708,13 +708,35 @@ const SHADER = [
   "    float opacity=WXGMaterialOpacity(u.tintColor.a,u.appearance.y,wxgEdge(shape.distance,wxgVeilWidth(optical.edgeWidth,u)),u.motion.y);",
   "    return saturate(mix(face,u.tintColor.rgb,opacity));",
   "}",
+  "/* FIX114 Z (user: the dock's Telegram icons and the group bar's text in a",
+  "   colour of their own (green) got fringes of other colours at the lens edge,",
+  "   read as \"the old blue\"): splitting a coloured glyph into its red, green and",
+  "   blue copies leaves, where only one copy covers, that one channel of the",
+  "   glyph's colour over the others of what is under it (green: cyan on one",
+  "   side, yellow on the other). A coloured glyph's fringes now keep its own",
+  "   colour: the copy on the red side lighter, on the blue side deeper; grey,",
+  "   black and white artwork (the resting icons, dark text) keeps the classic",
+  "   split. Samples are premultiplied. */",
+  "float wxgIconColourWeight(float4 r,float4 g,float4 b,thread float3 &colour) {",
+  "    float4 c=g.a>=max(r.a,b.a)?g:(r.a>=b.a?r:b);",
+  "    if(c.a<.004){colour=float3(0.);return 0.;}",
+  "    colour=saturate(c.rgb/c.a);",
+  "    float spread=max(colour.r,max(colour.g,colour.b))-min(colour.r,min(colour.g,colour.b));",
+  "    return smoothstep(.12,.35,spread);",
+  "}",
   "float3 wxgIcons(texture2d<float> icons,float2 source,float2 chroma,float3 face,",
   "                 constant WXGUniforms &u) {",
   "    float4 r=icons.sample(wxgSampler,(source+chroma)/u.viewport.xy);",
   "    float4 g=icons.sample(wxgSampler,source/u.viewport.xy);",
   "    float4 b=icons.sample(wxgSampler,(source-chroma)/u.viewport.xy);",
   "    // Images contain premultiplied alpha; each refracted colour uses its own alpha.",
-  "    return float3(r.r+face.r*(1.-r.a),g.g+face.g*(1.-g.a),b.b+face.b*(1.-b.a));",
+  "    float3 split=float3(r.r+face.r*(1.-r.a),g.g+face.g*(1.-g.a),b.b+face.b*(1.-b.a));",
+  "    float3 colour=float3(0.);float k=wxgIconColourWeight(r,g,b,colour);",
+  "    if(k<=0.)return split;",
+  "    float3 own=mix(face,mix(colour,float3(1.),.35),r.a*.6);",
+  "    own=mix(own,colour*.82,b.a*.6);",
+  "    own=mix(own,colour,g.a);",
+  "    return mix(split,own,k);",
   "}",
   "// FIX18 render-server modes. This layer is composited by Core Animation over",
   "// a CABackdropLayer that the render server captures and blurs at DISPLAY time,",
@@ -731,7 +753,14 @@ const SHADER = [
   "    float4 r=icons.sample(wxgSampler,(source+chroma)/u.viewport.xy);",
   "    float4 g=icons.sample(wxgSampler,source/u.viewport.xy);",
   "    float4 b=icons.sample(wxgSampler,(source-chroma)/u.viewport.xy);",
-  "    return float4(r.r+acc.r*(1.-r.a),g.g+acc.g*(1.-g.a),b.b+acc.b*(1.-b.a),g.a+acc.a*(1.-g.a));",
+  "    float4 split=float4(r.r+acc.r*(1.-r.a),g.g+acc.g*(1.-g.a),b.b+acc.b*(1.-b.a),g.a+acc.a*(1.-g.a));",
+  "    float3 colour=float3(0.);float k=wxgIconColourWeight(r,g,b,colour);   // FIX114 Z",
+  "    if(k<=0.)return split;",
+  "    float lit=r.a*.6,deep=b.a*.6;",
+  "    float4 own=wxgOver(float4(mix(colour,float3(1.),.35)*lit,lit),acc);",
+  "    own=wxgOver(float4(colour*.82*deep,deep),own);",
+  "    own=wxgOver(float4(colour*g.a,g.a),own);",
+  "    return mix(split,own,k);",
   "}",
   "// FIX97: the bar seen through the render-server lens at screen point p: its",
   "// signed distance on screen (inset contour; < 0 inside), the bent sample and",
@@ -991,6 +1020,7 @@ function logCheckin(env, ctx, account, device, result) {
       // FIX114：设备集合 [{d,last}]，只在成功核对(ok)时累计（被拒的不算“在用”）。
       let devices = Array.isArray(prev.devices) ? prev.devices.filter(x => x && typeof x.d === "string")
                   : (prev.lastDevice ? [{ d: prev.lastDevice, last: prev.lastTs || ts }] : []);
+      const knownDevice = validDevice && devices.some(x => x.d === validDevice);   // FIX120：加设备前先判断是不是老设备
       if (result === "ok" && validDevice) {
         const i = devices.findIndex(x => x.d === validDevice);
         if (i >= 0) devices[i] = { d: validDevice, last: ts };
@@ -999,13 +1029,22 @@ function logCheckin(env, ctx, account, device, result) {
         if (devices.length > DEVICE_KEEP) devices = devices.slice(0, DEVICE_KEEP);
       }
       const activeDevices = devices.filter(x => ts - (x.last || 0) <= DEVICE_WINDOW).length;
+      const flagged = activeDevices > 1;
+      // FIX120：砍 KV 写入——只在“有变化”或“跨 UTC 天保底”时写 seen:/ev:，其余（同设备·同结果·同状态·同一天）
+      // 跳过（读照旧）。稳定用户≈每账号每天一次写；新设备 / 被拒 / 爆红翻转即时写，多设备检测不受影响。
+      const material = !prev.lastTs
+                    || result !== (prev.lastResult || "")
+                    || (result === "ok" && validDevice && !knownDevice)
+                    || flagged !== !!prev.flagged
+                    || Math.floor((prev.lastTs || 0) / 86400) !== Math.floor(ts / 86400);
+      if (!material) return;
       const seen = {
         account,
         lastDevice: validDevice || prev.lastDevice || "",
         devices,
         deviceCount: devices.length,
         activeDevices,
-        flagged: activeDevices > 1,                 // A：近 7 天 >1 台设备 → 授权台爆红（只标记、不拦截）
+        flagged,                                    // A：近 7 天 >1 台设备 → 授权台爆红（只标记、不拦截）
         lastTs: ts,
         firstTs: prev.firstTs || ts,
         count: (prev.count | 0) + 1,

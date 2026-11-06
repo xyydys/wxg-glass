@@ -2,6 +2,7 @@
 #define WXG_MESH_REFRACTION_H
 #include "WXGOptics.h"
 #include "WXGLensOptics.h"
+#include "WXGSoftEdge.h"
 /* FIX20: TEST9 refraction as a Core Animation mesh for render-server glass.
 
    A mesh transform on the backdrop layer is evaluated by the render server
@@ -58,6 +59,13 @@ typedef struct {
        otherwise widens / closes the strip between the smaller bar and the
        lens' rim (the plugin passes keep x (resting half height - half height)). */
     float shrinkExtra;
+    /* FIX114 I (zero = off): 边界过渡, TEST9's shift mixed toward the soft
+       one (WXGSoftEdge.h); the glass body only. */
+    float transition;
+    /* FIX114 J (each zero = FIX114 I's): the soft shift's shape
+       (WXGSoftShape: the most the outline is magnified, the curve's power,
+       the band in points). */
+    float softStretch,softPower,softWidth;
 } WXGMeshOptics;
 /* The full inset of the smaller bar, and the inset ramped by `along` (as
    WXGInnerInsetAlong, either sign). */
@@ -85,6 +93,27 @@ static inline float WXGMeshBandWidth(WXGMeshOptics o,WXGShapeSample f,float px,f
 }
 static inline float WXGMeshDispersionSide(WXGMeshOptics o) {return o.dispersionWidth>0.f?o.dispersionWidth:o.edgeWidth;}
 static inline float WXGMeshDispersionRatio(WXGMeshOptics o) {return o.dispersionTopRatio>0.f?o.dispersionTopRatio:o.topRatio;}
+/* FIX114 I: how far in the soft shift may reach (field units): half the
+   shape's short side (a capsule's middle line, where the shift from both
+   sides is 0) and a rounded rectangle's corner radius (deeper, its field's
+   normals meet on the diagonals, where no shift stays continuous). */
+static inline float WXGMeshSoftLimit(WXGMeshOptics o) {
+    float s=o.fieldScale>0.f?o.fieldScale:1.f;
+    float half=WXG_MIN(WXGMeshShapeWidth(o),WXGMeshShapeHeight(o))*.5f/s;
+    if(o.radius>0.f)half=WXG_MIN(half,WXG_MAX(o.radius,.5f));
+    return half;
+}
+static inline WXGSoftShape WXGMeshSoftShape(WXGMeshOptics o) {WXGSoftShape s={o.softStretch,o.softPower,o.softWidth};return s;}
+/* The soft shift's band for a side width (0 with 边界过渡 off). */
+static inline float WXGMeshSoftBand(WXGMeshOptics o,float width) {
+    return o.transition>0.f?WXGSoftBandShaped(width,o.refraction,WXGMeshSoftLimit(o),WXGMeshSoftShape(o)):0.f;
+}
+/* The inward shift at a signed distance for band `width`: TEST9's (FIX113
+   I's cancel), mixed toward the soft one by 边界过渡. Off, exactly as before. */
+static inline float WXGMeshOffset(WXGMeshOptics o,float distance,float width) {
+    if(!(o.transition>0.f))return WXGLensRefractionOffset(distance,width,o.refraction,o.cancel)*o.offsetScale;
+    return WXGTransitionOffsetShaped(distance,width,o.refraction,o.cancel,o.transition,WXGMeshSoftLimit(o),WXGMeshSoftShape(o))*o.offsetScale;
+}
 
 /* Dense, uniform samples across both edge bands; sparse interior. */
 static inline int WXGMeshAxis(float length,float band,int edgeSamples,float interiorStep,float *out,int capacity) {
@@ -162,7 +191,7 @@ static inline void WXGMeshSource(WXGMeshOptics o,float px,float py,float *sx,flo
     float x=(px-cx)/s,y=(py-cy)/s,w=WXGMeshShapeWidth(o)/s,h=WXGMeshShapeHeight(o)/s;
     WXGShapeSample f=o.radius>0.f?WXGRoundedOpticalField(x,y,w,h,o.radius):WXGCapsuleOpticalField(x,y,w,h);
     float width=WXGMeshBandWidth(o,f,px,py,o.edgeWidth,o.topRatio);
-    float off=WXGLensRefractionOffset(f.distance,width,o.refraction,o.cancel)*o.offsetScale;   /* FIX113 I */
+    float off=WXGMeshOffset(o,f.distance,width);   /* FIX113 I, FIX114 I */
     /* Channel shift exactly as wxgRGB: red at source+chroma, blue at source-chroma.
        FIX88: over the colour split's own band. */
     float dwidth=o.dispersionWidth>0.f || o.dispersionTopRatio>0.f?WXGMeshBandWidth(o,f,px,py,WXGMeshDispersionSide(o),WXGMeshDispersionRatio(o)):width;
@@ -176,7 +205,7 @@ static inline int WXGBuildRefractionMesh(WXGMeshOptics o,WXGMeshPoint *points,in
     enum { WXGMeshAxisCapacity=96 };
     float xs[WXGMeshAxisCapacity],ys[WXGMeshAxisCapacity];
     float s=o.fieldScale>0.f?o.fieldScale:1.f;
-    float edge=WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),1.f)*s,radius=(o.radius>0.f?o.radius:WXG_MIN(WXGMeshShapeWidth(o),WXGMeshShapeHeight(o))*.5f/s)*s;
+    float edge=WXG_MAX(WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),WXGMeshSoftBand(o,o.edgeWidth)),1.f)*s,radius=(o.radius>0.f?o.radius:WXG_MIN(WXGMeshShapeWidth(o),WXGMeshShapeHeight(o))*.5f/s)*s;
     /* Curved ends need resolution over the whole corner, straight sides over the band. */
     float px=o.padX>0.f?o.padX:0.f,py=o.padY>0.f?o.padY:0.f;   /* FIX113 H: the shape's edges lie that far in */
     int cx=WXGMeshAxis(o.width,px+WXG_MAX(edge,radius)+2.f,8,24.f,xs,WXGMeshAxisCapacity);
@@ -215,7 +244,7 @@ typedef struct { float cx,cy,nx,ny,u; int kind; } WXGContourSample; /* kind 0 st
    FIX88: the colour split over its own band width `dwidth`. */
 static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,float t,float channel) {
     float d=-t;
-    float off=WXGLensRefractionOffset(d,width,o.refraction,o.cancel)*o.offsetScale;   /* FIX113 I */
+    float off=WXGMeshOffset(o,d,width);   /* FIX113 I, FIX114 I */
     return t+off-channel*o.dispersion*wxgEdgeC(d,dwidth);
 }
 static inline float WXGMeshCurvature(WXGMeshOptics o,float width,float dwidth,float t) {
@@ -231,7 +260,7 @@ static inline float WXGMeshCurvature(WXGMeshOptics o,float width,float dwidth,fl
 static inline int WXGMeshRings(WXGMeshOptics o,float limit,float pad,WXGMeshQuality q,float *rings,int capacity) {
     float side=WXG_MAX(o.edgeWidth,.5f),top=o.topRatio>0.f?side*WXGOClamp(o.topRatio,.05f,1.f):side;
     float dside=WXG_MAX(WXGMeshDispersionSide(o),.5f),dratio=WXGMeshDispersionRatio(o),dtop=dratio>0.f?dside*WXGOClamp(dratio,.05f,1.f):dside;
-    float band=WXG_MIN(WXG_MAX(side,dside)+.75f,limit),err=WXG_MAX(q.ringError,.01f);
+    float band=WXG_MIN(WXG_MAX(WXG_MAX(side,dside),WXGMeshSoftBand(o,side))+.75f,limit),err=WXG_MAX(q.ringError,.01f);   // FIX114 I: and the soft band
     int n=0;rings[n++]=-pad;
     float t=0.f;
     while(t<band && n<capacity-2) {
@@ -353,6 +382,7 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
     /* Rings end 1.25 pt past the band (plain mapping there), never at the
        centre; a tiny shape stops 0.5 pt short of collapsing. */
     float band=WXG_MIN(WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),.5f)+.75f,limit);   // FIX88: and the colour split's band
+    if(o.transition>0.f)band=WXG_MIN(WXG_MAX(band,WXGMeshSoftBand(o,o.edgeWidth)+.75f),limit);   // FIX114 I: and the soft band
     float stop=WXG_MIN(band+1.25f,limit-.5f);
     /* FIX113 U: rings down past the smaller bar's outline (the bar's top /
        bottom from the shape's edge, plus its full inset), so the straight

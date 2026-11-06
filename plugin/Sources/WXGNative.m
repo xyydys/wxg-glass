@@ -2,6 +2,7 @@
 #import "WXGIconAlignment.h"
 #import "WXGMonochrome.h"
 #import "WXGInputWidthPolicy.h"
+#import <pthread.h>
 
 // An opt-in guard on MMGrowTextView ONLY. No UIView/CALayer global setters,
 // no child UITextView frame or textContainer writes, no forced layout in setters.
@@ -23,16 +24,48 @@ static BOOL WXGWidthBindingApplies(UIView *view,WXGInputWidthBinding *binding) {
     return binding && binding.state && !binding.writing && view.superview==binding.parent &&
         view.window && CGAffineTransformIsIdentity(view.transform) && WXGPluginEnabled() && WXGPreferences.shared.input;
 }
+// FIX115 A: overrides are installed and listed here (see WXGIntegration.h; B: they call what was there when installed).
+static NSMutableArray<NSDictionary *> *WXGOverrides;
+IMP WXGOwnImplementation(Class cls,SEL selector) {
+    if(!cls || !selector)return NULL;
+    unsigned int count=0;Method *methods=class_copyMethodList(cls,&count);IMP own=NULL;
+    for(unsigned int i=0;i<count;i++)if(method_getName(methods[i])==selector){own=method_getImplementation(methods[i]);break;}
+    free(methods);
+    return own;
+}
+void WXGInstallOverride(Class cls,SEL selector,IMP replacement,const char *types) {
+    if(!cls || !selector || !replacement)return;
+    BOOL added=class_addMethod(cls,selector,replacement,types);
+    if(!added)class_replaceMethod(cls,selector,replacement,types);
+    if(!WXGOverrides)WXGOverrides=[NSMutableArray array];
+    if(WXGOverrides.count<160)[WXGOverrides addObject:@{@"class":@(class_getName(cls)),@"selector":NSStringFromSelector(selector),
+        @"inherited":@(added),@"imp":[NSValue valueWithPointer:(const void *)replacement]}];
+}
+// Per override: whether the class still calls ours first (NO: something
+// replaced it on that class later, which then calls ours or not, its choice).
+NSArray<NSDictionary *> *WXGOverrideEvidence(void) {
+    NSMutableArray *list=[NSMutableArray array];
+    for(NSDictionary *o in WXGOverrides) {
+        Class cls=objc_getClass([o[@"class"] UTF8String]);SEL selector=NSSelectorFromString(o[@"selector"]);
+        IMP now=cls?WXGOwnImplementation(cls,selector):NULL;
+        [list addObject:@{@"method":[NSString stringWithFormat:@"%@.%@",o[@"class"],o[@"selector"]],
+            @"how":[o[@"inherited"] boolValue]?@"继承的方法（调用时向父类取当前实现）":@"类自己的方法（原地替换）",
+            @"oursOnTop":@(now==[o[@"imp"] pointerValue])}];
+    }
+    return list;
+}
 static void WXGInstallInputWidthHooks(void) {
     static dispatch_once_t once;dispatch_once(&once,^{
         Class cls=NSClassFromString(@"MMGrowTextView");if(!cls)return;
+        Class superclass=class_getSuperclass(cls);
         for(NSString *name in @[@"setFrame:",@"setBounds:"]) {
             SEL selector=NSSelectorFromString(name);Method method=class_getInstanceMethod(cls,selector);if(!method)continue;
             NSMethodSignature *signature=[NSMethodSignature signatureWithObjCTypes:method_getTypeEncoding(method)];
             if(signature.numberOfArguments!=3 || strcmp(signature.methodReturnType,@encode(void)) ||
                strcmp([signature getArgumentTypeAtIndex:2],@encode(CGRect)))continue;
-            IMP original=method_getImplementation(method);BOOL frame=[name isEqual:@"setFrame:"];
+            IMP own=WXGCapturedImplementation(cls,selector);BOOL frame=[name isEqual:@"setFrame:"];
             IMP replacement=imp_implementationWithBlock(^(UIView *view,CGRect incoming){
+                IMP original=WXGThrough(own,superclass,selector);
                 WXGInputWidthBinding *binding=objc_getAssociatedObject(view,&WXGInputWidthKey);
                 if(!WXGWidthBindingApplies(view,binding)){((void(*)(id,SEL,CGRect))original)(view,selector,incoming);return;}
                 CGRect accepted=incoming;
@@ -50,15 +83,15 @@ static void WXGInstallInputWidthHooks(void) {
                 @try {((void(*)(id,SEL,CGRect))original)(view,selector,accepted);}
                 @finally {binding.writing=NO;}
             });
-            if(!class_addMethod(cls,selector,replacement,method_getTypeEncoding(method)))
-                class_replaceMethod(cls,selector,replacement,method_getTypeEncoding(method));
+            WXGInstallOverride(cls,selector,replacement,method_getTypeEncoding(method));
         }
         // WeChat also lays out this one host via bounds + center. A frame-only
         // guard lets that path move the narrowed editor back to its native x.
         SEL selector=@selector(setCenter:);Method method=class_getInstanceMethod(cls,selector);
         if(method) {
-            IMP original=method_getImplementation(method);
+            IMP own=WXGCapturedImplementation(cls,selector);
             IMP replacement=imp_implementationWithBlock(^(UIView *view,CGPoint incoming){
+                IMP original=WXGThrough(own,superclass,selector);
                 WXGInputWidthBinding *binding=objc_getAssociatedObject(view,&WXGInputWidthKey);
                 if(!WXGWidthBindingApplies(view,binding)){((void(*)(id,SEL,CGPoint))original)(view,selector,incoming);return;}
                 CGPoint accepted=incoming;
@@ -71,8 +104,7 @@ static void WXGInstallInputWidthHooks(void) {
                 @try {((void(*)(id,SEL,CGPoint))original)(view,selector,accepted);}
                 @finally {binding.writing=NO;}
             });
-            if(!class_addMethod(cls,selector,replacement,method_getTypeEncoding(method)))
-                class_replaceMethod(cls,selector,replacement,method_getTypeEncoding(method));
+            WXGInstallOverride(cls,selector,replacement,method_getTypeEncoding(method));
         }
     });
 }
@@ -273,6 +305,15 @@ UIImage *WXGCropInk(UIImage *image,UIColor *tint) {
     _localTitle=_localNavButtons=YES;   // FIX108
     _localSearchThemeFirst=NO;_chatAvatarButton=YES;   // FIX109
 }
+- (void)resetToBuildDefaults {   // FIX115 H
+    WXGPreferences *builtIn=[[WXGPreferences alloc] initBuiltIn];NSDictionary *build=WXGBuildDefaultSection(@"integration");
+    for(NSString *k in [self keys]) {
+        if([@[@"enabled",@"homeSearch",@"perfMonitor",@"perfHUD"] containsObject:k])continue;
+        id v=build[k];if(![v isKindOfClass:NSNumber.class] || !isfinite([v doubleValue]))v=[builtIn valueForKey:k];
+        if(v)[self setValue:v forKey:k];
+    }
+    [self save];
+}
 // FIX114 G: the switches' built-in values only (nothing read or written).
 - (instancetype)initBuiltIn {
     if((self=[super init]))[self loadBuiltIn];
@@ -377,7 +418,7 @@ static void WXGInstallImagePaintGuard(void) {
             if(guard){guard.nativeImage=image;image=WXGTransparentImageLike(image);}
             ((void(*)(id,SEL,UIImage *))WXGOriginalSetImage)(view,@selector(setImage:),image);
         });
-        method_setImplementation(method,replacement);
+        WXGInstallOverride(UIImageView.class,@selector(setImage:),replacement,method_getTypeEncoding(method));   // UIImageView's own: in place, as before (FIX115 A: listed)
     });
 }
 static void WXGGuardImagePaint(UIImageView *view) {
@@ -403,6 +444,66 @@ static void WXGReleaseImagePaint(UIImageView *view) {
 // FIX47: when set, the background is painted this colour instead of cleared.
 @property(nonatomic,strong) UIColor *paintColor;
 @property(nonatomic,strong) CALayer *originalMask,*concealMask;
+@property(nonatomic) BOOL changedUnmask;               // FIX115 J
+@property(nonatomic) BOOL changedFillGuard;            // FIX115 L
+@property(nonatomic,strong) CALayer *unmaskedOriginal;
+// FIX115 Q: drawn round (a corner radius and clipping of the plugin's), restorably.
+@property(nonatomic) BOOL changedRound,roundMasks;
+@property(nonatomic) CGFloat roundRadius,roundOriginalRadius;
+@property(nonatomic,copy) NSString *roundCurve;
+// FIX115 Q (review): a button's (normal) title colour of the plugin's, restorably.
+@property(nonatomic) BOOL changedTitleColor;
+@property(nonatomic,strong) UIColor *titleNormal,*titleApplied;
+@end
+static char WXGUnmaskedOwnKey;   // FIX115 J: WeChat's own mask while unmask: has it off (WXGOwnMask)
+/* FIX115 K (user, 13:07: the coloured 完成 still cut to WeChat's rounded box):
+   WeChat can set its mask again after the plugin's layout hook (later in the
+   same layout), so taking it off there was not enough. While a layer's mask is
+   off for a glass, a mask WeChat sets is kept as its own (given back when the
+   glass goes) and not put on; the plugin's hiding masks pass. */
+static NSHashTable<CALayer *> *WXGUnmaskedLayers;
+static void (*WXGSetMaskOriginal)(id,SEL,CALayer *);
+static void WXGSetMaskGuarded(CALayer *layer,SEL cmd,CALayer *mask) {
+    if(mask && pthread_main_np() && [WXGUnmaskedLayers containsObject:layer] && ![mask.name isEqualToString:@"wxg.conceal"]) {
+        id view=layer.delegate;
+        if([view isKindOfClass:UIView.class])objc_setAssociatedObject(view,&WXGUnmaskedOwnKey,mask,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if(layer.mask)WXGSetMaskOriginal(layer,cmd,nil);   // (a hiding mask being replaced: replaced by nothing)
+        return;
+    }
+    WXGSetMaskOriginal(layer,cmd,mask);
+}
+static void WXGInstallMaskGuard(void) {
+    static dispatch_once_t once;dispatch_once(&once,^{
+        WXGUnmaskedLayers=[NSHashTable hashTableWithOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality];
+        Method m=class_getInstanceMethod(CALayer.class,@selector(setMask:));
+        if(m){WXGSetMaskOriginal=(void (*)(id,SEL,CALayer *))method_getImplementation(m);method_setImplementation(m,(IMP)WXGSetMaskGuarded);}
+    });
+}
+/* FIX115 L (user, 20:43, probe 20:31: 聊天背景's 完成 still showed WeChat's
+   faint fill (white 0.102) as a box round the capsule: WeChat paints the
+   button's fill again after the plugin cleared it, in the same frame). While
+   a coloured button's glass is there, a fill set on its layer is kept as
+   WeChat's (the glass's tint, given back when the glass goes) and the layer
+   shows none; a clear one (the plugin's) passes. */
+static NSHashTable<CALayer *> *WXGFillGuardedLayers;
+static char WXGGuardedFillKey;
+static void (*WXGSetLayerBackgroundOriginal)(id,SEL,CGColorRef);
+static void WXGSetLayerBackgroundGuarded(CALayer *layer,SEL cmd,CGColorRef color) {
+    if(color && CGColorGetAlpha(color)>0 && pthread_main_np() && [WXGFillGuardedLayers containsObject:layer]) {
+        objc_setAssociatedObject(layer,&WXGGuardedFillKey,[UIColor colorWithCGColor:color],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if(layer.backgroundColor)WXGSetLayerBackgroundOriginal(layer,cmd,NULL);
+        return;
+    }
+    WXGSetLayerBackgroundOriginal(layer,cmd,color);
+}
+static void WXGInstallFillGuard(void) {
+    static dispatch_once_t once;dispatch_once(&once,^{
+        WXGFillGuardedLayers=[NSHashTable hashTableWithOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality];
+        Method m=class_getInstanceMethod(CALayer.class,@selector(setBackgroundColor:));
+        if(m){WXGSetLayerBackgroundOriginal=(void (*)(id,SEL,CGColorRef))method_getImplementation(m);method_setImplementation(m,(IMP)WXGSetLayerBackgroundGuarded);}
+    });
+}
+@interface WXGViewState ()
 @property(nonatomic,strong) UIImage *originalImage,*adaptiveImage;
 @property(nonatomic) BOOL changedImagePaint;
 @property(nonatomic) BOOL changedImage;
@@ -438,11 +539,14 @@ void WXGInstallNativeIconGuard(void) {
     static dispatch_once_t once;dispatch_once(&once,^{
         // Only UIImageViews explicitly registered by MainFrameLeftBarView's
         // correction use this path. Other native/third-party images pass through.
-        Class cls=UIImageView.class;
+        // FIX115 B: what UIImageView had when installed (its own, or UIView's then).
+        Class cls=UIImageView.class,superclass=class_getSuperclass(cls);
         for(NSString *name in @[@"setFrame:",@"setBounds:"]) {
-            SEL sel=NSSelectorFromString(name);Method method=class_getInstanceMethod(cls,sel);IMP original=method_getImplementation(method);
+            SEL sel=NSSelectorFromString(name);Method method=class_getInstanceMethod(cls,sel);if(!method)continue;
+            IMP own=WXGCapturedImplementation(cls,sel);
             BOOL frame=[name isEqual:@"setFrame:"];
             IMP replacement=imp_implementationWithBlock(^(UIImageView *view,CGRect incoming){
+                IMP original=WXGThrough(own,superclass,sel);
                 WXGViewState *state=WXGLockedIcon(view);CGRect accepted=incoming;
                 if(state) {
                     if(frame && !CGRectEqualToRect(incoming,state.alignedFrame))[state updateNativeFrame:incoming];
@@ -454,10 +558,12 @@ void WXGInstallNativeIconGuard(void) {
                     else ((void(*)(id,SEL,CGRect))original)(view,sel,accepted);
                 }@finally {if(state)state.alignmentWriting=NO;}
             });
-            if(!class_addMethod(cls,sel,replacement,method_getTypeEncoding(method)))class_replaceMethod(cls,sel,replacement,method_getTypeEncoding(method));
+            WXGInstallOverride(cls,sel,replacement,method_getTypeEncoding(method));
         }
-        SEL sel=@selector(setCenter:);Method method=class_getInstanceMethod(cls,sel);IMP original=method_getImplementation(method);
+        SEL sel=@selector(setCenter:);Method method=class_getInstanceMethod(cls,sel);if(!method)return;
+        IMP own=WXGCapturedImplementation(cls,sel);
         IMP replacement=imp_implementationWithBlock(^(UIImageView *view,CGPoint incoming){
+            IMP original=WXGThrough(own,superclass,sel);
             WXGViewState *state=WXGLockedIcon(view);CGPoint accepted=incoming;
             if(state){accepted=CGPointMake(CGRectGetMidX(state.alignedFrame),CGRectGetMidY(state.alignedFrame));state.alignmentWriting=YES;}
             @try {
@@ -465,7 +571,7 @@ void WXGInstallNativeIconGuard(void) {
                 else ((void(*)(id,SEL,CGPoint))original)(view,sel,accepted);
             }@finally {if(state)state.alignmentWriting=NO;}
         });
-        if(!class_addMethod(cls,sel,replacement,method_getTypeEncoding(method)))class_replaceMethod(cls,sel,replacement,method_getTypeEncoding(method));
+        WXGInstallOverride(cls,sel,replacement,method_getTypeEncoding(method));
     });
 }
 @implementation WXGViewState
@@ -481,14 +587,36 @@ void WXGInstallNativeIconGuard(void) {
     if(_changedClips)v.clipsToBounds=_clips;
     if(_changedAlpha)v.alpha=_originalAlpha;
     if(_changedMask){if(v.layer.mask==_concealMask)v.layer.mask=_originalMask;v.accessibilityElementsHidden=_originalAccessibilityHidden;}
+    if(_changedUnmask) {   // FIX115 J (and laid out again: a button resized meanwhile reshapes its own mask)
+        [WXGUnmaskedLayers removeObject:v.layer];   // FIX115 K: WeChat's masks pass again
+        CALayer *own=objc_getAssociatedObject(v,&WXGUnmaskedOwnKey)?:_unmaskedOriginal;
+        objc_setAssociatedObject(v,&WXGUnmaskedOwnKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if(!v.layer.mask && own){v.layer.mask=own;[v setNeedsLayout];}
+    }
     if(_adaptiveImage && [v isKindOfClass:UIImageView.class]){UIImageView *iv=(id)v;if(iv.image==_adaptiveImage){iv.image=_originalImage;iv.tintColor=_originalTint;}}
     if(_changedLabelColor && [v isKindOfClass:UILabel.class] && [((UILabel *)v).textColor isEqual:UIColor.labelColor])((UILabel *)v).textColor=_nativeLabelColor;
+    if(_changedFillGuard) {   // FIX115 L: WeChat's last fill (set while guarded) is what goes back
+        [WXGFillGuardedLayers removeObject:v.layer];_changedFillGuard=NO;
+        UIColor *latest=objc_getAssociatedObject(v.layer,&WXGGuardedFillKey);
+        objc_setAssociatedObject(v.layer,&WXGGuardedFillKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if(latest && _changedPaint)_color=latest;
+    }
     if(_changedPaint){v.backgroundColor=_color;v.opaque=_opaque;v.layer.borderWidth=_borderWidth;v.layer.shadowOpacity=_shadowOpacity;}
     if(_changedEffect && [v isKindOfClass:UIVisualEffectView.class])((UIVisualEffectView *)v).effect=_effect;
     if(_changedImage && [v isKindOfClass:UIImageView.class])WXGReleaseImagePaint((UIImageView *)v);
     if(_changedContents && !_changedImage)v.layer.contents=_contents;
     if(_restoreGeometry && !CGRectEqualToRect(v.frame,_originalFrame)) v.frame=_originalFrame;
     if(_changedSublayerTransform){[CATransaction begin];[CATransaction setDisableActions:YES];v.layer.sublayerTransform=_originalSublayerTransform;[CATransaction commit];}
+    if(_changedTitleColor && [v isKindOfClass:UIButton.class]) {   // FIX115 Q (review)
+        UIButton *b=(UIButton *)v;
+        [b setTitleColor:_titleNormal forState:UIControlStateNormal];
+        _changedTitleColor=NO;
+    }
+    if(_changedRound) {   // FIX115 Q
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        v.layer.cornerRadius=_roundOriginalRadius;v.layer.masksToBounds=_roundMasks;if(_roundCurve)v.layer.cornerCurve=_roundCurve;
+        [CATransaction commit];_changedRound=NO;
+    }
 }
 @end
 @interface WXGLayerState : NSObject
@@ -531,13 +659,29 @@ static BOOL WXGContainsContent(UIView *root,NSArray<UIView *> *protected) {
         if(![view.tintColor isEqual:UIColor.labelColor])view.tintColor=UIColor.labelColor;
     }
 }
+// FIX114 V: another bag's hiding mask is never a view's own (two bags hiding
+// one view, the first one's mask would otherwise be put back as the original).
+// FIX115 J: while unmask: has WeChat's own mask off, that one is still the
+// view's own: a bag concealing the view meanwhile (the host taking over a
+// coloured title-bar button) puts it back, not nil.
+static CALayer *WXGOwnMask(UIView *v) {
+    CALayer *mask=v.layer.mask;
+    if(!mask)mask=objc_getAssociatedObject(v,&WXGUnmaskedOwnKey);
+    return [mask.name isEqualToString:@"wxg.conceal"]?nil:mask;
+}
 - (void)conceal:(UIView *)v {
     if(!v)return;WXGViewState *s=[self remember:v];
-    if(!s.changedMask){s.originalMask=v.layer.mask;s.originalAccessibilityHidden=v.accessibilityElementsHidden;s.concealMask=[CALayer layer];s.changedMask=YES;}
+    if(!s.changedMask){s.originalMask=WXGOwnMask(v);s.originalAccessibilityHidden=v.accessibilityElementsHidden;s.concealMask=[CALayer layer];s.concealMask.name=@"wxg.conceal";s.changedMask=YES;}
     // Keep native alpha/hidden/transform and their presentation animations intact.
     // An empty mask hides only the pixels replaced by a full TEST4 surface.
-    if(v.layer.mask!=s.concealMask){s.originalMask=v.layer.mask;v.layer.mask=s.concealMask;}
+    if(v.layer.mask!=s.concealMask){s.originalMask=WXGOwnMask(v);v.layer.mask=s.concealMask;}
     if(!v.accessibilityElementsHidden)v.accessibilityElementsHidden=YES;
+}
+- (void)unconceal:(UIView *)v {
+    WXGViewState *s=v?[_states objectForKey:v]:nil;if(!s.changedMask)return;
+    if(v.layer.mask==s.concealMask)v.layer.mask=s.originalMask;
+    v.accessibilityElementsHidden=s.originalAccessibilityHidden;
+    s.changedMask=NO;s.originalMask=nil;s.concealMask=nil;
 }
 - (void)adaptLabelColor:(UILabel *)label {
     if(!label)return;WXGViewState *s=[self remember:label];
@@ -564,13 +708,68 @@ static BOOL WXGContainsContent(UIView *root,NSArray<UIView *> *protected) {
     if(!v)return;WXGViewState *s=[self remember:v];
     // FIX114 C (review): the original taken when this bag first changes it, not
     // when the bag first met the view (another bag may have opened it since).
-    if(!s.changedClips){s.clips=v.clipsToBounds;s.changedClips=YES;}
+    if(!s.changedClips) {
+        // FIX114 M (review): a view a drop shadow holds open: its own value from there.
+        BOOL clips=v.clipsToBounds,without=NO;
+        if(WXGShadowAdoptOverflow(v,&without))clips=without;
+        s.clips=clips;s.changedClips=YES;
+    }
     if(v.clipsToBounds)v.clipsToBounds=NO;
+}
+// FIX115 J: the fill WeChat last gave a view this bag cleared (-clear: keeps
+// every later one it finds; the first one from when the bag met the view).
+- (UIColor *)nativeColorOf:(UIView *)v {
+    WXGViewState *s=v?[_states objectForKey:v]:nil;
+    UIColor *guarded=s.changedFillGuard?objc_getAssociatedObject(v.layer,&WXGGuardedFillKey):nil;   // FIX115 L: the latest of all
+    return guarded?:(s.changedPaint?s.color:v.backgroundColor);
+}
+// FIX115 L: the view's fill cleared, and kept clear against WeChat painting it again.
+- (void)guardFill:(UIView *)v {
+    if(!v || !pthread_main_np())return;
+    WXGViewState *s=[self remember:v];
+    if(!s.changedFillGuard){WXGInstallFillGuard();[WXGFillGuardedLayers addObject:v.layer];s.changedFillGuard=YES;}
+    [self clear:v];
+}
+// FIX115 J: never one of the plugin's hiding masks. (Setting a layer's mask
+// does not ask for a layout: WeChat itself sets this one in every layout.)
+- (void)unmask:(UIView *)v {
+    if(!v || !pthread_main_np())return;WXGViewState *s=[self remember:v];
+    WXGInstallMaskGuard();[WXGUnmaskedLayers addObject:v.layer];   // FIX115 K
+    CALayer *mask=v.layer.mask;
+    if(!mask || [mask.name isEqualToString:@"wxg.conceal"]){s.changedUnmask=YES;return;}
+    s.unmaskedOriginal=mask;v.layer.mask=nil;
+    objc_setAssociatedObject(v,&WXGUnmaskedOwnKey,mask,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    s.changedUnmask=YES;
+}
+// FIX115 Q: a view drawn round with this radius (its corner radius and
+// clipping; WeChat's own values back on restore; set again on reapply).
+- (void)round:(UIView *)v radius:(CGFloat)radius {
+    if(!v || !(radius>0))return;WXGViewState *s=[self remember:v];
+    if(!s.changedRound){s.changedRound=YES;s.roundOriginalRadius=v.layer.cornerRadius;s.roundMasks=v.layer.masksToBounds;s.roundCurve=v.layer.cornerCurve;}
+    s.roundRadius=radius;
+    if(fabs(v.layer.cornerRadius-radius)>.01 || !v.layer.masksToBounds || ![v.layer.cornerCurve isEqualToString:kCACornerCurveCircular]) {
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        v.layer.cornerRadius=radius;v.layer.masksToBounds=YES;v.layer.cornerCurve=kCACornerCurveCircular;
+        [CATransaction commit];
+    }
+}
+// FIX115 Q (review: UIButton sets its label's colour from its title colours
+// at every layout and state change, so the label's own colour does not hold):
+// the button's (normal) title colour itself, WeChat's back on
+// restore; one WeChat sets again is taken as its own and replaced on reapply.
+- (void)titleColor:(UIButton *)button color:(UIColor *)color {
+    if(![button isKindOfClass:UIButton.class] || !color)return;WXGViewState *s=[self remember:button];
+    UIColor *normal=[button titleColorForState:UIControlStateNormal];
+    if(!s.changedTitleColor){s.changedTitleColor=YES;s.titleNormal=normal;}
+    else if(normal && ![normal isEqual:s.titleApplied])s.titleNormal=normal;
+    s.titleApplied=color;
+    if(![normal isEqual:color])[button setTitleColor:color forState:UIControlStateNormal];
 }
 - (void)clear:(UIView *)v {
     if(!v)return;WXGViewState *s=[self remember:v];
     // Keep later native theme changes restorable as well (not our own paint).
     if(s.changedPaint && v.backgroundColor && CGColorGetAlpha(v.backgroundColor.CGColor)>0 && ![v.backgroundColor isEqual:s.paintColor])s.color=v.backgroundColor;
+    else if(s.changedPaint && !v.backgroundColor && !v.layer.backgroundColor)s.color=nil;   // FIX115 K (review): WeChat emptied it (the plugin only ever sets clear)
     if(v.layer.shadowOpacity>0)s.shadowOpacity=v.layer.shadowOpacity;
     s.changedPaint=YES;
     if(s.paintColor){if(![v.backgroundColor isEqual:s.paintColor])v.backgroundColor=s.paintColor;return;}
@@ -695,6 +894,9 @@ static BOOL WXGContainsContent(UIView *root,NSArray<UIView *> *protected) {
         UIView *view=s.view;if(!view)continue;
         if(s.changedClips && view.clipsToBounds)view.clipsToBounds=NO;
         if(s.changedMask)[self conceal:view];
+        if(s.changedUnmask && view.layer.mask)[self unmask:view];   // FIX115 J: one WeChat set again
+        if(s.changedRound)[self round:view radius:s.roundRadius];    // FIX115 Q
+        if(s.changedTitleColor && s.titleApplied && [view isKindOfClass:UIButton.class])[self titleColor:(UIButton *)view color:s.titleApplied];   // FIX115 Q
         if(s.changedLabelColor && [view isKindOfClass:UILabel.class])[self adaptLabelColor:(id)view];
         if(s.adaptiveImage && [view isKindOfClass:UIImageView.class])[self adaptMonochromeImage:(id)view];
         if(s.changedImagePaint && [view isKindOfClass:UIImageView.class])[self clearImagePaint:(id)view];

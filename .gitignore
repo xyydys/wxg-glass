@@ -6,6 +6,9 @@ plugin/obj/
 plugin/toolchain/
 **/*.deb
 **/*.dylib
+# FIX114 H: the curve simulator's mesh dumper (built from dump_mesh.c), Python caches
+plugin/tools/curve_sim/dump_mesh
+**/__pycache__/
 
 # ---- server (Cloudflare Worker) ----
 server/node_modules/

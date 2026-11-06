@@ -112,13 +112,35 @@ float3 wxgBody(texture2d<float> raw,texture2d<float> soft,texture2d<float> lensS
     float opacity=WXGMaterialOpacity(u.tintColor.a,u.appearance.y,wxgEdge(shape.distance,wxgVeilWidth(optical.edgeWidth,u)),u.motion.y);
     return saturate(mix(face,u.tintColor.rgb,opacity));
 }
+/* FIX114 Z (user: the dock's Telegram icons and the group bar's text in a
+   colour of their own (green) got fringes of other colours at the lens edge,
+   read as "the old blue"): splitting a coloured glyph into its red, green and
+   blue copies leaves, where only one copy covers, that one channel of the
+   glyph's colour over the others of what is under it (green: cyan on one
+   side, yellow on the other). A coloured glyph's fringes now keep its own
+   colour: the copy on the red side lighter, on the blue side deeper; grey,
+   black and white artwork (the resting icons, dark text) keeps the classic
+   split. Samples are premultiplied. */
+float wxgIconColourWeight(float4 r,float4 g,float4 b,thread float3 &colour) {
+    float4 c=g.a>=max(r.a,b.a)?g:(r.a>=b.a?r:b);
+    if(c.a<.004){colour=float3(0.);return 0.;}
+    colour=saturate(c.rgb/c.a);
+    float spread=max(colour.r,max(colour.g,colour.b))-min(colour.r,min(colour.g,colour.b));
+    return smoothstep(.12,.35,spread);
+}
 float3 wxgIcons(texture2d<float> icons,float2 source,float2 chroma,float3 face,
                  constant WXGUniforms &u) {
     float4 r=icons.sample(wxgSampler,(source+chroma)/u.viewport.xy);
     float4 g=icons.sample(wxgSampler,source/u.viewport.xy);
     float4 b=icons.sample(wxgSampler,(source-chroma)/u.viewport.xy);
     // Images contain premultiplied alpha; each refracted colour uses its own alpha.
-    return float3(r.r+face.r*(1.-r.a),g.g+face.g*(1.-g.a),b.b+face.b*(1.-b.a));
+    float3 split=float3(r.r+face.r*(1.-r.a),g.g+face.g*(1.-g.a),b.b+face.b*(1.-b.a));
+    float3 colour=float3(0.);float k=wxgIconColourWeight(r,g,b,colour);
+    if(k<=0.)return split;
+    float3 own=mix(face,mix(colour,float3(1.),.35),r.a*.6);
+    own=mix(own,colour*.82,b.a*.6);
+    own=mix(own,colour,g.a);
+    return mix(split,own,k);
 }
 // FIX18 render-server modes. This layer is composited by Core Animation over
 // a CABackdropLayer that the render server captures and blurs at DISPLAY time,
@@ -135,7 +157,14 @@ float4 wxgIconsOver(texture2d<float> icons,float2 source,float2 chroma,float4 ac
     float4 r=icons.sample(wxgSampler,(source+chroma)/u.viewport.xy);
     float4 g=icons.sample(wxgSampler,source/u.viewport.xy);
     float4 b=icons.sample(wxgSampler,(source-chroma)/u.viewport.xy);
-    return float4(r.r+acc.r*(1.-r.a),g.g+acc.g*(1.-g.a),b.b+acc.b*(1.-b.a),g.a+acc.a*(1.-g.a));
+    float4 split=float4(r.r+acc.r*(1.-r.a),g.g+acc.g*(1.-g.a),b.b+acc.b*(1.-b.a),g.a+acc.a*(1.-g.a));
+    float3 colour=float3(0.);float k=wxgIconColourWeight(r,g,b,colour);   // FIX114 Z
+    if(k<=0.)return split;
+    float lit=r.a*.6,deep=b.a*.6;
+    float4 own=wxgOver(float4(mix(colour,float3(1.),.35)*lit,lit),acc);
+    own=wxgOver(float4(colour*.82*deep,deep),own);
+    own=wxgOver(float4(colour*g.a,g.a),own);
+    return mix(split,own,k);
 }
 // FIX97: the bar seen through the render-server lens at screen point p: its
 // signed distance on screen (inset contour; < 0 inside), the bent sample and

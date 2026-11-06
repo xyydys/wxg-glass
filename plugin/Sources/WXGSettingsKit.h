@@ -3,6 +3,12 @@
 #import "WXGIntegration.h"
 
 FOUNDATION_EXPORT NSString * const WXGSettingsUIChanged;
+/* FIX115 H: every parameter and switch back to this build's defaults (the
+   standard set in WXGBuildProfile.h); the main switch, the two floating tool
+   buttons, wallpapers, avatar, accent colour and the person's own chat groups
+   stay. WXGConfirmResetAll asks first (on `page`), then runs `done`. */
+FOUNDATION_EXPORT void WXGResetAllSettingsToDefaults(void);
+FOUNDATION_EXPORT void WXGConfirmResetAll(UIViewController *page,void (^done)(void));
 
 /* Settings-page look: accent colour, card corner radius, wallpapers, avatar. */
 @interface WXGSettingsStore : NSObject

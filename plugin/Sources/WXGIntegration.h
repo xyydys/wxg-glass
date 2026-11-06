@@ -11,6 +11,30 @@ BOOL WXGNativeInputLayoutInProgress(void);
 #import <objc/runtime.h>
 #import <objc/message.h>
 
+/* FIX115 A (user: another plugin's theme icons, more than a hundred all over
+   WeChat, are gone while this one is installed): an override this plugin puts
+   on a class for a method the class only inherits (most of WeChat's views:
+   layoutSubviews / didMoveToWindow; UIImageView: setFrame: / setBounds: /
+   setCenter:) used to call the superclass's implementation as it was when the
+   override went in, at launch. A plugin that hooks the superclass after that
+   (UIView's layoutSubviews, setFrame: ...) was then skipped for every view of
+   that class, and for UIImageView that is every icon. Now:
+   WXGOwnImplementation is the class's own implementation (replaced in place,
+   called as before) or NULL (inherited), and the override calls
+   WXGThrough(own,superclass,selector): for an inherited method the
+   superclass's implementation as it is at that call, whoever hooked it.
+   FIX115 B (user, 02:54: A did not bring the other plugin's icons back, and
+   a white band showed behind the home title row): the overrides call what
+   was there when they went in again (WXGCapturedImplementation: the class's
+   own or the inherited one, as before A); A's list in the diagnostics stays. */
+FOUNDATION_EXPORT IMP WXGOwnImplementation(Class cls,SEL selector);
+static inline IMP WXGCapturedImplementation(Class cls,SEL selector) {
+    Method m=cls && selector?class_getInstanceMethod(cls,selector):NULL;return m?method_getImplementation(m):NULL;
+}
+static inline IMP WXGThrough(IMP own,Class superclass,SEL selector) {return own?:class_getMethodImplementation(superclass,selector);}
+// Adds the override (the class only inherits the method) or replaces the class's own.
+FOUNDATION_EXPORT void WXGInstallOverride(Class cls,SEL selector,IMP replacement,const char *types);
+FOUNDATION_EXPORT NSArray<NSDictionary *> *WXGOverrideEvidence(void);   // FIX115 A: what was installed, how; still ours on top?
 FOUNDATION_EXPORT void WXGClaimInputTool(UIView *tool,id owner);
 FOUNDATION_EXPORT void WXGReleaseInputTool(UIView *tool,id owner);
 FOUNDATION_EXPORT id WXGRead(id object,NSString *key);
@@ -37,6 +61,21 @@ void WXGRegisterBackdropView(WXGGlassView *view);
 UIView *WXGContentSourceForView(UIView *view);
 FOUNDATION_EXPORT void WXGBeginBackdropFrame(NSArray<WXGGlassView *> *views,BOOL moving,CFTimeInterval frameTime);
 FOUNDATION_EXPORT NSDictionary *WXGBackdropEvidence(void);
+FOUNDATION_EXPORT NSDictionary *WXGDropShadowEvidence(void);   // FIX114 M
+// FIX114 M (review): a view a drop shadow holds open, about to be opened by a
+// WXGStateBag: YES and its own clipsToBounds in *clipsWithout (the shadow
+// leaves it to that bag from then on); NO when no shadow holds it.
+FOUNDATION_EXPORT BOOL WXGShadowAdoptOverflow(UIView *view,BOOL *clipsWithout);
+// FIX115 K: a view held open (not clipping) for `holder` (weakly), with the shadows' count.
+FOUNDATION_EXPORT void WXGHoldClipOpen(UIView *view,id holder);
+FOUNDATION_EXPORT void WXGReleaseClipHolds(id holder);
+/* FIX114 R: the title-bar trace (WXGHost.m), recorded while the diagnostics
+   export button is on: on (callers build their text only then), a line for an
+   event, a line for `key` only when its text changed, a page's short tag. */
+FOUNDATION_EXPORT BOOL WXGNavTraceOn(void);
+FOUNDATION_EXPORT void WXGNavTraceEvent(NSString *text);
+FOUNDATION_EXPORT void WXGNavTraceEventOnce(NSString *key,NSString *text);
+FOUNDATION_EXPORT NSString *WXGNavTracePage(UIViewController *page);
 FOUNDATION_EXPORT void WXGInvalidateSharedBackdrop(void);
 /* FIX16: glass ticks issued between Begin/End are queued and run by
    WXGFlushDeferredGlassTicks after the Core Animation commit. */
@@ -104,6 +143,9 @@ FOUNDATION_EXPORT void WXGEdgeFadeSyncController(UIViewController *controller);
 @property(nonatomic) BOOL localSearchThemeFirst,chatAvatarButton;
 - (NSArray *)keys;
 - (void)save;
+// FIX115 H: every switch (and 整体大小) to this build's defaults, else the
+// built-in ones; not the main switch, 首页搜索 or the frame-rate logs.
+- (void)resetToBuildDefaults;
 @end
 
 /* FIX84: frame-rate log (WXGPerfMonitor.m). */
@@ -130,6 +172,12 @@ FOUNDATION_EXPORT void WXGTransitionPerfNoteMesh(void);
 FOUNDATION_EXPORT void WXGTransitionPerfCommitPhase(BOOL inside);   // Core Animation's commit starts / ends
 FOUNDATION_EXPORT void WXGTransitionPerfLabel(NSString *label,double milliseconds);   // the plugin's time by part
 FOUNDATION_EXPORT NSDictionary *WXGTransitionPerfEvidence(void);
+// FIX119 A: every scroll recorded in full (WXGPerfMonitor.m); the glass' GPU time and submissions
+FOUNDATION_EXPORT void WXGScrollPerfInstall(void);
+FOUNDATION_EXPORT void WXGStallSamplerArm(double seconds,NSString *label);   // FIX119 D: sample the main thread's stalls for a while
+FOUNDATION_EXPORT void WXGStallSamplerPause(BOOL paused);                     // FIX119 E
+FOUNDATION_EXPORT void WXGPerfNoteGPU(double milliseconds);
+FOUNDATION_EXPORT void WXGPerfNoteGlassSubmit(void);
 FOUNDATION_EXPORT void WXGTransitionPerfShowReport(UIViewController *from);
 FOUNDATION_EXPORT BOOL WXGHostTimingPlugin(void);                 // inside the host's timed tick / refresh
 FOUNDATION_EXPORT NSDictionary *WXGPerfEvidence(void);             // summary for the diagnostics
@@ -169,11 +217,23 @@ void WXGInstallNativeIconGuard(void);
 - (WXGViewState *)remember:(UIView *)view;
 - (void)hide:(UIView *)view;
 - (void)conceal:(UIView *)view;
+- (void)unconceal:(UIView *)view;   // FIX114 S: shown again (its mask as it was), the rest of its state kept
 - (void)adaptMonochromeImage:(UIImageView *)view;
 - (void)adaptLabelColor:(UILabel *)view;
 - (void)clear:(UIView *)view;
 - (void)paint:(UIView *)view color:(UIColor *)color;   // FIX47
 - (void)allowOverflow:(UIView *)view;
+// FIX115 J: the fill WeChat last gave a view this bag cleared; a view rounded
+// by a mask layer of its own (WeChat's coloured 完成): the mask off, restorably
+// (one WeChat sets again goes again on reapply).
+- (UIColor *)nativeColorOf:(UIView *)view;
+- (void)unmask:(UIView *)view;
+- (void)round:(UIView *)view radius:(CGFloat)radius;   // FIX115 Q: drawn round, restorably
+- (void)titleColor:(UIButton *)button color:(UIColor *)color;   // FIX115 Q: a button's title colour, restorably
+// FIX115 L: cleared, and its layer kept without a fill against WeChat painting it again (restorably).
+- (void)guardFill:(UIView *)view;
+// FIX115 M: a layer of no view hidden (restorably).
+- (void)hideDecorationLayer:(CALayer *)layer;
 - (void)clearImagePaint:(UIImageView *)view;
 - (BOOL)centerNativeImage:(UIImageView *)image inHost:(UIView *)host maximumInk:(CGFloat)maximum;
 // FIX113 E: everything inside a native view drawn `dx` points to the right
@@ -200,6 +260,19 @@ void WXGInstallNativeIconGuard(void);
 @property(nonatomic,weak) UIViewController *motionOwner;
 @property(nonatomic) CGRect restingFrame;
 @property(nonatomic) BOOL followsNative,nativeTransitionActive;
+// FIX114 S: through a push / pop it stays where it is laid out (fading with
+// the native view as before, never moving with it). FIX114 T: and it does not
+// blink when WeChat swaps that view (out of the window for a moment, or at 0
+// opacity for one frame): it keeps showing, its opacity changing as a fade.
+@property(nonatomic) BOOL holdsPlace;
+// FIX114 V: a copy of a native control's content (WeChat's icon / text /
+// count as WeChat draws them) shown in this glass instead of its own icon and
+// text, at `nativeContentOrigin` in the glass (the control's place relative to
+// it); the signature and source it was copied from (copied again on a change).
+@property(nonatomic,strong) UIView *nativeContent;
+@property(nonatomic) CGPoint nativeContentOrigin;
+@property(nonatomic) NSUInteger nativeContentSignature;
+@property(nonatomic,weak) UIView *nativeContentSource;
 // FIX93: following the native view's opacity, never below this (the home
 // page pulled down: WeChat fades its own title bar, the glass stays); and the
 // native opacity / hidden state last read (diagnostics).
@@ -231,6 +304,12 @@ void WXGInstallNativeIconGuard(void);
 @property(nonatomic,strong) UIColor *iconTint;
 @property(nonatomic,copy) NSString *role;
 @property(nonatomic,readonly) CGRect materialRect;
+// FIX114 M: a small grey symbol right after the title (the avatar mode's
+// capsule: iOS 26's chevron), the text and it centred together; nil: none.
+// Its height (pt) and the gap to the text.
+@property(nonatomic,strong) UIImage *trailingSymbol;
+@property(nonatomic) CGFloat trailingSymbolHeight,trailingGap;
+@property(nonatomic) CGFloat trailingBias;   // FIX114 O: the text and symbol moved right (less room after the symbol)
 - (void)placeMaterial:(CGRect)rect inParent:(UIView *)parent;
 - (void)setImage:(UIImage *)image title:(NSString *)title count:(NSString *)count;
 - (void)setNativeIconSource:(UIView *)source preservingColors:(BOOL)preserve;
@@ -267,7 +346,13 @@ void WXGInstallNativeIconGuard(void);
 - (void)releaseTransientResources;   // memory warning
 - (void)restore;
 - (NSDictionary *)evidence;
+- (NSArray<UIView *> *)navButtonAnchors;   // FIX114 T: title-bar buttons with our glass on screen (the trace)
 @end
+// FIX114 V: a WeChat title-bar button's glass as the local glass sizes it (in
+// the button; CGRectNull: nothing to put one behind), and whether it paints
+// its own (a green 完成: left as WeChat has it).
+FOUNDATION_EXPORT CGRect WXGNativeNavGlassRect(UIView *button);
+FOUNDATION_EXPORT BOOL WXGNativeNavButtonFilled(UIView *button);
 // FIX112: the page's title capsule (its title view's text, else the bar's own
 // title, as the local glass draws it) in the window; CGRectNull: no title text.
 FOUNDATION_EXPORT CGRect WXGLocalTitleCapsuleRect(UINavigationBar *bar,UIView *titleView,UIWindow *window);
@@ -276,6 +361,17 @@ FOUNDATION_EXPORT CGRect WXGLocalTitleCapsuleRect(UINavigationBar *bar,UIView *t
    (WXGChatSegments.m): over the list's search bar on the 微信 page, the
    dock's lens on four segments (a demo grouping), WeChat's bar faded out and
    given back while its own search uses it or when off. */
+/* FIX118 A: the 我 page's header as Telegram's profile (WXGMeHeader.m, WXGMeMetaball.h). */
+@interface WXGMeHeader : NSObject
++ (instancetype)shared;
+- (NSDictionary *)evidence;
+// FIX118 B: the banner's video (picked from the photo library, kept in the app's Library)
+- (void)pickBannerVideoFrom:(UIViewController *)controller;
+- (void)clearBannerVideo;
+- (NSString *)bannerVideoName;
+@end
+FOUNDATION_EXPORT NSString *WXGSelfAvatarState(void);   // FIX118 B: where the 我 page's photo came from
+
 @interface WXGChatSegments : NSObject
 + (instancetype)shared;
 - (BOOL)wanted;   // the switch, the plugin on and authorised, render-server mode
@@ -355,6 +451,18 @@ FOUNDATION_EXPORT NSString *WXGChatNameSummary(void);   // FIX113 Z: where the n
 // FIX108: a title-bar button the host has no glass for and leaves native (web
 // pages, pages presented over the tabs) while the title-bar setting is on.
 - (BOOL)leavesNavigationControlNative:(UIView *)control;
+// FIX114 V: a chat's title view while the plugin draws chat titles (the avatar
+// mode): hidden wherever it is (a new one WeChat makes as a swipe back starts
+// too); YES when it is (no capsule of the local glass behind it then).
+- (BOOL)concealsChatTitleView:(UIView *)view;
+// FIX114 M: WeChat's search page opened at once from `page` (its own search
+// entry, as its search button does); NO when that page has none.
+- (BOOL)openWeChatSearchOn:(UIViewController *)page;
+// FIX116 A: the glass of the home page's "+" in `window` (CGRectNull: the
+// plugin has none there); the plus menu's icons are put in line with it.
+- (CGRect)homePlusRectInWindow:(UIWindow *)window;
+// FIX118 A: the user's own photo (HD, from the contact's address; kept on disk); nil while it downloads.
+- (UIImage *)selfAvatarPhoto;
 @end
 
 FOUNDATION_EXPORT UIViewController *WXGIntegrationSettings(void);

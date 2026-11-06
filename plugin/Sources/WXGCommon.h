@@ -7,8 +7,6 @@
 #import "WXGRenderPolicy.h"
 
 FOUNDATION_EXPORT NSString * const WXGSettingsChanged;
-// FIX113: 对外发布包（CI 的 build-obf 传 -DWXG_RELEASE=1）里 WXGLog 的函数体为空——
-// 不再在运行时往 syslog 打授权/流程日志。保持真函数（非空操作宏），-Werror 不误报未使用。
 FOUNDATION_EXPORT void WXGLog(NSString *format, ...) NS_FORMAT_FUNCTION(1,2);
 FOUNDATION_EXPORT CFTimeInterval WXGSecondsSinceLoad(void);   // FIX99: since the plugin loaded
 FOUNDATION_EXPORT NSString *WXGLogText(void);
@@ -49,6 +47,7 @@ FOUNDATION_EXPORT NSString *WXGBuildLabel(void);
 // FIX114 C: the title row's margin to the screen's sides (顶部按钮离屏幕两边)
 // and its move down (顶部按钮往下移), in points for a metrics scale.
 FOUNDATION_EXPORT CGFloat WXGTitleRowEdge(double scale);
+FOUNDATION_EXPORT CGFloat WXGFinderRowEdge(double scale);   // FIX115 S: 视频号's pages' margin to the screen's sides
 FOUNDATION_EXPORT CGFloat WXGTitleRowOffset(double scale);
 FOUNDATION_EXPORT NSArray<NSString *> *WXGHiddenSettingsModules(void);
 FOUNDATION_EXPORT NSDictionary *WXGBuildDefaultOptics(void);
@@ -64,13 +63,28 @@ FOUNDATION_EXPORT NSDictionary *WXGDefaultsAdoption(void);
 
 // FIX58: what the dock and the other glass set separately.
 typedef struct { CGFloat refraction,dispersion,edgeWidth,blur,blurCoverage; } WXGScopeOptics;
+// FIX114 I / J: a range's 边界过渡 (0..1) and its soft shift's shape
+// (WXGSoftEdge.h): the band (pt, 0 = automatic), the most the outline is
+// magnified, the curve's power.
+typedef struct { CGFloat amount,width,stretch,curve; } WXGTransitionSettings;
+// FIX114 J: what a range's backdrop does to the page's colours before
+// refraction (Telegram-like glass taking its colour from what is behind it):
+// saturation (1 = as is; TEST9's 1.05 by default) and brightness (added).
+typedef struct { CGFloat saturation,brightness; } WXGBackdropTone;
+// FIX114 K: a range's drop shadow (WXGDropShadow.h): strength (this
+// appearance's), sigma of its blur, how far down, how much larger (pt).
+typedef struct { CGFloat opacity,blur,offset,spread; } WXGDropShadowSettings;
+// FIX114 L: the four pages with a range picker; a range can use another
+// range's settings of a page (共用).
+typedef NS_ENUM(NSInteger,WXGSharePage) {WXGSharePageRefraction=0,WXGSharePageBlur=1,WXGSharePageMaterial=2,WXGSharePageBorder=3};
 typedef struct { CGFloat opacity,width,brightness,fade; } WXGScopeRim;
 // FIX85: the three groups of glass with their own optics and rims (the
 // liquid chat bubbles are the third), and the three rim styles.
 typedef NS_ENUM(NSInteger,WXGGlassScope) {WXGGlassScopeOther=0,WXGGlassScopeDock=1,WXGGlassScopeBubble=2,
     WXGGlassScopeSegment=3,WXGGlassScopeCard=4,   // FIX113 O: 分组 (the chat list's segment bar), 设置页 (these settings)
     WXGGlassScopeLens=5,   // FIX113 X: 透镜 (the lens' border of the dock; 边框与渐隐 only)
-    WXGGlassScopeSegmentLens=6};   // FIX114 C: 分组透镜 (the segment bar's lens border, its own since)
+    WXGGlassScopeSegmentLens=6,   // FIX114 C: 分组透镜 (the segment bar's lens border, its own since)
+    WXGGlassScopeFinder=7};   // FIX115 S: 视频号 (the video feed's capsules' border; 边框与渐隐 only)
 // FIX113 O: a lens's parameters (the dock's, or the segment bar's own); the
 // rim and tint values of the appearance asked for.
 typedef struct {
@@ -89,6 +103,10 @@ typedef struct {
 // frames of a tab (0 Chats, 1 Contacts, 2 Calls, 3 Settings; template
 // images, 60 fps), one frame tinted (0 = resting).
 FOUNDATION_EXPORT BOOL WXGTelegramTabIconsOn(void);
+// FIX115 D: 底栏主题优先 (the dock's glass and positions only; its icons and
+// titles as WeChat / a theme shows them: their pictures at their shown size,
+// their colours; the Telegram set and the accent colour not used).
+FOUNDATION_EXPORT BOOL WXGDockThemeFirst(void);
 FOUNDATION_EXPORT NSInteger WXGTelegramFrameCount(NSInteger tab);
 FOUNDATION_EXPORT NSArray<UIImage *> *WXGTelegramFrames(NSInteger tab);
 FOUNDATION_EXPORT UIImage *WXGTelegramTabImage(NSInteger tab,NSInteger frame,UIColor *color);
@@ -239,6 +257,11 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 // FIX85: by scope; the rim values are the current style's own (classic,
 // colour from the background, or iOS 27), its colour the classic or iOS 27 one.
 - (WXGScopeOptics)opticsForScope:(WXGGlassScope)scope;
+- (WXGTransitionSettings)refractionTransitionForScope:(WXGGlassScope)scope;   // FIX114 I / J: 边界过渡 (amount 0 = TEST9 as before)
+- (WXGBackdropTone)backdropToneForScope:(WXGGlassScope)scope;   // FIX114 J
+- (WXGDropShadowSettings)dropShadowForScope:(WXGGlassScope)scope dark:(BOOL)dark;   // FIX114 K
+- (WXGGlassScope)sharedScope:(WXGGlassScope)scope page:(WXGSharePage)page;   // FIX114 L: the range whose settings of that page it uses
+- (NSString *)rimSampleOverlayHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;   // FIX114 J: 取自背景's colour overlay (alpha 0 = none)
 - (WXGScopeRim)rimForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (NSString *)rimHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (WXGRimGlowShape)rimGlowForScope:(WXGGlassScope)scope index:(NSInteger)index dark:(BOOL)dark;   // FIX89: highlight 0 or 1 (FIX113 Z: of that appearance)
@@ -320,6 +343,7 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (void)save;
 - (void)reset;
 - (void)resetKeys:(NSArray<NSString *> *)keys;   // FIX81: one settings page
+- (void)resetAllKeeping:(NSArray<NSString *> *)kept;   // FIX115 H: every key to this build's defaults but these
 - (void)segmentFromDock;   // FIX113 P: the segment bar's glass, lens, pill and titles from the dock's values now (saved)
 - (BOOL)reloadSharedParameters;
 - (NSDictionary *)parameterValues;
@@ -385,6 +409,9 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 // FIX86: the rim always takes its dark-appearance settings (视频号's buttons,
 // over video whatever the system appearance).
 @property(nonatomic) BOOL rimAlwaysDark;
+// FIX114 K: no drop shadow for this glass whatever its range sets (a host
+// that draws its own or where a shadow cannot fit).
+@property(nonatomic) BOOL dropShadowOff;
 // FIX88: for the dock's tap animation: this glass's backdrop group (its layers
 // share one capture of the page behind it, without this glass's own veil;
 // nil outside render-server mode), the veil's colour as drawn, and the bar
@@ -412,6 +439,7 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 // segment bar (a dock surface: the lens, but its own range and lens
 // parameters), 设置页 for the settings pages' cards and buttons.
 @property(nonatomic) NSInteger glassScopeOverride;
+@property(nonatomic) NSInteger rimScopeOverride;   // FIX115 S: its border from this range (-1: its glass range's)
 // FIX113 N: the resting selection (the segment bar's pill): this colour with
 // its opacity instead of the selection colour of the settings.
 @property(nonatomic,strong) UIColor *selectionOverride;
@@ -428,6 +456,24 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 @property(nonatomic,copy) void (^onReady)(BOOL ready);
 @property(nonatomic,copy) void (^onFirstFrame)(void);
 @property(nonatomic,readonly) BOOL hasPresentedFrame;
+// FIX114 Y: its drop shadow never opens WeChat's clipping views above it (the
+// menus: their own rounded containers clip square backgrounds and shadows,
+// which showed as grey squares at the corners once opened).
+@property(nonatomic) BOOL keepsAncestorClips;
+/* FIX115 B (user, 02:54 screenshots, and the same at 01:25 on X: grey corners
+   at the long-press and "+" menus; measured: a soft grey only inside the
+   menu's own rectangle, around the glass's larger rounded corners, nothing
+   outside it): this glass's own drop shadow, cut by the menu's container (the
+   long-press menu's 8 pt rounded content view, the "+" menu's picture view),
+   both clipping. L/M never opened them: the walk up stopped at the first view
+   over 220 pt high, which was the plugin's own surface around the glass (made
+   40 pt larger each side for the shadow: 226 / 292 pt); Y then opened nothing.
+   With a root set: every clipping view from the glass up to and including the
+   root that cuts the shadow is opened and held (any height; the plugin's own
+   views never stop the walk), nothing above the root; a fade of the root
+   (alpha) does not let them go, only hiding or leaving the window. Their
+   paint was cleared (Z, the decorations' bag), so only the shadow shows. */
+@property(nonatomic,weak) UIView *shadowClipRoot;
 @property(nonatomic,readonly) BOOL ready;
 @property(nonatomic,readonly) NSString *diagnostics;
 @property(nonatomic,readonly) NSDictionary *layerEvidence;

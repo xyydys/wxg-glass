@@ -28,7 +28,7 @@ being replaced becomes the previous one."""
 import json, math, pathlib, re, subprocess, sys
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-SKIP_CONFIG = {"enabled"}
+SKIP_CONFIG = {"enabled", "diagnosticsFloat", "settingsFloat"}   # FIX115 H: the floating tool buttons are never a build's default
 SKIP_INTEGRATION = {"enabled", "homeSearch", "perfMonitor", "perfHUD"}
 
 

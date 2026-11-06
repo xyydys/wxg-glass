@@ -2,6 +2,17 @@
 #import "WXGFrameStats.h"
 #import <mach/mach.h>
 #import <sys/utsname.h>
+#import <Metal/Metal.h>
+#import <QuartzCore/CAMetalLayer.h>
+#import <os/lock.h>
+#import <sys/sysctl.h>
+#import <unistd.h>
+#import <mach/mach_time.h>
+void WXGStallSamplerArm(double seconds,NSString *label);   // FIX119 D (at the end of this file)
+static void WXGStallInstall(void);
+static NSString *WXGStallReportText(void);
+static NSDictionary *WXGStallEvidence(void);
+static BOOL WXGStallNamingOff;   // (the frame monitor's own save every 15 s: no naming, which takes a while)
 
 /* FIX84: 帧率检测 (基本设置 → 帧率与参数).
    - Measure: a display link of its own (the screen's fastest rate), running
@@ -27,7 +38,24 @@ static BOOL WXGPerfRunning;
 // FIX113 Z: the page-switch log (below): the last switch for the capsule, its report.
 static NSDictionary *WXGTransitionLastFinished;static CFTimeInterval WXGTransitionLastFinishedAt;
 static NSString *WXGTransitionReportText(void);
+static NSString *WXGScrollReportText(void);
 static double WXGPerfFrameWork;   // the plugin's main-thread ms since the last frame
+// FIX119 A: the plugin's time by part in the current second (while the monitor runs), and the glass' GPU time
+static NSMutableDictionary<NSString *,NSNumber *> *WXGPerfSecondParts;
+static double WXGPerfSecondGPU,WXGPerfGPUTotal;static NSUInteger WXGPerfSecondDraws,WXGPerfGPUDraws,WXGPerfGlassSubmits;
+static void WXGPerfSecondPart(const char *label,double ms) {
+    if(!WXGPerfRunning || !(ms>0))return;
+    if(!WXGPerfSecondParts)WXGPerfSecondParts=[NSMutableDictionary dictionary];
+    NSString *key=@(label?:"other");WXGPerfSecondParts[key]=@(WXGPerfSecondParts[key].doubleValue+ms);
+}
+static void WXGScrollNoteGPU(double ms);
+void WXGPerfNoteGPU(double ms) {   // main thread: one glass frame's GPU time, as it completed
+    if(!(ms>=0) || !isfinite(ms))return;
+    WXGPerfGPUTotal+=ms;++WXGPerfGPUDraws;
+    if(WXGPerfRunning){WXGPerfSecondGPU+=ms;++WXGPerfSecondDraws;}
+    WXGScrollNoteGPU(ms);
+}
+void WXGPerfNoteGlassSubmit(void) {++WXGPerfGlassSubmits;}
 void WXGPerfNotePluginWork(double milliseconds) {if(WXGPerfRunning && milliseconds>0 && isfinite(milliseconds))WXGPerfFrameWork+=milliseconds;}
 BOOL WXGPerfActive(void) {return WXGPerfRunning;}
 void WXGPerfTimePluginWorkAs(const char *label,void (NS_NOESCAPE ^work)(void)) {
@@ -47,6 +75,7 @@ void WXGPerfTimePluginWorkAs(const char *label,void (NS_NOESCAPE ^work)(void)) {
     double ms=(CACurrentMediaTime()-begin)*1000;
     if(WXGPerfRunning)WXGPerfFrameWork+=ms;
     double spent=ms-(WXGProfileOursTotal()-inner);
+    WXGPerfSecondPart(label,spent);   // FIX119 A
     if(spent>0)WXGProfileAdd(WXGProfileHooks,spent);
     if(WXGTransitionPerfOn && spent>0)WXGTransitionPerfLabel(@(label?:"other"),spent);   // FIX113 Z
 }
@@ -300,6 +329,16 @@ static NSString *WXGPerfPageName(UIViewController *vc) {
             @"scroll":@(WXGRound(_secondScroll/_second.frames,.01)),@"page":_page?:@"未知",@"pluginMS":@(WXGRound(_second.pluginMS,.01)),
             @"plugin":@(WXGPluginEnabled()),@"thermal":@((NSInteger)process.thermalState),@"lowPower":@(process.lowPowerModeEnabled),
             @"memMB":@(WXGRound(_footprint,.1))};
+        // FIX119 A: the plugin's parts this second (the five largest) and the glass' GPU time
+        if(WXGPerfSecondParts.count || WXGPerfSecondDraws) {
+            NSMutableDictionary *full=[record mutableCopy];
+            NSArray *keys=[WXGPerfSecondParts keysSortedByValueUsingComparator:^NSComparisonResult(NSNumber *a,NSNumber *b){return [b compare:a];}];
+            NSMutableDictionary *parts=[NSMutableDictionary dictionary];
+            for(NSString *k in [keys subarrayWithRange:NSMakeRange(0,MIN((NSUInteger)5,keys.count))])parts[k]=@(WXGRound(WXGPerfSecondParts[k].doubleValue,.01));
+            full[@"parts"]=parts;full[@"gpuMS"]=@(WXGRound(WXGPerfSecondGPU,.01));full[@"glassDraws"]=@(WXGPerfSecondDraws);
+            record=full;
+        }
+        [WXGPerfSecondParts removeAllObjects];WXGPerfSecondGPU=0;WXGPerfSecondDraws=0;
         [_seconds addObject:record];
         if(_seconds.count>WXGPerfSecondsKept)[_seconds removeObjectAtIndex:0];
     }
@@ -347,7 +386,7 @@ static NSDictionary *WXGPerfStatsDictionary(const WXGFrameStats *s) {
              @"hitches":_events.copy,@"worstFrames":_worst.copy,@"seconds":recent.copy,@"pageSwitches":WXGTransitionPerfEvidence()};   // FIX113 Z
 }
 - (void)save {
-    NSDictionary *snapshot=[self snapshotWithSeconds:0];_lastSave=CACurrentMediaTime();
+    WXGStallNamingOff=YES;NSDictionary *snapshot=[self snapshotWithSeconds:0];WXGStallNamingOff=NO;_lastSave=CACurrentMediaTime();
     NSString *path=WXGPerfFile(@"perf_current.json");
     dispatch_async(WXGPerfQueue(),^{
         NSData *data=[NSJSONSerialization dataWithJSONObject:snapshot options:0 error:nil];
@@ -407,12 +446,14 @@ static void WXGPerfAppendSession(NSMutableString *text,NSDictionary *session,BOO
         WXGPerfAppendSession(text,_previous,NO);
     }
     [text appendString:@"\n页面切换（FIX113 Z）\n"];[text appendString:WXGTransitionReportText()];
+    [text appendString:@"\n滑动（FIX119 A）\n"];[text appendString:WXGScrollReportText()];
+    [text appendString:@"\n主线程卡住时在做什么（FIX119 D 采样）\n"];[text appendString:WXGStallReportText()];
     [text appendString:@"\n说明\n"
         "  掉帧：应该刷新却没有新画面的次数占全部刷新的比例。\n"
         "  卡顿 ms/s：每秒里画面多等的时间。低于 5 很流畅，5–10 能感觉到，超过 10 明显卡。\n"
         "  p95：95% 的帧在这个时间内完成（60 Hz 是 17 ms，120 Hz 是 9 ms）。\n"
         "  插件：本插件在主线程上的时间（每帧刷新玻璃、页面适配、渐隐跟随滚动）。\n"
-        "  只量主线程能否按时出帧；系统渲染（玻璃本身的合成）慢不在这里。\n"];
+        "  这里只量主线程能否按时出帧；系统合成（玻璃本身的模糊）跟不上的，看下面“滑动”里的“屏幕掉帧”（FIX119 A）。\n"];
     return text;
 }
 
@@ -493,6 +534,21 @@ static void WXGPerfAppendSession(NSMutableString *text,NSDictionary *session,BOO
 BOOL WXGTransitionPerfOn=NO;
 static const NSUInteger WXGTransitionKept=40;
 static NSMutableArray<NSDictionary *> *WXGTransitionRecords;
+/* FIX119 C (user: "如果有解决不了的应该也就是底栏冷启动切换的问题，但是可能未必抓到"):
+   the first tab switches after WeChat started, kept apart (the last 40 have
+   pushed them out by the time a report is exported), each with the seconds
+   since the process started. */
+static NSMutableArray<NSDictionary *> *WXGTransitionColdStart;
+static const NSUInteger WXGTransitionColdKept=12;
+static double WXGPerfSecondsSinceLaunch(void) {
+    static double start=0;
+    if(start<=0) {
+        struct kinfo_proc info;size_t size=sizeof info;int mib[4]={CTL_KERN,KERN_PROC,KERN_PROC_PID,getpid()};
+        memset(&info,0,sizeof info);
+        if(sysctl(mib,4,&info,&size,NULL,0)==0 && info.kp_proc.p_starttime.tv_sec>0)start=info.kp_proc.p_starttime.tv_sec+info.kp_proc.p_starttime.tv_usec/1e6;
+    }
+    return start>0?NSDate.date.timeIntervalSince1970-start:-1;
+}
 static NSString *WXGTransitionLastPage;
 static NSString *WXGTransitionCallKind;static CFTimeInterval WXGTransitionCallStart,WXGTransitionCallEnd;
 typedef struct {double slots[WXGProfileSlotCount],plugin,idle,pluginInCommit;unsigned meshes;} WXGTransitionWork;
@@ -558,8 +614,10 @@ static UIViewController *WXGTransitionLeaf(UIViewController *vc) {
     }
     return vc;
 }
+static void WXGScrollFinishCurrent(NSString *why);
 void WXGTransitionPerfBegin(NSString *kind,UIViewController *from,UIViewController *to,id<UIViewControllerTransitionCoordinator> coordinator) {
     if(!NSThread.isMainThread || !WXGTransitionWanted())return;
+    WXGScrollFinishCurrent(@"switch");   // FIX119 A: a scroll being recorded ends here (the same counters)
     WXGTransitionRecorder *current=WXGTransitionCurrent;
     if(current && coordinator && current.coordinator==coordinator)return;   // the same switch seen again (a child's appearance)
     if(current){[current finish:@"interrupted"];current=nil;}
@@ -581,6 +639,7 @@ void WXGTransitionPerfBegin(NSString *kind,UIViewController *from,UIViewControll
     memset(&WXGTransitionFrame,0,sizeof WXGTransitionFrame);memset(&WXGTransitionTotal,0,sizeof WXGTransitionTotal);memset(&WXGTransitionSetup,0,sizeof WXGTransitionSetup);
     WXGTransitionLabels=[NSMutableDictionary dictionary];WXGTransitionFrameLabels=[NSMutableDictionary dictionary];
     WXGTransitionCurrent=r;WXGTransitionPerfOn=YES;
+    WXGStallSamplerArm(1.5,[NSString stringWithFormat:@"%@ %@ → %@",r.kind,r.from,r.to]);   // FIX119 D
     if(coordinator) {
         __weak WXGTransitionRecorder *weak=r;
         [coordinator animateAlongsideTransition:nil completion:^(id<UIViewControllerTransitionCoordinatorContext> context){
@@ -709,6 +768,13 @@ void WXGTransitionPerfAppearance(UIViewController *controller,BOOL appearing) {
     if(!WXGTransitionRecords)WXGTransitionRecords=[NSMutableArray array];
     [WXGTransitionRecords addObject:d];
     if(WXGTransitionRecords.count>WXGTransitionKept)[WXGTransitionRecords removeObjectAtIndex:0];
+    if([d[@"kind"] isEqual:@"tab"]) {   // FIX119 C
+        if(!WXGTransitionColdStart)WXGTransitionColdStart=[NSMutableArray array];
+        if(WXGTransitionColdStart.count<WXGTransitionColdKept) {
+            NSMutableDictionary *cold=[d mutableCopy];cold[@"sinceLaunchS"]=@(WXGRound(WXGPerfSecondsSinceLaunch(),.1));
+            [WXGTransitionColdStart addObject:cold];
+        }
+    }
     if(!self.cancelled)WXGTransitionLastPage=self.to;
     WXGTransitionLastFinished=d;WXGTransitionLastFinishedAt=now;
     [_link invalidate];_link=nil;WXGTransitionCurrent=nil;
@@ -738,10 +804,13 @@ static NSArray<NSDictionary *> *WXGTransitionSummary(NSArray<NSDictionary *> *re
     [out sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"count"] compare:a[@"count"]];}];
     return out;
 }
+static NSDictionary *WXGScrollEvidence(void);
 NSDictionary *WXGTransitionPerfEvidence(void) {
     NSArray *records=WXGTransitionRecords.copy?:@[];
     return @{@"schema":@"wxg-switch-v1",@"recording":@(WXGTransitionWanted()),@"recorded":@(records.count),
-             @"summary":WXGTransitionSummary(records),@"switches":records};
+             @"summary":WXGTransitionSummary(records),@"switches":records,@"scrolls":WXGScrollEvidence(),   // FIX119 A
+             @"coldStartTabs":WXGTransitionColdStart.copy?:@[],   // FIX119 C
+             @"stalls":WXGStallEvidence()};   // FIX119 D
 }
 static NSString *WXGTransitionLine(NSDictionary *r) {
     NSDictionary *m=r[@"mainThread"];
@@ -768,6 +837,11 @@ static NSString *WXGTransitionReportText(void) {
     for(NSDictionary *s in WXGTransitionSummary(records))
         [text appendFormat:@"  %@\n    %@ 次 · 首帧 %.0f ms · 掉 %.1f 帧 · 最长 %.0f ms · 插件 %.1f / 微信 %.1f ms\n",s[@"route"],s[@"count"],[s[@"avgFirstFrameMS"] doubleValue],
             [s[@"avgMissed"] doubleValue],[s[@"worstMS"] doubleValue],[s[@"avgPluginMS"] doubleValue],[s[@"avgWechatMS"] doubleValue]];
+    NSArray *cold=WXGTransitionColdStart.copy?:@[];   // FIX119 C
+    if(cold.count) {
+        [text appendString:@"\n启动后最早的几次切标签（启动后多少秒 · 不会被后面的记录挤掉）\n"];
+        for(NSDictionary *r in cold)[text appendFormat:@"  启动后 %.1f s · %@\n",[r[@"sinceLaunchS"] doubleValue],WXGTransitionLine(r)];
+    }
     [text appendString:@"\n最近的切换（新的在前）\n"];
     for(NSDictionary *r in [records.reverseObjectEnumerator.allObjects subarrayWithRange:NSMakeRange(0,MIN((NSUInteger)15,records.count))])
         [text appendFormat:@"  %@\n",WXGTransitionLine(r)];
@@ -848,4 +922,623 @@ void WXGPerfExportFrom(UIViewController *from) {
     UIActivityViewController *share=[[UIActivityViewController alloc]initWithActivityItems:@[[NSURL fileURLWithPath:path]] applicationActivities:nil];
     share.popoverPresentationController.sourceView=from.view;share.popoverPresentationController.sourceRect=CGRectMake(from.view.bounds.size.width*.5,60,1,1);
     [from presentViewController:share animated:YES completion:nil];
+}
+
+
+#pragma mark - FIX119 A: scrolling, recorded in full
+
+/* FIX119 A (user, 11-05: "有些地方的开销感觉很异常很卡，尤其聊天里滑动消息的时候 …
+   最好是全量的那种"): every scroll (the main run loop in UITrackingRunLoopMode,
+   until 0.9 s after the finger left: the deceleration) is recorded as a page
+   switch is (the same counters: the plugin's time by part, Core Animation's
+   commit, WeChat's time, the main thread idle), plus:
+   - the glass' GPU time and how many glass frames were drawn;
+   - the screen itself: a 1 pt Metal layer (clear: nothing shows) presents a
+     frame on every refresh; the times the system actually put them on screen
+     show the frames the whole screen missed, the render server's (the
+     system's compositing of every layer, the glass' blurs included) as well
+     as the main thread's. A frame missed with the main thread idle is the
+     render server / GPU's;
+   - what is on screen (counted when the scroll ends): layers, backdrop layers
+     (each glass blur is one), Metal layers, filtered, masked, shadowed
+     without a path (drawn off screen), rasterised, the plugin's glass views
+     and chat bubbles.
+   The last 30 scrolls are kept, with a summary per page. */
+@interface WXGScrollRecorder : NSObject
+@property(nonatomic,copy) NSString *page,*pageClass;
+@property(nonatomic) CFTimeInterval begin,lastTracking;
+- (void)start;
+- (void)finish:(NSString *)why;
+@end
+static WXGScrollRecorder *WXGScrollCurrent;
+static NSMutableArray<NSDictionary *> *WXGScrollRecords;
+static void WXGScrollFinishCurrent(NSString *why) {WXGScrollRecorder *r=WXGScrollCurrent;if(r)[r finish:why];}
+static double WXGScrollFrameGPU;static NSUInteger WXGScrollFrameDraws;
+static double WXGScrollGPU;static NSUInteger WXGScrollDraws;
+static void WXGScrollNoteGPU(double ms) {if(WXGScrollCurrent){WXGScrollGPU+=ms;++WXGScrollDraws;WXGScrollFrameGPU+=ms;++WXGScrollFrameDraws;}}
+
+// What the screen holds: a census of the window's layers.
+static NSDictionary *WXGScrollCensus(UIWindow *window) {
+    if(!window)return @{};
+    NSUInteger layers=0,backdrops=0,metals=0,filtered=0,masked=0,pathless=0,rasterized=0,glass=0,bubbles=0,surfaces=0;
+    NSMutableArray<CALayer *> *queue=[NSMutableArray arrayWithObject:window.layer];
+    Class glassClass=NSClassFromString(@"WXGGlassView"),bubbleClass=NSClassFromString(@"WXGBubbleGlass"),surfaceClass=NSClassFromString(@"WXGSurface");
+    for(NSUInteger i=0;i<queue.count && i<8000;i++) {
+        CALayer *l=queue[i];
+        if(l.hidden || l.opacity<.01)continue;
+        ++layers;
+        NSString *name=NSStringFromClass(l.class);
+        if([name rangeOfString:@"Backdrop"].location!=NSNotFound)++backdrops;
+        if([l isKindOfClass:CAMetalLayer.class])++metals;
+        if(l.filters.count || l.backgroundFilters.count || l.compositingFilter)++filtered;
+        if(l.mask)++masked;
+        if(l.shadowOpacity>0 && !l.shadowPath)++pathless;
+        if(l.shouldRasterize)++rasterized;
+        id delegate=l.delegate;
+        if([delegate isKindOfClass:UIView.class]) {
+            if(glassClass && [delegate isKindOfClass:glassClass])++glass;
+            if(bubbleClass && [delegate isKindOfClass:bubbleClass])++bubbles;
+            if(surfaceClass && [delegate isKindOfClass:surfaceClass])++surfaces;
+        }
+        if(l.sublayers.count)[queue addObjectsFromArray:l.sublayers];
+    }
+    return @{@"layers":@(layers),@"backdropLayers":@(backdrops),@"metalLayers":@(metals),@"filtered":@(filtered),@"masked":@(masked),
+             @"shadowsWithoutPath":@(pathless),@"rasterized":@(rasterized),@"glassViews":@(glass),@"bubbleGlass":@(bubbles),@"surfaces":@(surfaces),
+             @"capped":@(queue.count>=8000)};
+}
+
+@implementation WXGScrollRecorder {
+    CADisplayLink *_link;
+    CFTimeInterval _last;
+    int _maximumFPS;
+    NSUInteger _frames,_missed,_slow,_idleSlow;
+    double _worst,_hitch,_expected;
+    NSMutableArray<NSDictionary *> *_worstFrames;
+    // the screen probe
+    CAMetalLayer *_probe;id<MTLCommandQueue> _queue;
+    os_unfair_lock _lock;NSMutableArray<NSArray<NSNumber *> *> *_presented;NSUInteger _inFlight,_probeSubmits,_probeBusy;
+    NSUInteger _submitsAtStart;
+}
+- (void)start {
+    _maximumFPS=(int)UIScreen.mainScreen.maximumFramesPerSecond;_worstFrames=[NSMutableArray array];_lock=OS_UNFAIR_LOCK_INIT;_presented=[NSMutableArray array];
+    memset(&WXGTransitionFrame,0,sizeof WXGTransitionFrame);memset(&WXGTransitionTotal,0,sizeof WXGTransitionTotal);
+    WXGTransitionLabels=[NSMutableDictionary dictionary];WXGTransitionFrameLabels=[NSMutableDictionary dictionary];
+    WXGScrollGPU=0;WXGScrollDraws=0;WXGScrollFrameGPU=0;WXGScrollFrameDraws=0;_submitsAtStart=WXGPerfGlassSubmits;
+    WXGTransitionPerfOn=YES;
+    _link=[CADisplayLink displayLinkWithTarget:self selector:@selector(frame:)];
+    WXGConfigureDisplayLink(_link,UIScreen.mainScreen);
+    [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    // the screen probe: 1 pt, clear, at the window's top left, above everything
+    UIWindow *window=WXGPerfTopController().view.window;
+    id<MTLDevice> device=MTLCreateSystemDefaultDevice();
+    if(window && device) {
+        static id<MTLCommandQueue> queue;static dispatch_once_t once;dispatch_once(&once,^{queue=[device newCommandQueue];});
+        _queue=queue;
+        _probe=[CAMetalLayer layer];_probe.device=device;_probe.pixelFormat=MTLPixelFormatBGRA8Unorm;_probe.opaque=NO;_probe.framebufferOnly=YES;
+        _probe.contentsScale=1;_probe.drawableSize=CGSizeMake(1,1);_probe.frame=CGRectMake(0,0,1,1);_probe.zPosition=100000;
+        _probe.allowsNextDrawableTimeout=YES;_probe.maximumDrawableCount=3;
+        [CATransaction begin];[CATransaction setDisableActions:YES];[window.layer addSublayer:_probe];[CATransaction commit];
+    }
+}
+/* FIX119 B: each probe frame with the refresh it was meant for (the link's
+   target): the screen missed a refresh where two probe frames came out
+   further apart than they were meant to be, or where one never came out (a
+   newer one took its refresh). A frame not probed (all drawables in use: on
+   120 Hz the presented callbacks come two or three refreshes late, so with two
+   in flight the probe ran at about 70 fps and FIX119 A counted 50 misses a
+   second that were not there, fps_20261105_160347) is no miss. */
+- (void)presentFor:(CFTimeInterval)target {
+    CAMetalLayer *probe=_probe;if(!probe || !_queue)return;
+    os_unfair_lock_lock(&_lock);NSUInteger inFlight=_inFlight;os_unfair_lock_unlock(&_lock);
+    if(inFlight>=3){++_probeBusy;return;}   // (never waits for a drawable: the frame is simply not probed)
+    id<CAMetalDrawable> drawable=[probe nextDrawable];if(!drawable)return;
+    MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture=drawable.texture;pass.colorAttachments[0].loadAction=MTLLoadActionClear;
+    pass.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,0);pass.colorAttachments[0].storeAction=MTLStoreActionStore;
+    id<MTLCommandBuffer> buffer=[_queue commandBuffer];
+    [[buffer renderCommandEncoderWithDescriptor:pass] endEncoding];
+    os_unfair_lock_lock(&_lock);++_inFlight;os_unfair_lock_unlock(&_lock);
+    __weak WXGScrollRecorder *weakSelf=self;
+    [drawable addPresentedHandler:^(id<MTLDrawable> d){
+        WXGScrollRecorder *me=weakSelf;if(!me)return;
+        CFTimeInterval t=d.presentedTime;   // (0: never shown)
+        os_unfair_lock_lock(&me->_lock);
+        if(me->_inFlight)--me->_inFlight;
+        if(me->_presented.count<20000)[me->_presented addObject:@[@(target),@(t)]];
+        os_unfair_lock_unlock(&me->_lock);
+    }];
+    [buffer presentDrawable:drawable];[buffer commit];++_probeSubmits;
+}
+- (void)frame:(CADisplayLink *)link {
+    WXGScrollRecorder *keep __attribute__((objc_precise_lifetime))=self;(void)keep;
+    if(WXGScrollCurrent!=self){[link invalidate];return;}
+    CFTimeInterval now=CACurrentMediaTime();
+    CFStringRef mode=CFRunLoopCopyCurrentMode(CFRunLoopGetMain());
+    BOOL tracking=mode && CFEqual(mode,(__bridge CFStringRef)UITrackingRunLoopMode);if(mode)CFRelease(mode);
+    if(tracking)self.lastTracking=now;
+    [self presentFor:link.targetTimestamp];
+    if(_last<=0){_last=link.timestamp;memset(&WXGTransitionFrame,0,sizeof WXGTransitionFrame);[WXGTransitionFrameLabels removeAllObjects];WXGScrollFrameGPU=0;WXGScrollFrameDraws=0;return;}
+    double interval=(link.timestamp-_last)*1000;_last=link.timestamp;
+    if(interval>3000){[self finish:@"gap"];return;}
+    double expected=WXGFrameExpectedMS((link.targetTimestamp-link.timestamp)*1000,_maximumFPS);_expected=expected;
+    ++_frames;_missed+=WXGFrameMissed(interval,expected);
+    if(interval>_worst)_worst=interval;
+    if(interval>expected*1.5) {
+        ++_slow;_hitch+=interval-expected;
+        double idle=MIN(interval,WXGTransitionFrame.idle),plugin=WXGTransitionFrame.plugin,commit=WXGTransitionCommitOnly(&WXGTransitionFrame);
+        if(idle>interval*.6)++_idleSlow;
+        NSString *top=nil;double topMS=0;
+        for(NSString *key in WXGTransitionFrameLabels)if(WXGTransitionFrameLabels[key].doubleValue>topMS){topMS=WXGTransitionFrameLabels[key].doubleValue;top=key;}
+        NSMutableDictionary *frame=[@{@"atMS":@(WXGRound((now-self.begin)*1000,1)),@"intervalMS":@(WXGRound(interval,.1)),@"idleMS":@(WXGRound(idle,.1)),
+            @"pluginMS":@(WXGRound(plugin,.1)),@"commitMS":@(WXGRound(commit,.1)),@"wechatMS":@(WXGRound(MAX(0,interval-idle-plugin-commit),.1)),
+            @"gpuMS":@(WXGRound(WXGScrollFrameGPU,.1)),@"glassDraws":@(WXGScrollFrameDraws),@"tracking":@(tracking)} mutableCopy];
+        if(top)frame[@"pluginTop"]=[NSString stringWithFormat:@"%@ %.1f",top,topMS];
+        [_worstFrames addObject:frame];
+        [_worstFrames sortUsingComparator:^NSComparisonResult(NSDictionary *a,NSDictionary *b){return [b[@"intervalMS"] compare:a[@"intervalMS"]];}];
+        if(_worstFrames.count>6)[_worstFrames removeLastObject];
+    }
+    memset(&WXGTransitionFrame,0,sizeof WXGTransitionFrame);[WXGTransitionFrameLabels removeAllObjects];WXGScrollFrameGPU=0;WXGScrollFrameDraws=0;
+    if(!tracking && now-self.lastTracking>.9)[self finish:@"done"];
+    else if(now-self.begin>60)[self finish:@"timeout"];
+}
+- (void)finish:(NSString *)why {
+    if(WXGScrollCurrent!=self)return;
+    WXGScrollRecorder *keep __attribute__((objc_precise_lifetime))=self;(void)keep;
+    WXGTransitionPerfOn=NO;WXGTransitionInCommit=NO;
+    [_link invalidate];_link=nil;WXGScrollCurrent=nil;
+    CFTimeInterval now=CACurrentMediaTime();
+    double total=(now-self.begin)*1000;
+    double idle=WXGTransitionTotal.idle,plugin=WXGTransitionTotal.plugin,commit=WXGTransitionCommitOnly(&WXGTransitionTotal);
+    NSMutableDictionary *labels=[NSMutableDictionary dictionary];
+    NSArray *keys=[WXGTransitionLabels keysSortedByValueUsingComparator:^NSComparisonResult(NSNumber *a,NSNumber *b){return [b compare:a];}];
+    for(NSString *key in [keys subarrayWithRange:NSMakeRange(0,MIN((NSUInteger)14,keys.count))])labels[key]=@(WXGRound(WXGTransitionLabels[key].doubleValue,.01));
+    // the screen: the probe's frames as the system presented them
+    os_unfair_lock_lock(&_lock);NSArray<NSArray<NSNumber *> *> *pairs=[_presented copy];os_unfair_lock_unlock(&_lock);
+    pairs=[pairs sortedArrayUsingComparator:^NSComparisonResult(NSArray<NSNumber *> *a,NSArray<NSNumber *> *b){return [a[0] compare:b[0]];}];
+    NSUInteger shown=0,screenMissed=0,dropped=0;double screenWorst=0,frameMS=_expected>0?_expected:1000.0/MAX(_maximumFPS,60),lateSum=0;
+    double lastTarget=0,lastShown=0;NSMutableArray<NSNumber *> *lates=[NSMutableArray array];
+    for(NSArray<NSNumber *> *pair in pairs) {
+        double target=pair[0].doubleValue,at=pair[1].doubleValue;
+        if(at<=0){++dropped;continue;}
+        ++shown;
+        double late=(at-target)*1000;[lates addObject:@(late)];lateSum+=late;
+        if(lastShown>0) {
+            double meant=(target-lastTarget)*1000,gap=(at-lastShown)*1000;
+            if(gap>screenWorst)screenWorst=gap;
+            screenMissed+=(NSUInteger)MAX(0,lround((gap-meant)/frameMS));
+        }
+        lastTarget=target;lastShown=at;
+    }
+    screenMissed+=dropped;
+    [lates sortUsingSelector:@selector(compare:)];
+    double lateMedian=lates.count?lates[lates.count/2].doubleValue:0,lateP95=lates.count?lates[MIN(lates.count-1,(NSUInteger)(lates.count*.95))].doubleValue:0;
+    UIWindow *window=_probe.superlayer?WXGPerfTopController().view.window:nil;
+    [CATransaction begin];[CATransaction setDisableActions:YES];[_probe removeFromSuperlayer];[CATransaction commit];_probe=nil;
+    double seconds=MAX(total/1000,.001);
+    NSDictionary *census=WXGScrollCensus(window?:WXGPerfTopController().view.window);
+    NSDictionary *d=@{@"clock":WXGPerfClock(NSDate.date,YES),@"page":self.page?:@"?",@"pageClass":self.pageClass?:@"",@"end":why,
+        @"totalMS":@(WXGRound(total,1)),@"frames":@(_frames),@"fps":@(WXGRound(_frames/seconds,.1)),@"missed":@(_missed),@"slowFrames":@(_slow),
+        @"slowWithMainIdle":@(_idleSlow),@"worstMS":@(WXGRound(_worst,.1)),@"hitchMSPerSecond":@(WXGRound(_hitch/seconds,.1)),@"expectedMS":@(WXGRound(frameMS,.01)),
+        @"mainThread":@{@"busyMS":@(WXGRound(MAX(0,total-idle),.1)),@"idleMS":@(WXGRound(idle,.1)),@"pluginMS":@(WXGRound(plugin,.1)),
+                        @"commitMS":@(WXGRound(commit,.1)),@"wechatMS":@(WXGRound(MAX(0,total-idle-plugin-commit),.1))},
+        @"pluginByPart":labels,@"worstFrames":_worstFrames.copy?:@[],
+        @"glass":@{@"gpuMS":@(WXGRound(WXGScrollGPU,.1)),@"draws":@(WXGScrollDraws),@"submits":@(WXGPerfGlassSubmits-_submitsAtStart)},
+        @"screen":@{@"probeFrames":@(_probeSubmits),@"presented":@(shown),@"missed":@(screenMissed),@"worstGapMS":@(WXGRound(screenWorst,.1)),
+                    @"fps":@(WXGRound(shown/seconds,.1)),@"method":@"v2",@"dropped":@(dropped),@"notProbed":@(_probeBusy),   // FIX119 B
+                    @"latencyMS":@{@"median":@(WXGRound(lateMedian,.1)),@"p95":@(WXGRound(lateP95,.1)),@"mean":@(WXGRound(shown?lateSum/shown:0,.1))}},
+        @"census":census,@"plugin":@(WXGPluginEnabled()),@"renderMode":@(WXGEffectiveRenderMode())};
+    if(!WXGScrollRecords)WXGScrollRecords=[NSMutableArray array];
+    [WXGScrollRecords addObject:d];
+    if(WXGScrollRecords.count>30)[WXGScrollRecords removeObjectAtIndex:0];
+}
+@end
+static NSArray *WXGScrollSummary(NSArray<NSDictionary *> *records) {
+    NSMutableDictionary<NSString *,NSMutableDictionary *> *pages=[NSMutableDictionary dictionary];NSMutableArray *order=[NSMutableArray array];
+    for(NSDictionary *r in records) {
+        NSString *key=[NSString stringWithFormat:@"%@%@",r[@"page"],[r[@"plugin"] boolValue]?@"":@"（插件关）"];
+        NSMutableDictionary *s=pages[key];
+        if(!s){s=[@{@"page":key,@"count":@0,@"seconds":@0,@"frames":@0,@"missed":@0,@"screenMissed":@0,@"plugin":@0,@"wechat":@0,@"commit":@0,@"gpu":@0,@"idleSlow":@0,@"slow":@0,@"late":@0,@"shown":@0} mutableCopy];pages[key]=s;[order addObject:key];}
+        double sec=[r[@"totalMS"] doubleValue]/1000;NSDictionary *m=r[@"mainThread"];
+        s[@"count"]=@([s[@"count"] integerValue]+1);s[@"seconds"]=@([s[@"seconds"] doubleValue]+sec);
+        s[@"frames"]=@([s[@"frames"] doubleValue]+[r[@"frames"] doubleValue]);s[@"missed"]=@([s[@"missed"] doubleValue]+[r[@"missed"] doubleValue]);
+        s[@"screenMissed"]=@([s[@"screenMissed"] doubleValue]+[r[@"screen"][@"missed"] doubleValue]);
+        s[@"plugin"]=@([s[@"plugin"] doubleValue]+[m[@"pluginMS"] doubleValue]);s[@"wechat"]=@([s[@"wechat"] doubleValue]+[m[@"wechatMS"] doubleValue]);
+        s[@"commit"]=@([s[@"commit"] doubleValue]+[m[@"commitMS"] doubleValue]);s[@"gpu"]=@([s[@"gpu"] doubleValue]+[r[@"glass"][@"gpuMS"] doubleValue]);
+        s[@"idleSlow"]=@([s[@"idleSlow"] doubleValue]+[r[@"slowWithMainIdle"] doubleValue]);s[@"slow"]=@([s[@"slow"] doubleValue]+[r[@"slowFrames"] doubleValue]);
+        double shown=[r[@"screen"][@"presented"] doubleValue];   // FIX119 B: how late the probe's frames reached the screen
+        s[@"late"]=@([s[@"late"] doubleValue]+[r[@"screen"][@"latencyMS"][@"median"] doubleValue]*shown);s[@"shown"]=@([s[@"shown"] doubleValue]+shown);
+    }
+    NSMutableArray *out=[NSMutableArray array];
+    for(NSString *key in order) {
+        NSMutableDictionary *s=pages[key];double sec=MAX([s[@"seconds"] doubleValue],.001);
+        [out addObject:@{@"page":key,@"scrolls":s[@"count"],@"seconds":@(WXGRound(sec,.1)),@"fps":@(WXGRound([s[@"frames"] doubleValue]/sec,.1)),
+            @"mainMissedPerSecond":@(WXGRound([s[@"missed"] doubleValue]/sec,.1)),@"screenMissedPerSecond":@(WXGRound([s[@"screenMissed"] doubleValue]/sec,.1)),
+            @"pluginMSPerSecond":@(WXGRound([s[@"plugin"] doubleValue]/sec,.1)),@"wechatMSPerSecond":@(WXGRound([s[@"wechat"] doubleValue]/sec,.1)),
+            @"commitMSPerSecond":@(WXGRound([s[@"commit"] doubleValue]/sec,.1)),@"glassGPUMSPerSecond":@(WXGRound([s[@"gpu"] doubleValue]/sec,.1)),
+            @"slowFrames":s[@"slow"],@"slowWithMainIdle":s[@"idleSlow"],
+            @"screenLatencyMS":@(WXGRound([s[@"late"] doubleValue]/MAX([s[@"shown"] doubleValue],1),.1))}];
+    }
+    return out;
+}
+static NSDictionary *WXGScrollEvidence(void) {
+    NSArray *records=WXGScrollRecords.copy?:@[];
+    return @{@"schema":@"wxg-scroll-v1",@"recorded":@(records.count),@"summary":WXGScrollSummary(records),@"sessions":records,
+             @"glassTotals":@{@"gpuMS":@(WXGRound(WXGPerfGPUTotal,.1)),@"draws":@(WXGPerfGPUDraws),@"submits":@(WXGPerfGlassSubmits)}};
+}
+static NSString *WXGScrollReportText(void) {
+    NSArray *records=WXGScrollRecords.copy?:@[];
+    if(!records.count)return @"  还没有记录：插件开着时滑动任意列表就会记下。\n";
+    NSMutableString *text=[NSMutableString stringWithString:@"按页面（次数 · 帧率 · 主线程掉帧/秒 · 屏幕掉帧/秒 · 出画延迟 · 插件 / 微信 / 提交 ms/秒 · 玻璃 GPU ms/秒）\n"];
+    for(NSDictionary *s in WXGScrollSummary(records))
+        [text appendFormat:@"  %@\n    %@ 次 %.1f s · %.1f fps · 主线程掉 %.1f/s · 屏幕掉 %.1f/s · 延迟 %.1f ms · 插件 %.1f / 微信 %.1f / 提交 %.1f · GPU %.1f · 慢帧 %@（其中主线程空闲 %@）\n",
+            s[@"page"],s[@"scrolls"],[s[@"seconds"] doubleValue],[s[@"fps"] doubleValue],[s[@"mainMissedPerSecond"] doubleValue],[s[@"screenMissedPerSecond"] doubleValue],
+            [s[@"screenLatencyMS"] doubleValue],
+            [s[@"pluginMSPerSecond"] doubleValue],[s[@"wechatMSPerSecond"] doubleValue],[s[@"commitMSPerSecond"] doubleValue],[s[@"glassGPUMSPerSecond"] doubleValue],s[@"slowFrames"],s[@"slowWithMainIdle"]];
+    NSDictionary *last=records.lastObject;NSDictionary *c=last[@"census"];
+    if(c.count)[text appendFormat:@"\n最近一次（%@）屏幕上：图层 %@ · 模糊背景层 %@ · Metal 层 %@ · 滤镜 %@ · 遮罩 %@ · 无路径阴影 %@ · 玻璃视图 %@ · 气泡玻璃 %@\n",
+        last[@"page"],c[@"layers"],c[@"backdropLayers"],c[@"metalLayers"],c[@"filtered"],c[@"masked"],c[@"shadowsWithoutPath"],c[@"glassViews"],c[@"bubbleGlass"]];
+    [text appendString:@"\n说明\n"
+        "  主线程掉帧：主线程没赶上刷新（插件、微信或提交太慢）。\n"
+        "  屏幕掉帧：屏幕实际少换的画面，包括系统合成（各层模糊、玻璃）跟不上的情况；比主线程掉帧多出来的，就是渲染服务器 / GPU 的问题。\n"
+        "  （FIX119 B 起按每帧本该上屏的那次刷新来算，FIX119 A 在 120 Hz 上把探针自己没跑满的帧也算成了掉帧，那时的“屏幕掉”不可信。）\n"
+        "  延迟：探针那一帧从该上屏的刷新到真正上屏用了多久，中位数；忽高忽低就是画面一抖一抖。\n"
+        "  慢帧里“主线程空闲”的，主线程那一帧大多在等：卡的是合成 / GPU，不是代码。\n"];
+    return text;
+}
+void WXGScrollPerfInstall(void) {
+    WXGStallInstall();   // FIX119 D
+    static dispatch_once_t once;
+    dispatch_once(&once,^{
+        CFRunLoopObserverRef observer=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopAfterWaiting,YES,0,
+            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity a){
+                if(WXGScrollCurrent || WXGTransitionCurrent || !WXGTransitionWanted())return;
+                CFStringRef mode=CFRunLoopCopyCurrentMode(CFRunLoopGetMain());
+                BOOL tracking=mode && CFEqual(mode,(__bridge CFStringRef)UITrackingRunLoopMode);if(mode)CFRelease(mode);
+                if(!tracking || UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return;
+                WXGScrollRecorder *r=[WXGScrollRecorder new];
+                UIViewController *top=WXGPerfTopController();
+                r.page=WXGPerfPageName(top);r.pageClass=top?NSStringFromClass(top.class):@"";r.begin=CACurrentMediaTime();r.lastTracking=r.begin;
+                WXGScrollCurrent=r;[r start];
+            });
+        if(observer){CFRunLoopAddObserver(CFRunLoopGetMain(),observer,(__bridge CFStringRef)UITrackingRunLoopMode);CFRelease(observer);}
+    });
+}
+
+#pragma mark - FIX119 D: what the main thread is doing while it is stuck
+
+/* FIX119 D (user, 11-05 18:03: "就是底部的 tab切换稍微有点问题"; diagnostics_21 and
+   fps_20261105_180142, XS Max, just after launch: the first switch to 发现
+   took 643 / 370 ms to its first frame, of which the plugin 30 ms: the rest is
+   WeChat's own work, which no record so far could look into). While armed
+   (the first 45 s after launch, and 1.5 s from every dock touch and page
+   switch), a thread of its own looks every 4 ms whether the main thread has
+   been busy for more than 30 ms without sleeping; if so it stops it for a
+   moment, reads its stack (the frame pointers, nothing allocated while it is
+   stopped) and lets it go on. Exported: per stall, the WeChat methods its
+   samples were in (named from the Objective-C runtime: WeChat's own binary has
+   no symbols) and the innermost frames; overall, the methods most often on
+   the stack (each sample about 4 ms). */
+#import <dlfcn.h>
+#import <mach-o/dyld.h>
+#import <mach-o/loader.h>
+#import <objc/runtime.h>
+#import <pthread.h>
+#import <stdatomic.h>
+
+#define WXG_STALL_DEPTH 40
+#define WXG_STALL_SAMPLES 1200
+#define WXG_STALL_RECORDS 48
+#define WXG_STALL_PTR_MASK 0x0000000FFFFFFFFFULL
+typedef struct {uint64_t at;uint32_t stall;uint16_t depth;uintptr_t frames[WXG_STALL_DEPTH];} WXGStallSample;
+typedef struct {uint32_t stall;uint64_t busySince,last,labelAt;uint32_t samples;CFStringRef label;double sinceLaunch;} WXGStallRecord;
+static WXGStallSample *WXGStallBuffer;
+static NSUInteger WXGStallStored,WXGStallNext,WXGStallTaken;
+static WXGStallRecord WXGStallRecords[WXG_STALL_RECORDS];static NSUInteger WXGStallRecordNext,WXGStallRecordCount;
+static os_unfair_lock WXGStallLock=OS_UNFAIR_LOCK_INIT;
+static thread_t WXGStallMainThread=MACH_PORT_NULL;
+static _Atomic uint64_t WXGStallBusySince,WXGStallArmedUntil;
+static _Atomic int WXGStallPaused;
+static CFStringRef WXGStallLabel;static uint64_t WXGStallLabelAt;   // (under the lock)
+static dispatch_semaphore_t WXGStallWake;
+static double WXGStallMSPerTick;
+static double WXGStallLaunchOffset;   // seconds since launch at mach time 0 of WXGStallLaunchTick
+static uint64_t WXGStallLaunchTick;
+
+static BOOL WXGStallTake(WXGStallSample *s) {
+    thread_t t=WXGStallMainThread;
+    if(t==MACH_PORT_NULL || thread_suspend(t)!=KERN_SUCCESS)return NO;
+    arm_thread_state64_t state;mach_msg_type_number_t count=ARM_THREAD_STATE64_COUNT;
+    uint16_t d=0;
+    if(thread_get_state(t,ARM_THREAD_STATE64,(thread_state_t)&state,&count)==KERN_SUCCESS) {
+        uintptr_t pc=(uintptr_t)arm_thread_state64_get_pc(state)&WXG_STALL_PTR_MASK;
+        uintptr_t lr=(uintptr_t)arm_thread_state64_get_lr(state)&WXG_STALL_PTR_MASK;
+        uintptr_t fp=(uintptr_t)arm_thread_state64_get_fp(state);
+        if(pc)s->frames[d++]=pc;
+        if(lr && lr!=pc)s->frames[d++]=lr;
+        while(d<WXG_STALL_DEPTH && fp && !(fp&7)) {
+            uintptr_t record[2]={0,0};vm_size_t got=0;
+            if(vm_read_overwrite(mach_task_self(),(vm_address_t)fp,sizeof record,(vm_address_t)record,&got)!=KERN_SUCCESS || got!=sizeof record)break;
+            uintptr_t ret=record[1]&WXG_STALL_PTR_MASK;if(!ret)break;
+            if(!(d==2 && ret==s->frames[1]))s->frames[d++]=ret;   // (the leaf's caller seen twice: through lr and its frame)
+            if(record[0]<=fp)break;
+            fp=record[0];
+        }
+    }
+    thread_resume(t);
+    s->depth=d;
+    return d>0;
+}
+static void *WXGStallThreadMain(__unused void *arg) {
+    pthread_setname_np("wxg.stallSampler");
+    uint64_t lastBusy=0;uint32_t current=0,next=0;
+    for(;;) {
+        uint64_t now=mach_absolute_time();
+        if(now>=atomic_load(&WXGStallArmedUntil)){dispatch_semaphore_wait(WXGStallWake,DISPATCH_TIME_FOREVER);continue;}
+        usleep(4000);
+        if(atomic_load(&WXGStallPaused)>0)continue;
+        uint64_t busy=atomic_load(&WXGStallBusySince);if(!busy)continue;
+        now=mach_absolute_time();
+        if(now<=busy || (now-busy)*WXGStallMSPerTick<30)continue;
+        WXGStallSample sample;memset(&sample,0,sizeof sample);
+        if(!WXGStallTake(&sample))continue;   // (the main thread runs again from here on: locks and allocation are safe)
+        sample.at=now;
+        os_unfair_lock_lock(&WXGStallLock);
+        if(busy!=lastBusy) {
+            lastBusy=busy;current=++next;
+            WXGStallRecord *r=&WXGStallRecords[WXGStallRecordNext];
+            if(r->label)CFRelease(r->label);
+            r->stall=current;r->busySince=busy;r->last=now;r->samples=0;r->label=WXGStallLabel?CFRetain(WXGStallLabel):NULL;r->labelAt=WXGStallLabelAt;
+            r->sinceLaunch=WXGStallLaunchOffset+(busy-WXGStallLaunchTick)*WXGStallMSPerTick/1000;
+            WXGStallRecordNext=(WXGStallRecordNext+1)%WXG_STALL_RECORDS;WXGStallRecordCount=MIN(WXGStallRecordCount+1,(NSUInteger)WXG_STALL_RECORDS);
+        }
+        for(NSUInteger i=0;i<WXGStallRecordCount;i++){WXGStallRecord *r=&WXGStallRecords[i];if(r->stall==current){r->last=now;++r->samples;break;}}
+        sample.stall=current;
+        WXGStallBuffer[WXGStallNext]=sample;WXGStallNext=(WXGStallNext+1)%WXG_STALL_SAMPLES;
+        WXGStallStored=MIN(WXGStallStored+1,(NSUInteger)WXG_STALL_SAMPLES);++WXGStallTaken;
+        os_unfair_lock_unlock(&WXGStallLock);
+    }
+    return NULL;
+}
+void WXGStallSamplerPause(BOOL paused) {if(paused)atomic_fetch_add(&WXGStallPaused,1);else atomic_fetch_sub(&WXGStallPaused,1);}   // FIX119 E: the diagnostics export is no stall
+void WXGStallSamplerArm(double seconds,NSString *label) {
+    if(!WXGStallWake || seconds<=0)return;
+    uint64_t until=mach_absolute_time()+(uint64_t)(seconds*1000/WXGStallMSPerTick);
+    uint64_t was=atomic_load(&WXGStallArmedUntil);
+    while(was<until && !atomic_compare_exchange_weak(&WXGStallArmedUntil,&was,until)){}
+    if(label) {
+        CFStringRef copy=(__bridge_retained CFStringRef)[label copy];
+        os_unfair_lock_lock(&WXGStallLock);CFStringRef old=WXGStallLabel;WXGStallLabel=copy;WXGStallLabelAt=mach_absolute_time();os_unfair_lock_unlock(&WXGStallLock);
+        if(old)CFRelease(old);
+    }
+    dispatch_semaphore_signal(WXGStallWake);
+}
+static void WXGStallInstall(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once,^{
+        if(!NSThread.isMainThread)return;
+        mach_timebase_info_data_t tb;mach_timebase_info(&tb);WXGStallMSPerTick=(double)tb.numer/tb.denom/1e6;
+        WXGStallLaunchTick=mach_absolute_time();WXGStallLaunchOffset=MAX(WXGPerfSecondsSinceLaunch(),0);
+        WXGStallBuffer=calloc(WXG_STALL_SAMPLES,sizeof(WXGStallSample));if(!WXGStallBuffer)return;
+        WXGStallMainThread=mach_thread_self();
+        WXGStallWake=dispatch_semaphore_create(0);
+        // the main thread's busy stretches: from waking to going to sleep again
+        CFRunLoopObserverRef woke=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopAfterWaiting,YES,LONG_MIN,
+            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity a){atomic_store(&WXGStallBusySince,mach_absolute_time());});
+        CFRunLoopObserverRef sleeps=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting,YES,LONG_MAX,
+            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity a){atomic_store(&WXGStallBusySince,0);});
+        if(woke){CFRunLoopAddObserver(CFRunLoopGetMain(),woke,kCFRunLoopCommonModes);CFRelease(woke);}
+        if(sleeps){CFRunLoopAddObserver(CFRunLoopGetMain(),sleeps,kCFRunLoopCommonModes);CFRelease(sleeps);}
+        atomic_store(&WXGStallBusySince,mach_absolute_time());   // (busy now: launching)
+        pthread_t thread;pthread_attr_t attr;pthread_attr_init(&attr);pthread_attr_setdetachstate(&attr,PTHREAD_CREATE_DETACHED);
+        pthread_attr_set_qos_class_np(&attr,QOS_CLASS_USER_INTERACTIVE,0);
+        if(pthread_create(&thread,&attr,WXGStallThreadMain,NULL)!=0)WXGStallWake=nil;
+        pthread_attr_destroy(&attr);
+        WXGStallSamplerArm(45,@"启动");
+    });
+}
+
+// Names for the sampled addresses: the nearest method (Objective-C runtime) or symbol (dladdr) before each.
+typedef struct {uintptr_t imp,cls;SEL sel;} WXGStallImp;   // (cls | 1: a class method)
+static int WXGStallImpCompare(const void *a,const void *b) {uintptr_t x=((const WXGStallImp *)a)->imp,y=((const WXGStallImp *)b)->imp;return x<y?-1:x>y?1:0;}
+@interface WXGStallNamer : NSObject
+- (NSString *)nameFor:(uintptr_t)address image:(NSString **)image;
+@property(nonatomic) double buildMS;
+@end
+@implementation WXGStallNamer {
+    NSMutableDictionary<NSString *,NSValue *> *_tables;   // image path -> {entries, count}
+    NSMutableDictionary<NSNumber *,NSArray *> *_cache;
+    NSMutableArray<NSValue *> *_allocated;
+}
+- (instancetype)init {
+    if((self=[super init])){_tables=[NSMutableDictionary dictionary];_cache=[NSMutableDictionary dictionary];_allocated=[NSMutableArray array];}
+    return self;
+}
+- (void)dealloc {for(NSValue *v in _allocated)free(v.pointerValue);}
+- (WXGStallImp *)tableFor:(const char *)path count:(size_t *)count {
+    NSString *key=@(path);NSValue *found=_tables[key];
+    if(found){NSRange r=found.rangeValue;*count=r.length;return (WXGStallImp *)(uintptr_t)r.location;}
+    CFTimeInterval start=CACurrentMediaTime();
+    unsigned int classCount=0;const char **names=objc_copyClassNamesForImage(path,&classCount);
+    size_t capacity=1024,n=0;WXGStallImp *entries=malloc(capacity*sizeof *entries);
+    for(unsigned int i=0;i<classCount && entries;i++) {
+        Class cls=objc_getClass(names[i]);if(!cls)continue;
+        for(int meta=0;meta<2;meta++) {
+            Class c=meta?object_getClass(cls):cls;if(!c)continue;
+            unsigned int mc=0;Method *methods=class_copyMethodList(c,&mc);
+            for(unsigned int m=0;m<mc;m++) {
+                if(n==capacity){capacity*=2;WXGStallImp *grown=realloc(entries,capacity*sizeof *entries);if(!grown){free(entries);entries=NULL;break;}entries=grown;}
+                entries[n].imp=(uintptr_t)method_getImplementation(methods[m])&WXG_STALL_PTR_MASK;entries[n].cls=(uintptr_t)(__bridge void *)cls|(meta?1:0);entries[n].sel=method_getName(methods[m]);++n;
+            }
+            free(methods);
+            if(!entries)break;
+        }
+    }
+    free(names);
+    if(entries && n)qsort(entries,n,sizeof *entries,WXGStallImpCompare);
+    if(entries)[_allocated addObject:[NSValue valueWithPointer:entries]];
+    _tables[key]=[NSValue valueWithRange:NSMakeRange((NSUInteger)(uintptr_t)entries,entries?n:0)];
+    self.buildMS+=(CACurrentMediaTime()-start)*1000;
+    *count=entries?n:0;return entries;
+}
+- (NSString *)nameFor:(uintptr_t)address image:(NSString **)image {
+    NSArray *hit=_cache[@(address)];
+    if(hit){if(image)*image=hit[1];return hit[0];}
+    Dl_info info;memset(&info,0,sizeof info);
+    NSString *name=nil,*imageName=@"?";
+    uintptr_t lookup=address>0?address-1:address;   // (a return address: the call is just before it)
+    if(dladdr((void *)lookup,&info) && info.dli_fname) {
+        imageName=@(info.dli_fname).lastPathComponent;
+        uintptr_t symbolStart=(uintptr_t)info.dli_saddr&WXG_STALL_PTR_MASK;NSString *symbol=info.dli_sname?@(info.dli_sname):nil;
+        size_t count=0;WXGStallImp *table=[self tableFor:info.dli_fname count:&count];
+        if(table && count) {
+            size_t lo=0,hi=count;   // the last entry at or before the address
+            while(lo<hi){size_t mid=(lo+hi)/2;if(table[mid].imp<=lookup)lo=mid+1;else hi=mid;}
+            if(lo>0) {
+                WXGStallImp *e=&table[lo-1];
+                // FIX119 E: WeChat's binary has few symbols, and dladdr hands back one far away (diagnostics_22: most
+                // of WeChat's frames were "OnAccessibilityFeaturesChanged"): the method before it, if near (within
+                // 32 KB: inside it or a block of it), else marked ≈ (C / C++ code next to it), up to 512 KB.
+                uintptr_t gap=lookup-e->imp;
+                if(e->imp>=symbolStart || gap<0x80000) {
+                    if(e->imp>=symbolStart || gap<lookup-symbolStart) {
+                        symbolStart=e->imp;
+                        Class owner=(__bridge Class)(void *)(e->cls&~(uintptr_t)1);
+                        symbol=[NSString stringWithFormat:@"%@%c[%s %s]",gap<0x8000?@"":@"≈",(e->cls&1)?'+':'-',class_getName(owner),sel_getName(e->sel)];
+                    }
+                }
+            }
+        }
+        if(symbol && lookup-symbolStart>=0x80000)symbol=nil;   // (a symbol that far away names nothing)
+        if(symbol && symbolStart)name=[NSString stringWithFormat:@"%@+0x%lx",symbol,(unsigned long)(lookup+1-symbolStart)];
+        else name=[NSString stringWithFormat:@"%@+0x%lx",imageName,(unsigned long)(address-((uintptr_t)info.dli_fbase&WXG_STALL_PTR_MASK))];
+    }else name=[NSString stringWithFormat:@"0x%lx",(unsigned long)address];
+    _cache[@(address)]=@[name,imageName];
+    if(image)*image=imageName;
+    return name;
+}
+@end
+
+// FIX119 E: WeChat's own images: everything inside its app bundle (image 0 is not always its executable once
+// something has been injected: diagnostics_22 named none of WeChat's frames as WeChat's).
+static NSSet<NSString *> *WXGStallAppImages(void) {
+    static NSSet *names;static dispatch_once_t once;
+    dispatch_once(&once,^{
+        NSMutableSet *set=[NSMutableSet set];NSString *bundle=NSBundle.mainBundle.bundlePath.stringByResolvingSymlinksInPath;
+        NSString *exe=NSBundle.mainBundle.executablePath.lastPathComponent;if(exe)[set addObject:exe];
+        for(uint32_t i=0;i<_dyld_image_count();i++) {
+            const char *p=_dyld_get_image_name(i);if(!p)continue;
+            NSString *path=@(p);
+            if(bundle.length && ([path hasPrefix:bundle] || [path.stringByResolvingSymlinksInPath hasPrefix:bundle]))[set addObject:path.lastPathComponent];
+        }
+        names=set.copy;
+    });
+    return names;
+}
+static NSString *WXGStallPluginImage(void) {
+    static NSString *name;static dispatch_once_t once;
+    dispatch_once(&once,^{Dl_info info;name=dladdr((const void *)&WXGStallInstall,&info) && info.dli_fname?@(info.dli_fname).lastPathComponent:@"";});
+    return name;
+}
+static NSArray *WXGStallTop(NSDictionary<NSString *,NSNumber *> *counts,NSUInteger n,double sampleMS) {
+    NSArray *keys=[counts keysSortedByValueUsingComparator:^NSComparisonResult(NSNumber *a,NSNumber *b){return [b compare:a];}];
+    NSMutableArray *out=[NSMutableArray array];
+    for(NSString *k in [keys subarrayWithRange:NSMakeRange(0,MIN(n,keys.count))])[out addObject:@{@"frame":k,@"samples":counts[k],@"aboutMS":@(round(counts[k].doubleValue*sampleMS))}];
+    return out;
+}
+static NSDictionary *WXGStallCached;static NSUInteger WXGStallCachedTaken;
+static NSDictionary *WXGStallEvidence(void) {
+    if(!WXGStallBuffer)return @{@"schema":@"wxg-stall-v1",@"on":@NO};
+    os_unfair_lock_lock(&WXGStallLock);
+    NSUInteger taken=WXGStallTaken,stored=WXGStallStored,next=WXGStallNext,recordCount=WXGStallRecordCount,recordNext=WXGStallRecordNext;
+    os_unfair_lock_unlock(&WXGStallLock);
+    if(WXGStallCached && taken==WXGStallCachedTaken)return WXGStallCached;
+    if(WXGStallNamingOff)return @{@"schema":@"wxg-stall-v1",@"on":@YES,@"samplesTaken":@(taken),@"note":@"导出时才给采样命名"};
+    atomic_fetch_add(&WXGStallPaused,1);   // (the export itself is no stall to sample)
+    WXGStallSample *samples=malloc(MAX(stored,1)*sizeof(WXGStallSample));WXGStallRecord records[WXG_STALL_RECORDS];NSMutableArray *labels=[NSMutableArray array];
+    os_unfair_lock_lock(&WXGStallLock);
+    for(NSUInteger i=0;i<stored && samples;i++)samples[i]=WXGStallBuffer[(next+WXG_STALL_SAMPLES-stored+i)%WXG_STALL_SAMPLES];
+    for(NSUInteger i=0;i<recordCount;i++) {
+        records[i]=WXGStallRecords[(recordNext+WXG_STALL_RECORDS-recordCount+i)%WXG_STALL_RECORDS];
+        [labels addObject:records[i].label?(__bridge NSString *)records[i].label:@""];
+    }
+    os_unfair_lock_unlock(&WXGStallLock);
+    NSMutableDictionary *out=[@{@"schema":@"wxg-stall-v1",@"on":@YES,@"samplesTaken":@(taken),@"samplesKept":@(stored),@"sampleEveryMS":@4,
+        @"armed":@(mach_absolute_time()<atomic_load(&WXGStallArmedUntil))} mutableCopy];
+    if(!samples || !stored){free(samples);atomic_fetch_sub(&WXGStallPaused,1);out[@"stalls"]=@[];return out;}
+    WXGStallNamer *namer=[WXGStallNamer new];
+    NSSet<NSString *> *appImages=WXGStallAppImages();NSString *plugin=WXGStallPluginImage();
+    double sampleMS=4.5;
+    NSMutableDictionary<NSString *,NSNumber *> *inclusive=[NSMutableDictionary dictionary],*leaves=[NSMutableDictionary dictionary];
+    NSMutableDictionary<NSNumber *,NSMutableDictionary *> *perStall=[NSMutableDictionary dictionary];
+    NSMutableDictionary<NSString *,NSNumber *> *ownerTotals=[NSMutableDictionary dictionary];
+    for(NSUInteger i=0;i<stored;i++) {
+        WXGStallSample *s=&samples[i];
+        NSMutableArray<NSString *> *wechatPath=[NSMutableArray array];NSMutableSet *seen=[NSMutableSet set];
+        NSString *leaf=nil,*pluginFrame=nil,*owner=nil;
+        // FIX119 F: the frames from UIApplicationMain out (WeChat's main(), which diagnostics_23 named after the method
+        // next to it, on every sample) are left out.
+        uint16_t depth=s->depth;
+        for(uint16_t f=0;f<s->depth;f++){NSString *n=[namer nameFor:s->frames[f] image:NULL];if([n hasPrefix:@"UIApplicationMain"]){depth=f;break;}}
+        for(uint16_t f=0;f<depth;f++) {
+            NSString *image=nil;NSString *name=[namer nameFor:s->frames[f] image:&image];
+            NSString *bare=[name componentsSeparatedByString:@"+0x"].firstObject?:name;
+            if(f==0)leaf=[NSString stringWithFormat:@"%@ · %@",image,bare];
+            BOOL isPlugin=[image isEqual:plugin],isWeChat=!isPlugin && [appImages containsObject:image];
+            // (whose work it is: the innermost frame of WeChat's or the plugin's: the plugin's call into WeChat is WeChat's)
+            if(!owner && (isPlugin || isWeChat))owner=isPlugin?@"plugin":@"wechat";
+            if((isPlugin || isWeChat) && ![seen containsObject:bare]) {
+                [seen addObject:bare];
+                NSString *tag=isPlugin?[@"（插件）" stringByAppendingString:bare]:bare;
+                if(wechatPath.count<8)[wechatPath addObject:tag];
+                inclusive[tag]=@(inclusive[tag].integerValue+1);
+                if(!pluginFrame && isPlugin)pluginFrame=bare;
+            }
+        }
+        owner=owner?:@"system";
+        if(leaf)leaves[leaf]=@(leaves[leaf].integerValue+1);
+        NSMutableDictionary *st=perStall[@(s->stall)];
+        if(!st){st=[@{@"paths":[NSMutableDictionary dictionary],@"leaves":[NSMutableDictionary dictionary],@"plugin":@0,@"wechat":@0,@"pluginOwn":@0,@"system":@0} mutableCopy];perStall[@(s->stall)]=st;}
+        NSString *ownerKey=[owner isEqual:@"plugin"]?@"pluginOwn":owner;st[ownerKey]=@([st[ownerKey] integerValue]+1);
+        ownerTotals[ownerKey]=@(ownerTotals[ownerKey].integerValue+1);
+        NSString *path=wechatPath.count?[wechatPath componentsJoinedByString:@" ← "]:@"（栈里没有微信或插件的方法：系统在忙）";
+        st[@"paths"][path]=@([st[@"paths"][path] integerValue]+1);
+        if(leaf)st[@"leaves"][leaf]=@([st[@"leaves"][leaf] integerValue]+1);
+        if(pluginFrame)st[@"plugin"]=@([st[@"plugin"] integerValue]+1);
+    }
+    NSMutableArray *stalls=[NSMutableArray array];
+    for(NSInteger i=(NSInteger)recordCount-1;i>=0;i--) {
+        WXGStallRecord *r=&records[i];NSMutableDictionary *st=perStall[@(r->stall)];if(!st)continue;
+        [stalls addObject:@{@"label":labels[(NSUInteger)i],@"sinceLaunchS":@(round(r->sinceLaunch*10)/10),
+            @"atLeastMS":@(round((r->last-r->busySince)*WXGStallMSPerTick)),@"samples":@(r->samples),@"samplesInPlugin":st[@"plugin"],
+            @"labelAgeMS":@(r->labelAt?round((r->busySince>r->labelAt?r->busySince-r->labelAt:0)*WXGStallMSPerTick):-1),   // FIX119 E
+            @"whose":@{@"wechat":st[@"wechat"],@"plugin":st[@"pluginOwn"],@"system":st[@"system"]},
+            @"weChatPaths":WXGStallTop(st[@"paths"],4,sampleMS),@"innermost":WXGStallTop(st[@"leaves"],6,sampleMS)}];
+        if(stalls.count>=16)break;
+    }
+    out[@"stalls"]=stalls;
+    out[@"mostOnTheStack"]=WXGStallTop(inclusive,20,sampleMS);
+    out[@"innermostOverall"]=WXGStallTop(leaves,12,sampleMS);
+    out[@"namingMS"]=@(round(namer.buildMS));
+    out[@"whose"]=@{@"wechat":ownerTotals[@"wechat"]?:@0,@"plugin":ownerTotals[@"pluginOwn"]?:@0,@"system":ownerTotals[@"system"]?:@0,
+                    @"note":@"每次采样算给离栈顶最近的那一帧：微信的、插件的，或者两者都不在（系统）。插件调进微信里的算微信的。"};
+    free(samples);
+    atomic_fetch_sub(&WXGStallPaused,1);
+    WXGStallCached=out.copy;WXGStallCachedTaken=taken;
+    return WXGStallCached;
+}
+static NSString *WXGStallReportText(void) {
+    NSDictionary *e=WXGStallEvidence();NSArray *stalls=e[@"stalls"];
+    if(![e[@"on"] boolValue])return @"  采样没有启动。\n";
+    if(!stalls.count)return @"  还没有采到：启动后 45 秒内、以及每次点底栏 / 切换页面后 1.5 秒内，主线程连续忙超过 30 ms 才会采。\n";
+    NSMutableString *text=[NSMutableString string];
+    for(NSDictionary *s in [stalls subarrayWithRange:NSMakeRange(0,MIN((NSUInteger)8,stalls.count))]) {
+        NSDictionary *w=s[@"whose"];
+        [text appendFormat:@"  启动后 %.1f s · %@ · 至少 %@ ms · %@ 次采样（微信 %@ · 插件自己 %@ · 系统 %@）\n",[s[@"sinceLaunchS"] doubleValue],s[@"label"],s[@"atLeastMS"],s[@"samples"],w[@"wechat"],w[@"plugin"],w[@"system"]];
+        for(NSDictionary *p in [s[@"weChatPaths"] subarrayWithRange:NSMakeRange(0,MIN((NSUInteger)2,[s[@"weChatPaths"] count]))])
+            [text appendFormat:@"    %@ 次 · %@\n",p[@"samples"],p[@"frame"]];
+    }
+    [text appendString:@"  最常在栈上的方法（每次采样约 4.5 ms）\n"];
+    for(NSDictionary *m in [e[@"mostOnTheStack"] subarrayWithRange:NSMakeRange(0,MIN((NSUInteger)12,[e[@"mostOnTheStack"] count]))])
+        [text appendFormat:@"    约 %@ ms · %@\n",m[@"aboutMS"],m[@"frame"]];
+    return text;
 }

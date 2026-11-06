@@ -9,6 +9,11 @@ static WXGRect WXGInputRect(CGRect r) {return (WXGRect){r.origin.x,r.origin.y,r.
    key as Face ID) or, switched off, WeChat's own artwork of the control each
    button stands in for (the set's symbol where WeChat shows none). */
 static BOOL WXGInputSystemIcons(void) {return [WXGConfig.shared extraNumber:@"inputSystemIcons"]>.5;}
+// FIX115 J: the capsule's height, the plus' size, the side margin and the gap (基本设置).
+static WXGInputSize WXGInputConfiguredSize(void) {
+    WXGConfig *c=WXGConfig.shared;
+    return (WXGInputSize){[c extraNumber:@"inputPillHeight"],[c extraNumber:@"inputPlusSize"],[c extraNumber:@"inputSideMargin"],[c extraNumber:@"inputPlusGap"]};
+}
 static UIImage *WXGInputSymbol(NSString *name) {
     static NSMutableDictionary<NSString *,UIImage *> *cache;if(!cache)cache=[NSMutableDictionary dictionary];
     UIImage *image=cache[name];
@@ -333,14 +338,18 @@ static NSData *WXGEmojiFacePrint;
         CGRect nativeRect=WXGWindowRect(content,w);
         _nativeGrowHeight=MAX(40,content.bounds.size.height);_nativeTextHeight=MAX(24,editor.bounds.size.height);
         if(!holdingVoice && !editor.text.length && !editor.markedTextRange)_singleLineHeight=nativeRect.size.height;
-        WXGInputGeometry g=WXGInputBottomAnchoredLayout(w.bounds.size.width,w.safeAreaInsets.left,w.safeAreaInsets.right,
-            WXGInputRect(nativeRect),_singleLineHeight,_nativeTextHeight,WXGPreferences.shared.sizeScale);
+        WXGInputSize size=WXGInputConfiguredSize();   // FIX115 J
+        WXGInputGeometry g=WXGInputBottomAnchoredLayoutSized(w.bounds.size.width,w.safeAreaInsets.left,w.safeAreaInsets.right,
+            WXGInputRect(nativeRect),_singleLineHeight,_nativeTextHeight,WXGPreferences.shared.sizeScale,size);
         WXGSurface *plus=_surfaces[0],*pill=_surfaces[1],*mic=_surfaces[2];
         WXGMetrics m=WXGMeasure(w.bounds.size.width-w.safeAreaInsets.left-w.safeAreaInsets.right,WXGPreferences.shared.sizeScale);
         BOOL hasEmoji=_emojiButton && _emojiButton.window==w && !_emojiButton.hidden && WXGCanForward(_emojiButton);
         CGFloat emojiDiameter=MIN(28,m.inputButton*.72);
         CGRect emojiRect=CGRectMake(g.mic.x-emojiDiameter-5*m.scale,g.mic.y+g.mic.h*.5-emojiDiameter*.5,emojiDiameter,emojiDiameter);
-        pill.maximumCornerRadius=MIN(g.pill.h*.5,24*m.scale);
+        // FIX115 J: a single line is always a whole capsule (a taller one than
+        // TEST9's too); more lines keep that radius.
+        CGFloat base=g.mic.h/.9;
+        pill.maximumCornerRadius=MIN(g.pill.h*.5,MAX(24*m.scale,base*.5));
         [pill placeMaterial:[w convertRect:WXGCGRect(g.pill) toView:_panel] inParent:_panel];
         [pill observeTouchesInView:_tool?:_panel];   // FIX70: the text view and the buttons take the touches
         // The logs show MMGrowTextView reassigning its child to x=6,width=w-9
@@ -349,7 +358,12 @@ static NSData *WXGEmojiFacePrint;
         CGFloat firstAction=hasEmoji?CGRectGetMinX(emojiRect):g.mic.x;
         // Action spacing must not feed back from TextKit's changing scroll inset.
         CGFloat gap=6*m.scale;
-        WXGRect host=WXGInputContentHost(WXGInputRect(nativeRect),g.pill,firstAction,gap);
+        // FIX115 J: the text starts further in when the capsule is taller than
+        // TEST9's (its round end is wider), so it keeps the same distance to it.
+        // (按住说话 keeps the whole capsule: its title is centred in it.)
+        WXGRect textPill=g.pill;CGFloat inset=holdingVoice?0:WXGInputTextInset(base,m.inputButton);
+        textPill.x+=inset;textPill.w=MAX(40,textPill.w-inset);
+        WXGRect host=WXGInputContentHost(WXGInputRect(nativeRect),textPill,firstAction,gap);
         CGRect target=[w convertRect:WXGCGRect(host) toView:content.superview];
         BOOL changed=!CGRectEqualToRect(content.frame,target);
         [UIView performWithoutAnimation:^{WXGSetInputHostFrame(content,target,[self.states remember:content]);}];

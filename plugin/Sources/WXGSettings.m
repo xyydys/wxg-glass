@@ -56,8 +56,15 @@ static NSArray<NSString *> *WXGSettingsDirectories(void) {
         if(documents)[list addObject:[documents stringByAppendingPathComponent:@"WeChatLiquidGlass"]];
         directories=list;
     });
+    // FIX115 C: another plugin (WCGlass) keeps its libraries in a directory of the
+    // same name (Documents/WeChatLiquidGlass): one that is there is left as it
+    // is; only a missing one is created (with no file protection, FIX85). In
+    // these directories this plugin only ever writes, heals or removes its own
+    // three files (settings-wallpaper-light.jpg / -dark.jpg / settings-avatar.png).
+    BOOL isDirectory=NO;
     for(NSString *directory in directories)
-        [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:@{NSFileProtectionKey:NSFileProtectionNone} error:nil];
+        if(![NSFileManager.defaultManager fileExistsAtPath:directory isDirectory:&isDirectory] || !isDirectory)
+            [NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:@{NSFileProtectionKey:NSFileProtectionNone} error:nil];
     return directories;
 }
 static NSString *WXGSettingsLegacyFile(NSString *name) {
@@ -745,7 +752,7 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
         dispatch_async(dispatch_get_main_queue(),^{if(image)done(image);else[weakSelf imageFailed];});
     }];
 }
-- (void)showMessage:(NSString *)title detail:(NSString *)detail {
+- (void)showMessage:(NSString *)title detail:(NSString *)detail {   // (FIX115 H: WXGConfirmResetAll below presents the same way)
     UIAlertController *alert=[UIAlertController alertControllerWithTitle:title message:detail preferredStyle:UIAlertControllerStyleAlert];
     [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
     UIViewController *presenter=self;
@@ -847,6 +854,31 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     [super viewDidAppear:animated];
     if(_recheckResultWaiting){_recheckResultWaiting=NO;if(_license==WXGLicenseAuthorized)[self showRecheckResult];}
 }
+// FIX115 H (user, 10-26 09:43: this export the plugin's defaults; a global
+// 恢复默认参数 where it fits): the card on the home page and 基本设置's button.
+void WXGResetAllSettingsToDefaults(void) {
+    [WXGConfig.shared resetAllKeeping:@[@"enabled",@"settingsFloat",@"diagnosticsFloat"]];
+    [WXGPreferences.shared resetToBuildDefaults];
+    WXGSettingsStore *store=WXGSettingsStore.shared;
+    id radius=WXGBuildDefaultSection(@"ui")[@"cardRadius"];
+    store.cardRadius=[radius isKindOfClass:NSNumber.class] && isfinite([radius doubleValue])?WXGClamp([radius doubleValue],0,40):26;
+    [store save];
+    [WXGIntegrationHost.shared schedule];
+}
+void WXGConfirmResetAll(UIViewController *page,void (^done)(void)) {
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"恢复全部默认参数？"
+        message:@"所有玻璃参数（各范围的折射、模糊、材质、边框，底栏、分组、透镜、气泡、渐隐、菜单圆角……）和各项功能开关、整体比例、卡片圆角回到本版的标准参数。总开关、两个悬浮按钮、壁纸、头像、强调色和你自己建的分组不变。不能撤销。"
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    [alert addAction:[UIAlertAction actionWithTitle:@"恢复" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a){
+        WXGResetAllSettingsToDefaults();
+        if(WXGConfig.shared.haptics)[[[UINotificationFeedbackGenerator alloc]init] notificationOccurred:UINotificationFeedbackTypeSuccess];
+        if(done)done();
+    }]];
+    UIViewController *presenter=page;
+    while(presenter.presentedViewController && !presenter.presentedViewController.isBeingDismissed)presenter=presenter.presentedViewController;
+    [presenter presentViewController:alert animated:YES completion:nil];
+}
 // module, title, subtitle, symbols (first available). Four glass modules are
 // set separately for the dock and for the other glass (inside the module).
 + (NSArray<NSDictionary *> *)sections {
@@ -856,7 +888,9 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
                                       // FIX113 O: the chat list's segment bar (its own module).
                                       @[@"segments",@"分组",@"小底栏 · 胶囊 · 透镜 · 悬浮",@[@"rectangle.split.3x1",@"square.split.2x1",@"rectangle.split.2x1",@"rectangle"]],
                                       @[@"tools",@"帧率与参数",@"帧率日志 · 参数导入导出",@[@"speedometer",@"gauge",@"chart.bar"]],
-                                      @[@"bubble",@"液态气泡",@"文字气泡 · 单行圆角 · 颜色",@[@"bubble.left.and.bubble.right.fill",@"bubble.left.and.bubble.right",@"message"]]]},
+                                      @[@"bubble",@"液态气泡",@"文字气泡 · 单行圆角 · 颜色",@[@"bubble.left.and.bubble.right.fill",@"bubble.left.and.bubble.right",@"message"]],
+                                      // FIX115 H: not a page: asks, then every parameter back to this build's standard set.
+                                      @[@"resetAll",@"恢复默认参数",@"全部回到本版标准参数",@[@"arrow.counterclockwise.circle",@"arrow.counterclockwise",@"arrow.uturn.backward"]]]},
         @{@"title":@"玻璃 · 底栏、其余玻璃、气泡、分组、设置页分别设置",@"cards":@[@[@"refraction",@"折射强度和色散",@"强度 · 色散 · 折射宽度",@[@"drop",@"drop.fill"]],
                                       @[@"blur",@"模糊强度与范围",@"半径 · 覆盖范围 · 清晰度",@[@"aqi.medium",@"sun.haze",@"circle.dashed"]],
                                       @[@"material",@"材质强度与范围",@"底色 · 遮盖 · 边缘减弱",@[@"circle.lefthalf.filled",@"circle.lefthalf.fill"]],
@@ -912,6 +946,7 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
             WXGSettingsCard *card=[self addCard:YES];card.accessibilityLabel=spec[1];
             NSString *module=spec[0];BOOL license=[module isEqual:@"license"];
             if(license)card.action=^{[weakSelf recheckLicense];};
+            else if([module isEqual:@"resetAll"])card.action=^{[weakSelf confirmResetAll];};   // FIX115 H
             else {card.action=^{[weakSelf openModule:module];};[_searchModules addObject:spec];}
             UIImageView *icon=[[UIImageView alloc]initWithImage:[WXGSymbol(spec[3],22,UIImageSymbolWeightMedium) imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
             icon.contentMode=UIViewContentModeScaleAspectFit;
@@ -927,6 +962,10 @@ BOOL WXGSettingsShowBarForPage(UIViewController *page) {
     }
 }
 - (NSString *)versionText {return [NSString stringWithFormat:@"%@ · %@",WXGIntegrationHost.shared.versionString,WXGBuildLabel()];}
+- (void)confirmResetAll {   // FIX115 H
+    __weak WXGSettingsHome *weakSelf=self;
+    WXGConfirmResetAll(self,^{WXGSettingsHome *me=weakSelf;[me rebuildContent];[me showMessage:@"已恢复默认参数" detail:@"现在用的是本版的标准参数。"];});
+}
 // FIX106: 旧的“未授权”提示卡（复制账号 / 把账号和授权码发给作者 / buildLicenseCard +
 // copyAccount）已删除。未授权账号根本进不到设置页，这张卡拿不到；新买家的授权码走线下
 // （作者按 wxid 用 license_hash.py 入名单）。_licenseCard / _licenseText / _copyAccount 等 ivar

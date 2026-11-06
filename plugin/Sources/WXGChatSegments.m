@@ -974,12 +974,12 @@ static BOOL WXGInstallFilterHook(void) {
     Class c=objc_getClass("MainSessionMgr");SEL sel=NSSelectorFromString(@"rebuildMainSessions");
     Method m=c?class_getInstanceMethod(c,sel):NULL;
     if(!m || method_getNumberOfArguments(m)!=2 || WXGSessionTypeOf(m,YES,0)!='v')return NO;
-    IMP original=method_getImplementation(m);
+    IMP own=WXGCapturedImplementation(c,sel);Class sup=class_getSuperclass(c);   // FIX115 B: what was there when installed (as before A)
     IMP replacement=imp_implementationWithBlock(^(id manager){
-        ((void (*)(id,SEL))original)(manager,sel);
+        ((void (*)(id,SEL))WXGThrough(own,sup,sel))(manager,sel);
         WXGFilterAfterRebuild(manager);
     });
-    if(!class_addMethod(c,sel,replacement,method_getTypeEncoding(m)))method_setImplementation(m,replacement);
+    WXGInstallOverride(c,sel,replacement,method_getTypeEncoding(m));
     WXGFilterHookInstalled=YES;
     return YES;
 }
@@ -1022,77 +1022,79 @@ static BOOL WXGFilterRowExists(UITableView *table,NSIndexPath *path) {
 static void WXGFilterOverride(Class cls,SEL sel,id block) {
     Method m=class_getInstanceMethod(cls,sel);if(!m)return;
     IMP replacement=imp_implementationWithBlock(block);
-    if(!class_addMethod(cls,sel,replacement,method_getTypeEncoding(m)))method_setImplementation(m,replacement);
+    WXGInstallOverride(cls,sel,replacement,method_getTypeEncoding(m));
 }
 static Class WXGFilterTableClass;
 static BOOL WXGInstallTableGuards(UITableView *table) {
     Class cls=[table class];   // the class itself, not a KVO subclass of it
     if(!cls || cls==UITableView.class || !strcmp(class_getName(cls),"UITableView"))return NO;   // never UIKit's own class
     if(WXGFilterTableClass)return WXGFilterTableClass==cls;
-    // Each: the original IMP (UIKit's, inherited, or the class's own) captured now.
-    #define WXG_ORIGINAL(sel) method_getImplementation(class_getInstanceMethod(cls,sel))
+    // Each: the original IMP (UIKit's, inherited, or the class's own) captured now
+    // (FIX115 B: as before A again).
+    Class sup=class_getSuperclass(cls);
+    #define WXG_ORIGINAL(sel) WXGCapturedImplementation(cls,sel)   // FIX115 B: as before A
     {SEL sel=@selector(insertRowsAtIndexPaths:withRowAnimation:);IMP o=WXG_ORIGINAL(sel);
-     WXGFilterOverride(cls,sel,^(UITableView *t,NSArray *p,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))o)(t,sel,p,a);});}
+     WXGFilterOverride(cls,sel,^(UITableView *t,NSArray *p,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))WXGThrough(o,sup,sel))(t,sel,p,a);});}
     {SEL sel=@selector(deleteRowsAtIndexPaths:withRowAnimation:);IMP o=WXG_ORIGINAL(sel);
-     WXGFilterOverride(cls,sel,^(UITableView *t,NSArray *p,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))o)(t,sel,p,a);});}
+     WXGFilterOverride(cls,sel,^(UITableView *t,NSArray *p,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))WXGThrough(o,sup,sel))(t,sel,p,a);});}
     {SEL sel=@selector(reloadRowsAtIndexPaths:withRowAnimation:);IMP o=WXG_ORIGINAL(sel);
-     WXGFilterOverride(cls,sel,^(UITableView *t,NSArray *p,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))o)(t,sel,p,a);});}
+     WXGFilterOverride(cls,sel,^(UITableView *t,NSArray *p,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))WXGThrough(o,sup,sel))(t,sel,p,a);});}
     {SEL sel=@selector(moveRowAtIndexPath:toIndexPath:);IMP o=WXG_ORIGINAL(sel);
-     WXGFilterOverride(cls,sel,^(UITableView *t,NSIndexPath *a,NSIndexPath *b){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,id))o)(t,sel,a,b);});}
+     WXGFilterOverride(cls,sel,^(UITableView *t,NSIndexPath *a,NSIndexPath *b){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,id))WXGThrough(o,sup,sel))(t,sel,a,b);});}
     {SEL sel=@selector(insertSections:withRowAnimation:);IMP o=WXG_ORIGINAL(sel);
-     WXGFilterOverride(cls,sel,^(UITableView *t,NSIndexSet *x,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))o)(t,sel,x,a);});}
+     WXGFilterOverride(cls,sel,^(UITableView *t,NSIndexSet *x,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))WXGThrough(o,sup,sel))(t,sel,x,a);});}
     {SEL sel=@selector(deleteSections:withRowAnimation:);IMP o=WXG_ORIGINAL(sel);
-     WXGFilterOverride(cls,sel,^(UITableView *t,NSIndexSet *x,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))o)(t,sel,x,a);});}
+     WXGFilterOverride(cls,sel,^(UITableView *t,NSIndexSet *x,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))WXGThrough(o,sup,sel))(t,sel,x,a);});}
     {SEL sel=@selector(reloadSections:withRowAnimation:);IMP o=WXG_ORIGINAL(sel);
-     WXGFilterOverride(cls,sel,^(UITableView *t,NSIndexSet *x,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))o)(t,sel,x,a);});}
+     WXGFilterOverride(cls,sel,^(UITableView *t,NSIndexSet *x,UITableViewRowAnimation a){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id,NSInteger))WXGThrough(o,sup,sel))(t,sel,x,a);});}
     {SEL sel=@selector(moveSection:toSection:);IMP o=WXG_ORIGINAL(sel);
-     WXGFilterOverride(cls,sel,^(UITableView *t,NSInteger a,NSInteger b){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,NSInteger,NSInteger))o)(t,sel,a,b);});}
+     WXGFilterOverride(cls,sel,^(UITableView *t,NSInteger a,NSInteger b){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,NSInteger,NSInteger))WXGThrough(o,sup,sel))(t,sel,a,b);});}
     if([UITableView instancesRespondToSelector:NSSelectorFromString(@"reconfigureRowsAtIndexPaths:")]) {   // iOS 15
         SEL sel=NSSelectorFromString(@"reconfigureRowsAtIndexPaths:");IMP o=WXG_ORIGINAL(sel);
-        WXGFilterOverride(cls,sel,^(UITableView *t,NSArray *p){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id))o)(t,sel,p);});
+        WXGFilterOverride(cls,sel,^(UITableView *t,NSArray *p){if(WXGFilterIntercepting(t))WXGFilterReload(t);else ((void(*)(id,SEL,id))WXGThrough(o,sup,sel))(t,sel,p);});
     }
     // begin / end: ours while filtered (the rows inside become one reload at
     // the end); an end without our begin is UIKit's.
     static NSInteger ownBegins;
     IMP beginOriginal=WXG_ORIGINAL(@selector(beginUpdates));
     {SEL sel=@selector(beginUpdates);IMP o=beginOriginal;
-     WXGFilterOverride(cls,sel,^(UITableView *t){if(WXGFilterIntercepting(t)){++WXGFilterUpdateDepth;++ownBegins;}else ((void(*)(id,SEL))o)(t,sel);});}
+     WXGFilterOverride(cls,sel,^(UITableView *t){if(WXGFilterIntercepting(t)){++WXGFilterUpdateDepth;++ownBegins;}else ((void(*)(id,SEL))WXGThrough(o,sup,sel))(t,sel);});}
     {SEL sel=@selector(endUpdates);IMP o=WXG_ORIGINAL(sel);
      WXGFilterOverride(cls,sel,^(UITableView *t){
         if(ownBegins>0 && t==WXGFilterTable && NSThread.isMainThread) {
             --ownBegins;WXGFilterUpdateDepth=MAX(0,WXGFilterUpdateDepth-1);
             if(WXGFilterUpdateDepth)return;
             if(WXGFilterReloadPending || WXGFilterCountsDiffer(t)){WXGFilterReloadPending=NO;[t reloadData];atomic_fetch_add(&WXGFilterIntercepts,1);}
-            else {((void(*)(id,SEL))beginOriginal)(t,@selector(beginUpdates));((void(*)(id,SEL))o)(t,sel);}   // nothing in it: UIKit's (row heights)
+            else {((void(*)(id,SEL))WXGThrough(beginOriginal,sup,@selector(beginUpdates)))(t,@selector(beginUpdates));((void(*)(id,SEL))WXGThrough(o,sup,sel))(t,sel);}   // nothing in it: UIKit's (row heights)
             return;
         }
-        ((void(*)(id,SEL))o)(t,sel);
+        ((void(*)(id,SEL))WXGThrough(o,sup,sel))(t,sel);
      });}
     {SEL sel=@selector(performBatchUpdates:completion:);IMP o=WXG_ORIGINAL(sel);
      WXGFilterOverride(cls,sel,^(UITableView *t,void (^updates)(void),void (^completion)(BOOL)){
-        if(!WXGFilterIntercepting(t)){((void(*)(id,SEL,id,id))o)(t,sel,updates,completion);return;}
+        if(!WXGFilterIntercepting(t)){((void(*)(id,SEL,id,id))WXGThrough(o,sup,sel))(t,sel,updates,completion);return;}
         ++WXGFilterUpdateDepth;
         @try {if(updates)updates();} @finally {WXGFilterUpdateDepth=MAX(0,WXGFilterUpdateDepth-1);}
         if(WXGFilterUpdateDepth){if(completion)dispatch_async(dispatch_get_main_queue(),^{completion(YES);});return;}
         if(WXGFilterReloadPending || WXGFilterCountsDiffer(t)) {
             atomic_fetch_add(&WXGFilterIntercepts,1);WXGFilterReloadPending=NO;[t reloadData];
             if(completion)dispatch_async(dispatch_get_main_queue(),^{completion(YES);});
-        }else ((void(*)(id,SEL,id,id))o)(t,sel,nil,completion);   // nothing in it: UIKit's (row heights)
+        }else ((void(*)(id,SEL,id,id))WXGThrough(o,sup,sel))(t,sel,nil,completion);   // nothing in it: UIKit's (row heights)
      });}
     {SEL sel=@selector(scrollToRowAtIndexPath:atScrollPosition:animated:);IMP o=WXG_ORIGINAL(sel);
      WXGFilterOverride(cls,sel,^(UITableView *t,NSIndexPath *p,UITableViewScrollPosition pos,BOOL animated){
         if(WXGFilterIntercepting(t) && !WXGFilterRowExists(t,p)){atomic_fetch_add(&WXGFilterIntercepts,1);return;}
-        ((void(*)(id,SEL,id,NSInteger,BOOL))o)(t,sel,p,pos,animated);
+        ((void(*)(id,SEL,id,NSInteger,BOOL))WXGThrough(o,sup,sel))(t,sel,p,pos,animated);
      });}
     {SEL sel=@selector(rectForRowAtIndexPath:);IMP o=WXG_ORIGINAL(sel);
      WXGFilterOverride(cls,sel,^CGRect(UITableView *t,NSIndexPath *p){
         if(WXGFilterIntercepting(t) && !WXGFilterRowExists(t,p)){atomic_fetch_add(&WXGFilterIntercepts,1);return CGRectZero;}
-        return ((CGRect(*)(id,SEL,id))o)(t,sel,p);
+        return ((CGRect(*)(id,SEL,id))WXGThrough(o,sup,sel))(t,sel,p);
      });}
     {SEL sel=@selector(selectRowAtIndexPath:animated:scrollPosition:);IMP o=WXG_ORIGINAL(sel);
      WXGFilterOverride(cls,sel,^(UITableView *t,NSIndexPath *p,BOOL animated,UITableViewScrollPosition pos){
         if(WXGFilterIntercepting(t) && p && !WXGFilterRowExists(t,p)){atomic_fetch_add(&WXGFilterIntercepts,1);return;}
-        ((void(*)(id,SEL,id,BOOL,NSInteger))o)(t,sel,p,animated,pos);
+        ((void(*)(id,SEL,id,BOOL,NSInteger))WXGThrough(o,sup,sel))(t,sel,p,animated,pos);
      });}
     #undef WXG_ORIGINAL
     WXGFilterTableClass=cls;
@@ -1503,6 +1505,9 @@ static BOOL WXGPushedOver(UIViewController *below,UIViewController *leaf) {
 }
 @interface WXGFloatingSearch : UIControl
 @property(nonatomic,strong,readonly) WXGSurface *surface;
+// FIX114 M: at WeChat's bar's own place: touches go through to WeChat's bar
+// (hidden by a mask, not faded: still touchable), its own search opens.
+@property(nonatomic) BOOL passThrough;
 - (BOOL)copyLookOf:(UIView *)bar;   // FIX114 F: WeChat's own icon, text, font, colours and spacing (NO: not found yet)
 @end
 @implementation WXGFloatingSearch {
@@ -1570,6 +1575,10 @@ static BOOL WXGPushedOver(UIViewController *below,UIViewController *leaf) {
     }
     return self;
 }
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    if(_passThrough)return nil;   // FIX114 M
+    return [super hitTest:point withEvent:event];
+}
 - (void)layoutSubviews {
     [super layoutSubviews];
     [_surface placeMaterial:self.bounds inParent:self];
@@ -1622,6 +1631,7 @@ static BOOL WXGPushedOver(UIViewController *below,UIViewController *leaf) {
     BOOL _segmentFloating;       // FIX113 O: it is in the navigation overlay now
     NSMapTable<UIViewController *,WXGFloatSlot *> *_floats;
     NSUInteger _floatMoves;
+    NSUInteger _directSearches;   // FIX114 M: capsule taps that opened WeChat's search page at once
     NSMutableArray<NSString *> *_switchLog;
     CGFloat _gapDelta;           // FIX114 E: moved down with the title row (顶部按钮往下移; 0: where WeChat's field is)
     // FIX114 E: the bar's place on screen for about a second after the list's
@@ -2235,6 +2245,11 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
     CGRect natural=[bar convertRect:slot.field toView:host];
     CGFloat pinned=WXGFloatPinnedTop(table,header,CGRectGetMinY(natural),host);
     CGRect frame=natural;if(CGRectGetMinY(natural)<pinned)frame.origin.y=pinned;
+    // FIX114 M (user: tapping the home page's search box stuck with a field
+    // up that took no typing): at the bar's own place a tap is WeChat's own
+    // (its bar takes it: its search opens as without the plugin); held below
+    // the title row (the bar scrolled away) the capsule takes it.
+    clone.passThrough=CGRectGetMinY(natural)>=pinned-.5;
     WXGRaiseAboveList(clone,host,table);
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
@@ -2244,16 +2259,20 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
     }];
     if(!slot.pinned){slot.pinned=YES;++slot.pins;}
     if(!slot.states)slot.states=[WXGStateBag new];
-    [slot.states hide:bar];
+    [slot.states conceal:bar];   // FIX114 M: hidden by a mask (a faded view takes no touches)
     [clone.surface tick:time];
 }
-// The floating capsule tapped: the list back to its top (WeChat's bar where it
-// belongs), then WeChat's own field focused: its search opens as from a tap.
+// The floating capsule tapped (held below the title row: WeChat's bar has
+// scrolled away). FIX114 M (user: straight to the search page, nothing in
+// between): WeChat's own search entry when the page has one (the home page's
+// search button: the search page opens at once); else as before: the list
+// back to its top, then WeChat's own field focused.
 - (void)floatingTapped:(WXGFloatingSearch *)clone {
     for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects) {
         if(slot.clone!=clone)continue;
         ++slot.taps;UITableView *table=slot.table;UIView *bar=slot.bar,*header=table.tableHeaderView;
         [self unpin:slot];
+        if([WXGIntegrationHost.shared openWeChatSearchOn:slot.page]){++_directSearches;break;}
         if(table && header)[table setContentOffset:CGPointMake(table.contentOffset.x,CGRectGetMinY(header.frame)-table.adjustedContentInset.top) animated:NO];
         dispatch_async(dispatch_get_main_queue(),^{
             UITextField *field=[bar isKindOfClass:UISearchBar.class]?((UISearchBar *)bar).searchTextField:nil;
@@ -2317,7 +2336,7 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
         if(!slot.pinned || !slot.clone.window || (slot.page==leaf && !transitioning))continue;
         UIView *bar=slot.bar;UITableView *table=slot.table;
         if(!bar || !table || ![bar isDescendantOfView:table.tableHeaderView] || slot.clone.superview!=table.superview || [self nativeSearchActive:bar page:slot.page]){[self unpin:slot];continue;}
-        if(bar.alpha>.01 && slot.states)[slot.states hide:bar];
+        if(slot.states)[slot.states conceal:bar];   // FIX114 M (review): masked, not faded (it must still take touches back on its page)
     }
     if(transitioning)return;   // each page keeps what it shows while it slides
     // FIX114 F: a page pushed over this one in its navigation stack (a chat):
@@ -2357,7 +2376,7 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
     for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects)
         [floats addObject:@{@"page":slot.page?NSStringFromClass(slot.page.class):@"",@"bar":slot.bar?NSStringFromClass(slot.bar.class):@"",
                             @"field":NSStringFromCGRect(slot.field),@"pinned":@(slot.pinned),@"pins":@(slot.pins),@"taps":@(slot.taps),
-                            @"clone":slot.clone?NSStringFromCGRect(slot.clone.frame):@""}];
+                            @"clone":slot.clone?NSStringFromCGRect(slot.clone.frame):@"",@"passThrough":@(slot.clone.passThrough),@"directSearches":@(_directSearches)}];
     UIView *bar=_searchBar;
     return @{@"switch":@([WXGConfig.shared extraNumber:@"chatSegments"]>.5),@"wanted":@([self wanted]),@"status":_status?:@"",
              @"mounted":@(_bar.superview!=nil),@"container":_container?NSStringFromClass(_container.class):@"",

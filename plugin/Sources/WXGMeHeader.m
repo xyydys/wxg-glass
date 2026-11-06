@@ -1,0 +1,1057 @@
+#import "WXGIntegration.h"
+#import "WXGMeMetaball.h"
+#import <Metal/Metal.h>
+#import <MetalKit/MetalKit.h>
+#import <objc/runtime.h>
+#import <sys/utsname.h>
+#import <AVFoundation/AVFoundation.h>
+#import <CoreVideo/CoreVideo.h>
+#import <PhotosUI/PhotosUI.h>
+
+/* FIX118 A (user, 11-04: the 我 page as Telegram's profile: "将二维码作为一个左
+   上方的按钮，其余的详细资料列一个单独的列表条，昵称微信号，状态那块居中放在头像下";
+   the expo-scroll-metaball effect: scrolled up, the avatar melts into the
+   Dynamic Island (into the notch on a notched phone, or only shrinks and fades,
+   as the user chooses); "右上角 … 一个胶囊和设置两个字加入我们自己的设置"; a switch:
+   off, only the avatar going up; on, pulling down opens the avatar into a
+   banner whose lower edge moves as a liquid, in place of WeChat's own pull
+   (its 状态, still reached from the status buttons).
+
+   What is WeChat's stays WeChat's (FIX117 D's probe, diagnostics_16 on the XS
+   Max: MoreViewController, its TextStateProfileTableView inside a 2-screen
+   MMUIButton that WeChat's TextStateProfileDragAnimateHelper drags for its
+   status page; the header a 144 pt MMUIButton whose action is showProfileView):
+   - the avatar (MMHeadImageView), the name and ID labels, the QR button and
+     the chevron are masked (WXGStateBag conceal, restorable); the QR button no
+     longer takes touches where it was (it is a bar button now, which sends
+     WeChat's QR button its own action);
+   - WeChat's two status buttons are moved (their centres, before each commit
+     and in their own layout) to a row under the name, still inside the header,
+     so they take their own touches;
+   - the list gets more room at its top (its inset) for the new header and, if
+     it is too short to be scrolled that far, at its bottom;
+   - the bar gets a QR button on the left and 设置 on the right (navigationItem;
+     WeChat's own items, none on this page, are given back);
+   - with the banner on: WeChat's drag recognizer is switched off and the list
+     bounces (both given back).
+   Drawn by the plugin, in a view above the list (no touches): the name and ID
+   centred (FIX119 B: one name, collapsing into the bar's title as Telegram's,
+   the bar's background coming in as a step once it has), and the avatar, the
+   cut-out and the banner in one Metal pass (the shader below, after
+   expo-scroll-metaball's), its layer only as tall as what it draws. */
+
+typedef struct {float size[2];float scale;float time;float island[4];float islandShape[4];float avatar[4];float effect[4];float drop[4];float image[4];float video[4];float fx[4];} WXGMBUniforms;
+
+static const char *WXGMBShaderSource=
+"#include <metal_stdlib>\n"
+"using namespace metal;\n"
+"struct WXGMBOut{float4 position [[position]];float2 uv;};\n"
+"struct WXGMBUniforms{float2 size;float scale;float time;float4 island;float4 islandShape;float4 avatar;float4 effect;float4 drop;float4 image;float4 video;float4 fx;};\n"
+"vertex WXGMBOut wxgmb_vertex(uint vid [[vertex_id]]){float2 p=float2(float((vid<<1)&2),float(vid&2));WXGMBOut o;o.position=float4(p.x*2.0-1.0,1.0-p.y*2.0,0.0,1.0);o.uv=p;return o;}\n"
+"static float sdBox(float2 p,float2 c,float2 h,float r){float2 q=abs(p-c)-h+float2(r);return length(max(q,float2(0.0)))+min(max(q.x,q.y),0.0)-r;}\n"
+"static float smoothUnion(float a,float b,float k){if(k<=0.0001)return min(a,b);float h=max(k-abs(a-b),0.0)/k;return min(a,b)-h*h*h*k*(1.0/6.0);}\n"
+"static float sdDrop(float2 p,float r1,float r2,float h){float2 q=float2(abs(p.x),p.y);float b=(r1-r2)/h;float a=sqrt(max(1.0-b*b,0.0));float k=dot(q,float2(-b,a));if(k<0.0)return length(q)-r1;if(k>a*h)return length(q-float2(0.0,h))-r2;return dot(q,float2(a,b))-r1;}\n"
+"static float hash1(float n){return fract(sin(n*12.9898)*43758.5453);}\n"
+"static float glossAt(float2 p,float2 c,float r){float d=length(p-c+float2(r*0.32,r*0.38));return 1.0-smoothstep(r*0.08,r*0.5+0.01,d);}\n"
+"static float2 dripsAt(float2 p,float edge,float left,float width,float amount,float t,float room){\n"
+"  float2 acc=float2(100000.0,0.0);\n"
+"  for(int i=0;i<7;i++){\n"
+"    float fi=float(i);float seed=hash1(fi*1.7+0.3);\n"
+"    float neck=mix(3.5,6.5,hash1(fi*4.1+0.7))*amount;float bulb=neck+mix(2.5,5.0,hash1(fi*8.3+0.1))*amount;\n"
+"    float x=left+(fi+0.5+(seed-0.5)*0.7)/7.0*width;\n"
+"    if(abs(p.x-x)>bulb*1.3+14.0)continue;\n"
+"    float on=hash1(fi*6.6+0.2)>=0.4?1.0:0.0;float period=mix(2.6,4.4,hash1(fi*11.9+0.5));\n"
+"    float s=fract(t/period+seed*3.1);float form=smoothstep(0.0,0.45,s)*on;float fall=max(s-0.45,0.0)/0.55*on;\n"
+"    float sway=0.9+0.1*sin(t*0.9+fi*1.9)+0.18*form*(1.0-smoothstep(0.45,0.75,s));\n"
+"    float h=max(min(64.0*amount*mix(0.25,1.0,seed)*sway,room*0.45),bulb-neck+0.5);\n"
+"    float root=edge-neck;float tip=root+h;\n"
+"    float dDrip=sdDrop(p-float2(x,root),max(neck,0.01),max(bulb,0.01),h);\n"
+"    float r=bulb*0.95*form*(1.0-smoothstep(0.6,1.0,fall));float stretch=1.0+0.3*smoothstep(0.0,0.3,fall);\n"
+"    float2 c=float2(x,tip+r*0.9+fall*fall*max(room-(tip-edge)-12.0,0.0));float2 bead=float2(p.x,c.y+(p.y-c.y)/stretch);\n"
+"    float dBead=100000.0;\n"
+"    if(r>0.5){dBead=length(bead-c)-r;acc.y=max(acc.y,glossAt(bead,c,r));}\n"
+"    acc.y=max(acc.y,glossAt(p,float2(x,tip),bulb));\n"
+"    acc.x=min(acc.x,smoothUnion(dDrip,dBead,bulb*1.6));\n"
+"  }\n"
+"  return float2(acc.x,acc.y*amount);\n"
+"}\n"
+"// FIX118 E: a drip's colour: the banner mirrored at its lower edge (what is just above it), blurred the more the deeper\n"
+"static float3 blurTap(texture2d<float> t,sampler smp,float2 uv,float2 rad,float2 lo,float2 hi){\n"
+"  float3 acc=float3(0.0);\n"
+"  for(int i=0;i<8;i++){float fi=float(i);float a=fi*2.39996323;float rr=sqrt((fi+0.5)/8.0);acc+=t.sample(smp,clamp(uv+float2(cos(a),sin(a))*rad*rr,lo,hi),level(0.0)).rgb;}\n"
+"  return acc/8.0;\n"
+"}\n"
+"fragment float4 wxgmb_fragment(WXGMBOut in [[stage_in]],constant WXGMBUniforms &u [[buffer(0)]],texture2d<float> photo [[texture(0)]],texture2d<float> video [[texture(1)]],sampler smp [[sampler(0)]]){\n"
+"  float2 pos=in.uv*u.size;float aa=1.0/u.scale;\n"
+"  float presence=u.islandShape.z;float expand=u.drop.z;float flow=u.drop.w;float radius=u.avatar.z;\n"
+"  float top=mix(u.avatar.y-radius,0.0,expand);float bottom=u.avatar.y+radius;\n"
+"  float2 extent=float2(mix(radius,u.size.x*0.5,expand),max((bottom-top)*0.5,0.001));\n"
+"  float2 center=float2(u.avatar.x,(top+bottom)*0.5);\n"
+"  float2 local=pos-u.avatar.xy;\n"
+"  float dIsland=100000.0;\n"
+"  if(presence>0.001){\n"
+"    float2 h=max(u.island.zw-float2(u.islandShape.w),float2(0.5));\n"
+"    if(u.islandShape.y>1.5){dIsland=sdBox(pos,u.island.xy,h*presence,h.y*presence);}\n"
+"    else{float bot=u.island.y+h.y;float2 hh=float2(h.x*presence,(bot+60.0)*0.5);float2 c=float2(u.island.x,bot-hh.y);dIsland=sdBox(pos,c,hh,min(u.islandShape.x*presence,hh.x));}\n"
+"  }\n"
+"  float dShape=sdBox(pos,center,extent,radius*(1.0-expand));\n"
+"  float gloss=0.0;\n"
+"  float mode=u.fx.x;\n"
+"  if(mode<0.5&&flow>0.0&&pos.y>bottom-40.0){\n"
+"    dShape-=flow*2.5*sin(pos.x*0.045+u.time*0.8)*smoothstep(bottom-40.0,bottom,pos.y);\n"
+"    float2 d=dripsAt(pos,bottom,center.x-extent.x,2.0*extent.x,flow,u.time,u.fx.y);\n"
+"    dShape=smoothUnion(dShape,d.x,12.0*flow);gloss=d.y;\n"
+"  }\n"
+
+"  float dAvatar=radius>0.5?dShape:100000.0;\n"
+"  if(radius>0.5&&expand<0.001&&u.drop.x>radius-u.drop.y+0.01)dAvatar=sdDrop(float2(local.x,-local.y),radius,max(u.drop.y,0.01),u.drop.x);\n"
+"  float d=smoothUnion(dIsland,dAvatar,u.effect.y);\n"
+"  float coverage=clamp(0.5-d/aa,0.0,1.0);\n"
+"  if(coverage<=0.0)return float4(0.0);\n"
+"  float3 color=float3(0.0);\n"
+"  if(radius>0.5&&u.avatar.w<1.0){\n"
+"    float feather=max(aa,u.effect.x*0.6);float edge=clamp(0.5-dShape/feather,0.0,1.0);float melt=1.0;\n"
+"    if(u.effect.w>0.0&&presence>0.001){float soft=max(radius*0.8,8.0);float reach=bottom-(u.island.y+u.island.w)+soft;float front=mix(-soft,reach,u.effect.w);melt=smoothstep(front-soft,front+soft,dIsland);}\n"
+"    float weight=clamp(edge/coverage,0.0,1.0)*melt*(1.0-u.avatar.w);\n"
+"    if(weight>0.0){\n"
+"      float2 uvShape=(pos-center)/(2.0*extent)+0.5;\n"
+"      float depth=max(pos.y-bottom,0.0);\n"
+"      if(uvShape.y>1.0)uvShape.y=2.0-uvShape.y;\n"
+"      uvShape=clamp(uvShape,0.0,1.0);\n"
+"      float mirrorBlur=depth>0.0?clamp(depth*0.35+2.0,2.0,18.0):0.0;\n"
+"      float aspect=extent.x/extent.y;float img=u.image.x/max(u.image.y,1.0);\n"
+"      float2 lo=float2(0.0);float2 sz=float2(1.0);\n"
+"      if(img>aspect){sz.x=aspect/img;lo.x=(1.0-sz.x)*0.5;}else{sz.y=img/aspect;lo.y=(1.0-sz.y)*u.image.z;}\n"
+"      float texelsPerPt=sz.y*u.image.y/max(2.0*extent.y,1.0);\n"
+"      float lod=log2(max(max(u.effect.x,mirrorBlur)*texelsPerPt*0.5,1.0));\n"
+"      float3 c=photo.sample(smp,lo+uvShape*sz,level(min(lod,u.image.w))).rgb;\n"
+"      if(u.video.w>0.0){\n"
+"        float vimg=u.video.x/max(u.video.y,1.0);float2 vlo=float2(0.0);float2 vsz=float2(1.0);\n"
+"        if(vimg>aspect){vsz.x=aspect/vimg;vlo.x=(1.0-vsz.x)*0.5;}else{vsz.y=vimg/aspect;vlo.y=(1.0-vsz.y)*u.video.z;}\n"
+"        float2 vuv=vlo+uvShape*vsz;\n"
+"        float3 f=mirrorBlur>0.0?blurTap(video,smp,vuv,mirrorBlur/(2.0*extent)*vsz,vlo,vlo+vsz):video.sample(smp,vuv,level(0.0)).rgb;\n"
+"        c=mix(c,f,u.video.w);\n"
+"      }\n"
+"      color=min(c*weight+gloss*0.35*weight,float3(weight));\n"
+"    }\n"
+"  }\n"
+"  float a=coverage*u.effect.z;\n"
+"  if(mode>0.5&&mode<1.5){\n"   // FIX118 F: the banner's lower part fades into the page (no drips, no mirroring)
+"    float fadeLen=max((bottom-top)*0.38,64.0);float g=1.0-smoothstep(bottom-fadeLen,bottom,pos.y);\n"
+"    g=g*g*(3.0-2.0*g);\n"
+"    a*=mix(1.0,g,smoothstep(0.3,1.0,expand));\n"
+"  }\n"
+"  return float4(color*a,a);\n"
+"}\n";
+
+FOUNDATION_EXPORT id<MTLDevice> WXGSharedDevice(void);
+
+// FIX119 E (diagnostics_22's stall samples: WXGMetaballView setPhoto: on the main thread when coming to 我): the shader
+// built once, off the main thread, a few seconds after launch (a first visit before that builds it there, as before);
+// a new photo after the first made into a texture off the main thread.
+static id<MTLRenderPipelineState> WXGMBSharedPipeline;static NSString *WXGMBSharedFailure;
+static void WXGMBBuildPipeline(void) {
+    static dispatch_once_t once;
+    dispatch_once(&once,^{
+        id<MTLDevice> device=WXGSharedDevice();if(!device){WXGMBSharedFailure=@"没有 GPU";return;}
+        NSError *error=nil;
+        id<MTLLibrary> library=[device newLibraryWithSource:@(WXGMBShaderSource) options:nil error:&error];
+        if(!library){WXGMBSharedFailure=[@"着色器编译失败：" stringByAppendingString:error.localizedDescription?:@"?"];return;}
+        MTLRenderPipelineDescriptor *d=[MTLRenderPipelineDescriptor new];
+        d.vertexFunction=[library newFunctionWithName:@"wxgmb_vertex"];d.fragmentFunction=[library newFunctionWithName:@"wxgmb_fragment"];
+        d.colorAttachments[0].pixelFormat=MTLPixelFormatBGRA8Unorm;
+        id<MTLRenderPipelineState> pipeline=[device newRenderPipelineStateWithDescriptor:d error:&error];
+        if(!pipeline){WXGMBSharedFailure=[@"管线失败：" stringByAppendingString:error.localizedDescription?:@"?"];return;}
+        WXGMBSharedPipeline=pipeline;
+    });
+}
+// The photo as an 8-bit RGBA texture with mipmaps (FIX118 D: a greyscale picture would load as red only), at most 512 px.
+static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
+    CGSize px=CGSizeMake(photo.size.width*photo.scale,photo.size.height*photo.scale);
+    if(px.width<1 || px.height<1)return nil;
+    CGFloat f=MIN(1,512/MAX(px.width,px.height));CGSize out=CGSizeMake(round(px.width*f),round(px.height*f));
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat preferredFormat];format.scale=1;format.opaque=NO;
+    if(@available(iOS 12.0,*))format.preferredRange=UIGraphicsImageRendererFormatRangeStandard;
+    UIImage *drawn=[[[UIGraphicsImageRenderer alloc]initWithSize:out format:format] imageWithActions:^(__unused UIGraphicsImageRendererContext *c){[photo drawInRect:CGRectMake(0,0,out.width,out.height)];}];
+    CGImageRef image=drawn.CGImage;if(!image)return nil;
+    MTKTextureLoader *loader=[[MTKTextureLoader alloc]initWithDevice:WXGSharedDevice()];
+    NSError *error=nil;
+    id<MTLTexture> texture=[loader newTextureWithCGImage:image options:@{MTKTextureLoaderOptionGenerateMipmaps:@YES,MTKTextureLoaderOptionAllocateMipmaps:@YES,
+        MTKTextureLoaderOptionSRGB:@NO,MTKTextureLoaderOptionTextureUsage:@(MTLTextureUsageShaderRead)} error:&error];
+    if(!texture && failure)*failure=[@"头像纹理失败：" stringByAppendingString:error.localizedDescription?:@"?"];
+    return texture;
+}
+
+@interface WXGMetaballView : UIView
+@property(nonatomic) WXGMBUniforms uniforms;
+@property(nonatomic,copy) void (^photoReady)(void);   // FIX119 E: a photo made off the main thread is in
+@property(nonatomic,copy) NSString *failure;
+@property(nonatomic) NSUInteger frames;
+@property(nonatomic,strong) id<MTLTexture> videoTexture;   // FIX118 B: the banner's video frame (nil: none)
+- (void)setPhoto:(UIImage *)photo;
+- (BOOL)render;
+@end
+@implementation WXGMetaballView {
+    id<MTLRenderPipelineState> _pipeline;
+    id<MTLCommandQueue> _queue;
+    id<MTLTexture> _photo,_placeholder;
+    id<MTLSamplerState> _sampler;
+    BOOL _tried;NSUInteger _photoToken;
+}
++ (Class)layerClass {return CAMetalLayer.class;}
+- (instancetype)initWithFrame:(CGRect)frame {
+    if((self=[super initWithFrame:frame])) {
+        self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;
+        CAMetalLayer *layer=(CAMetalLayer *)self.layer;
+        layer.opaque=NO;layer.pixelFormat=MTLPixelFormatBGRA8Unorm;layer.framebufferOnly=YES;layer.presentsWithTransaction=YES;
+        layer.contentsScale=UIScreen.mainScreen.scale;
+    }
+    return self;
+}
+- (BOOL)prepare {
+    if(_pipeline)return YES;
+    if(_tried)return NO;
+    _tried=YES;
+    id<MTLDevice> device=WXGSharedDevice();if(!device){_failure=@"没有 GPU";return NO;}
+    ((CAMetalLayer *)self.layer).device=device;
+    WXGMBBuildPipeline();   // (FIX119 E: built off the main thread after launch; here only if 我 comes first)
+    _pipeline=WXGMBSharedPipeline;
+    if(!_pipeline){_failure=WXGMBSharedFailure?:@"管线失败";WXGLog(@"我页头部：%@",_failure);return NO;}
+    _queue=[device newCommandQueue];
+    MTLSamplerDescriptor *s=[MTLSamplerDescriptor new];
+    s.minFilter=s.magFilter=MTLSamplerMinMagFilterLinear;s.mipFilter=MTLSamplerMipFilterLinear;
+    s.sAddressMode=s.tAddressMode=MTLSamplerAddressModeClampToEdge;
+    _sampler=[device newSamplerStateWithDescriptor:s];
+    MTLTextureDescriptor *t=[MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm width:1 height:1 mipmapped:NO];
+    _placeholder=[device newTextureWithDescriptor:t];
+    uint8_t grey[4]={128,128,128,255};
+    [_placeholder replaceRegion:MTLRegionMake2D(0,0,1,1) mipmapLevel:0 withBytes:grey bytesPerRow:4];
+    return YES;
+}
+- (void)setPhoto:(UIImage *)photo {
+    if(![self prepare])return;
+    NSUInteger token=++_photoToken;
+    if(!_photo) {   // the first: at once (the avatar is drawn with it in this very pass)
+        NSString *failure=nil;id<MTLTexture> texture=WXGMBTextureFor(photo,&failure);
+        if(texture)_photo=texture;else if(failure)_failure=failure;
+        return;
+    }
+    // a newer one (the HD photo arriving): made off the main thread, the old one shown meanwhile
+    __weak WXGMetaballView *weakSelf=self;
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+        NSString *failure=nil;id<MTLTexture> texture=WXGMBTextureFor(photo,&failure);
+        dispatch_async(dispatch_get_main_queue(),^{
+            WXGMetaballView *me=weakSelf;if(!me || me->_photoToken!=token || !texture)return;
+            me->_photo=texture;
+            if(me.photoReady)me.photoReady();
+        });
+    });
+}
+- (BOOL)render {
+    if(![self prepare] || UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return NO;   // (never from the background: FIX117 A's pink)
+    CAMetalLayer *layer=(CAMetalLayer *)self.layer;
+    CGFloat scale=layer.contentsScale;CGSize size=self.bounds.size;
+    if(size.width<1 || size.height<1)return NO;
+    CGSize pixels=CGSizeMake(round(size.width*scale),round(size.height*scale));
+    if(!CGSizeEqualToSize(layer.drawableSize,pixels))layer.drawableSize=pixels;
+    id<CAMetalDrawable> drawable=[layer nextDrawable];if(!drawable)return NO;
+    WXGMBUniforms u=_uniforms;u.size[0]=size.width;u.size[1]=size.height;u.scale=scale;
+    id<MTLTexture> photo=_photo?:_placeholder;
+    u.image[0]=photo.width;u.image[1]=photo.height;u.image[3]=MAX((float)photo.mipmapLevelCount-1,0);
+    id<MTLTexture> video=_videoTexture;
+    if(video){u.video[0]=video.width;u.video[1]=video.height;}else u.video[3]=0;
+    MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
+    pass.colorAttachments[0].texture=drawable.texture;pass.colorAttachments[0].loadAction=MTLLoadActionClear;
+    pass.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,0);pass.colorAttachments[0].storeAction=MTLStoreActionStore;
+    id<MTLCommandBuffer> buffer=[_queue commandBuffer];
+    id<MTLRenderCommandEncoder> encoder=[buffer renderCommandEncoderWithDescriptor:pass];
+    [encoder setRenderPipelineState:_pipeline];
+    [encoder setFragmentBytes:&u length:sizeof u atIndex:0];
+    [encoder setFragmentTexture:photo atIndex:0];[encoder setFragmentTexture:video?:_placeholder atIndex:1];[encoder setFragmentSamplerState:_sampler atIndex:0];
+    [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
+    [encoder endEncoding];
+    [buffer commit];[buffer waitUntilScheduled];[drawable present];   // (presentsWithTransaction: with this commit, in step with the list)
+    ++_frames;
+    return YES;
+}
+@end
+
+static char WXGMeNativeCenterKey,WXGMeAppliedCenterKey;
+
+@interface WXGMeHeader () <PHPickerViewControllerDelegate,UIGestureRecognizerDelegate>
+- (void)update;
+- (void)statusLaidOut:(UIView *)view;
+@end
+
+@implementation WXGMeHeader {
+    __weak UIViewController *_page;
+    __weak UITableView *_table;
+    __weak UIControl *_header,*_qr;
+    __weak UIView *_avatar,*_photoView,*_chevron;
+    __weak UILabel *_name,*_wxid;
+    NSHashTable<UIView *> *_status;       // WeChat's status buttons (weakly)
+    __weak UIPanGestureRecognizer *_dragPan,*_tablePan;
+    WXGStateBag *_states;
+    UIView *_overlay,*_labels,*_band,*_bandLine;
+    UILabel *_bigName,*_bigID;UIFont *_bigFont,*_idFont;
+    WXGMetaballView *_metal;
+    // FIX119 B: Telegram's segments (the title locks in the bar, then the bar's background comes in as a step)
+    CGFloat _titleCollapse,_collapseAll;BOOL _bandOn,_bandSet;WXGMeTitlePose _titlePose;
+    // FIX119 B: a pass with nothing changed does nothing (diagnostics, 16 Pro Max: 3 ms on every pass, standing still)
+    double _sig[28];BOOL _haveSig;CFTimeInterval _auditAt,_cellColorAt;NSUInteger _skips,_fullPasses;
+    UIColor *_cellColor;UIUserInterfaceStyle _cellStyle;CGFloat _canvasHeight;
+    UIImage *_shownPhoto;CFTimeInterval _photoAt,_findAt,_snapUntil,_start,_partsTriedAt,_renderedAt;
+    UIEdgeInsets _baseInsets,_appliedInsets;BOOL _insetsApplied;
+    BOOL _bouncesWas,_alwaysBounceWas,_bounceTouched,_dragWasEnabled,_dragTouched,_qrTouchWas,_qrTouched;
+    UIBarButtonItem *_leftWas,*_rightWas,*_leftItem,*_rightItem;BOOL _itemsTouched;
+    __weak UINavigationItem *_itemsOn;
+    WXGMBUniforms _lastUniforms;BOOL _haveLast;
+    CADisplayLink *_link;
+    WXGMeLayout _layout;BOOL _haveLayout;
+    // FIX118 B: the banner pull (WeChat keeps its list from going past its top, diagnostics_17: so the list's top inset grows by
+    // the pull and its offset follows, which WeChat lets be; a spring of our own brings it back or to the open banner)
+    UITapGestureRecognizer *_avatarTap;CGPoint _avatarWindowCenter;CGFloat _avatarWindowRadius;NSUInteger _avatarTaps;
+    CGFloat _dripRoom,_contentPull;
+    CGFloat _pull,_pullTarget,_pullVelocity,_pullBase,_pullAtBegin,_pullVisual;BOOL _pulling,_locked,_pullSpring,_pullPinned;CFTimeInterval _pullStepAt;NSUInteger _locks;
+    // FIX118 B: the banner's video
+    AVPlayer *_player;AVPlayerItemVideoOutput *_videoOut;CVMetalTextureCacheRef _textureCache;CVMetalTextureRef _videoRef,_videoRefOld;
+    CVPixelBufferRef _videoBuffer,_videoBufferOld;BOOL _videoPlaying;NSUInteger _videoFrames;NSString *_videoNote;id _loopObserver;
+    NSString *_status_;CGFloat _shift,_collapse,_travel;WXGCutout _cutout;BOOL _merge,_banner;NSUInteger _snaps,_renders,_passes;
+}
++ (instancetype)shared {
+    static WXGMeHeader *header;static dispatch_once_t once;
+    dispatch_once(&once,^{
+        header=[self new];header->_start=CACurrentMediaTime();header->_status=[NSHashTable weakObjectsHashTable];header->_states=[WXGStateBag new];
+        // FIX119 E: the shader built off the main thread once things have settled after launch
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(4*NSEC_PER_SEC)),dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{WXGMBBuildPipeline();});
+        __weak WXGMeHeader *weakHeader=header;
+        // Before each commit (with WeChat's layout of this pass done): the header laid out and drawn in step with the list.
+        CFRunLoopObserverRef observer=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,1999750,
+            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity a){WXGPerfTimePluginWorkAs("meHeader",^{[weakHeader update];});});   // FIX119 A: timed
+        if(observer){CFRunLoopAddObserver(CFRunLoopGetMain(),observer,kCFRunLoopCommonModes);CFRelease(observer);}
+        // WeChat's status buttons laying themselves out: put back in our row at once. (A frame WeChat lays its header out in
+        // without their own layout running can still show them at its place for that one frame: rare, on a status change.)
+        for(NSString *name in @[@"TextStatePublishEntryButton",@"TextStateFriendTopicButton"]) {
+            Class cls=NSClassFromString(name);Method m=cls?class_getInstanceMethod(cls,@selector(layoutSubviews)):NULL;if(!m)continue;
+            IMP old=method_getImplementation(m);
+            IMP replacement=imp_implementationWithBlock(^(UIView *view){
+                ((void (*)(id,SEL))old)(view,@selector(layoutSubviews));
+                [weakHeader statusLaidOut:view];
+            });
+            WXGInstallOverride(cls,@selector(layoutSubviews),replacement,method_getTypeEncoding(m));
+        }
+    });
+    return header;
+}
+// FIX118 F: the banner's lower edge: 0 drips, 1 fading into WeChat's page, 2 plain
+static int WXGMeEdgeStyle(void) {return (int)lround(WXGMBLerp([WXGConfig.shared extraNumber:@"meBannerEdgeStyle"],0,2,0,2));}
+static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraNumber:@"meHeader"]>.5;}
+
+#pragma mark - Finding WeChat's page and parts
+
+- (UIViewController *)findPage {
+    UIViewController *page=_page;
+    if(page)return page;
+    CFTimeInterval now=CACurrentMediaTime();if(now-_findAt<1)return nil;_findAt=now;
+    NSMutableArray<UIViewController *> *queue=[NSMutableArray array];
+    for(UIScene *scene in UIApplication.sharedApplication.connectedScenes)
+        if([scene isKindOfClass:UIWindowScene.class])for(UIWindow *w in ((UIWindowScene *)scene).windows)if(w.rootViewController && !w.hidden)[queue addObject:w.rootViewController];
+    Class more=NSClassFromString(@"MoreViewController");
+    for(NSUInteger i=0;i<queue.count && i<200;i++) {
+        UIViewController *vc=queue[i];
+        if(more && [vc isKindOfClass:more]){_page=vc;return vc;}
+        [queue addObjectsFromArray:vc.childViewControllers];
+        if([vc isKindOfClass:UITabBarController.class])[queue addObjectsFromArray:((UITabBarController *)vc).viewControllers?:@[]];
+        if([vc isKindOfClass:UINavigationController.class])[queue addObjectsFromArray:((UINavigationController *)vc).viewControllers];
+        if(vc.presentedViewController)[queue addObject:vc.presentedViewController];
+    }
+    return nil;
+}
+- (NSArray<UIView *> *)statusViews {
+    return _status.allObjects;
+}
+// The header's parts (looked up again when WeChat made a new header or they went away).
+- (BOOL)findPartsOn:(UIViewController *)page {
+    UITableView *table=_table;UIControl *header=_header;
+    if(table && header && [header isDescendantOfView:table] && [table isDescendantOfView:page.view] && _name && _avatar)return YES;
+    table=nil;header=nil;
+    CFTimeInterval now=CACurrentMediaTime();if(now-_partsTriedAt<.5)return NO;_partsTriedAt=now;   // (a page without them is not searched on every pass)
+    Class profileTable=NSClassFromString(@"TextStateProfileTableView");
+    for(UIView *v in WXGViews(page.view,300))if([v isKindOfClass:UITableView.class] && !WXGIsPluginView(v) && (!profileTable || [v isKindOfClass:profileTable])){table=(id)v;break;}
+    if(!table){_status_=@"没有找到“我”页的列表";return NO;}
+    for(UIView *v in WXGViews(table,300))if([v isKindOfClass:UIControl.class] && v.bounds.size.width>200 && [WXGActionNames((id)v) containsObject:@"showProfileView"]){header=(id)v;break;}
+    if(!header){_status_=@"列表里没有头部（showProfileView）";return NO;}
+    UIView *avatar=nil,*photo=nil,*chevron=nil;UIControl *qr=nil;NSMutableArray<UILabel *> *labels=[NSMutableArray array];
+    NSMutableArray *status=[NSMutableArray array];
+    Class publish=NSClassFromString(@"TextStatePublishEntryButton"),topic=NSClassFromString(@"TextStateFriendTopicButton");
+    NSArray<UIView *> *all=WXGViews(header,160);
+    for(UIView *v in all)if((publish && [v isKindOfClass:publish]) || (topic && [v isKindOfClass:topic]))[status addObject:v];
+    BOOL (^inStatus)(UIView *)=^BOOL(UIView *v){for(UIView *s in status)if([v isDescendantOfView:s])return YES;return NO;};
+    for(UIView *v in all)if([v isKindOfClass:UIControl.class] && [WXGActionNames((id)v) containsObject:@"onShowMyQrCode"]){qr=(id)v;break;}
+    for(UIView *v in all) {
+        if(v==header || v==qr || WXGIsPluginView(v) || inStatus(v) || (qr && [v isDescendantOfView:qr]))continue;
+        CGRect r=[v convertRect:v.bounds toView:header];
+        if([NSStringFromClass(v.class) rangeOfString:@"HeadImageView"].location!=NSNotFound && r.size.width>=40 && r.size.width<=110 && fabs(r.size.width-r.size.height)<4) {
+            if(!avatar || r.size.width>avatar.bounds.size.width)avatar=v;
+        }else if([v isKindOfClass:UILabel.class] && ((UILabel *)v).text.length)[labels addObject:(id)v];
+        else if([v isKindOfClass:UIImageView.class] && r.size.width<=16 && r.size.height>=16 && r.size.height<=32 && CGRectGetMidX(r)>header.bounds.size.width*.85)chevron=v;
+    }
+    if(avatar)for(UIView *v in WXGViews(avatar,20))if([v isKindOfClass:UIImageView.class] && ((UIImageView *)v).image && !v.hidden){photo=v;break;}
+    [labels sortUsingComparator:^NSComparisonResult(UILabel *a,UILabel *b){return a.font.pointSize>b.font.pointSize?NSOrderedAscending:a.font.pointSize<b.font.pointSize?NSOrderedDescending:NSOrderedSame;}];
+    UILabel *name=labels.firstObject,*wxid=nil;
+    for(UILabel *l in labels)if(l!=name && ([l.text containsString:@"微信号"] || [l.text containsString:@"WeChat ID"])){wxid=l;break;}
+    if(!wxid && labels.count>1)wxid=labels[1];
+    if(!avatar || !name){_status_=@"头部里没有找到头像或昵称";return NO;}
+    if(table!=_table || _dragPan)[self giveBackDragAndBounce];   // (what was switched off on the old ones goes back first)
+    _table=table;_header=header;_avatar=avatar;_photoView=photo;_chevron=chevron;_qr=qr;_name=name;_wxid=wxid;
+    [_status removeAllObjects];for(UIView *v in status)[_status addObject:v];
+    if(_tablePan!=table.panGestureRecognizer){[_tablePan removeTarget:self action:@selector(panned:)];_tablePan=table.panGestureRecognizer;[_tablePan addTarget:self action:@selector(panned:)];}
+    // FIX118 D: a tap on the avatar opens WeChat's profile page (the header button's own action); begins only on the avatar
+    if(!_avatarTap){_avatarTap=[[UITapGestureRecognizer alloc]initWithTarget:self action:@selector(avatarTapped:)];_avatarTap.cancelsTouchesInView=NO;_avatarTap.delaysTouchesEnded=NO;_avatarTap.delegate=self;}
+    if(_avatarTap.view!=table){[_avatarTap.view removeGestureRecognizer:_avatarTap];[table addGestureRecognizer:_avatarTap];}
+    // WeChat's drag of the page (its status page) on the list's container
+    _dragPan=nil;
+    for(UIView *v=table.superview;v && v!=page.view.superview && !_dragPan;v=v.superview)for(UIGestureRecognizer *g in v.gestureRecognizers)
+        if([g isKindOfClass:UIPanGestureRecognizer.class] && [NSStringFromClass([(id)g.delegate class]) rangeOfString:@"DragAnimate"].location!=NSNotFound){_dragPan=(id)g;break;}
+    return YES;
+}
+
+#pragma mark - Each pass
+
+// FIX119 B: what a pass depends on. [0] is the scrolling, [1] and [2] where the list is on the screen; the rest is
+// the page's make-up (a change there redoes the parts that only need doing then: masks, the status row, the bar's items).
+// FIX119 C (user, 11-05 17:31, recording: "灵动岛或者刘海会飞下来 … 头像会抽搐错位闪一下"): B left out [1] and [2]. WeChat moves
+// the list's container itself (its own drag of the page; the list's offset stays as it is): the passes were skipped, and the
+// Metal layer, in the overlay in that container, went with it, the cut-out drawn in it with it (down the screen, until the
+// half-second pass), the avatar in its old pose.
+- (void)signature:(double *)sig table:(UITableView *)table header:(UIControl *)header window:(UIWindow *)window page:(UIViewController *)page {
+    memset(sig,0,sizeof _sig);
+    WXGConfig *c=WXGConfig.shared;
+    CGRect h=[header convertRect:header.bounds toView:table];
+    UINavigationBar *bar=page.navigationController.navigationBar;
+    CGRect barRect=bar && !bar.hidden && bar.window?[bar convertRect:bar.bounds toView:nil]:CGRectZero;
+    UIView *status=[self statusViews].firstObject;UIView *mover=status.superview && status.superview!=header?status.superview:status;
+    UINavigationItem *item=page.navigationItem;
+    CGRect onScreen=[table convertRect:table.bounds toView:nil];   // (the list's own frame in the window, whatever moved it)
+    sig[0]=table.contentOffset.y;sig[1]=onScreen.origin.y;sig[2]=onScreen.origin.x;
+    sig[25]=table.contentInset.top;sig[26]=table.contentInset.bottom;sig[3]=table.contentSize.height;
+    sig[4]=table.bounds.size.width;sig[5]=table.bounds.size.height;
+    sig[6]=h.origin.y;sig[7]=h.size.width;sig[8]=h.size.height;
+    sig[9]=window.safeAreaInsets.top;sig[10]=window.bounds.size.height;sig[11]=CGRectGetMaxY(barRect);
+    sig[12]=table.traitCollection.userInterfaceStyle;
+    sig[13]=(double)(_name.text.hash&0xFFFFFFFFFFFF);sig[14]=(double)(_wxid.text.hash&0xFFFFFFFFFFFF);   // (by content: an attributed label hands out a new string each time)
+    sig[15]=(double)(uintptr_t)(__bridge void *)item.leftBarButtonItem;sig[16]=(double)(uintptr_t)(__bridge void *)item.rightBarButtonItem;
+    sig[17]=status.center.x+status.center.y*4096;sig[18]=mover.center.x+mover.center.y*4096;
+    sig[19]=[c extraNumber:@"meBanner"];sig[20]=[c extraNumber:@"meBannerEdgeStyle"]+[c extraNumber:@"meNotchMerge"]*10;
+    sig[21]=[c extraNumber:@"meAvatarSize"];sig[22]=[c extraNumber:@"meCutoutY"]*1000+[c extraNumber:@"meCutoutW"];
+    sig[23]=_name.font.pointSize;
+    sig[24]=(table.isTracking?1:0)+(table.isDragging?2:0)+(table.isDecelerating?4:0);   // (a scroll ending: the snap's pass)
+    sig[27]=onScreen.size.height;
+}
+- (void)update {
+    if(!NSThread.isMainThread)return;
+    ++_passes;
+    if(!WXGMeOn()){[self restore];_status_=WXGPluginEnabled()?@"开关关着":@"插件未启用";return;}
+    UIViewController *page=[self findPage];
+    if(!page){_status_=@"还没找到“我”页";return;}
+    if(!page.isViewLoaded || !page.view.window){[self pauseLink];return;}   // another tab: left as it is
+    UITableView *oldTable=_table;UIControl *oldHeader=_header;UILabel *oldName=_name;UIView *oldAvatar=_avatar;
+    if(![self findPartsOn:page]){[self restore];return;}
+    UITableView *table=_table;UIControl *header=_header;UIWindow *window=table.window;
+    if(!window)return;
+    BOOL newParts=table!=oldTable || header!=oldHeader || _name!=oldName || _avatar!=oldAvatar;
+    // FIX119 B: nothing new since the last pass (no scrolling, nothing of WeChat's moved, no pull, no video): nothing to do
+    // (but every half second all of it, against WeChat having changed something no signature sees).
+    CFTimeInterval now=CACurrentMediaTime();
+    double sig[28];[self signature:sig table:table header:header window:window page:page];
+    BOOL sameMakeUp=_haveSig && !memcmp(sig+3,_sig+3,sizeof(double)*25),same=sameMakeUp && !memcmp(sig,_sig,sizeof(double)*3);
+    memcpy(_sig,sig,sizeof _sig);_haveSig=YES;
+    BOOL animating=_pulling || _pullSpring || _videoPlaying || (_link && !_link.paused);   // (an open banner standing still is no animation)
+    BOOL audit=newParts || !_insetsApplied || !_overlay.superview || now-_auditAt>.5;
+    if(same && !animating && !audit){++_skips;return;}
+    if(audit)_auditAt=now;
+    BOOL slow=audit || !sameMakeUp;   // (the masks, the status row and the bar's items: only when the page's make-up changed)
+    ++_fullPasses;
+    WXGConfig *c=WXGConfig.shared;
+    _merge=YES;_banner=[c extraNumber:@"meBanner"]>.5;
+    CGFloat W=header.bounds.size.width,H=header.bounds.size.height;
+    CGFloat safeTop=window.safeAreaInsets.top;
+    // The cut-out (Telegram's table), as the user has nudged it.
+    struct utsname u;uname(&u);
+    WXGCutout cut=WXGCutoutFor(u.machine,window.bounds.size.width,safeTop);
+    cut.y+=[c extraNumber:@"meCutoutY"];CGFloat dw=[c extraNumber:@"meCutoutW"];cut.x-=dw*.5;cut.w+=dw;
+    if(cut.kind==WXGCutoutNotch && [c extraNumber:@"meNotchMerge"]<.5)_merge=NO;
+    if(cut.kind==WXGCutoutNone)_merge=NO;
+    _cutout=cut;_status_=@"正常";
+    // The insets: WeChat's own (whatever it sets) plus the room of the new header.
+    UIEdgeInsets cur=table.contentInset;
+    if(!_insetsApplied || !UIEdgeInsetsEqualToEdgeInsets(cur,_appliedInsets))_baseInsets=cur;
+    CGFloat headerTop=[header convertRect:header.bounds toView:table].origin.y;   // in the list's content
+    WXGMeLayout L=WXGMeLayoutFor(H,safeTop,_baseInsets.top+headerTop,[c extraNumber:@"meAvatarSize"]);
+    L.shift=round(L.shift);   // (whole points: WeChat keeps the offset at the top inset cut to whole points, diagnostics_17/18)
+    if(_haveLayout && (fabs(L.statusTop-_layout.statusTop)>.01 || fabs(L.shift-_layout.shift)>.01))slow=YES;
+    _shift=L.shift;_layout=L;_haveLayout=YES;
+    CGFloat t0=table.contentOffset.y+table.contentInset.top;
+    CGFloat restCenter=[header convertPoint:CGPointMake(W*.5,L.avatarCenterY) toView:nil].y+t0+(_insetsApplied?0:L.shift);   // the avatar's centre in the window at rest
+    CGFloat target=cut.kind!=WXGCutoutNone?cut.y+cut.h*.5:_baseInsets.top-22;
+    _collapse=MAX(restCenter-target,20);
+    // FIX119 B: the name's way up to the bar's centre (Telegram's titleCollapseOffset); the page snaps to the end of both
+    UINavigationBar *bar=page.navigationController.navigationBar;
+    CGFloat barMid=bar && !bar.hidden && bar.window?CGRectGetMidY([bar convertRect:bar.bounds toView:nil]):safeTop+22;
+    _titleCollapse=MAX(restCenter+(L.nameCenterY-L.avatarCenterY)-barMid,1);
+    _collapseAll=MAX(_collapse,_titleCollapse);
+    UIEdgeInsets want=_baseInsets;want.top+=L.shift;
+    CGFloat needed=_collapseAll+60;   // (the list can always be scrolled until the title is in the bar)
+    CGFloat range=table.contentSize.height+want.top+want.bottom-table.bounds.size.height;
+    if(range<needed)want.bottom+=needed-range;
+    [self stepPull];
+    if(!_banner && _pull>0 && !_pulling){_pull=_pullTarget=0;_pullVelocity=0;_locked=NO;}
+    // FIX118 B: the pull (whole points, as the shift). FIX118 E (user: "给名字位置那部分的液体腾开，不要挡住"): as the
+    // banner opens, the page goes a little further down than the banner, so the drips hang in a gap of their own.
+    {double e=WXGMBLerp(_pull,0,140,0,1);_dripRoom=_banner && WXGMeEdgeStyle()==0?72*e*e*(3-2*e):0;}
+    _contentPull=round(_pull+_dripRoom);
+    want.top+=_contentPull;
+    if(!UIEdgeInsetsEqualToEdgeInsets(cur,want)) {
+        CGFloat rel=table.contentOffset.y+cur.top;
+        table.contentInset=want;
+        // (only when first applied: WeChat setting its own insets again does not move the content, and neither does putting ours back)
+        if(!_insetsApplied && want.top!=cur.top)table.contentOffset=CGPointMake(table.contentOffset.x,rel-want.top);
+    }
+    if(_pull>.01 || _pullPinned || _pullSpring) {   // pulled: the list at its (grown) top, not carried on by its own deceleration
+        [self stopDecelerating:table];
+        if(fabs(table.contentOffset.y+want.top)>.6)table.contentOffset=CGPointMake(table.contentOffset.x,-want.top);
+        _pullPinned=_pull>.01;
+    }
+    _appliedInsets=want;_insetsApplied=YES;
+    CGFloat t=table.contentOffset.y+want.top;_travel=t;
+    // The banner: WeChat's drag off (given back when off). FIX118 B: the pull moves the list down (its transform)
+    // instead of scrolling it past its top, which WeChat's own code undoes on every pass (diagnostics_17).
+    UIPanGestureRecognizer *drag=_dragPan;
+    if(_banner) {
+        if(drag && !_dragTouched){_dragWasEnabled=drag.enabled;_dragTouched=YES;}
+        if(drag.enabled)drag.enabled=NO;
+    }else [self giveBackDragAndBounce];
+    _pullVisual=_pull;
+    if(_pull>.25)t=-_pull;else if(fabs(t)<1)t=0;
+    if(slow) {
+        // WeChat's parts: masked, the QR button out of the way of touches.
+        for(UIView *v in @[_name?:NSNull.null,_wxid?:NSNull.null,_chevron?:NSNull.null,_qr?:NSNull.null])
+            if(v!=(id)NSNull.null)[_states conceal:v];
+        // WeChat's avatar only while ours can be drawn (a shader that failed to build: WeChat's stays)
+        if(_avatar){if(_metal.failure)[_states unconceal:_avatar];else [_states conceal:_avatar];}
+        [_states reapply];
+        UIControl *qr=_qr;
+        if(qr){if(!_qrTouched){_qrTouchWas=qr.userInteractionEnabled;_qrTouched=YES;}if(qr.userInteractionEnabled)qr.userInteractionEnabled=NO;}
+        [self placeStatusWith:L];
+        [self ensureBarItemsOn:page];
+    }
+    [self layoutOverlayFor:table header:header layout:L travel:t width:W];
+    [self snapIfResting:table];
+}
+// WeChat's status buttons: their row centred under the ID, its top at L.statusTop (both still inside the header).
+- (void)placeStatusWith:(WXGMeLayout)L {
+    UIControl *header=_header;if(!header)return;
+    NSArray<UIView *> *views=[self statusViews];
+    // (in a container of their own inside the header: the container is what moves, so they stay inside its bounds and take touches)
+    UIView *common=views.firstObject.superview;
+    for(UIView *v in views)if(v.superview!=common)common=nil;
+    if(common && common!=header && [common isDescendantOfView:header] && common.bounds.size.height<header.bounds.size.height*.6)views=@[common];
+    // where WeChat has put each (a centre not ours is WeChat's: its place)
+    for(UIView *v in views) {
+        NSValue *applied=objc_getAssociatedObject(v,&WXGMeAppliedCenterKey);
+        if(!applied || !CGPointEqualToPoint(applied.CGPointValue,v.center))
+            objc_setAssociatedObject(v,&WXGMeNativeCenterKey,[NSValue valueWithCGPoint:v.center],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+    // the row's extent there, in the header
+    CGFloat minX=CGFLOAT_MAX,maxX=-CGFLOAT_MAX,minY=CGFLOAT_MAX;
+    for(UIView *v in views) {
+        NSValue *n=objc_getAssociatedObject(v,&WXGMeNativeCenterKey);if(!n || !v.superview)continue;
+        CGPoint p=[v.superview convertPoint:n.CGPointValue toView:header];CGSize sz=v.bounds.size;
+        minX=MIN(minX,p.x-sz.width*.5);maxX=MAX(maxX,p.x+sz.width*.5);minY=MIN(minY,p.y-sz.height*.5);
+    }
+    if(minX==CGFLOAT_MAX)return;
+    CGFloat dx=header.bounds.size.width*.5-(minX+maxX)*.5,dy=L.statusTop-minY;
+    for(UIView *v in views) {
+        UIView *superview=v.superview;NSValue *n=objc_getAssociatedObject(v,&WXGMeNativeCenterKey);if(!superview || !n)continue;
+        CGPoint inHeader=[superview convertPoint:n.CGPointValue toView:header];
+        CGPoint want=[header convertPoint:CGPointMake(inHeader.x+dx,inHeader.y+dy) toView:superview];
+        want.x=round(want.x*6)/6;want.y=round(want.y*6)/6;
+        if(!CGPointEqualToPoint(v.center,want))v.center=want;
+        objc_setAssociatedObject(v,&WXGMeAppliedCenterKey,[NSValue valueWithCGPoint:v.center],OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+}
+- (void)statusLaidOut:(UIView *)view {
+    if(!_insetsApplied || !_haveLayout || !_header || ![view isDescendantOfView:_header] || !WXGMeOn())return;
+    if(![_status containsObject:view])[_status addObject:view];   // (one WeChat made anew)
+    [self placeStatusWith:_layout];
+}
+- (void)restoreStatus {
+    NSMutableArray<UIView *> *movers=[[self statusViews] mutableCopy];
+    UIView *common=movers.firstObject.superview;if(common && ![movers containsObject:common])[movers addObject:common];
+    for(UIView *v in movers) {
+        NSValue *native=objc_getAssociatedObject(v,&WXGMeNativeCenterKey),*applied=objc_getAssociatedObject(v,&WXGMeAppliedCenterKey);
+        if(native && applied && CGPointEqualToPoint(v.center,applied.CGPointValue))v.center=native.CGPointValue;
+        objc_setAssociatedObject(v,&WXGMeNativeCenterKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(v,&WXGMeAppliedCenterKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    }
+}
+// The bar: QR on the left, 设置 on the right.
+- (void)ensureBarItemsOn:(UIViewController *)page {
+    UINavigationItem *item=page.navigationItem;
+    if(!_leftItem) {
+        UIButton *qr=[UIButton buttonWithType:UIButtonTypeSystem];
+        UIImage *image=[UIImage systemImageNamed:@"qrcode"];
+        [qr setImage:image forState:UIControlStateNormal];qr.frame=CGRectMake(0,0,36,36);
+        [qr addTarget:self action:@selector(openQR) forControlEvents:UIControlEventTouchUpInside];
+        qr.accessibilityLabel=@"我的二维码";
+        _leftItem=[[UIBarButtonItem alloc]initWithCustomView:qr];
+        UIButton *settings=[UIButton buttonWithType:UIButtonTypeSystem];
+        [settings setTitle:@"设置" forState:UIControlStateNormal];settings.titleLabel.font=[UIFont systemFontOfSize:17 weight:UIFontWeightMedium];
+        [settings sizeToFit];CGRect f=settings.frame;f.size.width=MAX(f.size.width+16,52);f.size.height=36;settings.frame=f;
+        [settings addTarget:self action:@selector(openSettings) forControlEvents:UIControlEventTouchUpInside];
+        _rightItem=[[UIBarButtonItem alloc]initWithCustomView:settings];
+    }
+    UIColor *ink=_name.textColor?:UIColor.labelColor;
+    for(UIView *v in @[_leftItem.customView?:NSNull.null,_rightItem.customView?:NSNull.null])   // (FIX119 B: only when it changed: a tint set
+        if(v!=(id)NSNull.null && ![v.tintColor isEqual:ink])v.tintColor=ink;                     //  again redraws the buttons and their glass)
+    if(_itemsOn!=item){_leftWas=item.leftBarButtonItem;_rightWas=item.rightBarButtonItem;_itemsOn=item;}
+    if(item.leftBarButtonItem!=_leftItem){if(item.leftBarButtonItem!=nil && item.leftBarButtonItem!=_leftWas)_leftWas=item.leftBarButtonItem;item.leftBarButtonItem=_leftItem;}
+    if(item.rightBarButtonItem!=_rightItem){if(item.rightBarButtonItem!=nil && item.rightBarButtonItem!=_rightWas)_rightWas=item.rightBarButtonItem;item.rightBarButtonItem=_rightItem;}
+    _itemsTouched=YES;
+}
+- (void)openQR {
+    UIControl *qr=_qr;
+    if(qr)[qr sendActionsForControlEvents:UIControlEventTouchUpInside];
+}
+- (void)openSettings {
+    UIViewController *page=_page;if(page)[WXGIntegrationHost.shared openSettingsFrom:page];
+}
+
+#pragma mark - Drawing
+
+- (void)ensureOverlayOver:(UITableView *)table {
+    UIView *container=table.superview;if(!container)return;
+    if(!_overlay) {
+        _overlay=[UIView new];_overlay.userInteractionEnabled=NO;_overlay.backgroundColor=UIColor.clearColor;
+        // (FIX119 B: the bar's background under the name, which is the bar's title once it has gone up; the avatar over both)
+        _band=[UIView new];_band.alpha=0;[_overlay addSubview:_band];
+        _bandLine=[UIView new];_bandLine.backgroundColor=UIColor.separatorColor;[_band addSubview:_bandLine];
+        _labels=[UIView new];_labels.userInteractionEnabled=NO;[_overlay addSubview:_labels];
+        _bigName=[UILabel new];_bigName.textAlignment=NSTextAlignmentCenter;_bigName.lineBreakMode=NSLineBreakByTruncatingTail;
+        _bigID=[UILabel new];_bigID.textAlignment=NSTextAlignmentCenter;_idFont=[UIFont systemFontOfSize:15];_bigID.font=_idFont;
+        for(UIView *v in @[_bigName,_bigID])[_labels addSubview:v];
+        _metal=[WXGMetaballView new];[_overlay addSubview:_metal];
+        __weak WXGMeHeader *weakSelf=self;
+        _metal.photoReady=^{WXGMeHeader *me=weakSelf;if(!me)return;me->_haveLast=NO;[me runLink];};   // (drawn again on the next pass)
+    }
+    if(_overlay.superview!=container || container.subviews.lastObject!=_overlay) {
+        if(_overlay.superview!=container)[container addSubview:_overlay];
+        else [container bringSubviewToFront:_overlay];
+    }
+    if(!CGRectEqualToRect(_overlay.frame,table.frame))_overlay.frame=table.frame;   // (the list is never transformed by us)
+}
+static UIColor *WXGMeOpaque(UIColor *color) {
+    if(!color || CGColorGetAlpha(color.CGColor)<.5)return nil;
+    return color;
+}
+// FIX119 B: set only what changed (the same text, font or colour set again on every pass redraws a label)
+static void WXGMeSetText(UILabel *l,NSString *text) {if(l.text!=text && ![l.text isEqualToString:text?:@""])l.text=text;}
+static void WXGMeSetInk(UILabel *l,UIColor *color) {if(l.textColor!=color && ![l.textColor isEqual:color])l.textColor=color;}
+static void WXGMeSetFont(UILabel *l,UIFont *font) {if(l.font!=font && ![l.font isEqual:font])l.font=font;}
+static void WXGMeSetAlpha(UIView *v,CGFloat alpha) {if(fabs(v.alpha-alpha)>.002)v.alpha=alpha;}
+static void WXGMeSetHidden(UIView *v,BOOL hidden) {if(v.hidden!=hidden)v.hidden=hidden;}
+static void WXGMeSetFrame(UIView *v,CGRect frame) {if(!CGRectEqualToRect(v.frame,frame))v.frame=frame;}   // (views without a transform)
+static void WXGMeSetBounds(UIView *v,CGRect bounds) {if(!CGRectEqualToRect(v.bounds,bounds))v.bounds=bounds;}
+static void WXGMeSetCenter(UIView *v,CGPoint center) {if(!CGPointEqualToPoint(v.center,center))v.center=center;}
+static void WXGMeSetScale(UIView *v,CGFloat scale) {
+    CGAffineTransform t=CGAffineTransformMakeScale(scale,scale);
+    if(!CGAffineTransformEqualToTransform(v.transform,t))v.transform=t;
+}
+- (void)layoutOverlayFor:(UITableView *)table header:(UIControl *)header layout:(WXGMeLayout)L travel:(CGFloat)t width:(CGFloat)W {
+    [self ensureOverlayOver:table];
+    UIView *o=_overlay;UIWindow *window=table.window;
+    CFTimeInterval now=CACurrentMediaTime();
+    // colours from WeChat: its cells (looked at once a second, or when the look changes), its name
+    UIUserInterfaceStyle style=table.traitCollection.userInterfaceStyle;
+    if(!_cellColor || style!=_cellStyle || now-_cellColorAt>1) {
+        UIColor *cellColor=nil;
+        for(UITableViewCell *cell in table.visibleCells){cellColor=WXGMeOpaque(cell.backgroundColor)?:WXGMeOpaque(cell.contentView.backgroundColor);if(cellColor)break;}
+        _cellColor=cellColor?:WXGMeOpaque(header.backgroundColor)?:UIColor.secondarySystemGroupedBackgroundColor;
+        _cellStyle=style;_cellColorAt=now;
+    }
+    UIColor *cellColor=_cellColor,*ink=_name.textColor?:UIColor.labelColor,*grey=_wxid.textColor?:UIColor.secondaryLabelColor;
+    CGFloat px=window.screen.scale?:UIScreen.mainScreen.scale;
+    CGFloat up=MAX(t,0);
+    __block BOOL bandOn=_bandOn;
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        WXGMeSetFrame(self->_labels,o.bounds);
+        CGPoint (^at)(CGFloat)=^CGPoint(CGFloat y){return [header convertPoint:CGPointMake(W*.5,y) toView:o];};
+        // the bar: its centre (where the name stops) and its bottom
+        UINavigationBar *bar=self->_page.navigationController.navigationBar;
+        CGRect barRect=bar && !bar.hidden && bar.window?[bar convertRect:bar.bounds toView:nil]:CGRectMake(0,window.safeAreaInsets.top,W,44);
+        CGRect barInOverlay=[o convertRect:CGRectMake(0,0,window.bounds.size.width,CGRectGetMaxY(barRect)) fromView:nil];
+        barInOverlay.origin.x=0;barInOverlay.size.width=W;
+        CGFloat lockY=[o convertPoint:CGPointMake(0,CGRectGetMidY(barRect)) fromView:nil].y;
+        // FIX119 B (user: "两个昵称同时存在 … Telegram … 分了段，不会乱跳"): one name. It goes up with the page, shrinking to
+        // the bar title's size (17 pt) on the way, until its centre is the bar's, and stays there; the ID under it shrinks
+        // a little, follows it and is gone before it stops (Telegram's PeerInfoHeaderNode).
+        CGFloat nameSize=MAX(self->_name.font.pointSize+6,26);
+        UIFont *bigFont=self->_bigFont;
+        if(!bigFont || fabs(bigFont.pointSize-nameSize)>.01)self->_bigFont=bigFont=[UIFont systemFontOfSize:nameSize weight:UIFontWeightSemibold];
+        WXGMeSetText(self->_bigName,self->_name.text);WXGMeSetInk(self->_bigName,ink);WXGMeSetFont(self->_bigName,bigFont);
+        WXGMeSetText(self->_bigID,self->_wxid.text);WXGMeSetInk(self->_bigID,grey);
+        CGPoint natural=at(L.nameCenterY);
+        CGFloat lockScale=17/nameSize;
+        WXGMeTitlePose tp=WXGMeTitlePoseAt(natural.y,up,lockY,L.idCenterY-L.nameCenterY,lockScale);
+        self->_titlePose=tp;
+        CGFloat x=round(natural.x*px)/px;
+        // (as wide as fits between the bar's buttons once it is small)
+        WXGMeSetBounds(self->_bigName,CGRectMake(0,0,round(MIN(W-48,(W-150)/lockScale)),ceil(bigFont.lineHeight)+4));
+        WXGMeSetCenter(self->_bigName,CGPointMake(x,round(tp.titleY*px)/px));
+        WXGMeSetScale(self->_bigName,tp.titleScale);
+        WXGMeSetBounds(self->_bigID,CGRectMake(0,0,W-48,22));
+        WXGMeSetCenter(self->_bigID,CGPointMake(x,round(tp.idY*px)/px));
+        WXGMeSetScale(self->_bigID,tp.idScale);
+        WXGMeSetAlpha(self->_bigID,tp.idAlpha);
+        WXGMeSetHidden(self->_bigID,!self->_wxid || tp.idAlpha<.004);
+        // the bar's background: in as a step once the name is the bar's title (Telegram's), out again a little lower
+        WXGMeSetFrame(self->_band,barInOverlay);
+        if(![self->_band.backgroundColor isEqual:cellColor])self->_band.backgroundColor=cellColor;
+        WXGMeSetFrame(self->_bandLine,CGRectMake(0,barInOverlay.size.height-1/px,W,1/px));
+        bandOn=WXGMeBandOn(self->_bandOn,up,self->_titleCollapse)!=0;
+        [CATransaction commit];
+    }];
+    if(bandOn!=_bandOn || !_bandSet) {
+        BOOL animate=_bandSet;_bandOn=bandOn;_bandSet=YES;
+        UIView *band=_band;CGFloat alpha=bandOn?1:0;
+        if(animate)[UIView animateWithDuration:.2 delay:0 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionCurveEaseInOut
+                                    animations:^{band.alpha=alpha;} completion:nil];
+        else [UIView performWithoutAnimation:^{band.alpha=alpha;}];
+    }
+    [self drawAvatarIn:o header:header layout:L travel:t width:W];
+}
+- (void)drawAvatarIn:(UIView *)o header:(UIControl *)header layout:(WXGMeLayout)L travel:(CGFloat)t width:(CGFloat)W {
+    WXGMetaballView *metal=_metal;
+    UIWindow *window=o.window;if(!window)return;
+    // (the layer's top is the window's: the shader's coordinates are the window's)
+    CGRect windowInOverlay=[o convertRect:window.bounds fromView:nil];
+    if(fabs(metal.frame.origin.y-windowInOverlay.origin.y)>.01 || fabs(metal.frame.size.width-W)>.01 || metal.frame.origin.x!=0) {
+        CGFloat h=_canvasHeight>0?_canvasHeight:windowInOverlay.size.height;
+        [CATransaction begin];[CATransaction setDisableActions:YES];metal.frame=CGRectMake(0,windowInOverlay.origin.y,W,h);[CATransaction commit];
+    }
+    // the photo: WeChat's HD one when it is there, else the one on the page
+    CFTimeInterval now=CACurrentMediaTime();
+    if(!_shownPhoto || (now-_photoAt>1 && _shownPhoto.size.width*_shownPhoto.scale<300)) {
+        _photoAt=now;
+        UIImage *photo=[WXGIntegrationHost.shared selfAvatarPhoto];
+        UIImageView *native=(UIImageView *)_photoView;
+        if(!photo && [native isKindOfClass:UIImageView.class])photo=native.image;
+        if(photo && photo!=_shownPhoto){_shownPhoto=photo;[metal setPhoto:photo];_haveLast=NO;}
+    }
+    // the avatar's centre at rest moves with the page (scrolled, or WeChat dragging it); the cut-out is the screen's
+    CGPoint restCenter=[header convertPoint:CGPointMake(W*.5,L.avatarCenterY) toView:metal];
+    CGFloat restY=restCenter.y+MAX(_travel,0)-_contentPull;   // where it is when the list is at rest (not scrolled, not pulled)
+    CGRect cut=[metal convertRect:CGRectMake(_cutout.x,_cutout.y,_cutout.w,_cutout.h) fromView:nil];
+    WXGMetaballPose p=WXGMetaballPoseAt(t,_collapse,restY,L.avatarRadius,CGRectGetMaxY(cut),_merge,_banner?140:0);
+    WXGMBUniforms u;memset(&u,0,sizeof u);
+    u.time=(float)(now-_start);
+    u.island[0]=CGRectGetMidX(cut);u.island[1]=CGRectGetMidY(cut);u.island[2]=cut.size.width*.5;u.island[3]=cut.size.height*.5;
+    // the drawn cut-out a little inside the real one; a notch's corners
+    u.islandShape[0]=_cutout.kind==WXGCutoutNotch?20:cut.size.height*.5;u.islandShape[1]=_cutout.kind;
+    u.islandShape[2]=_merge?p.presence:0;u.islandShape[3]=_cutout.kind==WXGCutoutNotch?9:1.5;
+    if(_cutout.kind==WXGCutoutNotch){u.island[2]-=0;}   // (a notch's ears are left out by the inset above: 223 pt is its width at the top)
+    u.avatar[0]=restCenter.x;u.avatar[1]=p.centerY;u.avatar[2]=p.radius;u.avatar[3]=p.darkness;
+    _avatarWindowCenter=[metal convertPoint:CGPointMake(restCenter.x,p.centerY) toView:nil];_avatarWindowRadius=p.expand>.05?0:p.radius*p.fade;
+    u.effect[0]=p.blur;u.effect[1]=p.goo;u.effect[2]=p.fade;u.effect[3]=p.blend;
+    u.drop[0]=p.stretch;u.drop[1]=p.tip;u.drop[2]=p.expand;u.drop[3]=p.flow;
+    u.image[2]=.3f;
+    u.fx[0]=WXGMeEdgeStyle();   // FIX118 F: 0 drips, 1 fading into the page, 2 a plain edge
+    // (the drips' room: from the banner's edge down to the name, which the page has moved out of their way)
+    {CGFloat nameTop=[_bigName convertPoint:CGPointMake(0,0) toView:metal].y+(_bigName.bounds.size.height-_bigName.font.lineHeight)*.5;
+     u.fx[1]=(float)MAX(nameTop-(p.centerY+p.radius)-4,0);}
+    // FIX119 B: the layer only as tall as what it draws (it was the whole window: a full-screen layer blended over the
+    // page on every frame, and every pixel of it shaded): the avatar or the banner, the drips under it, the cut-out.
+    BOOL resized=NO;
+    {CGFloat maxY=MAX(p.centerY+p.radius,CGRectGetMaxY(cut))+6;
+     if(p.expand>0)maxY=MAX(maxY,p.centerY+L.avatarRadius+6);
+     if(p.flow>0 && u.fx[0]<.5)maxY+=u.fx[1]+30;
+     CGFloat h=WXGMeCanvasHeight(maxY,windowInOverlay.size.height);
+     if(fabs(h-metal.bounds.size.height)>.5) {
+         _canvasHeight=h;_haveLast=NO;resized=YES;
+         [CATransaction begin];[CATransaction setDisableActions:YES];metal.frame=CGRectMake(0,windowInOverlay.origin.y,W,h);[CATransaction commit];
+     }}
+    u.size[0]=metal.bounds.size.width;u.size[1]=metal.bounds.size.height;u.scale=metal.layer.contentsScale;
+    // FIX118 B: the video fades in as the banner opens (playing only then)
+    float videoMix=(float)WXGMBLerp(p.expand,.35,1,0,1);
+    BOOL wantVideo=_banner && videoMix>0 && [self prepareVideo];
+    if(wantVideo){[self playVideo];if([self pullVideoFrame])metal.videoTexture=CVMetalTextureGetTexture(_videoRef);}
+    else [self pauseVideo];
+    if(metal.videoTexture && wantVideo){u.video[2]=.5f;u.video[3]=videoMix;}
+    BOOL moving=(p.flow>0 && u.fx[0]<.5) || wantVideo || _pulling || _pullSpring;   // (FIX119 B: only the drips change with time)
+    if(!moving){WXGMBUniforms a=u,b=_lastUniforms;a.time=b.time=0;if(_haveLast && !memcmp(&a,&b,sizeof a)){[self pauseLink];return;}}
+    if(moving && !wantVideo && p.flow<=0 && _haveLast && !memcmp(&u.avatar,&_lastUniforms.avatar,sizeof u.avatar) && !memcmp(&u.drop,&_lastUniforms.drop,sizeof u.drop)){[self runLink];return;}   // (still: nothing new to draw)
+    // at most one frame per refresh (several run-loop passes in one frame would wait for drawables). FIX119 C: 1/130 s
+    // dropped real frames on 120 Hz whenever a pass came a little early (the avatar a frame behind the page); and a layer
+    // just made taller is always drawn at once (else its old picture shows stretched to the new height for a frame).
+    if(!resized && now-_renderedAt<1./200){[self runLink];return;}   // (the link brings the pass that draws it)
+    if(moving)[self runLink];else [self pauseLink];
+    metal.uniforms=u;
+    if([metal render]){_lastUniforms=u;_haveLast=YES;++_renders;_renderedAt=now;}
+}
+- (void)runLink {
+    if(!_link) {
+        _link=[CADisplayLink displayLinkWithTarget:self selector:@selector(linkTick:)];
+        WXGConfigureDisplayLink(_link,UIScreen.mainScreen);   // (FIX119 B: the screen's full rate on ProMotion, as the rest of the glass)
+        [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    }
+    _link.paused=NO;
+}
+- (void)pauseLink {_link.paused=YES;}
+- (void)linkTick:(__unused CADisplayLink *)link {}   // (only wakes the run loop: the observer draws)
+
+#pragma mark - The avatar's tap (FIX118 D)
+
+- (BOOL)gestureRecognizerShouldBegin:(UIGestureRecognizer *)g {
+    if(g!=_avatarTap)return YES;
+    if(_avatarWindowRadius<16 || !WXGMeOn())return NO;
+    CGPoint p=[g locationInView:nil];
+    return hypot(p.x-_avatarWindowCenter.x,p.y-_avatarWindowCenter.y)<=_avatarWindowRadius+4;
+}
+- (BOOL)gestureRecognizer:(UIGestureRecognizer *)g shouldRecognizeSimultaneouslyWithGestureRecognizer:(__unused UIGestureRecognizer *)other {return g==_avatarTap;}
+- (void)avatarTapped:(UITapGestureRecognizer *)tap {
+    if(tap.state!=UIGestureRecognizerStateRecognized)return;
+    UIControl *header=_header;if(!header)return;
+    ++_avatarTaps;[header sendActionsForControlEvents:UIControlEventTouchUpInside];
+}
+// The list's own deceleration stopped (a push up closing the banner would otherwise carry on scrolling it, diagnostics_19).
+- (void)stopDecelerating:(UITableView *)table {
+    if(table.isDecelerating)[table setContentOffset:table.contentOffset animated:NO];
+}
+
+#pragma mark - Snapping
+
+// Released between the avatar at rest and in the cut-out: to the nearer of the two.
+- (void)panned:(UIPanGestureRecognizer *)pan {
+    UITableView *table=_table;if(!table || !_insetsApplied || !WXGMeOn())return;
+    if(_banner && [self pulled:pan table:table])return;
+    if(pan.state!=UIGestureRecognizerStateEnded && pan.state!=UIGestureRecognizerStateCancelled)return;
+    CGFloat rel=table.contentOffset.y+table.contentInset.top,v=[pan velocityInView:table].y;
+    CGFloat predicted=rel-v*.5;   // (UIKit's deceleration, rate .998: about v/2 points further)
+    CGFloat end=_collapseAll>0?_collapseAll:_collapse;   // FIX119 B: the end of both: the avatar in, the name in the bar
+    if(predicted<=0 || predicted>=end)return;
+    CGFloat target=predicted<end*.5?0:end;
+    __weak UITableView *weakTable=table;CGFloat top=table.contentInset.top;
+    dispatch_async(dispatch_get_main_queue(),^{
+        UITableView *list=weakTable;if(!list)return;
+        self->_snapUntil=CACurrentMediaTime()+.45;++self->_snaps;
+        [list setContentOffset:CGPointMake(list.contentOffset.x,target-top) animated:YES];
+    });
+}
+// FIX118 B: the banner pull. At the list's top, pulling down moves WeChat's list down (its transform: WeChat's
+// own code keeps its offset from going past the top) and opens the avatar into the banner; let go past 100 pt
+// (or flicked past 40) it stays open (locked at 140), else it springs back; open, pushing up closes it.
+// YES: the gesture is the pull's (no snapping for it).
+- (BOOL)pulled:(UIPanGestureRecognizer *)pan table:(UITableView *)table {
+    UIGestureRecognizerState state=pan.state;
+    CGFloat rel=table.contentOffset.y+table.contentInset.top,ty=[pan translationInView:table.superview].y;
+    if(state==UIGestureRecognizerStateBegan){_pullBase=ty;_pullAtBegin=_pull;_pulling=_pull>.5;return _pulling;}
+    if(state==UIGestureRecognizerStateChanged) {
+        if(!_pulling && rel<=1 && ty-_pullBase>0){_pulling=YES;_pullBase=ty;_pullAtBegin=0;}   // the top reached going down: the pull starts here
+        if(!_pulling){_pullBase=ty;return NO;}
+        CGFloat d=ty-_pullBase,p=_pullAtBegin+(d>0?d*.6:d);
+        if(p>140)p=140+70*(1-exp(-(p-140)/70));   // past the open banner: harder and harder
+        // (FIX118 C: B stopped here at once: the pull starts with d=0, so p=0 ended it on its first move; diagnostics_18)
+        if(p<0 || (d<0 && p<=0)){p=0;_pulling=NO;_pullBase=ty;}
+        _pull=_pullTarget=p;_pullVelocity=0;_pullSpring=NO;[self runLink];   // (the next pass sets the list's top to it)
+        return YES;
+    }
+    if(state==UIGestureRecognizerStateEnded || state==UIGestureRecognizerStateCancelled) {
+        if(!_pulling && _pull<=.5)return NO;
+        CGFloat v=[pan velocityInView:table.superview].y;
+        BOOL open=_locked?(_pull>90 && v>-600):(_pull>100 || (v>800 && _pull>40));
+        if(open && !_locked)++_locks;
+        _locked=open;_pulling=NO;
+        [self setPull:open?140:0 animated:YES table:table];
+        __weak UITableView *weakTable=table;
+        dispatch_async(dispatch_get_main_queue(),^{UITableView *list=weakTable;if(list)[self stopDecelerating:list];});   // (after UIKit has started it)
+        return YES;
+    }
+    return NO;
+}
+- (void)setPull:(CGFloat)p animated:(BOOL)animated table:(__unused UITableView *)table {
+    _pullTarget=p;
+    if(!animated){_pull=p;_pullVelocity=0;_pullSpring=NO;return;}
+    _pullSpring=YES;_pullStepAt=CACurrentMediaTime();[self runLink];
+}
+// The spring towards the pull's target (stiffness 170, damping ratio .86: about half a second, no overshoot to speak of).
+- (void)stepPull {
+    if(!_pullSpring)return;
+    CFTimeInterval now=CACurrentMediaTime();double dt=MIN(now-_pullStepAt,.05);_pullStepAt=now;
+    const double k=170,c=2*sqrt(k)*.86,h=1./240;
+    for(double left=dt;left>1e-6;left-=h) {
+        double step=MIN(h,left);
+        double a=-k*(_pull-_pullTarget)-c*_pullVelocity;
+        _pullVelocity+=a*step;_pull+=_pullVelocity*step;
+    }
+    if(fabs(_pull-_pullTarget)<.2 && fabs(_pullVelocity)<2){_pull=_pullTarget;_pullVelocity=0;_pullSpring=NO;}
+    if(_pull<0)_pull=0;
+}
+- (void)snapIfResting:(UITableView *)table {
+    if(_pull>.5 || _pulling)return;
+    if(table.isTracking || table.isDragging || table.isDecelerating || CACurrentMediaTime()<_snapUntil)return;
+    CGFloat rel=_travel,end=_collapseAll>0?_collapseAll:_collapse;
+    if(rel<=1 || rel>=end-1)return;
+    _snapUntil=CACurrentMediaTime()+.45;++_snaps;
+    [table setContentOffset:CGPointMake(table.contentOffset.x,(rel<end*.5?0:end)-table.contentInset.top) animated:YES];
+}
+
+#pragma mark - Giving back
+
+- (void)giveBackDragAndBounce {
+    UIPanGestureRecognizer *drag=_dragPan;UITableView *table=_table;
+    (void)table;_locked=NO;_pulling=NO;
+    [self pauseVideo];
+    if(_dragTouched){if(drag)drag.enabled=_dragWasEnabled;_dragTouched=NO;}
+    if(_bounceTouched) {
+        if(table) {
+            table.bounces=_bouncesWas;table.alwaysBounceVertical=_alwaysBounceWas;
+            if(table.contentOffset.y<-table.contentInset.top)[table setContentOffset:CGPointMake(table.contentOffset.x,-table.contentInset.top) animated:YES];   // (left pulled down: back to the top)
+        }
+        _bounceTouched=NO;
+    }
+}
+- (void)restore {
+    BOOL any=_insetsApplied || _overlay.superview || _itemsTouched || _qrTouched || _dragTouched || _bounceTouched;
+    if(!any)return;
+    UITableView *table=_table;
+    if(_insetsApplied && table) {
+        UIEdgeInsets cur=table.contentInset;
+        if(UIEdgeInsetsEqualToEdgeInsets(cur,_appliedInsets)) {
+            CGFloat rel=table.contentOffset.y+cur.top;
+            table.contentInset=_baseInsets;
+            table.contentOffset=CGPointMake(table.contentOffset.x,MAX(rel-_shift,0)-_baseInsets.top);
+        }
+    }
+    _insetsApplied=NO;_haveLayout=NO;_pull=_pullTarget=_pullVelocity=0;_pullSpring=_pulling=_locked=_pullPinned=NO;
+    [self giveBackDragAndBounce];
+    UIControl *qr=_qr;if(_qrTouched){qr.userInteractionEnabled=_qrTouchWas;_qrTouched=NO;}
+    [_states restore];
+    [self restoreStatus];
+    UINavigationItem *item=_itemsOn;
+    if(_itemsTouched && item) {
+        if(item.leftBarButtonItem==_leftItem)item.leftBarButtonItem=_leftWas;
+        if(item.rightBarButtonItem==_rightItem)item.rightBarButtonItem=_rightWas;
+    }
+    _itemsTouched=NO;_itemsOn=nil;_leftWas=_rightWas=nil;
+    [self dropVideo];
+    [_avatarTap.view removeGestureRecognizer:_avatarTap];
+    [_overlay removeFromSuperview];[self pauseLink];_haveLast=NO;
+    _haveSig=NO;_bandSet=NO;_bandOn=NO;_band.alpha=0;_cellColor=nil;
+}
+
+#pragma mark - The banner's video (FIX118 B)
+
+static NSString *WXGMeVideoPath(void) {
+    NSString *dir=[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,NSUserDomainMask,YES).firstObject stringByAppendingPathComponent:@"WeChatLiquidGlass"];
+    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
+    return [dir stringByAppendingPathComponent:@"meBanner.mov"];
+}
+- (NSString *)bannerVideoName {
+    NSDictionary *a=[NSFileManager.defaultManager attributesOfItemAtPath:WXGMeVideoPath() error:NULL];
+    return a?[NSString stringWithFormat:@"已选（%.1f MB）",a.fileSize/1048576.0]:@"未选";
+}
+- (BOOL)prepareVideo {
+    if(_videoOut)return YES;
+    NSString *path=WXGMeVideoPath();
+    if(![NSFileManager.defaultManager fileExistsAtPath:path])return NO;
+    if(!_textureCache && CVMetalTextureCacheCreate(kCFAllocatorDefault,NULL,WXGSharedDevice(),NULL,&_textureCache)!=kCVReturnSuccess){_videoNote=@"纹理缓存失败";return NO;}
+    AVPlayerItem *item=[AVPlayerItem playerItemWithURL:[NSURL fileURLWithPath:path]];
+    _videoOut=[[AVPlayerItemVideoOutput alloc]initWithPixelBufferAttributes:@{(id)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_32BGRA),(id)kCVPixelBufferMetalCompatibilityKey:@YES}];
+    [item addOutput:_videoOut];
+    _player=[AVPlayer playerWithPlayerItem:item];_player.muted=YES;_player.actionAtItemEnd=AVPlayerActionAtItemEndNone;
+    if(@available(iOS 12.0,*))_player.preventsDisplaySleepDuringVideoPlayback=NO;
+    __weak AVPlayer *weakPlayer=_player;
+    _loopObserver=[NSNotificationCenter.defaultCenter addObserverForName:AVPlayerItemDidPlayToEndTimeNotification object:item queue:NSOperationQueue.mainQueue
+        usingBlock:^(__unused NSNotification *n){[weakPlayer seekToTime:kCMTimeZero];[weakPlayer play];}];
+    _videoNote=@"已载入";
+    return YES;
+}
+- (void)playVideo {if(!_videoPlaying && _player){[_player play];_videoPlaying=YES;}}
+- (void)pauseVideo {if(_videoPlaying){[_player pause];_videoPlaying=NO;}}
+- (BOOL)pullVideoFrame {
+    AVPlayerItemVideoOutput *out=_videoOut;if(!out || !_textureCache)return _videoRef!=NULL;
+    CMTime time=[out itemTimeForHostTime:CACurrentMediaTime()];
+    if(![out hasNewPixelBufferForItemTime:time])return _videoRef!=NULL;
+    CVPixelBufferRef buffer=[out copyPixelBufferForItemTime:time itemTimeForDisplay:NULL];if(!buffer)return _videoRef!=NULL;
+    CVMetalTextureRef texture=NULL;
+    CVReturn r=CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,_textureCache,buffer,NULL,MTLPixelFormatBGRA8Unorm,
+        CVPixelBufferGetWidth(buffer),CVPixelBufferGetHeight(buffer),0,&texture);
+    if(r!=kCVReturnSuccess || !texture){CVPixelBufferRelease(buffer);return _videoRef!=NULL;}
+    // (the frame before kept one frame longer: the GPU may still be reading it)
+    if(_videoRefOld)CFRelease(_videoRefOld);
+    if(_videoBufferOld)CVPixelBufferRelease(_videoBufferOld);
+    _videoRefOld=_videoRef;_videoBufferOld=_videoBuffer;_videoRef=texture;_videoBuffer=buffer;++_videoFrames;
+    if(_videoFrames%120==0)CVMetalTextureCacheFlush(_textureCache,0);
+    return YES;
+}
+- (void)dropVideo {
+    [self pauseVideo];
+    if(_loopObserver){[NSNotificationCenter.defaultCenter removeObserver:_loopObserver];_loopObserver=nil;}
+    _player=nil;_videoOut=nil;_metal.videoTexture=nil;
+    if(_videoRef){CFRelease(_videoRef);_videoRef=NULL;}
+    if(_videoRefOld){CFRelease(_videoRefOld);_videoRefOld=NULL;}
+    if(_videoBuffer){CVPixelBufferRelease(_videoBuffer);_videoBuffer=NULL;}
+    if(_videoBufferOld){CVPixelBufferRelease(_videoBufferOld);_videoBufferOld=NULL;}
+}
+- (void)pickBannerVideoFrom:(UIViewController *)controller {
+    PHPickerConfiguration *configuration=[PHPickerConfiguration new];
+    configuration.filter=PHPickerFilter.videosFilter;configuration.selectionLimit=1;
+    configuration.preferredAssetRepresentationMode=PHPickerConfigurationAssetRepresentationModeCurrent;
+    PHPickerViewController *picker=[[PHPickerViewController alloc]initWithConfiguration:configuration];picker.delegate=self;
+    [controller presentViewController:picker animated:YES completion:nil];
+}
+- (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
+    [picker dismissViewControllerAnimated:YES completion:nil];
+    NSItemProvider *provider=results.firstObject.itemProvider;if(!provider)return;
+    __weak WXGMeHeader *weakSelf=self;
+    [provider loadFileRepresentationForTypeIdentifier:@"public.movie" completionHandler:^(NSURL *url,NSError *error){
+        NSString *path=WXGMeVideoPath(),*note=nil;
+        if(url) {
+            NSString *temp=[path stringByAppendingString:@".tmp"];
+            [NSFileManager.defaultManager removeItemAtPath:temp error:NULL];
+            NSError *copyError=nil;
+            if([NSFileManager.defaultManager copyItemAtURL:url toURL:[NSURL fileURLWithPath:temp] error:&copyError]) {
+                [NSFileManager.defaultManager removeItemAtPath:path error:NULL];
+                [NSFileManager.defaultManager moveItemAtPath:temp toPath:path error:NULL];
+                note=@"横幅视频已更新";
+            }else note=[@"复制视频失败：" stringByAppendingString:copyError.localizedDescription?:@"?"];
+        }else note=[@"读取视频失败：" stringByAppendingString:error.localizedDescription?:@"?"];
+        dispatch_async(dispatch_get_main_queue(),^{
+            WXGMeHeader *me=weakSelf;[me dropVideo];me->_videoNote=note;WXGLog(@"我页横幅：%@",note);
+            [NSNotificationCenter.defaultCenter postNotificationName:WXGSettingsChanged object:nil];
+        });
+    }];
+}
+- (void)clearBannerVideo {
+    [self dropVideo];[NSFileManager.defaultManager removeItemAtPath:WXGMeVideoPath() error:NULL];_videoNote=@"已清除";
+}
+
+- (NSDictionary *)evidence {
+    UITableView *table=_table;
+    return @{@"on":@(WXGMeOn()),@"status":_status_?:@"",@"page":_page?NSStringFromClass(_page.class):@"",@"table":table?NSStringFromClass(table.class):@"",
+             @"parts":@{@"header":@(_header!=nil),@"avatar":@(_avatar!=nil),@"photo":@(_photoView!=nil),@"name":@(_name!=nil),@"id":@(_wxid!=nil),@"qr":@(_qr!=nil),
+                        @"chevron":@(_chevron!=nil),@"status":@([self statusViews].count),@"weChatDrag":@(_dragPan!=nil)},
+             @"cutout":@{@"kind":@(_cutout.kind),@"fromTable":@(_cutout.known),@"rect":NSStringFromCGRect(CGRectMake(_cutout.x,_cutout.y,_cutout.w,_cutout.h)),@"merge":@(_merge)},
+             @"banner":@(_banner),@"shift":@(_shift),@"collapse":@(_collapse),@"travel":@(round(_travel*10)/10),
+             @"insets":@{@"wechat":NSStringFromUIEdgeInsets(_baseInsets),@"applied":_insetsApplied?NSStringFromUIEdgeInsets(_appliedInsets):@""},
+             @"photo":_shownPhoto?[NSString stringWithFormat:@"%.0fx%.0f",_shownPhoto.size.width*_shownPhoto.scale,_shownPhoto.size.height*_shownPhoto.scale]:@"",
+             @"metal":@{@"frames":@(_metal.frames),@"failure":_metal.failure?:@""},
+             @"pull":@{@"pull":@(round(_pull)),@"locked":@(_locked),@"locks":@(_locks),@"visual":@(round(_pullVisual))},
+             @"video":@{@"file":[self bannerVideoName],@"note":_videoNote?:@"",@"frames":@(_videoFrames),@"playing":@(_videoPlaying)},
+             @"photoSource":WXGSelfAvatarState(),@"avatarTaps":@(_avatarTaps),@"edgeStyle":@(WXGMeEdgeStyle()),@"dripRoom":@(round(_dripRoom)),@"renders":@(_renders),@"snaps":@(_snaps),@"passes":@(_passes),
+             @"fullPasses":@(_fullPasses),@"skippedPasses":@(_skips),@"canvasHeight":@(round(_canvasHeight)),   // FIX119 B
+             @"title":@{@"collapse":@(round(_titleCollapse*10)/10),@"end":@(round(_collapseAll*10)/10),@"fraction":@(round(_titlePose.fraction*100)/100),
+                        @"locked":@(_titlePose.locked),@"band":@(_bandOn)}};
+}
+@end

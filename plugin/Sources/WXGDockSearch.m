@@ -58,7 +58,7 @@ static UIImageView *WXGDockGlyph(NSString *name,CGFloat size) {
     if((self=[super initWithFrame:frame])) {
         self.backgroundColor=UIColor.clearColor;self.opaque=NO;self.clipsToBounds=NO;
         // The dock's own shadow, so the two read as one row.
-        self.layer.shadowColor=UIColor.blackColor.CGColor;self.layer.shadowOpacity=.10;self.layer.shadowRadius=20;self.layer.shadowOffset=CGSizeMake(0,8);
+        self.layer.shadowColor=UIColor.blackColor.CGColor;self.layer.shadowOpacity=0;   /* FIX114 K: the glass draws its own */ self.layer.shadowRadius=20;self.layer.shadowOffset=CGSizeMake(0,8);
         // FIX61: no shadow until there is an outline (without a path the shadow
         // is taken from the content: the backdrop layers' rectangles).
         self.layer.shadowPath=[UIBezierPath bezierPath].CGPath;
@@ -205,7 +205,8 @@ static UIImageView *WXGDockGlyph(NSString *name,CGFloat size) {
 - (void)followFinger:(CGPoint)point inside:(BOOL)inside {
     if(!inside || !WXGDockStretchWanted()){_stretch.tracking=0;_stretch.targetX=_stretch.targetY=0;return;}
     _stretch.tracking=1;
-    WXGStretchTarget(&_stretch,point.x-_stretchStart.x,point.y-_stretchStart.y,[self stretchLimit]);
+    double ratio=MAX(1,[WXGConfig.shared extraNumber:@"pressStretchRatio"]);   // FIX115 L
+    WXGStretchTarget(&_stretch,(point.x-_stretchStart.x)/ratio,(point.y-_stretchStart.y)/ratio,[self stretchLimit]);
 }
 - (void)releaseFinger {_stretch.tracking=0;_stretch.targetX=_stretch.targetY=0;}
 - (void)tick:(CFTimeInterval)time {

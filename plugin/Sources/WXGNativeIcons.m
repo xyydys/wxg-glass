@@ -13,6 +13,7 @@ extern BOOL WXGImageIsMonochrome(UIImage *image);
     p.normalSource=_normalSource; p.selectedSource=_selectedSource;
     p.normalTemplate=_normalTemplate; p.selectedTemplate=_selectedTemplate;
     p.normalRank=_normalRank; p.selectedRank=_selectedRank;
+    p.normalDisplaySize=_normalDisplaySize; p.selectedDisplaySize=_selectedDisplaySize;   // FIX115 D
     return p;
 }
 @end
@@ -31,17 +32,36 @@ static NSString *WXGIconColorSignature(UIColor *color) {
     return color.description;
 }
 static void WXGSetNativeImage(WXGNativeIconPair *pair,BOOL selected,UIImage *image,
-                             UIColor *tint,BOOL automaticTemplate,CGFloat rank,NSString *source) {
+                             UIColor *tint,BOOL automaticTemplate,CGFloat rank,NSString *source,CGSize display) {
     if(!WXGUsableNativeImage(image) || rank<(selected?pair.selectedRank:pair.normalRank)) return;
     BOOL templ=image.renderingMode==UIImageRenderingModeAlwaysTemplate ||
         (automaticTemplate && image.renderingMode!=UIImageRenderingModeAlwaysOriginal);
     if(selected) {
         pair.selectedImage=image; pair.selectedTint=tint; pair.selectedTemplate=templ;
-        pair.selectedRank=rank; pair.selectedSource=source;
+        pair.selectedRank=rank; pair.selectedSource=source; pair.selectedDisplaySize=display;
     } else {
         pair.normalImage=image; pair.normalTint=tint; pair.normalTemplate=templ;
-        pair.normalRank=rank; pair.normalSource=source;
+        pair.normalRank=rank; pair.normalSource=source; pair.normalDisplaySize=display;
     }
+}
+/* FIX115 D (user: a theme's PNG icons came out larger or smaller in the dock):
+   the dock drew a picture at its own size (capped at 30 pt); a theme's PNG
+   loaded at another scale than the screen's has a size unrelated to how big
+   it shows. What is shown: an image view's box, the picture fitted into it
+   when the view scales its content (fit / fill / stretch), the picture's own
+   size when it does not (centre and the like). Bounds, not the frame on
+   screen: a bounce animating the view's transform does not change it. */
+static CGSize WXGShownSize(UIImageView *view,UIImage *image) {
+    if(!view || !WXGUsableNativeImage(image))return CGSizeZero;
+    CGSize box=view.bounds.size,size=image.size;
+    if(box.width<1 || box.height<1)return CGSizeZero;
+    UIViewContentMode mode=view.contentMode;
+    if(mode==UIViewContentModeScaleToFill)return box;
+    if(mode==UIViewContentModeScaleAspectFit || mode==UIViewContentModeScaleAspectFill) {
+        CGFloat k=MIN(box.width/size.width,box.height/size.height);
+        return CGSizeMake(size.width*k,size.height*k);
+    }
+    return size;
 }
 // FIX36: WeChat's own tab shows "微信", not "微信(359)": drop a trailing count.
 static NSString *WXGCleanTabTitle(NSString *title) {
@@ -114,6 +134,8 @@ static NSArray<WXGNativeIconPair *> *WXGLoadCachedPairs(NSInteger style) {
         pair.normalTint=WXGColorOfHex(m[@"normalTint"]);pair.selectedTint=WXGColorOfHex(m[@"selectedTint"]);
         pair.normalTextColor=WXGColorOfHex(m[@"normalText"]);pair.selectedTextColor=WXGColorOfHex(m[@"selectedText"]);
         pair.title=m[@"title"];pair.normalRank=1;pair.selectedRank=sel?1:0;
+        pair.normalDisplaySize=CGSizeMake([m[@"normalShownW"] doubleValue],[m[@"normalShownH"] doubleValue]);   // FIX115 D (0 when not recorded)
+        pair.selectedDisplaySize=CGSizeMake([m[@"selectedShownW"] doubleValue],[m[@"selectedShownH"] doubleValue]);
         pair.normalSource=@"上次读取的微信图标（缓存）";pair.selectedSource=sel?@"上次读取的微信图标（缓存）":nil;
         [pairs addObject:pair];
     }
@@ -132,6 +154,8 @@ static void WXGSaveCachedPairs(NSArray<WXGNativeIconPair *> *pairs,NSInteger sty
         NSMutableDictionary *m=[NSMutableDictionary dictionary];
         m[@"title"]=pair.title?:@"";m[@"normalTemplate"]=@(pair.normalTemplate);m[@"selectedTemplate"]=@(pair.selectedTemplate);
         m[@"normalScale"]=@(pair.normalImage.scale);m[@"selectedScale"]=@(pair.selectedImage.scale?:pair.normalImage.scale);
+        m[@"normalShownW"]=@(pair.normalDisplaySize.width);m[@"normalShownH"]=@(pair.normalDisplaySize.height);   // FIX115 D
+        m[@"selectedShownW"]=@(pair.selectedDisplaySize.width);m[@"selectedShownH"]=@(pair.selectedDisplaySize.height);
         NSString *v;
         if((v=WXGHexOf(pair.normalTint)))m[@"normalTint"]=v;
         if((v=WXGHexOf(pair.selectedTint)))m[@"selectedTint"]=v;
@@ -177,11 +201,12 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
 - (NSString *)signatureForPairs:(NSArray<WXGNativeIconPair *> *)pairs {
     NSMutableString *signature=[NSMutableString string];
     for(WXGNativeIconPair *p in pairs) {
-        [signature appendFormat:@"%p/%p/%d/%d/%@/%@/%@/%@/%@/%ld/%.1f;",
+        [signature appendFormat:@"%p/%p/%d/%d/%@/%@/%@/%@/%@/%ld/%.1f/%.1fx%.1f/%.1fx%.1f;",
             (__bridge void *)p.normalImage,(__bridge void *)p.selectedImage,p.normalTemplate,p.selectedTemplate,
             WXGIconColorSignature(p.normalTint),WXGIconColorSignature(p.selectedTint),
             WXGIconColorSignature(p.normalTextColor),WXGIconColorSignature(p.selectedTextColor),p.title,
-            (long)p.traits.userInterfaceStyle,p.traits.displayScale];
+            (long)p.traits.userInterfaceStyle,p.traits.displayScale,
+            p.normalDisplaySize.width,p.normalDisplaySize.height,p.selectedDisplaySize.width,p.selectedDisplaySize.height];   // FIX115 D
     }
     return signature;
 }
@@ -223,10 +248,10 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
             UITabBarItem *item=nativeItems[i]; pair.title=WXGCleanTabTitle(item.title); pair.traits=traits;
             pair.normalTextColor=WXGResolvedIconColor(appearance.normal.titleTextAttributes[NSForegroundColorAttributeName],traits)?:cached.normalTextColor;
             pair.selectedTextColor=WXGResolvedIconColor(appearance.selected.titleTextAttributes[NSForegroundColorAttributeName],traits)?:cached.selectedTextColor;
-            WXGSetNativeImage(pair,NO,item.image,normalTint,YES,20,@"UITabBarItem.image");
+            WXGSetNativeImage(pair,NO,item.image,normalTint,YES,20,@"UITabBarItem.image",CGSizeZero);
             // UIKit uses the normal image when no separate selectedImage exists.
             WXGSetNativeImage(pair,YES,item.selectedImage?:item.image,selectedTint,YES,20,
-                item.selectedImage?@"UITabBarItem.selectedImage":@"UITabBarItem.image（选中共用）");
+                item.selectedImage?@"UITabBarItem.selectedImage":@"UITabBarItem.image（选中共用）",CGSizeZero);
             [pairs addObject:pair];
         }
         // Observe custom/native controls inside the existing tab bar. Read only
@@ -276,10 +301,10 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
                 // No setSelected:, sendActions..., or forced page switches.
                 UIColor *tint=WXGResolvedIconColor(button.tintColor,traits);
                 if(rect.size.width<=bar.bounds.size.width*.45 && rect.size.height<=100) {
-                    WXGSetNativeImage(pair,NO,[button imageForState:UIControlStateNormal],tint,NO,60,@"UIButton.normal");
                     UIImage *normal=[button imageForState:UIControlStateNormal],*chosen=[button imageForState:UIControlStateSelected];
+                    WXGSetNativeImage(pair,NO,normal,tint,NO,60,@"UIButton.normal",WXGShownSize(button.imageView,normal));
                     // UIButton returns the normal image when no selected resource exists.
-                    if(chosen && (chosen!=normal || button.selected))WXGSetNativeImage(pair,YES,chosen,tint,NO,60,@"UIButton.selected");
+                    if(chosen && (chosen!=normal || button.selected))WXGSetNativeImage(pair,YES,chosen,tint,NO,60,@"UIButton.selected",WXGShownSize(button.imageView,chosen));
                 }
             }
             if([view isKindOfClass:UIImageView.class]) {
@@ -291,11 +316,11 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
                 UITabBarItem *item=nativeItems[slot];
                 BOOL template=imageView.image && (imageView.image==item.image || imageView.image==item.selectedImage);
                 if(imageView.highlightedImage) {
-                    WXGSetNativeImage(pair,NO,imageView.image,tint,template,score,@"UIImageView.image");
+                    WXGSetNativeImage(pair,NO,imageView.image,tint,template,score,@"UIImageView.image",WXGShownSize(imageView,imageView.image));
                     BOOL highlightedTemplate=imageView.highlightedImage==item.selectedImage || imageView.highlightedImage==item.image;
-                    WXGSetNativeImage(pair,YES,imageView.highlightedImage,tint,highlightedTemplate,score,@"UIImageView.highlightedImage");
+                    WXGSetNativeImage(pair,YES,imageView.highlightedImage,tint,highlightedTemplate,score,@"UIImageView.highlightedImage",WXGShownSize(imageView,imageView.highlightedImage));
                 } else {
-                    WXGSetNativeImage(pair,currentSelected,imageView.image,tint,template,score,@"微信当前图标视图");
+                    WXGSetNativeImage(pair,currentSelected,imageView.image,tint,template,score,@"微信当前图标视图",WXGShownSize(imageView,imageView.image));
                 }
             }
         }
@@ -331,9 +356,9 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
         if(sameIdentity) for(NSUInteger i=0;i<4;i++) {
             WXGNativeIconPair *pair=pairs[i],*cached=_items[i];
             if(floor(cached.normalRank)>floor(pair.normalRank))
-                WXGSetNativeImage(pair,NO,cached.normalImage,cached.normalTint,cached.normalTemplate,cached.normalRank,cached.normalSource);
+                WXGSetNativeImage(pair,NO,cached.normalImage,cached.normalTint,cached.normalTemplate,cached.normalRank,cached.normalSource,cached.normalDisplaySize);
             if(floor(cached.selectedRank)>floor(pair.selectedRank))
-                WXGSetNativeImage(pair,YES,cached.selectedImage,cached.selectedTint,cached.selectedTemplate,cached.selectedRank,cached.selectedSource);
+                WXGSetNativeImage(pair,YES,cached.selectedImage,cached.selectedTint,cached.selectedTemplate,cached.selectedRank,cached.selectedSource,cached.selectedDisplaySize);
         }
         // FIX38: a read replaces only what it actually saw. At launch WeChat's
         // items have no images yet; that read used to replace the cached set
@@ -342,11 +367,11 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
             WXGNativeIconPair *pair=pairs[i],*prior=priors[i];
             if(!pair.normalImage && prior.normalImage) {
                 pair.normalImage=prior.normalImage;pair.normalTint=prior.normalTint;pair.normalTemplate=prior.normalTemplate;
-                pair.normalRank=prior.normalRank;pair.normalSource=prior.normalSource;
+                pair.normalRank=prior.normalRank;pair.normalSource=prior.normalSource;pair.normalDisplaySize=prior.normalDisplaySize;
             }
             if(!pair.selectedImage && prior.selectedImage) {
                 pair.selectedImage=prior.selectedImage;pair.selectedTint=prior.selectedTint;pair.selectedTemplate=prior.selectedTemplate;
-                pair.selectedRank=prior.selectedRank;pair.selectedSource=prior.selectedSource;
+                pair.selectedRank=prior.selectedRank;pair.selectedSource=prior.selectedSource;pair.selectedDisplaySize=prior.selectedDisplaySize;
             }
             if(!pair.title.length && prior.title.length)pair.title=prior.title;
             if(!pair.normalTextColor)pair.normalTextColor=prior.normalTextColor;
@@ -360,14 +385,14 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
                 // FIX108 D: a theme's coloured artwork as it is (tinting it made
                 // a flat green silhouette); a one-colour outline in the accent.
                 BOOL mono=WXGImageIsMonochrome(pair.normalImage);
-                pair.selectedImage=pair.normalImage;pair.selectedTemplate=mono;pair.selectedTint=mono?accent:nil;
+                pair.selectedImage=pair.normalImage;pair.selectedTemplate=mono;pair.selectedTint=mono?accent:nil;pair.selectedDisplaySize=pair.normalDisplaySize;
                 pair.selectedSource=mono?@"现有轮廓和原生选中色（未访问状态）":@"现有图（主题彩色图，未访问状态）";
             }
             // FIX108 D: the selected tab's other state unknown (dropped above,
             // or never seen): its selected artwork, the rest colour if one-colour.
             if(!pair.normalImage && pair.selectedImage && pair.selectedRank>=60) {
                 BOOL mono=WXGImageIsMonochrome(pair.selectedImage);
-                pair.normalImage=pair.selectedImage;pair.normalTemplate=mono;pair.normalTint=mono?rest:nil;pair.normalRank=10;
+                pair.normalImage=pair.selectedImage;pair.normalTemplate=mono;pair.normalTint=mono?rest:nil;pair.normalRank=10;pair.normalDisplaySize=pair.selectedDisplaySize;
                 pair.normalSource=@"选中图（未选中状态未见过）";
             }
             if(!pair.selectedTextColor)pair.selectedTextColor=accent;
@@ -382,7 +407,9 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
         NSUInteger normals=0,selecteds=0; NSMutableArray *sources=[NSMutableArray array];
         for(NSUInteger i=0;i<4;i++) {
             WXGNativeIconPair *p=pairs[i]; normals+=p.normalImage!=nil; selecteds+=p.selectedImage!=nil;
-            [sources addObject:[NSString stringWithFormat:@"%lu：%@ / %@",(unsigned long)i+1,p.normalSource?:@"未选中回退",p.selectedSource?:@"选中回退"]];
+            [sources addObject:[NSString stringWithFormat:@"%lu：%@ / %@；图 %.0fx%.0f@%.0fx / %.0fx%.0f@%.0fx，显示 %.1fx%.1f / %.1fx%.1f",(unsigned long)i+1,p.normalSource?:@"未选中回退",p.selectedSource?:@"选中回退",
+                p.normalImage.size.width,p.normalImage.size.height,p.normalImage.scale,p.selectedImage.size.width,p.selectedImage.size.height,p.selectedImage.scale,
+                p.normalDisplaySize.width,p.normalDisplaySize.height,p.selectedDisplaySize.width,p.selectedDisplaySize.height]];   // FIX115 D
         }
         _diagnostics=[NSString stringWithFormat:@"微信图标：未选中 %lu/4，选中 %lu/4；按钮%@布局（未布局扫描 %lu 次）；图标换过 %lu 次（主题）；微信标题字体 %@\n%@",(unsigned long)normals,(unsigned long)selecteds,
             laidOut?@"已":@"未",(unsigned long)_unlaidScans,(unsigned long)_artworkChanges,_titleFont?:@"未读到",[sources componentsJoinedByString:@"\n"]];

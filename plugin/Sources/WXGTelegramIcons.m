@@ -19,7 +19,8 @@ static WXGTelegramSheet WXGTelegramSheetFor(NSInteger tab) {
         default:return (WXGTelegramSheet){WXGTabSettingsPNG,WXGTabSettingsLength,WXGTabSettingsFrames};
     }
 }
-BOOL WXGTelegramTabIconsOn(void) {return [WXGConfig.shared extraNumber:@"dockTelegramIcons"]>.5;}
+BOOL WXGDockThemeFirst(void) {return [WXGConfig.shared extraNumber:@"dockThemeFirst"]>.5;}   // FIX115 D
+BOOL WXGTelegramTabIconsOn(void) {return [WXGConfig.shared extraNumber:@"dockTelegramIcons"]>.5 && !WXGDockThemeFirst();}   // FIX115 D: not with 主题优先
 NSInteger WXGTelegramFrameCount(NSInteger tab) {return (NSInteger)WXGTelegramSheetFor(tab).frames;}
 // FIX113 F: how wide the resting glyph's ink is, as a share of a frame (the
 // frames leave room for the animation around it: 0.69 Calls .. 0.86 Chats).

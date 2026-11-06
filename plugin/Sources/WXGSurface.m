@@ -100,6 +100,36 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
     NSHashTable<UIView *> *_followers;
     BOOL _followTouching;                 // FIX72: an observed touch is down
     NSArray<NSString *> *_followerNames;  // FIX72: diagnostics
+    BOOL _traitsPending;                  // FIX114 M: an appearance change while out of a window
+    UIImage *_resolvedFrom;               // FIX114 M: the artwork and traits the icon was last drawn from
+    UITraitCollection *_resolvedTraits;   // light / dark, contrast, level, bold text
+    UIColor *_resolvedTint;
+    NSString *_resolvedRole;
+    BOOL _resolvedPreserve;
+    UIImageView *_trailingView;           // FIX114 M: trailingSymbol
+    CFTimeInterval _lastFollow;           // FIX114 T: holdsPlace's fade
+    CFTimeInterval _hostAwaySince;        // FIX114 U: holdsPlace: the native view out of the window since
+}
+- (void)setNativeContent:(UIView *)content {   // FIX114 V
+    if(content==_nativeContent)return;
+    [_nativeContent removeFromSuperview];_nativeContent=content;
+    if(content){content.userInteractionEnabled=NO;content.isAccessibilityElement=NO;content.accessibilityElementsHidden=YES;[self addSubview:content];}
+    [self setNeedsLayout];
+}
+- (void)setNativeContentOrigin:(CGPoint)origin {
+    if(CGPointEqualToPoint(origin,_nativeContentOrigin))return;
+    _nativeContentOrigin=origin;[self setNeedsLayout];
+}
+- (void)setTrailingSymbol:(UIImage *)symbol {
+    if(symbol==_trailingSymbol)return;
+    _trailingSymbol=symbol;
+    if(symbol && !_trailingView) {
+        _trailingView=[UIImageView new];_trailingView.userInteractionEnabled=NO;_trailingView.contentMode=UIViewContentModeScaleAspectFit;
+        _trailingView.tintColor=UIColor.systemGray2Color;   // iOS 26: #AEAEB2 on white (measured 173,173,173)
+        [self addSubview:_trailingView];
+    }
+    _trailingView.image=symbol;_trailingView.hidden=symbol==nil;
+    [self setNeedsLayout];
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if((self=[super initWithFrame:frame])) {
@@ -114,7 +144,9 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
         _label.opaque=NO;_label.backgroundColor=UIColor.clearColor;
         _label.lineBreakMode=NSLineBreakByTruncatingTail;[self addSubview:_label];
         _countLabel=[UILabel new];_countLabel.font=[UIFont monospacedDigitSystemFontOfSize:12 weight:UIFontWeightSemibold];
-        _countLabel.textAlignment=NSTextAlignmentCenter;_countLabel.textColor=UIColor.whiteColor;_countLabel.backgroundColor=UIColor.blackColor;
+        _countLabel.textAlignment=NSTextAlignmentCenter;   // FIX114 L (user: always a black capsule with white digits; dark mode should be the other way round)
+        _countLabel.textColor=[UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t){return t.userInterfaceStyle==UIUserInterfaceStyleDark?UIColor.blackColor:UIColor.whiteColor;}];
+        _countLabel.backgroundColor=[UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *t){return t.userInterfaceStyle==UIUserInterfaceStyleDark?UIColor.whiteColor:UIColor.blackColor;}];
         _countLabel.clipsToBounds=YES;_countLabel.layer.cornerCurve=kCACornerCurveContinuous;[self addSubview:_countLabel];
         _feedback=[[UIImpactFeedbackGenerator alloc]initWithStyle:UIImpactFeedbackStyleLight];
         // WXGGlassView owns a shared, explicitly BGRA 1x1 transparent texture.
@@ -137,7 +169,10 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
 static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
 - (void)setPlain:(BOOL)plain {_plain=plain;_glass.hidden=plain || (!_glass.ready && WXGFallbackAllowed());_fallback.hidden=plain || _glass.hasPresentedFrame || !WXGFallbackAllowed();_glass.active=_active && !plain;}
 - (void)placeMaterial:(CGRect)rect inParent:(UIView *)parent {
-    if(self.superview!=parent){[self removeFromSuperview];[parent addSubview:self];}
+    // FIX114 M (crash): moved straight into the new parent. Taken out first,
+    // it left the window and came back, and its colours were resolved again
+    // on every move (UIKit's appearance setters: a hang when moved in a loop).
+    if(self.superview!=parent){if(parent)[parent addSubview:self];else [self removeFromSuperview];}
     CGRect canvas=CGRectInset(rect,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
     CGRect material=CGRectMake(WXGCanvasPaddingX,WXGCanvasPaddingY,rect.size.width,rect.size.height);
     BOOL sizeChanged=!CGRectEqualToRect(material,_materialRect);
@@ -186,7 +221,18 @@ static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
 - (void)followNativePresentation {
     if(!_followsNative || !_motionHost || !self.superview)return;
     UIView *host=_motionHost;UIView *parent=self.superview;
-    if(!host.window || host.window!=parent.window){self.hidden=YES;return;}
+    // FIX114 T (diagnostics_13: at the start of every swipe back the chat's
+    // avatar and capsule went for about 80 ms: WeChat's title was out of the
+    // window as it swapped it): held in place, it stays as it is meanwhile.
+    // FIX114 U (diagnostics_14: still about 95 ms gone at the start of each
+    // swipe back: WeChat swaps its title before the host has seen the
+    // transition): not only during one; at most half a second.
+    BOOL holding=_holdsPlace && !self.hidden;CFTimeInterval now=CACurrentMediaTime();
+    if(!host.window || host.window!=parent.window) {
+        if(holding){if(!_hostAwaySince)_hostAwaySince=now;if(now-_hostAwaySince<.5)return;}
+        _hostAwaySince=0;self.hidden=YES;return;
+    }
+    _hostAwaySince=0;
     CALayer *model=host.layer,*present=model.presentationLayer;
     CALayer *destination=parent.layer.presentationLayer;
     if(!present || !destination){present=model;destination=parent.layer;}
@@ -208,7 +254,7 @@ static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
     }
     WXGAffine delta=WXGPresentationDelta((WXGPoint){normal.x,normal.y},(WXGPoint){nx.x,nx.y},(WXGPoint){ny.x,ny.y},
       (WXGPoint){shown.x,shown.y},(WXGPoint){px.x,px.y},(WXGPoint){py.x,py.y},(WXGPoint){CGRectGetMidX(_restingFrame),CGRectGetMidY(_restingFrame)});
-    if(!_nativeTransitionActive)delta=(WXGAffine){1,0,0,1,0,0};
+    if(!_nativeTransitionActive || _holdsPlace)delta=(WXGAffine){1,0,0,1,0,0};   // FIX114 S: held in place
     CGFloat alpha=1;BOOL hidden=NO;
     for(UIView *v=host;v && v!=parent;v=v.superview){
         if([parent isDescendantOfView:v])break;
@@ -217,6 +263,14 @@ static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
 
     }
     _nativeAlpha=alpha;_nativeHidden=hidden;
+    // FIX114 T: a held glass fades at most this fast (a fade of WeChat's title
+    // passes; a swap's one frame at 0 opacity or hidden is no blink).
+    if(holding) {
+        double dt=_lastFollow>0?MIN(MAX(now-_lastFollow,0),1/30.):1/60.;CGFloat step=MAX(.06,dt*9);
+        if(hidden){hidden=NO;alpha=0;}
+        alpha=WXGClamp(alpha,self.alpha-step,self.alpha+step);
+    }
+    _lastFollow=now;
     if(_alphaFloor>.001){if(hidden){hidden=NO;alpha=0;}alpha=MAX(alpha,_alphaFloor);}   // FIX93
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
@@ -255,14 +309,26 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     UIImage *image=_sourceImage.imageAsset?[_sourceImage.imageAsset imageWithTraitCollection:traits]:_sourceImage;
     UIColor *tint=_preservesNativeIconColors?(_nativeIconSource.tintColor?:UIColor.labelColor):UIColor.labelColor;
     _resolvedNativeTint=[tint resolvedColorWithTraitCollection:traits];
-    [traits performAsCurrentTraitCollection:^{
-        UIImage *cropped=image && !WXGPhotoRole(self.role)?WXGCropInk(image,tint):image;
-        // Video uses native original artwork or its actual template tint;
-        // a white glyph is not evidence that it should become labelColor.
-        BOOL adaptive=!self.preservesNativeIconColors && !WXGPhotoRole(self.role) && WXGImageIsMonochrome(image);
-        self.iconView.image=adaptive?[cropped imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]:cropped;
-    }];
-    _label.textColor=UIColor.labelColor;_iconView.tintColor=_iconTint?:_resolvedNativeTint;
+    // FIX114 M (crash): UIKit's appearance setters are slow (each one looks
+    // through the class's methods); a value already set is not set again,
+    // and the same artwork under the same appearance is not cropped again.
+    BOOL sameTraits=_resolvedTraits && ![traits hasDifferentColorAppearanceComparedToTraitCollection:_resolvedTraits] && traits.legibilityWeight==_resolvedTraits.legibilityWeight;
+    BOOL redraw=!(_sourceImage==_resolvedFrom && sameTraits && (tint==_resolvedTint || [tint isEqual:_resolvedTint]) &&
+                  _preservesNativeIconColors==_resolvedPreserve && (_role==_resolvedRole || [_role isEqual:_resolvedRole]) && (image || !_iconView.image));
+    if(redraw) {
+        _resolvedFrom=_sourceImage;_resolvedTraits=traits;_resolvedTint=tint;_resolvedPreserve=_preservesNativeIconColors;_resolvedRole=[_role copy];
+        [traits performAsCurrentTraitCollection:^{
+            UIImage *cropped=image && !WXGPhotoRole(self.role)?WXGCropInk(image,tint):image;
+            // Video uses native original artwork or its actual template tint;
+            // a white glyph is not evidence that it should become labelColor.
+            BOOL adaptive=!self.preservesNativeIconColors && !WXGPhotoRole(self.role) && WXGImageIsMonochrome(image);
+            UIImage *shown=adaptive?[cropped imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]:cropped;
+            if(self.iconView.image!=shown)self.iconView.image=shown;
+        }];
+    }
+    if(_label.textColor!=UIColor.labelColor)_label.textColor=UIColor.labelColor;
+    UIColor *iconTint=_iconTint?:_resolvedNativeTint;
+    if(!(_iconView.tintColor==iconTint || [_iconView.tintColor isEqual:iconTint]))_iconView.tintColor=iconTint;
     if(([_role isEqual:@"avatar"] && _plain) || [_role isEqual:@"chatAvatarButton"])[self styleAvatarRing];
 }
 // FIX94: about 1.5 pt of translucent grey at the avatar's edge, drawn over the
@@ -289,7 +355,16 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
     [super traitCollectionDidChange:previous];
     if(previous && ![self.traitCollection hasDifferentColorAppearanceComparedToTraitCollection:previous])return;
-    [self resolveSourceImage];[self applyConfig];
+    // FIX114 M (crash): out of a window the traits are not the page's; the
+    // work is done once it is back in one.
+    if(!self.window){_traitsPending=YES;return;}
+    _traitsPending=NO;[self resolveSourceImage];[self applyConfig];
+}
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    if(!self.window || !_traitsPending)return;
+    _traitsPending=NO;
+    if(_sourceStyle!=self.traitCollection.userInterfaceStyle){[self resolveSourceImage];[self applyConfig];}
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -297,6 +372,7 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     [UIView performWithoutAnimation:^{
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _iconView.transform=_label.transform=_countLabel.transform=CGAffineTransformIdentity;
+    if(_trailingView)_trailingView.transform=CGAffineTransformIdentity;   // FIX114 M
     _glass.transform=CGAffineTransformIdentity;
     _glass.frame=self.bounds;_glass.glassRect=_materialRect;
     CGFloat radius=MIN(_materialRect.size.width,_materialRect.size.height)*.5;
@@ -348,17 +424,43 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
         _iconView.layer.cornerRadius=_iconView.clipsToBounds?MIN(r.w,r.h)*.5:0;
     }
     _label.frame=CGRectInset(_materialRect,10,0);
-    if(!_label.hidden && !_iconView.image && self.window) {
+    // FIX115 K (hang on 发起群聊, 10-26 13:03: a glass with no text rendered its
+    // empty label on every layout — never "available", so never remembered —
+    // and a layer render lays out every dirty view above it first: in a page
+    // being presented that is the whole page, the plugin's hooks in it, more
+    // glasses, more renders): only a label with text is measured.
+    if(!_label.hidden && _label.text.length && !_iconView.image && self.window) {
         NSString *key=[NSString stringWithFormat:@"%@/%@/%.3f/%@/%.1f",_label.text,_label.font.fontName,_label.font.pointSize,NSStringFromCGSize(_label.bounds.size),self.window.screen.scale];
         if(![_textLayoutKey isEqual:key]) {
             NSDictionary *pixel=WXGRenderedInkEvidence(_label);
             if([pixel[@"available"] boolValue]) {
                 NSArray *p=pixel[@"windowRect"];CGRect r=CGRectMake([p[0] doubleValue],[p[1] doubleValue],[p[2] doubleValue],[p[3] doubleValue]);
                 CGRect material=[self convertRect:_materialRect toView:self.window];
-                _textCorrection=CGPointMake(CGRectGetMidX(material)-CGRectGetMidX(r),CGRectGetMidY(material)-CGRectGetMidY(r));_textLayoutKey=key;
+                _textCorrection=CGPointMake(CGRectGetMidX(material)-CGRectGetMidX(r),CGRectGetMidY(material)-CGRectGetMidY(r));
             }
+            _textLayoutKey=key;   // FIX115 K (review): once per key, ink or not (a label with no ink rendered on every layout)
         }
         _label.frame=CGRectOffset(_label.frame,_textCorrection.x,_textCorrection.y);
+    }
+    // FIX114 M: the trailing symbol after the text, the two centred together.
+    if(_trailingView && _trailingSymbol && !_label.hidden && _label.text.length && !_iconView.image) {
+        CGSize s=_trailingSymbol.size;
+        CGFloat sh=_trailingSymbolHeight>0?MIN(_trailingSymbolHeight,h*.7):MIN(12,h*.4),sw=s.height>0?sh*s.width/s.height:sh*.4;
+        CGFloat gap=_trailingGap>0?_trailingGap:7;
+        CGFloat textW=MIN(ceil([_label.text sizeWithAttributes:@{NSFontAttributeName:_label.font}].width),CGRectGetWidth(_label.frame));
+        WXGTrailingPlace place=WXGTrailingLayoutBiased(CGRectGetMidX(_materialRect),textW,gap,sw,_trailingBias);
+        _label.frame=CGRectOffset(_label.frame,place.textMidX-CGRectGetMidX(_materialRect),0);
+        CGFloat x=place.symbolX;
+        _trailingView.transform=CGAffineTransformIdentity;
+        _trailingView.frame=CGRectMake(x,CGRectGetMidY(_materialRect)-sh*.5,sw,sh);
+        _trailingView.hidden=NO;
+    }else if(_trailingView)_trailingView.hidden=YES;
+    if(_nativeContent) {   // FIX114 V: where the native control is relative to its glass, on whole device pixels
+        CGFloat px=self.traitCollection.displayScale>0?self.traitCollection.displayScale:UIScreen.mainScreen.scale;
+        CGSize size=_nativeContent.bounds.size;
+        CGFloat x=round((_materialRect.origin.x+_nativeContentOrigin.x)*px)/px,y=round((_materialRect.origin.y+_nativeContentOrigin.y)*px)/px;
+        _nativeContent.transform=CGAffineTransformIdentity;
+        _nativeContent.center=CGPointMake(x+size.width*.5,y+size.height*.5);
     }
     if(_countLabel.text.length) {
         CGSize sz=[_countLabel.text sizeWithAttributes:@{NSFontAttributeName:_countLabel.font}];
@@ -404,7 +506,10 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     CGPoint materialCentre=CGPointMake(CGRectGetMidX(_materialRect),CGRectGetMidY(_materialRect));
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
-        for(UIView *child in @[self.glass,self.fallback,self.iconView,self.label,self.countLabel]) {
+        NSMutableArray<UIView *> *children=[@[self.glass,self.fallback,self.iconView,self.label,self.countLabel] mutableCopy];
+        if(_trailingView)[children addObject:_trailingView];
+        if(_nativeContent)[children addObject:_nativeContent];   // FIX114 V: pressed and stretched with the glass
+        for(UIView *child in children) {
             CGPoint centre=child.center;double tx=0,ty=0;
             WXGStretchChildOffset(pose,centre.x-materialCentre.x,centre.y-materialCentre.y,&tx,&ty);
             child.transform=CGAffineTransformMake(pose.a,pose.b,pose.c,pose.d,tx,ty);
@@ -472,7 +577,9 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     if(!inside || ![self stretches]){_stretch.tracking=0;_stretch.targetX=_stretch.targetY=0;return;}
     // FIX69: (inside is now the whole touch when stretching)
     _stretch.tracking=1;
-    WXGStretchTarget(&_stretch,point.x-_stretchStart.x,point.y-_stretchStart.y,[self stretchLimit]);
+    // FIX115 L: the finger travels `ratio` points per point of pull.
+    double ratio=MAX(1,[WXGConfig.shared extraNumber:@"pressStretchRatio"]);
+    WXGStretchTarget(&_stretch,(point.x-_stretchStart.x)/ratio,(point.y-_stretchStart.y)/ratio,[self stretchLimit]);
     // FIX73: the target itself stops where a clipping parent would cut the
     // glass, so the release springs back from there without a pause.
     double share=[self stretchShareX:_stretch.targetX y:_stretch.targetY press:WXGButtonPress(1,_touchTargetX,_touchTargetY,NO)];

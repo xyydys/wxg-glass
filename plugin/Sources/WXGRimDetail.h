@@ -98,6 +98,23 @@ static inline WXGRimMatrix WXGRimSampleMatrix(double saturation,double contrast,
     out.m[18]=1.f;
     return out;
 }
+/* FIX114 J (user: the 取自背景 border with a colour laid over it, as the
+   bubbles have): the colour taken from the background first mixed toward
+   (r, g, b) by a (0 = as before, 1 = that colour alone), then m: one matrix
+   again (m's colour part x (1 - a), plus a x m's colour part of (r, g, b) on
+   the offsets). */
+static inline WXGRimMatrix WXGRimOverlayMatrix(WXGRimMatrix m,double r,double g,double b,double a) {
+    a=WXGRimDetailClamp(a,0,1);
+    if(!(a>0))return m;
+    const double c[3]={r,g,b};
+    WXGRimMatrix out=m;
+    for(int row=0;row<3;row++) {
+        double add=0;
+        for(int column=0;column<3;column++){add+=m.m[row*5+column]*c[column];out.m[row*5+column]=(float)(m.m[row*5+column]*(1-a));}
+        out.m[row*5+4]=(float)(m.m[row*5+4]+a*add);
+    }
+    return out;
+}
 static inline void WXGRimApplyMatrix(WXGRimMatrix m,const double in[3],double out[3]) {
     for(int row=0;row<3;row++)out[row]=m.m[row*5]*in[0]+m.m[row*5+1]*in[1]+m.m[row*5+2]*in[2]+m.m[row*5+4];
 }

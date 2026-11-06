@@ -138,16 +138,12 @@ static NSString *WXGComputeDeviceHash(void) {
     if(!vendor)return nil;
     return WXGSHA256Hex([[@"WXGLiquidGlass.device.v1:" stringByAppendingString:vendor.UUIDString] dataUsingEncoding:NSUTF8StringEncoding]);
 }
-// The cache key belongs to this phone: a file copied to another device cannot
-// be decrypted (keyed on this device's id). FIX118: keyed on device ONLY now,
-// not account+device. 原因：FIX111 把缓存文件名改成不透明哈希后，读取侧已无法从文件名
-// 恢复账号，用账号+设备派生的钥匙就解不开自己写的缓存 → 冷启动每次都当没缓存、离线全废。
-// 账号不进钥匙是安全的：缓存文件里的票据本就按账号+设备签名、着色器也按账号+设备封装
-// （WXGTicketProblem / WXGUnsealShader 照验），拷到别的设备既解不开外层、也过不了签名。
-static NSData *WXGCacheKey(NSString *device) {
+// The cache key belongs to this account on this phone: a copied file cannot
+// even be decrypted elsewhere (and its signature names the device anyway).
+static NSData *WXGCacheKey(NSString *device) {   // FIX118: 只按设备派生，冷启动无需先知道账号即可解开缓存外层
     static const unsigned char seed[32]={0x19,0x2c,0xb2,0x77,0x74,0x92,0xdf,0x3b,0xa6,0x36,0xfe,0x61,0x04,0xc5,0x97,0x54,
                                          0x63,0xd7,0x34,0xae,0x5e,0x78,0xec,0xf1,0x3e,0x6b,0xc9,0x29,0xca,0x85,0xd3,0xb7};
-    NSData *message=[[@"cache.v2|" stringByAppendingString:device?:@""] dataUsingEncoding:NSUTF8StringEncoding];
+    NSData *message=[[NSString stringWithFormat:@"cache.v2|%@",device] dataUsingEncoding:NSUTF8StringEncoding];
     NSMutableData *key=[NSMutableData dataWithLength:CC_SHA256_DIGEST_LENGTH];
     CCHmac(kCCHmacAlgSHA256,seed,sizeof seed,message.bytes,message.length,key.mutableBytes);
     return key;
@@ -234,10 +230,28 @@ static NSURL *WXGCacheFile(NSString *account) {
     NSString *name=WXGOpaqueName([@"wxg.item.v1|" stringByAppendingString:account?:@""],24);
     return [WXGCacheDirectory() URLByAppendingPathComponent:[name stringByAppendingPathExtension:@"dat"]];
 }
-// 一次性清理旧的显眼目录（Application Support 下 WeChatLiquidGlass 只有 Unlock，可整删）。
+/* FIX115 C（用户 10-25 03:47：另一个插件 WCGlass 下载的图标主题，文件还在
+   Documents/WeChatLiquidGlass/IconThemes 里，但每次重启微信它就不认了，要重新
+   下载；不重启时能和本插件共存；关掉总开关也一样）：FIX111 起这里在每次启动
+   （构造函数里，总开关之前）把整个 Library/Application Support/WeChatLiquidGlass
+   删掉——注释说“一次性”，实际每次都删。别的插件用同名目录（WCGlass 的素材库
+   就在同名的 Documents 目录里），它放在 Application Support 下的记录（下载过 /
+   应用了哪个主题）每次启动都被删了。
+   现在只删旧版本自己放的东西：Unlock 子目录里的 *.wxgu（旧授权缓存），删完
+   Unlock 空了才删 Unlock；WeChatLiquidGlass 目录本身和里面的其它东西一律不碰
+   （旧版放在那里的三张设置图由 WXGSettings.m 按文件名迁移、删除）。 */
+static NSUInteger WXGLegacyUnlockFilesRemoved;
 static void WXGCleanupLegacyCache(void) {
-    NSURL *base=[NSFileManager.defaultManager URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
-    if(base)[NSFileManager.defaultManager removeItemAtURL:[base URLByAppendingPathComponent:@"WeChatLiquidGlass" isDirectory:YES] error:nil];
+    NSFileManager *files=NSFileManager.defaultManager;
+    NSURL *base=[files URLsForDirectory:NSApplicationSupportDirectory inDomains:NSUserDomainMask].firstObject;
+    if(!base)return;
+    NSURL *unlock=[[base URLByAppendingPathComponent:@"WeChatLiquidGlass" isDirectory:YES] URLByAppendingPathComponent:@"Unlock" isDirectory:YES];
+    NSArray<NSURL *> *items=[files contentsOfDirectoryAtURL:unlock includingPropertiesForKeys:nil options:0 error:nil];
+    if(!items)return;
+    for(NSURL *item in items)
+        if([item.pathExtension isEqualToString:@"wxgu"] && [files removeItemAtURL:item error:nil])++WXGLegacyUnlockFilesRemoved;
+    NSArray *left=[files contentsOfDirectoryAtURL:unlock includingPropertiesForKeys:nil options:0 error:nil];
+    if(left && !left.count)[files removeItemAtURL:unlock error:nil];   // only an empty Unlock (a listing that failed leaves it)
 }
 static NSData *WXGCrypt(CCOperation operation,NSData *key,const void *iv,NSData *input) {
     NSMutableData *output=[NSMutableData dataWithLength:input.length+kCCBlockSizeAES128];size_t moved=0;
@@ -254,7 +268,7 @@ static void WXGWriteCache(WXGUnlockTicket *ticket) {
     NSData *json=[NSJSONSerialization dataWithJSONObject:plain options:0 error:nil];
     unsigned char iv[kCCBlockSizeAES128];
     if(!json || SecRandomCopyBytes(kSecRandomDefault,sizeof iv,iv)!=errSecSuccess)return;
-    NSData *sealed=WXGCrypt(kCCEncrypt,WXGCacheKey(ticket.device),iv,json);
+    NSData *sealed=WXGCrypt(kCCEncrypt,WXGCacheKey(ticket.device),iv,json);   // FIX118: 只按设备
     if(!sealed)return;
     NSMutableData *file=[NSMutableData dataWithBytes:WXGCacheMagic length:sizeof WXGCacheMagic];
     [file appendBytes:iv length:sizeof iv];[file appendData:sealed];
@@ -278,12 +292,11 @@ static WXGUnlockTicket *WXGReadCache(NSURL *url,NSString *device,BOOL *discard) 
     size_t header=sizeof WXGCacheMagic+kCCBlockSizeAES128;
     if(file.length<=header || memcmp(file.bytes,WXGCacheMagic,sizeof WXGCacheMagic)){*discard=YES;return nil;}
     NSData *sealed=[file subdataWithRange:NSMakeRange(header,file.length-header)];
-    NSData *json=WXGCrypt(kCCDecrypt,WXGCacheKey(device),(const unsigned char *)file.bytes+sizeof WXGCacheMagic,sealed);
+    NSData *json=WXGCrypt(kCCDecrypt,WXGCacheKey(device),(const unsigned char *)file.bytes+sizeof WXGCacheMagic,sealed);   // FIX118: 只按设备解；老 v1 缓存自然解不开→留着不删，下次在线按同名覆盖
     NSDictionary *plain=json?[NSJSONSerialization JSONObjectWithData:json options:0 error:nil]:nil;
-    if(![plain isKindOfClass:NSDictionary.class])return nil;   // 解不开（不是本机的文件 / 损坏）：留着，别删
+    if(![plain isKindOfClass:NSDictionary.class])return nil;
     *discard=YES;
-    // FIX118: 账号从解密后的内容里取（文件名已是不透明哈希，不再是账号）。
-    NSString *account=WXGStringValue(plain[@"account"]);
+    NSString *account=[plain[@"account"] isKindOfClass:NSString.class]?plain[@"account"]:nil;   // FIX118: 账号从解密内容取，不再从(不透明)文件名取
     if(!account || !WXGUnlockHex64(account.UTF8String) || ![plain[@"device"] isEqual:device])return nil;
     WXGUnlockTicket *ticket=WXGTicketFromAnswer(plain,account,device);
     ticket.fetchedAt=[plain[@"fetchedAt"] isKindOfClass:NSNumber.class]?[plain[@"fetchedAt"] doubleValue]:0;
@@ -582,7 +595,7 @@ void WXGUnlockStart(void) {
     if(WXGStarted || !NSThread.isMainThread)return;
     WXGStarted=YES;
     WXGTickets=[NSMutableDictionary dictionary];WXGDeniedAccounts=[NSMutableSet set];
-    WXGCleanupLegacyCache();   // FIX111: 删掉旧的显眼目录（一次性，不存在则无操作）
+    WXGCleanupLegacyCache();   // FIX111（FIX115 C：只删旧授权缓存文件，不再整删同名目录）
     WXGStartCacheLoad();
 }
 // Main thread; cheap (asked again at most once a second unless forced).
@@ -656,7 +669,7 @@ NSDictionary *WXGUnlockEvidence(void) {
         @"recheckAfterSent":@(ticket.recheckAfter),@"recheckEveryS":@(WXGUnlockRecheckInterval(ticket.recheckAfter))}:@{};   // FIX104
     NSString *shaderFrom=nil;BOOL shaderReady=WXGShaderReady(&shaderFrom);
     return @{@"server":[NSURL URLWithString:endpoint].host?:@"",@"shaderVersion":WXG_SHADER_VERSION,
-             @"device":WXGDeviceHash.length>8?[WXGDeviceHash substringToIndex:8]:@"",@"cacheLoaded":@(WXGCacheLoaded),@"cachedTickets":@(WXGCacheHits),
+             @"device":WXGDeviceHash.length>8?[WXGDeviceHash substringToIndex:8]:@"",@"cacheLoaded":@(WXGCacheLoaded),@"cachedTickets":@(WXGCacheHits),@"legacyUnlockFilesRemoved":@(WXGLegacyUnlockFilesRemoved),
              // FIX104: when the cached tickets were read (ms after the plugin loaded), how long it took, how long main waited.
              @"cacheReadAtMS":@(round(WXGCacheReadAtMS)),@"cacheReadMS":@(round(WXGCacheReadMS*10)/10),@"cacheWaitMS":@(round(WXGCacheWaitMS*10)/10),
              @"ticket":ticketEvidence,@"shaderReady":@(shaderReady),@"shaderFrom":shaderFrom?:@"",
