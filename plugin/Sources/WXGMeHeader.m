@@ -282,6 +282,23 @@ static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
 @end
 
 static char WXGMeNativeCenterKey,WXGMeAppliedCenterKey,WXGMeFadedKey,WXGMeNativeAlphaKey;
+/* FIX120 G (user, diagnostics_7 and the 11-06 recording: "灵动岛也闪，头像也闪，名字也闪 … 滑到顶部区域之后就会开始闪"):
+   the host's page-top cleaning (WXGHost clearPageTopPaint, FIX29: WeChat paints the bar's background with a full-width
+   view inside the page, exactly 0..navBottom, and a hairline at navBottom) took the header's own bar background for
+   WeChat's: it is just that. Every quarter second while the page moved it was cleared (and the line under it hidden),
+   and the header's next pass painted it again: the background behind the title, the avatar and the cut-out came and
+   went, the status row and the list showing through under the island in between. Everything in the overlay is ours. */
+static __weak UIView *WXGMeOverlay;
+BOOL WXGMeHeaderOwnsView(UIView *view) {
+    UIView *overlay=WXGMeOverlay;
+    return overlay && view && (view==overlay || [view isDescendantOfView:overlay]);
+}
+// FIX120 G: the header's flight recorder (each pass's state, as it changed) in the debug build's diagnostics only
+#if defined(WXG_RELEASE) && WXG_RELEASE
+#define WXGME_TRACE 0
+#else
+#define WXGME_TRACE 1
+#endif
 
 @interface WXGMeHeader () <PHPickerViewControllerDelegate,UIGestureRecognizerDelegate>
 - (void)update;
@@ -323,6 +340,9 @@ static char WXGMeNativeCenterKey,WXGMeAppliedCenterKey,WXGMeFadedKey,WXGMeNative
     CVPixelBufferRef _videoBuffer,_videoBufferOld;BOOL _videoPlaying;NSUInteger _videoFrames;NSString *_videoNote;id _loopObserver;
     NSString *_status_;CGFloat _shift,_collapse,_travel;WXGCutout _cutout;BOOL _merge,_banner;NSUInteger _snaps,_renders,_passes;
     NSUInteger _statusMoves;CGFloat _statusMovedY;   // FIX120 F: WeChat moving its status row after us (diagnostics)
+    // FIX120 G (user, diagnostics_7: "灵动岛也闪，头像也闪，名字也闪 … 滑到顶部区域之后就会开始闪"): what each pass did
+    NSMutableArray<NSString *> *_trace;NSString *_traceLast,*_coveredBy;__weak UIView *_coveredView;NSUInteger _traceRepeat;char _renderNote;
+    NSUInteger _restores,_insetRetakes,_overlayCovered,_bandToggles,_gateSkips;double _worstRenderMS;
 }
 + (instancetype)shared {
     static WXGMeHeader *header;static dispatch_once_t once;
@@ -457,15 +477,16 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
 - (void)update {
     if(!NSThread.isMainThread)return;
     ++_passes;
-    if(!WXGMeOn()){[self restore];_status_=WXGPluginEnabled()?@"开关关着":@"插件未启用";return;}
+    if(!WXGMeOn()){[self restoreBecause:@"开关关"];_status_=WXGPluginEnabled()?@"开关关着":@"插件未启用";return;}
     UIViewController *page=[self findPage];
     if(!page){_status_=@"还没找到“我”页";return;}
     if(!page.isViewLoaded || !page.view.window){[self pauseLink];return;}   // another tab: left as it is
     UITableView *oldTable=_table;UIControl *oldHeader=_header;UILabel *oldName=_name;UIView *oldAvatar=_avatar;
-    if(![self findPartsOn:page]){[self restore];return;}
+    if(![self findPartsOn:page]){[self restoreBecause:[@"找部件：" stringByAppendingString:_status_?:@""]];return;}
     UITableView *table=_table;UIControl *header=_header;UIWindow *window=table.window;
     if(!window)return;
     BOOL newParts=table!=oldTable || header!=oldHeader || _name!=oldName || _avatar!=oldAvatar;
+    if(newParts && oldHeader)[self traceEvent:[NSString stringWithFormat:@"部件换了：表%d 头%d 名%d 像%d",table!=oldTable,header!=oldHeader,_name!=oldName,_avatar!=oldAvatar]];
     // FIX119 B: nothing new since the last pass (no scrolling, nothing of WeChat's moved, no pull, no video): nothing to do
     // (but every half second all of it, against WeChat having changed something no signature sees).
     CFTimeInterval now=CACurrentMediaTime();
@@ -491,6 +512,9 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     _cutout=cut;_status_=@"正常";
     // The insets: WeChat's own (whatever it sets) plus the room of the new header.
     UIEdgeInsets cur=table.contentInset;
+    if(_insetsApplied && !UIEdgeInsetsEqualToEdgeInsets(cur,_appliedInsets)) {   // FIX120 G (diagnostics)
+        ++_insetRetakes;[self traceEvent:[NSString stringWithFormat:@"微信改了 inset：%@ → %@（偏移 %.1f）",NSStringFromUIEdgeInsets(_appliedInsets),NSStringFromUIEdgeInsets(cur),table.contentOffset.y]];
+    }
     if(!_insetsApplied || !UIEdgeInsetsEqualToEdgeInsets(cur,_appliedInsets))_baseInsets=cur;
     CGFloat headerTop=[header convertRect:header.bounds toView:table].origin.y;   // in the list's content
     WXGMeLayout L=WXGMeLayoutFor(H,safeTop,_baseInsets.top+headerTop,[c extraNumber:@"meAvatarSize"]);
@@ -553,6 +577,29 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     }
     [self layoutOverlayFor:table header:header layout:L travel:t width:W];
     [self snapIfResting:table];
+#if WXGME_TRACE
+    {UIView *container=table.superview,*top=container.subviews.lastObject,*mover=[self statusMoversIn:header].firstObject;
+     CALayer *shown=_band.layer.presentationLayer;
+     [self tracePass:[NSString stringWithFormat:@"t%.1f o%.1f in%.1f/%.1f tc%.1f end%.1f 带%d a%.2f/%.2f %@ 表y%.1f 层y%.1f 画布%.0f %c 状%.2f%@%@",
+         t,table.contentOffset.y,table.contentInset.top,_baseInsets.top,_titleCollapse,_collapseAll,_bandOn,_band.alpha,shown?shown.opacity:-1.f,
+         top==_overlay?@"顶":NSStringFromClass(top.class),[container convertPoint:table.frame.origin toView:nil].y,[_overlay convertPoint:CGPointZero toView:nil].y,
+         _metal.bounds.size.height,_renderNote?:'?',mover?mover.alpha:-1,slow?@" 慢":@"",table.isTracking?@" 按":table.isDecelerating?@" 惯":@""]];}
+#endif
+}
+// FIX120 G: the flight recorder (a line per pass that differs from the last; events as they happen)
+- (void)traceEvent:(NSString *)line {
+#if WXGME_TRACE
+    if(!_trace)_trace=[NSMutableArray array];
+    [_trace addObject:[NSString stringWithFormat:@"%.3f %@",CACurrentMediaTime()-_start,line]];
+    if(_trace.count>1500)[_trace removeObjectsInRange:NSMakeRange(0,_trace.count-1500)];
+#else
+    (void)line;
+#endif
+}
+- (void)tracePass:(NSString *)state {
+    if(_traceLast && [state isEqualToString:_traceLast]){++_traceRepeat;return;}
+    if(_traceRepeat)[self traceEvent:[NSString stringWithFormat:@"（同上 ×%lu）",(unsigned long)_traceRepeat]];
+    _traceRepeat=0;_traceLast=state;[self traceEvent:state];
 }
 // WeChat's status buttons: their row centred under the ID, its top at L.statusTop (both still inside the header).
 // (in a container of their own inside the header: the container is what moves, so they stay inside its bounds and take touches)
@@ -677,12 +724,17 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
         _bigID=[UILabel new];_bigID.textAlignment=NSTextAlignmentCenter;_idFont=[UIFont systemFontOfSize:15];_bigID.font=_idFont;
         for(UIView *v in @[_bigName,_bigID])[_labels addSubview:v];
         _metal=[WXGMetaballView new];[_overlay addSubview:_metal];
+        WXGMeOverlay=_overlay;   // FIX120 G: the host's page-top paint cleaning leaves all of it alone
         __weak WXGMeHeader *weakSelf=self;
         _metal.photoReady=^{WXGMeHeader *me=weakSelf;if(!me)return;me->_haveLast=NO;[me runLink];};   // (drawn again on the next pass)
     }
     if(_overlay.superview!=container || container.subviews.lastObject!=_overlay) {
-        if(_overlay.superview!=container)[container addSubview:_overlay];
-        else [container bringSubviewToFront:_overlay];
+        if(_overlay.superview!=container){[container addSubview:_overlay];[self traceEvent:@"层加回容器"];}
+        else {
+            UIView *top=container.subviews.lastObject;   // FIX120 G (diagnostics: counted once per view put on top)
+            if(top!=_coveredView){++_overlayCovered;_coveredView=top;_coveredBy=NSStringFromClass(top.class);[self traceEvent:[_coveredBy stringByAppendingString:@" 盖到了层上面，已移回"]];}
+            [container bringSubviewToFront:_overlay];
+        }
     }
     if(!CGRectEqualToRect(_overlay.frame,table.frame))_overlay.frame=table.frame;   // (the list is never transformed by us)
 }
@@ -759,6 +811,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
         [CATransaction commit];
     }];
     if(bandOn!=_bandOn || !_bandSet) {
+        if(_bandSet)++_bandToggles;   // FIX120 G (diagnostics)
         BOOL animate=_bandSet;_bandOn=bandOn;_bandSet=YES;
         UIView *band=_band;CGFloat alpha=bandOn?1:0;
         if(animate)[UIView animateWithDuration:.2 delay:0 options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionCurveEaseInOut
@@ -769,7 +822,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     [self drawAvatarIn:o header:header layout:L travel:t width:W];
 }
 - (void)drawAvatarIn:(UIView *)o header:(UIControl *)header layout:(WXGMeLayout)L travel:(CGFloat)t width:(CGFloat)W {
-    WXGMetaballView *metal=_metal;
+    WXGMetaballView *metal=_metal;_renderNote='-';
     UIWindow *window=o.window;if(!window)return;
     // (the layer's top is the window's: the shader's coordinates are the window's)
     CGRect windowInOverlay=[o convertRect:window.bounds fromView:nil];
@@ -826,15 +879,22 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     else [self pauseVideo];
     if(metal.videoTexture && wantVideo){u.video[2]=.5f;u.video[3]=videoMix;}
     BOOL moving=(p.flow>0 && u.fx[0]<.5) || wantVideo || _pulling || _pullSpring;   // (FIX119 B: only the drips change with time)
-    if(!moving){WXGMBUniforms a=u,b=_lastUniforms;a.time=b.time=0;if(_haveLast && !memcmp(&a,&b,sizeof a)){[self pauseLink];return;}}
-    if(moving && !wantVideo && p.flow<=0 && _haveLast && !memcmp(&u.avatar,&_lastUniforms.avatar,sizeof u.avatar) && !memcmp(&u.drop,&_lastUniforms.drop,sizeof u.drop)){[self runLink];return;}   // (still: nothing new to draw)
+    WXGMBUniforms a=u,b=_lastUniforms;a.time=b.time=0;
+    BOOL same=_haveLast && !memcmp(&a,&b,sizeof a);   // (nothing but the clock differs from what is on the screen)
+    if(!moving && same){_renderNote='s';[self pauseLink];return;}
+    if(moving && !wantVideo && p.flow<=0 && _haveLast && !memcmp(&u.avatar,&_lastUniforms.avatar,sizeof u.avatar) && !memcmp(&u.drop,&_lastUniforms.drop,sizeof u.drop)){_renderNote='m';[self runLink];return;}   // (still: nothing new to draw)
     // at most one frame per refresh (several run-loop passes in one frame would wait for drawables). FIX119 C: 1/130 s
     // dropped real frames on 120 Hz whenever a pass came a little early (the avatar a frame behind the page); and a layer
     // just made taller is always drawn at once (else its old picture shows stretched to the new height for a frame).
-    if(!resized && now-_renderedAt<1./200){[self runLink];return;}   // (the link brings the pass that draws it)
+    // FIX120 G: only a frame that is new in its clock alone (the drips, the video) waits. One whose pose changed (the page
+    // scrolled, the avatar or the cut-out moved) is drawn in this pass: skipped, the avatar and the cut-out stayed where the
+    // last pass had put them for a frame while the page and the name had moved on (a second pass early in a frame).
+    if(!resized && same && now-_renderedAt<1./200){_renderNote='g';++_gateSkips;[self runLink];return;}   // (the link brings the pass that draws it)
     if(moving)[self runLink];else [self pauseLink];
     metal.uniforms=u;
-    if([metal render]){_lastUniforms=u;_haveLast=YES;++_renders;_renderedAt=now;}
+    CFTimeInterval began=CACurrentMediaTime();
+    if([metal render]){_lastUniforms=u;_haveLast=YES;++_renders;_renderedAt=now;_renderNote='R';}else _renderNote='f';
+    _worstRenderMS=MAX(_worstRenderMS,(CACurrentMediaTime()-began)*1000);
 }
 - (void)runLink {
     if(!_link) {
@@ -957,6 +1017,14 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
         }
         _bounceTouched=NO;
     }
+}
+- (void)restoreBecause:(NSString *)why {   // FIX120 G (diagnostics)
+    if(_insetsApplied || _overlay.superview) {
+        ++_restores;UITableView *table=_table;UIControl *header=_header;
+        [self traceEvent:[NSString stringWithFormat:@"还原（%@）：表%d 头%d 头在表里%d 名%d 像%d",why,table!=nil,header!=nil,
+                          (int)(header && table && [header isDescendantOfView:table]),_name!=nil,_avatar!=nil]];
+    }
+    [self restore];
 }
 - (void)restore {
     BOOL any=_insetsApplied || _overlay.superview || _itemsTouched || _qrTouched || _dragTouched || _bounceTouched;
@@ -1089,6 +1157,10 @@ static NSString *WXGMeVideoPath(void) {
              @"photoSource":WXGSelfAvatarState(),@"avatarTaps":@(_avatarTaps),@"edgeStyle":@(WXGMeEdgeStyle()),@"dripRoom":@(round(_dripRoom)),@"renders":@(_renders),@"snaps":@(_snaps),@"passes":@(_passes),
              @"fullPasses":@(_fullPasses),@"skippedPasses":@(_skips),@"canvasHeight":@(round(_canvasHeight)),   // FIX119 B
              @"statusMovedByWeChat":@(_statusMoves),@"statusMovedToY":@(round(_statusMovedY)),   // FIX120 F
+             @"flicker":@{@"restores":@(_restores),@"insetRetakes":@(_insetRetakes),@"overlayCovered":@(_overlayCovered),@"coveredBy":_coveredBy?:@"",
+                          @"bandToggles":@(_bandToggles),@"gateSkips":@(_gateSkips),@"worstRenderMS":@(round(_worstRenderMS*10)/10),
+                          @"traceKey":@"t 行程 o 偏移 in 当前/微信 inset.top tc 标题收起点 end 终点 带 底带开 a 底带 alpha 模型/屏上 顶=层在最上 表y/层y 窗口坐标 画布高 R画了 g闸门跳过 s没变 m静止 f失败 -没画 状 状态行 alpha 慢=整套 按/惯"},
+             @"trace":[_trace copy]?:@[],   // FIX120 G
              @"title":@{@"collapse":@(round(_titleCollapse*10)/10),@"end":@(round(_collapseAll*10)/10),@"fraction":@(round(_titlePose.fraction*100)/100),
                         @"locked":@(_titlePose.locked),@"band":@(_bandOn)}};
 }

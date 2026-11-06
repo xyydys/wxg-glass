@@ -371,6 +371,7 @@ FOUNDATION_EXPORT CGRect WXGLocalTitleCapsuleRect(UINavigationBar *bar,UIView *t
 - (NSString *)bannerVideoName;
 @end
 FOUNDATION_EXPORT NSString *WXGSelfAvatarState(void);   // FIX118 B: where the 我 page's photo came from
+FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我 header's own views (the host's top-paint cleaning skips them)
 
 @interface WXGChatSegments : NSObject
 + (instancetype)shared;

@@ -1990,7 +1990,7 @@ static BOOL WXGColorsDiffer(UIColor *a,UIColor *b,UITraitCollection *traits) {
     CGFloat width=w.bounds.size.width;
     for(UIView *v in WXGViewsInBand(page,w,-1,navBottom+48,500)) {
         if(v==page || v.hidden || WXGIsPluginView(v) || [v isKindOfClass:UIControl.class] ||
-           [v isKindOfClass:UILabel.class] || [v isKindOfClass:UIScrollView.class])continue;
+           [v isKindOfClass:UILabel.class] || [v isKindOfClass:UIScrollView.class] || WXGMeHeaderOwnsView(v))continue;   // FIX120 G: the 我 header's bar background is ours
         CGRect r=WXGWindowRect(v,w);
         if(r.size.width<width-1)continue;
         BOOL hairline=r.size.height<=1.5 && fabs(CGRectGetMinY(r)-navBottom)<=2 && !v.subviews.count;
@@ -2020,7 +2020,7 @@ static BOOL WXGColorsDiffer(UIColor *a,UIColor *b,UITraitCollection *traits) {
     NSMutableArray<UIView *> *backs=[NSMutableArray arrayWithObject:page];
     for(UIView *v in WXGViews(page,60))if(v!=page)[backs addObject:v];
     for(UIView *v in backs) {
-        if(v.hidden || WXGIsPluginView(v) || [v isKindOfClass:UIScrollView.class] || [v isKindOfClass:UIControl.class])continue;
+        if(v.hidden || WXGIsPluginView(v) || [v isKindOfClass:UIScrollView.class] || [v isKindOfClass:UIControl.class] || WXGMeHeaderOwnsView(v))continue;
         if(!v.backgroundColor || CGColorGetAlpha(v.backgroundColor.CGColor)<.99)continue;
         CGRect r=WXGWindowRect(v,w);
         if(fabs(CGRectGetMinY(r))>1 || r.size.width<width-1 || CGRectGetMaxY(r)<height-1)continue;
