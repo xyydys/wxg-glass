@@ -189,6 +189,7 @@ static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
 @property(nonatomic,copy) NSString *failure;
 @property(nonatomic) NSUInteger frames;
 @property(nonatomic,strong) id<MTLTexture> videoTexture;   // FIX118 B: the banner's video frame (nil: none)
+@property(atomic) double lastGPUMS,worstGPUMS;   // FIX120 L: the GPU's time for a frame (diagnostics)
 - (void)setPhoto:(UIImage *)photo;
 - (BOOL)render;
 @end
@@ -276,6 +277,11 @@ static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
     [encoder setFragmentTexture:photo atIndex:0];[encoder setFragmentTexture:video?:_placeholder atIndex:1];[encoder setFragmentSamplerState:_sampler atIndex:0];
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
+    __weak WXGMetaballView *weakSelf=self;   // FIX120 L (diagnostics)
+    [buffer addCompletedHandler:^(id<MTLCommandBuffer> done){
+        double ms=(done.GPUEndTime-done.GPUStartTime)*1000;WXGMetaballView *me=weakSelf;
+        if(me && ms>0 && ms<1000){me.lastGPUMS=ms;if(ms>me.worstGPUMS)me.worstGPUMS=ms;}
+    }];
     [buffer commit];[buffer waitUntilScheduled];[drawable present];   // (presentsWithTransaction: with this commit, in step with the list)
     ++_frames;
     return YES;
@@ -352,6 +358,7 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
     CGSize _videoNatural,_videoOutSize;double _lastRenderMS;
     // FIX120 K: clock frames (nothing moved: the video's new frame or the drips' time drawn on the last pose)
     CFTimeInterval _lastFullAt;BOOL _videoFresh;float _videoMixBase;NSUInteger _clockPasses,_clockRenders;
+    NSUInteger _frameTick,_stepTick,_renderTick,_twiceSkipped;   // FIX120 L: display frames (the link's ticks)
 }
 + (instancetype)shared {
     static WXGMeHeader *header;static dispatch_once_t once;
@@ -510,12 +517,14 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     // nothing has moved does no layout. Before, anything running with the clock (the video, the drips, the link) made every
     // run-loop pass a full one, two or three a frame, each drawing the avatar again. Now only the spring moves with the clock
     // (a full pass once a frame); the video and the drips get a clock frame: the last picture with the new video frame or time.
-    BOOL stepping=_pullSpring && now-_lastFullAt>=1./150;
+    // FIX120 L (diagnostics_10: the spring's frames 20-29 ms, the avatar drawn twice in them and the second waiting 7-15 ms
+    // for a drawable): the spring steps once a display frame (the link's tick; at the latest every 20 ms).
+    BOOL stepping=_pullSpring && (_frameTick!=_stepTick || now-_lastFullAt>.02);
     if(same && !audit && !stepping) {
         if(_videoPlaying || (_link && !_link.paused))[self clockFrame];else ++_skips;
         return;
     }
-    _lastFullAt=now;
+    _lastFullAt=now;_stepTick=_frameTick;
     if(audit)_auditAt=now;
     BOOL slow=audit || !sameMakeUp;   // (the masks, the status row and the bar's items: only when the page's make-up changed)
     ++_fullPasses;
@@ -612,6 +621,10 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     }
     [self layoutOverlayFor:table header:header layout:L travel:t width:W];
     [self snapIfResting:table];
+    // FIX120 L: what this pass did itself (the spring's step, the list's inset and offset for the pull, the status row put in
+    // place) is not news to the next pass: the signature as the pass leaves things. (It was taken before them: the next pass,
+    // in the same frame, saw a change, stepped and drew again.)
+    if(table.window)[self signature:_sig table:table header:header window:window page:page];
 #if WXGME_TRACE
     {UIView *container=table.superview,*top=container.subviews.lastObject,*mover=[self statusMoversIn:header].firstObject;
      [self tracePass:[NSString stringWithFormat:@"t%.1f 抬%.1f o%.1f in%.1f/%.1f tc%.1f end%.1f 名y%.1f %@ 表y%.1f 层y%.1f 画布%.0f %c%.1f 状%.2f%@%@",
@@ -924,7 +937,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     if(moving)[self runLink];else [self pauseLink];
     metal.uniforms=u;
     CFTimeInterval began=CACurrentMediaTime();
-    if([metal render]){_lastUniforms=u;_haveLast=YES;++_renders;_renderedAt=now;_renderNote='R';_videoFresh=NO;}else _renderNote='f';
+    if([metal render]){_lastUniforms=u;_haveLast=YES;++_renders;_renderedAt=now;_renderNote='R';_videoFresh=NO;_renderTick=_frameTick;}else _renderNote='f';
     _lastRenderMS=(CACurrentMediaTime()-began)*1000;_worstRenderMS=MAX(_worstRenderMS,_lastRenderMS);
 }
 // FIX120 K: a clock frame. Nothing has moved since the last full pass: the last pose drawn again with the video's new frame
@@ -946,11 +959,14 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     float ramp=(float)MIN(MAX((now-_videoFirstAt)/.16,0),1);
     BOOL ramping=_videoMixBase>0 && ramp<1;
     if(!_videoFresh && !ramping && !(dripping && now-_renderedAt>=1./125))return;
+    // FIX120 L: not a second time in a display frame (a new video frame coming in after the pose was drawn waited 7-15 ms for a
+    // drawable): the next frame's tick draws it
+    if(_renderTick==_frameTick && !_link.paused && now-_renderedAt<.02){++_twiceSkipped;return;}
     WXGMBUniforms u=_lastUniforms;u.time=(float)(now-_start);
     if(metal.videoTexture && _videoMixBase>0){u.video[2]=.5f;u.video[3]=_videoMixBase*ramp;}
     metal.uniforms=u;
     CFTimeInterval began=CACurrentMediaTime();
-    if([metal render]){_lastUniforms=u;_renderedAt=now;++_renders;++_clockRenders;_videoFresh=NO;}
+    if([metal render]){_lastUniforms=u;_renderedAt=now;++_renders;++_clockRenders;_videoFresh=NO;_renderTick=_frameTick;}
     _lastRenderMS=(CACurrentMediaTime()-began)*1000;_worstRenderMS=MAX(_worstRenderMS,_lastRenderMS);
 }
 - (void)runLink {
@@ -962,7 +978,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     _link.paused=NO;
 }
 - (void)pauseLink {_link.paused=YES;}
-- (void)linkTick:(__unused CADisplayLink *)link {}   // (only wakes the run loop: the observer draws)
+- (void)linkTick:(__unused CADisplayLink *)link {++_frameTick;}   // (wakes the run loop: the observer draws; FIX120 L: counts the frames)
 
 #pragma mark - The avatar's tap (FIX118 D)
 
@@ -1306,6 +1322,7 @@ static NSString *WXGMeVideoPath(void) {
              @"video":@{@"file":[self bannerVideoName],@"note":_videoNote?:@"",@"frames":@(_videoFrames),@"playing":@(_videoPlaying),
                         @"natural":NSStringFromCGSize(_videoNatural),@"decodedAt":NSStringFromCGSize(_videoOutSize)},   // FIX120 J
              @"canvasResizes":@(_canvasResizes),@"clockPasses":@(_clockPasses),@"clockRenders":@(_clockRenders),   // FIX120 K
+             @"gpu":@{@"lastMS":@(round(_metal.lastGPUMS*100)/100),@"worstMS":@(round(_metal.worstGPUMS*100)/100)},@"secondDrawsSkipped":@(_twiceSkipped),   // FIX120 L
              @"photoSource":WXGSelfAvatarState(),@"avatarTaps":@(_avatarTaps),@"edgeStyle":@(WXGMeEdgeStyle()),@"dripRoom":@(round(_dripRoom)),@"renders":@(_renders),@"snaps":@(_snaps),@"passes":@(_passes),
              @"fullPasses":@(_fullPasses),@"skippedPasses":@(_skips),@"canvasHeight":@(round(_canvasHeight)),   // FIX119 B
              @"statusMovedByWeChat":@(_statusMoves),@"statusMovedToY":@(round(_statusMovedY)),   // FIX120 F
