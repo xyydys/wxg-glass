@@ -46,9 +46,9 @@ export default {
     if (req.method === "GET") {   // 自检：私钥在不在、对应的公钥是哪把（公钥本来就是公开的）
       let pub = null;
       if (env.SIGN_PRIV) { try { pub = await publicFromPriv(env.SIGN_PRIV.trim()); } catch { pub = "invalid"; } }
-      const list = await listMeta(env);
+      // FIX121：公开自检不再 listMeta 全量扫（原来任何人 GET 一次就 list 一遍，吃「列」额度）；来源只看 KV 绑没绑。
       return json({ ok: true, service: "wxg-unlock", ver: VER, signKey: env.SIGN_PRIV ? "set" : "missing", pub,
-                    listSource: list.source, admin: env.ADMIN_TOKEN ? "set" : "missing" });   // L5: 不再对未鉴权请求泄露授权人数（allowCount 只在已鉴权的 /v1/admin/ping 返回）
+                    listSource: hasKV(env) ? "kv" : "const", admin: env.ADMIN_TOKEN ? "set" : "missing" });   // L5: 不再对未鉴权请求泄露授权人数（allowCount 只在已鉴权的 /v1/admin/ping 返回）
     }
     if (req.method !== "POST") return json({ error: "POST only" }, 405);
 
@@ -969,10 +969,29 @@ const DEVICE_KEEP = 5;                  // 每账号最多留最近 5 台设备
 function hasKV(env) { return !!(env && env.LIST && typeof env.LIST.get === "function"); }
 async function sha256hex(str) { return toHex(await sha256(utf8(str))); }
 
-// KV 是否已导入名单（判定回退用，只在「账号不在 KV」时才查，开销落在拒绝分支）
+// FIX121（用户 11-07：Cloudflare 报「KV daily LIST limit 1000 exceeded / Operation: list」。
+// 上次 FIX120 砍的是「写」额度，被拒分支这里每次都 list 吃的是「列」额度——另一套，没动过，所以照超）：
+// 正版账号在 isAllowed 里 get 命中即放行、根本走不到这；被拒的（抄走/破解的拷贝、乱探测）才会来这查「KV 到底
+// 导没导过名单」，原来每个被拒请求 = 1 次 list。名单一旦非空就永远非空（清空要靠管理台），所以存一个哨兵键，用
+// get（读额度 10 万/天）代替 list（列额度 1000/天）。模块级缓存让热 isolate 连 get 都省了。
+let KV_POPULATED = false;
+async function markPopulated(env) {   // 加人 / 导种子后主动落哨兵，之后被拒分支永不再 list
+  KV_POPULATED = true;
+  try { await env.LIST.put("meta:allowlist_populated", "1"); } catch { /* 落哨兵失败不影响主流程 */ }
+}
 async function kvPopulated(env) {
-  const r = await env.LIST.list({ prefix: "allow:", limit: 1 });
-  return r.keys.length > 0;
+  if (KV_POPULATED) return true;                                   // 本 isolate 已确认，连 get 都免
+  if (await env.LIST.get("meta:allowlist_populated")) { KV_POPULATED = true; return true; }   // 读哨兵（get，不是 list）
+  try {
+    const r = await env.LIST.list({ prefix: "allow:", limit: 1 }); // 兜底：老部署哨兵还没写过，list 一次
+    if (r.keys.length > 0) { await markPopulated(env); return true; } // 顺手补哨兵，此后永不再 list
+    return false;
+  } catch {
+    // list 失败（如正遇「列额度」已耗尽 429）：保守当作已导入名单（拒绝未知账号，不误放行），
+    // 并落哨兵 + 缓存，避免在额度耗尽窗口里对每个被拒请求反复 list。
+    await markPopulated(env);
+    return true;
+  }
 }
 // 名单判定：KV 优先；KV 尚未导入任何名单时回退常量，避免误锁测试机。
 async function isAllowed(env, account) {
@@ -1084,6 +1103,7 @@ async function admin(req, env, url) {
       const old = JSON.parse(await env.LIST.get("allow:" + account) || "null");
       const entry = { account, note: String(body.note || (old && old.note) || "").slice(0, 200), addedAt: (old && old.addedAt) || Math.floor(Date.now() / 1000) };
       await env.LIST.put("allow:" + account, JSON.stringify(entry));
+      await markPopulated(env);   // FIX121：名单非空，落哨兵，被拒分支永不再 list
       return json({ ok: true, added: !old, entry });
     }
     return json({ error: "method not allowed" }, 405);
@@ -1094,6 +1114,10 @@ async function admin(req, env, url) {
     if (!/^[0-9a-f]{64}$/.test(account)) return json({ error: "bad account" }, 400);
     const existed = !!(await env.LIST.get("allow:" + account));
     await env.LIST.delete("allow:" + account);
+    // FIX121：可能刚踢掉最后一个账号→名单变空。清掉哨兵与缓存，下一个被拒请求 list 一次重新确认
+    // （名单真空了就回退常量，不空就重新落哨兵）；踢人后此后最多多一次 list，不会一直空扫。
+    KV_POPULATED = false;
+    try { await env.LIST.delete("meta:allowlist_populated"); } catch { /* 忽略 */ }
     return json({ ok: true, removed: existed });
   }
 
@@ -1107,6 +1131,7 @@ async function admin(req, env, url) {
       added++;
     }
     const meta = await listMeta(env);
+    if (meta.count > 0) await markPopulated(env);   // FIX121：种子导入后名单非空，落哨兵
     return json({ ok: true, added, count: meta.count });
   }
 
