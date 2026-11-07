@@ -321,7 +321,7 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
     // FIX119 B: Telegram's segments (the title locks in the bar, then the bar's background comes in as a step)
     CGFloat _titleCollapse,_collapseAll;WXGMeTitlePose _titlePose;
     // FIX119 B: a pass with nothing changed does nothing (diagnostics, 16 Pro Max: 3 ms on every pass, standing still)
-    double _sig[28];BOOL _haveSig;CFTimeInterval _auditAt;NSUInteger _skips,_fullPasses;
+    double _sig[30];BOOL _haveSig;CFTimeInterval _auditAt;NSUInteger _skips,_fullPasses;
     CGFloat _canvasHeight;
     UIImage *_shownPhoto;CFTimeInterval _photoAt,_findAt,_snapUntil,_start,_partsTriedAt,_renderedAt;
     UIEdgeInsets _baseInsets,_appliedInsets;BOOL _insetsApplied;
@@ -350,6 +350,8 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
     // FIX120 J: the banner's video ready before it is needed; the layer not made taller in the middle of the pull
     BOOL _videoLoading,_pageShown,_canvasOpen;NSUInteger _videoToken,_canvasResizes;CFTimeInterval _visibleSince,_videoWantedAt,_videoFirstAt;
     CGSize _videoNatural,_videoOutSize;double _lastRenderMS;
+    // FIX120 K: clock frames (nothing moved: the video's new frame or the drips' time drawn on the last pose)
+    CFTimeInterval _lastFullAt;BOOL _videoFresh;float _videoMixBase;NSUInteger _clockPasses,_clockRenders;
 }
 + (instancetype)shared {
     static WXGMeHeader *header;static dispatch_once_t once;
@@ -467,19 +469,21 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     UINavigationItem *item=page.navigationItem;
     CGRect onScreen=[table convertRect:table.bounds toView:nil];   // (the list's own frame in the window, whatever moved it)
     sig[0]=table.contentOffset.y;sig[1]=onScreen.origin.y;sig[2]=onScreen.origin.x;
-    sig[25]=table.contentInset.top;sig[26]=table.contentInset.bottom;sig[3]=table.contentSize.height;
-    sig[4]=table.bounds.size.width;sig[5]=table.bounds.size.height;
-    sig[6]=h.origin.y;sig[7]=h.size.width;sig[8]=h.size.height;
-    sig[9]=window.safeAreaInsets.top;sig[10]=window.bounds.size.height;sig[11]=CGRectGetMaxY(barRect);
-    sig[12]=table.traitCollection.userInterfaceStyle;
-    sig[13]=(double)(_name.text.hash&0xFFFFFFFFFFFF);sig[14]=(double)(_wxid.text.hash&0xFFFFFFFFFFFF);   // (by content: an attributed label hands out a new string each time)
-    sig[15]=(double)(uintptr_t)(__bridge void *)item.leftBarButtonItem;sig[16]=(double)(uintptr_t)(__bridge void *)item.rightBarButtonItem;
-    sig[17]=status.center.x+status.center.y*4096;sig[18]=mover.center.x+mover.center.y*4096;
-    sig[19]=[c extraNumber:@"meBanner"];sig[20]=[c extraNumber:@"meBannerEdgeStyle"]+[c extraNumber:@"meNotchMerge"]*10;
-    sig[21]=[c extraNumber:@"meAvatarSize"];sig[22]=[c extraNumber:@"meCutoutY"]*1000+[c extraNumber:@"meCutoutW"];
-    sig[23]=_name.font.pointSize;
-    sig[24]=(table.isTracking?1:0)+(table.isDragging?2:0)+(table.isDecelerating?4:0);   // (a scroll ending: the snap's pass)
-    sig[27]=onScreen.size.height;
+    sig[3]=_pull;sig[4]=_pullTarget+(_locked?1000:0);   // FIX120 K: our own pull (a change is a pass of its own)
+    // FIX120 K: the list's insets as far as they are not ours (the pull sets them on every frame: every frame was a slow pass)
+    sig[27]=table.contentInset.top-(_insetsApplied?_appliedInsets.top:0);sig[28]=table.contentInset.bottom-(_insetsApplied?_appliedInsets.bottom:0);sig[5]=table.contentSize.height;
+    sig[6]=table.bounds.size.width;sig[7]=table.bounds.size.height;
+    sig[8]=h.origin.y;sig[9]=h.size.width;sig[10]=h.size.height;
+    sig[11]=window.safeAreaInsets.top;sig[12]=window.bounds.size.height;sig[13]=CGRectGetMaxY(barRect);
+    sig[14]=table.traitCollection.userInterfaceStyle;
+    sig[15]=(double)(_name.text.hash&0xFFFFFFFFFFFF);sig[16]=(double)(_wxid.text.hash&0xFFFFFFFFFFFF);   // (by content: an attributed label hands out a new string each time)
+    sig[17]=(double)(uintptr_t)(__bridge void *)item.leftBarButtonItem;sig[18]=(double)(uintptr_t)(__bridge void *)item.rightBarButtonItem;
+    sig[19]=status.center.x+status.center.y*4096;sig[20]=mover.center.x+mover.center.y*4096;
+    sig[21]=[c extraNumber:@"meBanner"];sig[22]=[c extraNumber:@"meBannerEdgeStyle"]+[c extraNumber:@"meNotchMerge"]*10;
+    sig[23]=[c extraNumber:@"meAvatarSize"];sig[24]=[c extraNumber:@"meCutoutY"]*1000+[c extraNumber:@"meCutoutW"];
+    sig[25]=_name.font.pointSize;
+    sig[26]=(table.isTracking?1:0)+(table.isDragging?2:0)+(table.isDecelerating?4:0);   // (a scroll ending: the snap's pass)
+    sig[29]=onScreen.size.height;
 }
 - (void)update {
     if(!NSThread.isMainThread)return;
@@ -498,12 +502,20 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     // FIX119 B: nothing new since the last pass (no scrolling, nothing of WeChat's moved, no pull, no video): nothing to do
     // (but every half second all of it, against WeChat having changed something no signature sees).
     CFTimeInterval now=CACurrentMediaTime();
-    double sig[28];[self signature:sig table:table header:header window:window page:page];
-    BOOL sameMakeUp=_haveSig && !memcmp(sig+3,_sig+3,sizeof(double)*25),same=sameMakeUp && !memcmp(sig,_sig,sizeof(double)*3);
+    double sig[30];[self signature:sig table:table header:header window:window page:page];
+    BOOL sameMakeUp=_haveSig && !memcmp(sig+5,_sig+5,sizeof(double)*25),same=sameMakeUp && !memcmp(sig,_sig,sizeof(double)*5);
     memcpy(_sig,sig,sizeof _sig);_haveSig=YES;
-    BOOL animating=_pulling || _pullSpring || _videoPlaying || (_link && !_link.paused);   // (an open banner standing still is no animation)
     BOOL audit=newParts || !_insetsApplied || !_overlay.superview || now-_auditAt>.5;
-    if(same && !animating && !audit){++_skips;return;}
+    // FIX120 K (user, diagnostics_9: "还是卡卡的"; the 我 page 25-35 ms of every frame with the banner open): a pass in which
+    // nothing has moved does no layout. Before, anything running with the clock (the video, the drips, the link) made every
+    // run-loop pass a full one, two or three a frame, each drawing the avatar again. Now only the spring moves with the clock
+    // (a full pass once a frame); the video and the drips get a clock frame: the last picture with the new video frame or time.
+    BOOL stepping=_pullSpring && now-_lastFullAt>=1./150;
+    if(same && !audit && !stepping) {
+        if(_videoPlaying || (_link && !_link.paused))[self clockFrame];else ++_skips;
+        return;
+    }
+    _lastFullAt=now;
     if(audit)_auditAt=now;
     BOOL slow=audit || !sameMakeUp;   // (the masks, the status row and the bar's items: only when the page's make-up changed)
     ++_fullPasses;
@@ -892,6 +904,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     }else [self pauseVideo];
     BOOL wantVideo=videoOn && videoMix>0;
     // (the very first frame comes in over a sixth of a second, not at once at whatever the mix is by then)
+    _videoMixBase=wantVideo?videoMix:0;
     if(metal.videoTexture && wantVideo){u.video[2]=.5f;u.video[3]=videoMix*(float)MIN(MAX((now-_videoFirstAt)/.16,0),1);}
     BOOL moving=(p.flow>0 && u.fx[0]<.5) || wantVideo || _pulling || _pullSpring;   // (FIX119 B: only the drips change with time)
     WXGMBUniforms a=u,b=_lastUniforms;a.time=b.time=0;
@@ -904,11 +917,40 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     // FIX120 G: only a frame that is new in its clock alone (the drips, the video) waits. One whose pose changed (the page
     // scrolled, the avatar or the cut-out moved) is drawn in this pass: skipped, the avatar and the cut-out stayed where the
     // last pass had put them for a frame while the page and the name had moved on (a second pass early in a frame).
-    if(!resized && same && now-_renderedAt<1./200){_renderNote='g';++_gateSkips;[self runLink];return;}   // (the link brings the pass that draws it)
+    // FIX120 K: and one new in its clock alone is drawn when there is something new to show: a new video frame (30 or 60 a
+    // second, not on every pass), the drips' time once a refresh.
+    BOOL dripping=p.flow>0 && u.fx[0]<.5;
+    if(!resized && same && !_videoFresh && !(dripping && now-_renderedAt>=1./125)){_renderNote='g';++_gateSkips;[self runLink];return;}   // (the link brings the pass that draws it)
     if(moving)[self runLink];else [self pauseLink];
     metal.uniforms=u;
     CFTimeInterval began=CACurrentMediaTime();
-    if([metal render]){_lastUniforms=u;_haveLast=YES;++_renders;_renderedAt=now;_renderNote='R';}else _renderNote='f';
+    if([metal render]){_lastUniforms=u;_haveLast=YES;++_renders;_renderedAt=now;_renderNote='R';_videoFresh=NO;}else _renderNote='f';
+    _lastRenderMS=(CACurrentMediaTime()-began)*1000;_worstRenderMS=MAX(_worstRenderMS,_lastRenderMS);
+}
+// FIX120 K: a clock frame. Nothing has moved since the last full pass: the last pose drawn again with the video's new frame
+// (only when it has one) or the drips' time (once a refresh); no layout, no pose. The video stops half a second after the
+// banner has closed, as in a full pass; the link stops once nothing runs with the clock.
+- (void)clockFrame {
+    ++_clockPasses;
+    WXGMetaballView *metal=_metal;
+    if(!_haveLast || !metal.window){[self pauseLink];return;}
+    CFTimeInterval now=CACurrentMediaTime();
+    BOOL open=_lastUniforms.drop[2]>0;   // (the banner: expand)
+    if(open || _pulling)_videoWantedAt=now;
+    if(_videoPlaying && now-_videoWantedAt>=.5)[self pauseVideo];
+    BOOL dripping=_lastUniforms.drop[3]>0 && _lastUniforms.fx[0]<.5;
+    if(!_videoPlaying && !dripping && !_pulling && !_pullSpring){[self pauseLink];return;}
+    [self runLink];
+    BOOL had=_videoRef!=NULL;
+    if(_videoPlaying && [self pullVideoFrame]){metal.videoTexture=CVMetalTextureGetTexture(_videoRef);if(!had)_videoFirstAt=now;}
+    float ramp=(float)MIN(MAX((now-_videoFirstAt)/.16,0),1);
+    BOOL ramping=_videoMixBase>0 && ramp<1;
+    if(!_videoFresh && !ramping && !(dripping && now-_renderedAt>=1./125))return;
+    WXGMBUniforms u=_lastUniforms;u.time=(float)(now-_start);
+    if(metal.videoTexture && _videoMixBase>0){u.video[2]=.5f;u.video[3]=_videoMixBase*ramp;}
+    metal.uniforms=u;
+    CFTimeInterval began=CACurrentMediaTime();
+    if([metal render]){_lastUniforms=u;_renderedAt=now;++_renders;++_clockRenders;_videoFresh=NO;}
     _lastRenderMS=(CACurrentMediaTime()-began)*1000;_worstRenderMS=MAX(_worstRenderMS,_lastRenderMS);
 }
 - (void)runLink {
@@ -1203,7 +1245,7 @@ static NSString *WXGMeVideoPath(void) {
     // (the frame before kept one frame longer: the GPU may still be reading it)
     if(_videoRefOld)CFRelease(_videoRefOld);
     if(_videoBufferOld)CVPixelBufferRelease(_videoBufferOld);
-    _videoRefOld=_videoRef;_videoBufferOld=_videoBuffer;_videoRef=texture;_videoBuffer=buffer;++_videoFrames;
+    _videoRefOld=_videoRef;_videoBufferOld=_videoBuffer;_videoRef=texture;_videoBuffer=buffer;++_videoFrames;_videoFresh=YES;   // (FIX120 K)
     if(_videoFrames%120==0)CVMetalTextureCacheFlush(_textureCache,0);
     return YES;
 }
@@ -1263,7 +1305,7 @@ static NSString *WXGMeVideoPath(void) {
              @"pull":@{@"pull":@(round(_pull)),@"locked":@(_locked),@"locks":@(_locks),@"visual":@(round(_pullVisual))},
              @"video":@{@"file":[self bannerVideoName],@"note":_videoNote?:@"",@"frames":@(_videoFrames),@"playing":@(_videoPlaying),
                         @"natural":NSStringFromCGSize(_videoNatural),@"decodedAt":NSStringFromCGSize(_videoOutSize)},   // FIX120 J
-             @"canvasResizes":@(_canvasResizes),
+             @"canvasResizes":@(_canvasResizes),@"clockPasses":@(_clockPasses),@"clockRenders":@(_clockRenders),   // FIX120 K
              @"photoSource":WXGSelfAvatarState(),@"avatarTaps":@(_avatarTaps),@"edgeStyle":@(WXGMeEdgeStyle()),@"dripRoom":@(round(_dripRoom)),@"renders":@(_renders),@"snaps":@(_snaps),@"passes":@(_passes),
              @"fullPasses":@(_fullPasses),@"skippedPasses":@(_skips),@"canvasHeight":@(round(_canvasHeight)),   // FIX119 B
              @"statusMovedByWeChat":@(_statusMoves),@"statusMovedToY":@(round(_statusMovedY)),   // FIX120 F

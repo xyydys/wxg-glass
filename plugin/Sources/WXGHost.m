@@ -935,7 +935,7 @@ static BOOL WXGSideChatSheetFrame(CGRect f,UIWindow *w) {
         });
     if(beforeCommit){CFRunLoopAddObserver(CFRunLoopGetMain(),beforeCommit,kCFRunLoopCommonModes);CFRelease(beforeCommit);}
     if(afterCommit){CFRunLoopAddObserver(CFRunLoopGetMain(),afterCommit,kCFRunLoopCommonModes);CFRelease(afterCommit);}
-    WXGLog(@"WeChat Liquid Glass 0.4.105 TEST4 FIX105 启动；%@；iOS %@",NSBundle.mainBundle.bundleIdentifier,UIDevice.currentDevice.systemVersion);
+    WXGLog(@"WeChat Liquid Glass 0.4.120 TEST4 FIX120 K 启动；%@；iOS %@",NSBundle.mainBundle.bundleIdentifier,UIDevice.currentDevice.systemVersion);
     [self schedule];
 }
 - (void)changed:(NSNotification *)n {
@@ -5560,7 +5560,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
 - (CGFloat)titleRowOffsetForPage:(UIViewController *)page {
     return page && page==self.navCapsuleLeaf?_rowOffset:NAN;
 }
-- (NSString *)versionString {return @"0.4.119 · TEST4 FIX119 F";}
+- (NSString *)versionString {return @"0.4.120 · TEST4 FIX120 K";}
 // FIX116 A: the glass the plugin draws for the home page's "+" (the button whose
 // action is showRightTopMenuBtn), in window points; null when there is none.
 - (CGRect)homePlusRectInWindow:(UIWindow *)window {
@@ -5591,7 +5591,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
           @"style":@(surface.traitCollection.userInterfaceStyle),@"template":@(surface.iconView.image.renderingMode==UIImageRenderingModeAlwaysTemplate),
           @"titleLength":@(surface.label.text.length),@"digitSuffixPresent":@(surface.label.text.length && [surface.label.text rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet].location!=NSNotFound)}];
     }
-    return @{@"version":@"0.4.105-test4fix105",@"pageID":[NSString stringWithFormat:@"%p",_route.leaf],@"page":_route.leaf?NSStringFromClass(_route.leaf.class):@"none",@"primary":@(_route.primary),
+    return @{@"version":@"0.4.120-test4fix120k",@"pageID":[NSString stringWithFormat:@"%p",_route.leaf],@"page":_route.leaf?NSStringFromClass(_route.leaf.class):@"none",@"primary":@(_route.primary),
       @"tickCPUms":@(_tickCost),@"sharedCaptureCPUms":@(_backdropCost),@"drawAndDockCaptureCPUms":@(_drawCost),@"refreshCPUms":@(_refreshCost),@"maxTickCPUms":@(_maxTickCost),
       @"navigationPaintRescans":@(_navigationPaintRescans),@"tabBarSnapshotsConcealed":@(_snapshotsConcealed),
       @"coldStartLayersCleared":@(_coldStartLayersCleared),@"tabBarSnapshotLog":_snapshotLog?:@[],@"pageTopPaintCleared":@(_pageTopPaintCleared),@"pageTopRepairs":@(WXGPageTopRepairs),@"settingsEntryReady":@(WXGSettingsEntryReady),@"navigationRaises":@(_navigationRaises),@"navigationCovers":@(_navigationCovers),@"lastNavigationCover":_lastNavigationCover?:@"none",@"homePullTrace":_homePullTrace?:@[],@"navSnapshots":_navSnapshots?:@{},@"homeIcon":[self homeIconEvidenceNow],
@@ -5678,7 +5678,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
 }
 - (NSDictionary *)evidence {
     NSMutableArray *buttons=[NSMutableArray array];for(WXGSurface *s in _buttons)[buttons addObject:s.evidence];
-    return @{@"schema":@"wxg-test4-fix11",@"version":@"0.4.105-test4fix105",@"runtime":self.runtimeMetrics,
+    return @{@"schema":@"wxg-test4-fix11",@"version":@"0.4.120-test4fix120k",@"runtime":self.runtimeMetrics,
         @"backdrop":WXGBackdropEvidence(),@"nativeNavigationCandidates":[self navigationInventory],
         @"performance":@{@"screenMaximumFPS":@(_window.screen.maximumFramesPerSecond),@"requestedCaptureFPS":@(WXGConfig.shared.captureFPS),@"effectiveCaptureFPS":@(WXGScreenCaptureFPS(_window.screen)),@"hostHighRefreshOptIn":[NSBundle.mainBundle objectForInfoDictionaryKey:@"CADisableMinimumFrameDurationOnPhone"]?:@NO,@"displayCallbacks":@(_frames),@"callbacksOver25ms":@(_slowFrames),@"refreshes":@(_refreshes),
             @"displayCallbackRate":@(_frames/MAX(.001,CACurrentMediaTime()-_frameStart)),@"pageRestores":@(_pageRestores),@"cachedPages":@(_pages.count),@"pooledNavigationSurfaces":@(_surfacePool.count),@"pooledInputSurfaces":@(_inputAdapter.surfaces.count)},@"page":_route.path?:@"",@"presentedChat":@(_route.presentedStack),@"status":_status?:@"",
