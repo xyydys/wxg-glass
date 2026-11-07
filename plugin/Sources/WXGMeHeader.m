@@ -344,6 +344,9 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
     // FIX120 G (user, diagnostics_7: "灵动岛也闪，头像也闪，名字也闪 … 滑到顶部区域之后就会开始闪"): what each pass did
     NSMutableArray<NSString *> *_trace;NSString *_traceLast,*_coveredBy;__weak UIView *_coveredView;NSUInteger _traceRepeat;char _renderNote;
     NSUInteger _restores,_insetRetakes,_overlayCovered,_gateSkips;double _worstRenderMS;
+    // FIX120 I: WeChat's drag helper moving the list's container with the list's own pan (the lift: how far up, on the screen)
+    CGFloat _tableHome,_tableYSeen,_lift,_maxLift,_shownTravel;CFTimeInterval _tableYSince;BOOL _haveTableHome;
+    NSMapTable *_heldTargets;__weak UIPanGestureRecognizer *_heldPan;NSUInteger _targetHolds;NSString *_panTargetsSeen,*_helperMethods,*_tableObservers;
 }
 + (instancetype)shared {
     static WXGMeHeader *header;static dispatch_once_t once;
@@ -522,7 +525,17 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     L.shift=round(L.shift);   // (whole points: WeChat keeps the offset at the top inset cut to whole points, diagnostics_17/18)
     if(_haveLayout && (fabs(L.statusTop-_layout.statusTop)>.01 || fabs(L.shift-_layout.shift)>.01))slow=YES;
     _shift=L.shift;_layout=L;_haveLayout=YES;
-    CGFloat t0=table.contentOffset.y+table.contentInset.top;
+    // FIX120 I (user: "还是有点抖"; diagnostics_8's trace, "表y"): WeChat's drag helper moves the list's container along with the
+    // list's own pan (about half the finger) and springs it back when let go, the list's offset not knowing. What is ours goes
+    // by where the header is on the screen: the container moved up by the lift is that much more travel. (It went by the offset
+    // alone: the name and the avatar went one way while the page went the other, and back.) Down is WeChat's status page,
+    // which the header goes along with as before. Home: where the list is whenever nothing has moved it for a moment.
+    CGFloat tableY=[table.superview convertPoint:table.frame.origin toView:nil].y;
+    BOOL busy=table.isTracking || table.isDragging || table.isDecelerating;
+    if(fabs(tableY-_tableYSeen)>=.01){_tableYSeen=tableY;_tableYSince=now;}
+    if(!_haveTableHome || (!busy && now-_tableYSince>.15)){_tableHome=tableY;_haveTableHome=YES;}
+    _lift=MIN(tableY-_tableHome,0);_maxLift=MIN(_maxLift,_lift);
+    CGFloat t0=table.contentOffset.y+table.contentInset.top-_lift;
     CGFloat restCenter=[header convertPoint:CGPointMake(W*.5,L.avatarCenterY) toView:nil].y+t0+(_insetsApplied?0:L.shift);   // the avatar's centre in the window at rest
     CGFloat target=cut.kind!=WXGCutoutNone?cut.y+cut.h*.5:_baseInsets.top-22;
     _collapse=MAX(restCenter-target,20);
@@ -555,12 +568,14 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     }
     _appliedInsets=want;_insetsApplied=YES;
     CGFloat t=table.contentOffset.y+want.top;_travel=t;
+    _shownTravel=t-_lift;t=_shownTravel;   // FIX120 I: on the screen (the list's own travel, _travel, is what the snap moves)
     // The banner: WeChat's drag off (given back when off). FIX118 B: the pull moves the list down (its transform)
     // instead of scrolling it past its top, which WeChat's own code undoes on every pass (diagnostics_17).
     UIPanGestureRecognizer *drag=_dragPan;
     if(_banner) {
         if(drag && !_dragTouched){_dragWasEnabled=drag.enabled;_dragTouched=YES;}
         if(drag.enabled)drag.enabled=NO;
+        if(slow && !busy)[self holdDragTargetsOn:table];   // FIX120 I (never in the middle of a drag: WeChat would miss its end)
     }else [self giveBackDragAndBounce];
     _pullVisual=_pull;
     if(_pull>.25)t=-_pull;else if(fabs(t)<1)t=0;
@@ -580,8 +595,8 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     [self snapIfResting:table];
 #if WXGME_TRACE
     {UIView *container=table.superview,*top=container.subviews.lastObject,*mover=[self statusMoversIn:header].firstObject;
-     [self tracePass:[NSString stringWithFormat:@"t%.1f o%.1f in%.1f/%.1f tc%.1f end%.1f 名y%.1f %@ 表y%.1f 层y%.1f 画布%.0f %c 状%.2f%@%@",
-         t,table.contentOffset.y,table.contentInset.top,_baseInsets.top,_titleCollapse,_collapseAll,_titlePose.titleY,
+     [self tracePass:[NSString stringWithFormat:@"t%.1f 抬%.1f o%.1f in%.1f/%.1f tc%.1f end%.1f 名y%.1f %@ 表y%.1f 层y%.1f 画布%.0f %c 状%.2f%@%@",
+         t,_lift,table.contentOffset.y,table.contentInset.top,_baseInsets.top,_titleCollapse,_collapseAll,_titlePose.titleY,
          top==_overlay?@"顶":NSStringFromClass(top.class),[container convertPoint:table.frame.origin toView:nil].y,[_overlay convertPoint:CGPointZero toView:nil].y,
          _metal.bounds.size.height,_renderNote?:'?',mover?mover.alpha:-1,slow?@" 慢":@"",table.isTracking?@" 按":table.isDecelerating?@" 惯":@""]];}
 #endif
@@ -815,7 +830,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     }
     // the avatar's centre at rest moves with the page (scrolled, or WeChat dragging it); the cut-out is the screen's
     CGPoint restCenter=[header convertPoint:CGPointMake(W*.5,L.avatarCenterY) toView:metal];
-    CGFloat restY=restCenter.y+MAX(_travel,0)-_contentPull;   // where it is when the list is at rest (not scrolled, not pulled)
+    CGFloat restY=restCenter.y+MAX(_shownTravel,0)-_contentPull;   // (FIX120 I: the travel on the screen)   // where it is when the list is at rest (not scrolled, not pulled)
     CGRect cut=[metal convertRect:CGRectMake(_cutout.x,_cutout.y,_cutout.w,_cutout.h) fromView:nil];
     WXGMetaballPose p=WXGMetaballPoseAt(t,_collapse,restY,L.avatarRadius,CGRectGetMaxY(cut),_merge,_banner?140:0);
     WXGMBUniforms u;memset(&u,0,sizeof u);
@@ -900,6 +915,65 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     if(table.isDecelerating)[table setContentOffset:table.contentOffset animated:NO];
 }
 
+#pragma mark - WeChat's drag on the list's own pan (FIX120 I)
+
+// The targets of a gesture recognizer: [target, action name] (UIGestureRecognizerTarget's _target and _action, read only when
+// they are an object and a selector).
+static NSArray<NSArray *> *WXGMePanTargets(UIGestureRecognizer *g) {
+    NSMutableArray<NSArray *> *out=[NSMutableArray array];
+    id targets=nil;
+    @try{targets=[g valueForKey:@"_targets"];}@catch(__unused NSException *e){return out;}
+    if(![targets isKindOfClass:NSArray.class])return out;
+    for(id entry in targets) {
+        Class cls=object_getClass(entry);
+        Ivar ti=class_getInstanceVariable(cls,"_target"),ai=class_getInstanceVariable(cls,"_action");
+        const char *tt=ti?ivar_getTypeEncoding(ti):NULL,*at=ai?ivar_getTypeEncoding(ai):NULL;
+        if(!tt || !at || tt[0]!='@' || at[0]!=':')continue;
+        id target=object_getIvar(entry,ti);
+        SEL action=*(SEL *)((uint8_t *)(__bridge void *)entry+ivar_getOffset(ai));
+        if(target && action)[out addObject:@[target,NSStringFromSelector(action)]];
+    }
+    return out;
+}
+// With the banner on, WeChat's drag of the page is off (its own recognizer, above) and the pull is ours; its helper's targets on
+// the list's own pan come off too (they moved the container with every scroll), put back with the drag.
+- (void)holdDragTargetsOn:(UITableView *)table {
+    UIPanGestureRecognizer *pan=table.panGestureRecognizer;if(!pan)return;
+    NSMutableArray<NSString *> *seen=[NSMutableArray array];
+    for(NSArray *pair in WXGMePanTargets(pan)) {
+        id target=pair[0];NSString *action=pair[1],*name=NSStringFromClass([target class]);
+        [seen addObject:[NSString stringWithFormat:@"%@ %@",name,action]];
+        if(target==self || [name rangeOfString:@"DragAnimate"].location==NSNotFound)continue;
+        [pan removeTarget:target action:NSSelectorFromString(action)];
+        if(!_heldTargets)_heldTargets=[NSMapTable weakToStrongObjectsMapTable];
+        NSMutableSet<NSString *> *actions=[_heldTargets objectForKey:target];
+        if(!actions){actions=[NSMutableSet set];[_heldTargets setObject:actions forKey:target];}
+        [actions addObject:action];_heldPan=pan;++_targetHolds;
+        [self traceEvent:[NSString stringWithFormat:@"拿下微信拖动：%@ %@",name,action]];
+    }
+    _panTargetsSeen=[seen componentsJoinedByString:@"；"];
+#if WXGME_TRACE
+    // (diagnostics: what else could be moving it, if not a target of the pan)
+    id helper=_dragPan.delegate;
+    if(helper && !_helperMethods) {
+        unsigned n=0;Method *methods=class_copyMethodList(object_getClass(helper),&n);NSMutableArray<NSString *> *names=[NSMutableArray array];
+        for(unsigned i=0;i<n && i<120;i++)[names addObject:NSStringFromSelector(method_getName(methods[i]))];
+        free(methods);
+        _helperMethods=[NSString stringWithFormat:@"%@: %@",NSStringFromClass([helper class]),[names componentsJoinedByString:@" "]];
+    }
+    if(!_tableObservers) {
+        id info=(__bridge id)table.observationInfo;NSString *text=info?[info description]:@"";
+        _tableObservers=text.length>1500?[text substringToIndex:1500]:text;
+    }
+#endif
+}
+- (void)giveBackDragTargets {
+    UIPanGestureRecognizer *pan=_heldPan;
+    if(pan)for(id target in _heldTargets.keyEnumerator.allObjects)for(NSString *action in [_heldTargets objectForKey:target])
+        [pan addTarget:target action:NSSelectorFromString(action)];
+    [_heldTargets removeAllObjects];_heldPan=nil;
+}
+
 #pragma mark - Snapping
 
 // Released between the avatar at rest and in the cut-out: to the nearer of the two.
@@ -971,6 +1045,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
 - (void)snapIfResting:(UITableView *)table {
     if(_pull>.5 || _pulling)return;
     if(table.isTracking || table.isDragging || table.isDecelerating || CACurrentMediaTime()<_snapUntil)return;
+    if(_lift<-.5)return;   // FIX120 I: WeChat's container still on its way back
     CGFloat rel=_travel,end=_collapseAll>0?_collapseAll:_collapse;
     if(rel<=1 || rel>=end-1)return;
     _snapUntil=CACurrentMediaTime()+.45;++_snaps;
@@ -984,6 +1059,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     (void)table;_locked=NO;_pulling=NO;
     [self pauseVideo];
     if(_dragTouched){if(drag)drag.enabled=_dragWasEnabled;_dragTouched=NO;}
+    [self giveBackDragTargets];   // FIX120 I
     if(_bounceTouched) {
         if(table) {
             table.bounces=_bouncesWas;table.alwaysBounceVertical=_alwaysBounceWas;
@@ -1012,6 +1088,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
             table.contentOffset=CGPointMake(table.contentOffset.x,MAX(rel-_shift,0)-_baseInsets.top);
         }
     }
+    _haveTableHome=NO;_lift=0;   // FIX120 I
     _insetsApplied=NO;_haveLayout=NO;_pull=_pullTarget=_pullVelocity=0;_pullSpring=_pulling=_locked=_pullPinned=NO;
     [self giveBackDragAndBounce];
     UIControl *qr=_qr;if(_qrTouched){qr.userInteractionEnabled=_qrTouchWas;_qrTouched=NO;}
@@ -1133,8 +1210,10 @@ static NSString *WXGMeVideoPath(void) {
              @"statusMovedByWeChat":@(_statusMoves),@"statusMovedToY":@(round(_statusMovedY)),   // FIX120 F
              @"flicker":@{@"restores":@(_restores),@"insetRetakes":@(_insetRetakes),@"overlayCovered":@(_overlayCovered),@"coveredBy":_coveredBy?:@"",
                           @"gateSkips":@(_gateSkips),@"worstRenderMS":@(round(_worstRenderMS*10)/10),
-                          @"traceKey":@"t 行程 o 偏移 in 当前/微信 inset.top tc 标题收起点 end 终点 名y 名字中心 顶=层在最上 表y/层y 窗口坐标 画布高 R画了 g闸门跳过 s没变 m静止 f失败 -没画 状 状态行 alpha 慢=整套 按/惯"},
+                          @"traceKey":@"t 屏幕上的行程 抬 微信把列表容器抬起的距离 o 偏移 in 当前/微信 inset.top tc 标题收起点 end 终点 名y 名字中心 顶=层在最上 表y/层y 窗口坐标 画布高 R画了 g闸门跳过 s没变 m静止 f失败 -没画 状 状态行 alpha 慢=整套 按/惯"},
              @"trace":[_trace copy]?:@[],   // FIX120 G
+             @"weChatDrag":@{@"targetHolds":@(_targetHolds),@"held":@(_heldTargets.count),@"panTargets":_panTargetsSeen?:@"",@"helperMethods":_helperMethods?:@"",
+                             @"tableObservers":_tableObservers?:@"",@"lift":@(round(_lift*10)/10),@"maxLift":@(round(_maxLift)),@"home":@(round(_tableHome*10)/10)},   // FIX120 I
              @"title":@{@"collapse":@(round(_titleCollapse*10)/10),@"end":@(round(_collapseAll*10)/10),@"fraction":@(round(_titlePose.fraction*100)/100),
                         @"locked":@(_titlePose.locked)}};
 }
