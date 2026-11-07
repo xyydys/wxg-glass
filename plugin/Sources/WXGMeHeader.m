@@ -347,6 +347,9 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
     // FIX120 I: WeChat's drag helper moving the list's container with the list's own pan (the lift: how far up, on the screen)
     CGFloat _tableHome,_tableYSeen,_lift,_maxLift,_shownTravel;CFTimeInterval _tableYSince;BOOL _haveTableHome;
     NSMapTable *_heldTargets;__weak UIPanGestureRecognizer *_heldPan;NSUInteger _targetHolds;NSString *_panTargetsSeen,*_helperMethods,*_tableObservers;
+    // FIX120 J: the banner's video ready before it is needed; the layer not made taller in the middle of the pull
+    BOOL _videoLoading,_pageShown,_canvasOpen;NSUInteger _videoToken,_canvasResizes;CFTimeInterval _visibleSince,_videoWantedAt,_videoFirstAt;
+    CGSize _videoNatural,_videoOutSize;double _lastRenderMS;
 }
 + (instancetype)shared {
     static WXGMeHeader *header;static dispatch_once_t once;
@@ -484,7 +487,8 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     if(!WXGMeOn()){[self restoreBecause:@"开关关"];_status_=WXGPluginEnabled()?@"开关关着":@"插件未启用";return;}
     UIViewController *page=[self findPage];
     if(!page){_status_=@"还没找到“我”页";return;}
-    if(!page.isViewLoaded || !page.view.window){[self pauseLink];return;}   // another tab: left as it is
+    if(!page.isViewLoaded || !page.view.window){[self pauseLink];[self pauseVideo];_pageShown=NO;return;}   // another tab: left as it is (FIX120 J: the video too)
+    if(!_pageShown){_pageShown=YES;_visibleSince=CACurrentMediaTime();}
     UITableView *oldTable=_table;UIControl *oldHeader=_header;UILabel *oldName=_name;UIView *oldAvatar=_avatar;
     if(![self findPartsOn:page]){[self restoreBecause:[@"找部件：" stringByAppendingString:_status_?:@""]];return;}
     UITableView *table=_table;UIControl *header=_header;UIWindow *window=table.window;
@@ -590,15 +594,18 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
         if(qr){if(!_qrTouched){_qrTouchWas=qr.userInteractionEnabled;_qrTouched=YES;}if(qr.userInteractionEnabled)qr.userInteractionEnabled=NO;}
         [self placeStatusWith:L];
         [self ensureBarItemsOn:page];
+        // FIX120 J: the banner's video made ready (loaded off the main thread, its first frame decoded) once the page has been
+        // up a moment, not on the first pull (the player made on the main thread right as the avatar turned into the banner)
+        if(_banner && !busy && now-_visibleSince>.6)[self prepareVideo];
     }
     [self layoutOverlayFor:table header:header layout:L travel:t width:W];
     [self snapIfResting:table];
 #if WXGME_TRACE
     {UIView *container=table.superview,*top=container.subviews.lastObject,*mover=[self statusMoversIn:header].firstObject;
-     [self tracePass:[NSString stringWithFormat:@"t%.1f 抬%.1f o%.1f in%.1f/%.1f tc%.1f end%.1f 名y%.1f %@ 表y%.1f 层y%.1f 画布%.0f %c 状%.2f%@%@",
+     [self tracePass:[NSString stringWithFormat:@"t%.1f 抬%.1f o%.1f in%.1f/%.1f tc%.1f end%.1f 名y%.1f %@ 表y%.1f 层y%.1f 画布%.0f %c%.1f 状%.2f%@%@",
          t,_lift,table.contentOffset.y,table.contentInset.top,_baseInsets.top,_titleCollapse,_collapseAll,_titlePose.titleY,
          top==_overlay?@"顶":NSStringFromClass(top.class),[container convertPoint:table.frame.origin toView:nil].y,[_overlay convertPoint:CGPointZero toView:nil].y,
-         _metal.bounds.size.height,_renderNote?:'?',mover?mover.alpha:-1,slow?@" 慢":@"",table.isTracking?@" 按":table.isDecelerating?@" 惯":@""]];}
+         _metal.bounds.size.height,_renderNote?:'?',_renderNote=='R'?_lastRenderMS:0,mover?mover.alpha:-1,slow?@" 慢":@"",table.isTracking?@" 按":table.isDecelerating?@" 惯":@""]];}
 #endif
 }
 // FIX120 G: the flight recorder (a line per pass that differs from the last; events as they happen)
@@ -855,18 +862,37 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     {CGFloat maxY=MAX(p.centerY+p.radius,CGRectGetMaxY(cut))+6;
      if(p.expand>0)maxY=MAX(maxY,p.centerY+L.avatarRadius+6);
      if(p.flow>0 && u.fx[0]<.5)maxY+=u.fx[1]+30;
-     CGFloat h=WXGMeCanvasHeight(maxY,windowInOverlay.size.height);
-     if(fabs(h-metal.bounds.size.height)>.5) {
-         _canvasHeight=h;_haveLast=NO;resized=YES;
+     // FIX120 J (user: "头像和展开的视频切换的时候会有点掉帧"): with the banner on and the avatar near its rest, as tall as the
+     // banner pulled as far as it goes needs, from the start. Made taller step by step in the middle of the pull, the layer's
+     // drawables were made anew right as the avatar turned into the banner (a frame dropped at each step). Smaller only when
+     // two steps smaller (well up the page), not on every step back.
+     if(!_banner || t>_collapse*.7)_canvasOpen=NO;else if(t<_collapse*.4)_canvasOpen=YES;   // (apart, so it does not go back and forth)
+     if(_canvasOpen) {
+         WXGMetaballPose open=WXGMetaballPoseAt(-210,_collapse,restY,L.avatarRadius,CGRectGetMaxY(cut),_merge,140);
+         CGFloat openY=open.centerY+L.avatarRadius+6;
+         if(u.fx[0]<.5)openY+=130;   // (the drips under it)
+         maxY=MAX(maxY,openY);
+     }
+     CGFloat h=WXGMeCanvasHeight(maxY,windowInOverlay.size.height),shown=metal.bounds.size.height;
+     if(h>shown+.5 || h<shown-150) {
+         _canvasHeight=h;_haveLast=NO;resized=YES;++_canvasResizes;
          [CATransaction begin];[CATransaction setDisableActions:YES];metal.frame=CGRectMake(0,windowInOverlay.origin.y,W,h);[CATransaction commit];
      }}
     u.size[0]=metal.bounds.size.width;u.size[1]=metal.bounds.size.height;u.scale=metal.layer.contentsScale;
     // FIX118 B: the video fades in as the banner opens (playing only then)
     float videoMix=(float)WXGMBLerp(p.expand,.35,1,0,1);
-    BOOL wantVideo=_banner && videoMix>0 && [self prepareVideo];
-    if(wantVideo){[self playVideo];if([self pullVideoFrame])metal.videoTexture=CVMetalTextureGetTexture(_videoRef);}
-    else [self pauseVideo];
-    if(metal.videoTexture && wantVideo){u.video[2]=.5f;u.video[3]=videoMix;}
+    // FIX120 J: the player runs from the first moment of the pull (it started at 35 % open, its decoder starting then: the
+    // banner held a still and jumped) and stops half a second after the banner has closed (not on every small pull).
+    BOOL videoOn=_banner && (p.expand>0 || _pulling) && [self prepareVideo];
+    if(videoOn)_videoWantedAt=now;
+    if(videoOn || (_videoPlaying && now-_videoWantedAt<.5)) {
+        [self playVideo];
+        BOOL had=_videoRef!=NULL;
+        if([self pullVideoFrame]){metal.videoTexture=CVMetalTextureGetTexture(_videoRef);if(!had)_videoFirstAt=now;}
+    }else [self pauseVideo];
+    BOOL wantVideo=videoOn && videoMix>0;
+    // (the very first frame comes in over a sixth of a second, not at once at whatever the mix is by then)
+    if(metal.videoTexture && wantVideo){u.video[2]=.5f;u.video[3]=videoMix*(float)MIN(MAX((now-_videoFirstAt)/.16,0),1);}
     BOOL moving=(p.flow>0 && u.fx[0]<.5) || wantVideo || _pulling || _pullSpring;   // (FIX119 B: only the drips change with time)
     WXGMBUniforms a=u,b=_lastUniforms;a.time=b.time=0;
     BOOL same=_haveLast && !memcmp(&a,&b,sizeof a);   // (nothing but the clock differs from what is on the screen)
@@ -883,7 +909,7 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     metal.uniforms=u;
     CFTimeInterval began=CACurrentMediaTime();
     if([metal render]){_lastUniforms=u;_haveLast=YES;++_renders;_renderedAt=now;_renderNote='R';}else _renderNote='f';
-    _worstRenderMS=MAX(_worstRenderMS,(CACurrentMediaTime()-began)*1000);
+    _lastRenderMS=(CACurrentMediaTime()-began)*1000;_worstRenderMS=MAX(_worstRenderMS,_lastRenderMS);
 }
 - (void)runLink {
     if(!_link) {
@@ -1117,21 +1143,51 @@ static NSString *WXGMeVideoPath(void) {
     NSDictionary *a=[NSFileManager.defaultManager attributesOfItemAtPath:WXGMeVideoPath() error:NULL];
     return a?[NSString stringWithFormat:@"已选（%.1f MB）",a.fileSize/1048576.0]:@"未选";
 }
+// FIX120 J: the asset's tracks loaded off the main thread (YES once the player is there; NO while it is being made). The
+// frames asked for no larger than cover the screen's width both ways (a 4K clip was decoded and converted at full size for a
+// banner 1320 px wide); the first frame decoded at once (paused at the start), so the pull has a picture from its first moment.
 - (BOOL)prepareVideo {
     if(_videoOut)return YES;
+    if(_videoLoading)return NO;
     NSString *path=WXGMeVideoPath();
     if(![NSFileManager.defaultManager fileExistsAtPath:path])return NO;
     if(!_textureCache && CVMetalTextureCacheCreate(kCFAllocatorDefault,NULL,WXGSharedDevice(),NULL,&_textureCache)!=kCVReturnSuccess){_videoNote=@"纹理缓存失败";return NO;}
-    AVPlayerItem *item=[AVPlayerItem playerItemWithURL:[NSURL fileURLWithPath:path]];
-    _videoOut=[[AVPlayerItemVideoOutput alloc]initWithPixelBufferAttributes:@{(id)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_32BGRA),(id)kCVPixelBufferMetalCompatibilityKey:@YES}];
+    _videoLoading=YES;_videoNote=@"载入中";
+    NSUInteger token=_videoToken;
+    AVURLAsset *asset=[AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
+    __weak WXGMeHeader *weakSelf=self;
+    [asset loadValuesAsynchronouslyForKeys:@[@"tracks"] completionHandler:^{
+        CGSize natural=CGSizeZero;
+        if([asset statusOfValueForKey:@"tracks" error:NULL]==AVKeyValueStatusLoaded)natural=[asset tracksWithMediaType:AVMediaTypeVideo].firstObject.naturalSize;
+        dispatch_async(dispatch_get_main_queue(),^{
+            WXGMeHeader *me=weakSelf;if(!me || me->_videoToken!=token)return;
+            me->_videoLoading=NO;[me makePlayerFor:asset natural:natural];
+        });
+    }];
+    return NO;
+}
+- (void)makePlayerFor:(AVURLAsset *)asset natural:(CGSize)natural {
+    if(_videoOut)return;
+    NSMutableDictionary *attributes=[@{(id)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_32BGRA),(id)kCVPixelBufferMetalCompatibilityKey:@YES} mutableCopy];
+    CGFloat box=MAX(UIScreen.mainScreen.nativeBounds.size.width,320);
+    _videoNatural=natural;_videoOutSize=natural;
+    if(natural.width>1 && natural.height>1) {
+        CGFloat f=MIN(1,MAX(box/natural.width,box/natural.height));   // (still covering the width both ways: aspect fill)
+        if(f<.98) {
+            _videoOutSize=CGSizeMake(round(natural.width*f/2)*2,round(natural.height*f/2)*2);
+            attributes[(id)kCVPixelBufferWidthKey]=@((NSInteger)_videoOutSize.width);attributes[(id)kCVPixelBufferHeightKey]=@((NSInteger)_videoOutSize.height);
+        }
+    }
+    AVPlayerItem *item=[AVPlayerItem playerItemWithAsset:asset];
+    _videoOut=[[AVPlayerItemVideoOutput alloc]initWithPixelBufferAttributes:attributes];
     [item addOutput:_videoOut];
     _player=[AVPlayer playerWithPlayerItem:item];_player.muted=YES;_player.actionAtItemEnd=AVPlayerActionAtItemEndNone;
     if(@available(iOS 12.0,*))_player.preventsDisplaySleepDuringVideoPlayback=NO;
     __weak AVPlayer *weakPlayer=_player;
     _loopObserver=[NSNotificationCenter.defaultCenter addObserverForName:AVPlayerItemDidPlayToEndTimeNotification object:item queue:NSOperationQueue.mainQueue
         usingBlock:^(__unused NSNotification *n){[weakPlayer seekToTime:kCMTimeZero];[weakPlayer play];}];
+    [_player seekToTime:kCMTimeZero toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];   // (the first frame decoded now)
     _videoNote=@"已载入";
-    return YES;
 }
 - (void)playVideo {if(!_videoPlaying && _player){[_player play];_videoPlaying=YES;}}
 - (void)pauseVideo {if(_videoPlaying){[_player pause];_videoPlaying=NO;}}
@@ -1153,6 +1209,7 @@ static NSString *WXGMeVideoPath(void) {
 }
 - (void)dropVideo {
     [self pauseVideo];
+    ++_videoToken;_videoLoading=NO;   // FIX120 J (one being loaded is not used)
     if(_loopObserver){[NSNotificationCenter.defaultCenter removeObserver:_loopObserver];_loopObserver=nil;}
     _player=nil;_videoOut=nil;_metal.videoTexture=nil;
     if(_videoRef){CFRelease(_videoRef);_videoRef=NULL;}
@@ -1204,7 +1261,9 @@ static NSString *WXGMeVideoPath(void) {
              @"photo":_shownPhoto?[NSString stringWithFormat:@"%.0fx%.0f",_shownPhoto.size.width*_shownPhoto.scale,_shownPhoto.size.height*_shownPhoto.scale]:@"",
              @"metal":@{@"frames":@(_metal.frames),@"failure":_metal.failure?:@""},
              @"pull":@{@"pull":@(round(_pull)),@"locked":@(_locked),@"locks":@(_locks),@"visual":@(round(_pullVisual))},
-             @"video":@{@"file":[self bannerVideoName],@"note":_videoNote?:@"",@"frames":@(_videoFrames),@"playing":@(_videoPlaying)},
+             @"video":@{@"file":[self bannerVideoName],@"note":_videoNote?:@"",@"frames":@(_videoFrames),@"playing":@(_videoPlaying),
+                        @"natural":NSStringFromCGSize(_videoNatural),@"decodedAt":NSStringFromCGSize(_videoOutSize)},   // FIX120 J
+             @"canvasResizes":@(_canvasResizes),
              @"photoSource":WXGSelfAvatarState(),@"avatarTaps":@(_avatarTaps),@"edgeStyle":@(WXGMeEdgeStyle()),@"dripRoom":@(round(_dripRoom)),@"renders":@(_renders),@"snaps":@(_snaps),@"passes":@(_passes),
              @"fullPasses":@(_fullPasses),@"skippedPasses":@(_skips),@"canvasHeight":@(round(_canvasHeight)),   // FIX119 B
              @"statusMovedByWeChat":@(_statusMoves),@"statusMovedToY":@(round(_statusMovedY)),   // FIX120 F
