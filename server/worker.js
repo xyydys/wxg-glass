@@ -1003,10 +1003,17 @@ async function isAllowed(env, account) {
 }
 async function listMeta(env) {
   if (!hasKV(env)) return { source: "const", count: ALLOWLIST.length };
-  let count = 0, cursor;
-  do { const r = await env.LIST.list({ prefix: "allow:", cursor }); count += r.keys.length; cursor = r.list_complete ? undefined : r.cursor; } while (cursor);
-  return { source: "kv", count };
+  // FIX121：list 失败（列额度耗尽 429 等）不抛错——数不出人数就返回 null，调用方据此降级，别让管理台 500。
+  try {
+    let count = 0, cursor;
+    do { const r = await env.LIST.list({ prefix: "allow:", cursor }); count += r.keys.length; cursor = r.list_complete ? undefined : r.cursor; } while (cursor);
+    return { source: "kv", count };
+  } catch {
+    return { source: "kv", count: null, listError: true };
+  }
 }
+// FIX121：列额度耗尽时管理台各页的统一提示（北京时间每天早 8 点＝UTC 00:00 自动重置）。
+const LIST_QUOTA_NOTE = "KV 列额度暂时耗尽，名单/流水可能不全或为空；下发核对不受影响，额度每天 UTC 00:00（北京时间 08:00）自动重置后恢复。";
 
 // 核对流水：尽力而为，绝不影响解锁响应（ctx.waitUntil + try/catch 吞掉一切）。
 function logCheckin(env, ctx, account, device, result) {
@@ -1081,19 +1088,22 @@ async function admin(req, env, url) {
 
   if (p === "/v1/admin/ping" && req.method === "GET") {
     const meta = await listMeta(env);
-    return json({ ok: true, admin: true, ver: VER, allowCount: meta.count, recheckAfter: RECHECK_AFTER, signKey: env.SIGN_PRIV ? "set" : "missing" });
+    return json({ ok: true, admin: true, ver: VER, allowCount: meta.count, recheckAfter: RECHECK_AFTER, signKey: env.SIGN_PRIV ? "set" : "missing",
+                  ...(meta.listError ? { listUnavailable: true, note: LIST_QUOTA_NOTE } : {}) });   // FIX121：数不出人数也别 500
   }
 
   if (p === "/v1/admin/allow") {
     if (req.method === "GET") {
-      const entries = []; let cursor;
-      do {
-        const r = await env.LIST.list({ prefix: "allow:", cursor });
-        for (const k of r.keys) { const v = JSON.parse(await env.LIST.get(k.name) || "null"); if (v) entries.push(v); }
-        cursor = r.list_complete ? undefined : r.cursor;
-      } while (cursor);
+      const entries = []; let cursor, listError = false;
+      try {
+        do {
+          const r = await env.LIST.list({ prefix: "allow:", cursor });
+          for (const k of r.keys) { const v = JSON.parse(await env.LIST.get(k.name) || "null"); if (v) entries.push(v); }
+          cursor = r.list_complete ? undefined : r.cursor;
+        } while (cursor);
+      } catch { listError = true; }   // FIX121：列额度耗尽也返回已拿到的部分名单 + 提示，不 500
       entries.sort((a, b) => (b.addedAt || 0) - (a.addedAt || 0));
-      return json({ count: entries.length, entries });
+      return json({ count: entries.length, entries, ...(listError ? { listUnavailable: true, note: LIST_QUOTA_NOTE } : {}) });
     }
     if (req.method === "POST") {
       let body; try { body = await req.json(); } catch { return json({ error: "bad json" }, 400); }
@@ -1131,30 +1141,36 @@ async function admin(req, env, url) {
       added++;
     }
     const meta = await listMeta(env);
-    if (meta.count > 0) await markPopulated(env);   // FIX121：种子导入后名单非空，落哨兵
-    return json({ ok: true, added, count: meta.count });
+    // FIX121：导入后名单必非空（刚写了或本就有）→ 落哨兵；count 可能因列额度耗尽为 null，不影响落哨兵。
+    if (added > 0 || (meta.count || 0) > 0) await markPopulated(env);
+    return json({ ok: true, added, count: meta.count, ...(meta.listError ? { listUnavailable: true, note: LIST_QUOTA_NOTE } : {}) });
   }
 
   if (p === "/v1/admin/activity" && req.method === "GET") {
     const limit = Math.min(parseInt(url.searchParams.get("limit") || "100", 10) || 100, 1000);
+    let listError = false;   // FIX121：ev:/seen: 扫描遇列额度耗尽也返回已拿到的部分 + 提示，不 500
     const names = []; let cursor;
-    do {
-      const r = await env.LIST.list({ prefix: "ev:", cursor });
-      for (const k of r.keys) names.push(k.name);
-      cursor = r.list_complete ? undefined : r.cursor;
-    } while (cursor && names.length < 5000);
+    try {
+      do {
+        const r = await env.LIST.list({ prefix: "ev:", cursor });
+        for (const k of r.keys) names.push(k.name);
+        cursor = r.list_complete ? undefined : r.cursor;
+      } while (cursor && names.length < 5000);
+    } catch { listError = true; }
     names.sort();                                   // 键名含零填充 ts，升序即时间序
     const events = [];
     for (const name of names.slice(-limit)) { const v = JSON.parse(await env.LIST.get(name) || "null"); if (v) events.push(v); }
     events.reverse();                               // 最新在前
     const accounts = []; cursor = undefined;
-    do {
-      const r = await env.LIST.list({ prefix: "seen:", cursor });
-      for (const k of r.keys) { const v = JSON.parse(await env.LIST.get(k.name) || "null"); if (v) accounts.push(v); }
-      cursor = r.list_complete ? undefined : r.cursor;
-    } while (cursor && accounts.length < 5000);   // FIX114/H1：给 seen: 扫描封顶，防被刷爆后拖垮管理页
+    try {
+      do {
+        const r = await env.LIST.list({ prefix: "seen:", cursor });
+        for (const k of r.keys) { const v = JSON.parse(await env.LIST.get(k.name) || "null"); if (v) accounts.push(v); }
+        cursor = r.list_complete ? undefined : r.cursor;
+      } while (cursor && accounts.length < 5000);   // FIX114/H1：给 seen: 扫描封顶，防被刷爆后拖垮管理页
+    } catch { listError = true; }
     accounts.sort((a, b) => (b.lastTs || 0) - (a.lastTs || 0));
-    return json({ events, accounts });
+    return json({ events, accounts, ...(listError ? { listUnavailable: true, note: LIST_QUOTA_NOTE } : {}) });
   }
 
   return json({ error: "not found" }, 404);
