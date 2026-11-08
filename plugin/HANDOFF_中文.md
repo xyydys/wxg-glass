@@ -1,15 +1,6 @@
 # 交接说明（给新对话）· WeChat Liquid Glass TEST4 · 当前 FIX114 G（用户 01:48 导出的参数作为这版默认；手机上没改过的设置换成新默认、改过的保留；基于 FIX114 F）
 
 
-## FIX116（用户 11-08：“三种画法里前两种（普通、取自背景）都卡在线条边缘太过结实，想了办法弥补但效果一般”；参照 Kyant 的 AndroidLiquidGlass / Backdrop 的高光画法）
-
-- 原因：普通和取自背景的线都是 Core Animation 边框叠出来的“一整条实心线”，FIX109 B 的泛光又是从“泛光亮度”（默认 0.5）开始的，所以线的里侧是一道 1 → 0.5 的硬台阶（1 pt 线 + 0.8 pt 泛光、亮度 0.5、3x：深度 0.95 pt 处 1.00，1.10 pt 处 0.45）；FIX79 的分级渐隐最多 1 pt、线性，拐点也看得出来。
-- Kyant 的做法（`backdrop/.../highlight/HighlightModifier.kt`）：描边宽度取两倍、居中跨在轮廓上，BlurMaskFilter 模糊（半径 = 宽度 / 2），再按形状裁掉外面一半。效果是轮廓一侧锐利、最亮，里侧是一段平滑的 erf 衰减，没有平台也没有硬边。
-- 新：`WXGRimBlurredBands`（`WXGRimGlow.h`，纯 C，`Tests/RimGlowTests.c`）。把 FIX109 B 的截面（线 `core` 满亮 + 高斯泛光）在轮廓外按轮廓处的亮度延伸，和 σ = “线边柔化”的高斯做卷积（闭式解：线是正态 CDF，泛光是高斯 × 两个 CDF 之差），只画轮廓以内；四分之一像素一级，每级取平均（Simpson），超过 20 级用原来的合并 / 求 alpha（抽成 `WXGRimSolveSteps`，`WXGRimSoftBands` 逐位不变）。轮廓处仍约等于线的亮度，“宽度”处正好一半亮度，最远到 core + 泛光宽度 + 3σ（不超过短边一半）。同一组参数下深度 0.95 / 1.10 pt：0.71 / 0.55。
-- 接入：`WXGRimView configureSoftWidth:level:blur:`、`WXGRimGlowLayer.softBlur`、`WXGRimTintView setSoftWidth:level:blur:`；本体、透镜、本体取色线、透镜取色线四处都传。柔化 > 0 时即使没开泛光也走分级边框（线本身被模糊），“描边细节”的分级线和深色两侧的黑底不用（和开泛光时一样）；左下 / 右上渐隐的角窗口按 线 + 泛光 + 3σ 放大。诊断 `softGlow.blur`。
-- 配置：`…RimEdgeSoftness`（σ，pt，0–2，默认 0.35；0 = FIX109 B 原样），每个范围一个（rim / dock / bubble / segment / card / lensGlass / segmentLensGlass / finderGlass，继承同 Inward 系），浅色深色、普通和取自背景共用；iOS 27 样式恒为 0。设置：边框页“普通 · 柔和泛光”和“取自背景 · 柔和泛光”两组各加一行“线边柔化”（同一个键）。
-- 验证：`Tests/RimGlowTests.c` 新增（σ=0 与旧函数逐位相同；闭式解与暴力卷积误差 < 2e-3；不向内变亮；线与泛光之间不再有台阶；总光量守恒；限长）。全部 C 测试除 `LensInsetAlongTests`（main 上本来就因 `WXGMeshOptics` 缺 `transition` 初始化编不过，和本次无关）外都过；三个改动的 .m 用 iOS 16.5 SDK + clang 18 `-Werror` 编译通过。真机效果未看。
-
 ## FIX114（用户 17:16，附 diagnostics_11 和帧率 JSON：“分组可以了；首页顶部下拉时中间胶囊有概率在原位置留下空白胶囊；替换了搜索框的分组下拉时和胶囊设定的间距会变动而不是固定；右上角加号边缘显示不全，不知道是微信还是插件；感觉性能有一点问题，卡顿看能不能找到原因优化”）
 
 - G（用户 10-23 01:50，附 WeChatLiquidGlass_settings_20261023_0148.json：“差不多了，参数也给你了，只针对没有改动过的设置项采用这套参数，已经被自定义过的不覆盖，实在做不到强制覆盖也行；编译 deb 的同时给最新的完整工程文件”）：

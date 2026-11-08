@@ -84,13 +84,22 @@ static inline double WXGRimSoftIntegral(double a,double b,double core,double sof
     double k=sqrt(WXG_RIM_SOFT_FALLOFF),x1=(a-core)/soft,x2=(b-core)/soft;
     return level*soft*sqrt(M_PI)/(2.*k)*(erf(k*x2)-erf(k*x1));
 }
-/* The steps' merging and the nested bands' alphas, shared by
-   WXGRimSoftBands and WXGRimBlurredBands: m steps from the outline, step k
-   ending at hi[k] with light[k] (its level integrated over it); past `max`
-   steps the two neighbours whose levels differ least are joined; then the
-   nested bands from the outline whose composite is each step's average
-   (b_k = 1 - (1 - L_k) / (1 - L_{k+1})). Returns the band count. */
-static inline int WXGRimSolveSteps(double *hi,double *light,int m,int max,double *inset,double *bandWidth,double *alpha) {
+static inline int WXGRimSoftBands(double core,double soft,double level,double scale,int max,double *inset,double *bandWidth,double *alpha) {
+    if(max<1 || !inset || !bandWidth || !alpha)return 0;
+    core=core>0.?core:0.;
+    soft=soft>0.?soft:0.;
+    level=level>1.?1.:level>0.?level:0.;
+    if(level<=0.)soft=0.;
+    if(core<=0. && soft<=0.)return 0;
+    if(!(scale>0.))scale=3.;
+    if(max>WXG_RIM_GLOW_MAX_BANDS)max=WXG_RIM_GLOW_MAX_BANDS;
+    double hi[WXG_RIM_SOFT_MAX_STEPS+1],light[WXG_RIM_SOFT_MAX_STEPS+1];int m=0;
+    if(core>0.){hi[m]=core;light[m]=core;++m;}
+    if(soft>0.) {
+        double steps=ceil(soft*scale*4.-1e-9);
+        int n=steps<1.?1:steps>(double)WXG_RIM_SOFT_MAX_STEPS-1?WXG_RIM_SOFT_MAX_STEPS-1:(int)steps;
+        for(int k=0;k<n;k++){double a=core+soft*k/n,b=k+1==n?core+soft:core+soft*(k+1)/n;hi[m]=b;light[m]=WXGRimSoftIntegral(a,b,core,soft,level);++m;}
+    }
     while(m>max) {
         int best=0;double bestGap=-1.;
         for(int i=0;i+1<m;i++) {
@@ -111,81 +120,6 @@ static inline int WXGRimSolveSteps(double *hi,double *light,int m,int max,double
         alpha[k]=a<0.?0.:a>1.?1.:a;
     }
     return m;
-}
-static inline int WXGRimSoftBands(double core,double soft,double level,double scale,int max,double *inset,double *bandWidth,double *alpha) {
-    if(max<1 || !inset || !bandWidth || !alpha)return 0;
-    core=core>0.?core:0.;
-    soft=soft>0.?soft:0.;
-    level=level>1.?1.:level>0.?level:0.;
-    if(level<=0.)soft=0.;
-    if(core<=0. && soft<=0.)return 0;
-    if(!(scale>0.))scale=3.;
-    if(max>WXG_RIM_GLOW_MAX_BANDS)max=WXG_RIM_GLOW_MAX_BANDS;
-    double hi[WXG_RIM_SOFT_MAX_STEPS+1],light[WXG_RIM_SOFT_MAX_STEPS+1];int m=0;
-    if(core>0.){hi[m]=core;light[m]=core;++m;}
-    if(soft>0.) {
-        double steps=ceil(soft*scale*4.-1e-9);
-        int n=steps<1.?1:steps>(double)WXG_RIM_SOFT_MAX_STEPS-1?WXG_RIM_SOFT_MAX_STEPS-1:(int)steps;
-        for(int k=0;k<n;k++){double a=core+soft*k/n,b=k+1==n?core+soft:core+soft*(k+1)/n;hi[m]=b;light[m]=WXGRimSoftIntegral(a,b,core,soft,level);++m;}
-    }
-    return WXGRimSolveSteps(hi,light,m,max,inset,bandWidth,alpha);
-}
-/* FIX116 (user: 普通 / 取自背景 still end in a line edge that is too solid,
-   however the glow is set): the line as a blurred stroke clipped by the
-   glass, as Kyant's Backdrop draws its highlight (a stroke twice the width
-   centred on the outline, a blur of half the width, clipped to the inside).
-   The FIX109 B profile across the edge (the line `core` pt at full level,
-   then the glow from `level`) is continued past the outline at its level
-   there and convolved with a Gaussian of `blur` pt (its sigma); only the
-   inside is drawn. So the outline stays as sharp as before (nothing is
-   drawn outside it, the light there is still about the line's), while the
-   line's inner edge becomes an erf roll-off centred on `core` (half the
-   level there): no step between the line and the glow, no plateau ending in
-   a hard edge. Closed form (the glow is a Gaussian too, so its blur is a
-   Gaussian times a difference of normal CDFs). blur <= 0.001 pt: exactly
-   WXGRimSoftBands. */
-#define WXG_RIM_BLUR_REACH 3.
-static inline double WXGRimNormalCDF(double x) {return .5*erfc(-x*.70710678118654752440);}
-static inline double WXGRimBlurredLevel(double t,double core,double soft,double level,double blur) {
-    core=core>0.?core:0.;soft=soft>0.?soft:0.;
-    level=level>1.?1.:level>0.?level:0.;
-    if(!(blur>0.))blur=1e-6;
-    double v=core>0.?WXGRimNormalCDF((core-t)/blur):level*WXGRimNormalCDF(-t/blur);
-    if(soft>0. && level>0.) {
-        double a2=soft*soft/(2.*WXG_RIM_SOFT_FALLOFF),s2=blur*blur,sum=a2+s2;
-        double mean=(core*s2+t*a2)/sum,dev=sqrt(a2*s2/sum),d=t-core;
-        v+=level*sqrt(a2/sum)*exp(-d*d/(2.*sum))*(WXGRimNormalCDF((core+soft-mean)/dev)-WXGRimNormalCDF((core-mean)/dev));
-    }
-    return v<0.?0.:v>1.?1.:v;
-}
-/* The bands: quarter-device-pixel steps from the outline to where the light
-   is gone (core + soft + 3 sigma, at most `limit` pt when > 0: half the
-   glass's short side), each the level's average over it (Simpson), merged
-   and solved as WXGRimSoftBands. */
-static inline int WXGRimBlurredBands(double core,double soft,double level,double blur,double limit,double scale,int max,double *inset,double *bandWidth,double *alpha) {
-    if(!(blur>.001))return WXGRimSoftBands(core,soft,level,scale,max,inset,bandWidth,alpha);
-    if(max<1 || !inset || !bandWidth || !alpha)return 0;
-    core=core>0.?core:0.;
-    soft=soft>0.?soft:0.;
-    level=level>1.?1.:level>0.?level:0.;
-    if(level<=0.)soft=0.;
-    if(core<=0. && (soft<=0. || level<=0.))return 0;
-    if(!(scale>0.))scale=3.;
-    if(max>WXG_RIM_GLOW_MAX_BANDS)max=WXG_RIM_GLOW_MAX_BANDS;
-    double reach=core+soft+WXG_RIM_BLUR_REACH*blur;
-    if(limit>0. && reach>limit)reach=limit;
-    if(!(reach>0.))return 0;
-    double hi[WXG_RIM_SOFT_MAX_STEPS+1],light[WXG_RIM_SOFT_MAX_STEPS+1];
-    double steps=ceil(reach*scale*4.-1e-9);
-    int n=steps<1.?1:steps>(double)WXG_RIM_SOFT_MAX_STEPS?WXG_RIM_SOFT_MAX_STEPS:(int)steps;
-    for(int k=0;k<n;k++) {
-        double a=reach*k/n,b=k+1==n?reach:reach*(k+1)/n,h=b-a;
-        int q=(int)ceil(h/blur*8.);q=q<2?2:q>32?32:q;q+=q&1;
-        double sum=WXGRimBlurredLevel(a,core,soft,level,blur)+WXGRimBlurredLevel(b,core,soft,level,blur);
-        for(int i=1;i<q;i++)sum+=(i&1?4.:2.)*WXGRimBlurredLevel(a+h*i/q,core,soft,level,blur);
-        hi[k]=b;light[k]=sum*h/(3.*q);
-    }
-    return WXGRimSolveSteps(hi,light,n,max,inset,bandWidth,alpha);
 }
 /* FIX109: nested one-colour bands at `opacity` without group opacity: every
    step's composite level multiplied by it, the alphas solved again
