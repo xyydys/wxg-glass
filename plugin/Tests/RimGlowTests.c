@@ -90,7 +90,61 @@ int main(void) {
     CHECK(WXGRimSoftBands(0,0,.5,3,4,inset,width,alpha)==0 && WXGRimSoftBands(0,1,0,3,4,inset,width,alpha)==0 && WXGRimSoftBands(1,1,.5,3,0,inset,width,alpha)==0,"soft: nothing");
     CHECK(WXGRimSoftBands(1,0,.5,3,20,inset,width,alpha)==1 && alpha[0]==1,"no glow: the plain line");
 
+    /* FIX116: the line as a blurred stroke clipped by the glass
+       (WXGRimBlurredBands). blur 0: exactly the FIX109 B bands. The closed
+       form equals the brute-force convolution of the extended profile; the
+       outline keeps the line's level, half of it at the line's width, nothing
+       past the reach; the drawn steps are the level's averages, never
+       brighter inward, no jump between neighbours like the line / glow step,
+       and the total light is kept. */
+    {
+        double i2[WXG_RIM_GLOW_MAX_BANDS],w2[WXG_RIM_GLOW_MAX_BANDS],a2[WXG_RIM_GLOW_MAX_BANDS];
+        for(size_t c=0;c<sizeof cases/sizeof *cases;c++) {
+            double core=cases[c][0],soft=cases[c][1],level=cases[c][2],sc=cases[c][3];
+            int m1=WXGRimSoftBands(core,soft,level,sc,WXG_RIM_GLOW_MAX_BANDS,inset,width,alpha);
+            int m2=WXGRimBlurredBands(core,soft,level,0,0,sc,WXG_RIM_GLOW_MAX_BANDS,i2,w2,a2);
+            int same=m1==m2;
+            for(int j=0;same && j<m1;j++)same=inset[j]==i2[j] && width[j]==w2[j] && alpha[j]==a2[j];
+            CHECK(same,"blur 0 is the FIX109 B line exactly (%zu)",c);
+        }
+        double blurs[]={.15,.35,.8};
+        for(size_t c=0;c<sizeof cases/sizeof *cases;c++)for(size_t b=0;b<3;b++) {
+            double core=cases[c][0],soft=cases[c][1],level=cases[c][2],sc=cases[c][3],blur=blurs[b];
+            /* brute force: the profile (level past the outline) times the Gaussian */
+            for(double t=0;t<core+soft+3*blur;t+=.137) {
+                double sum=0,du=.0005;
+                for(double u=t-8*blur;u<t+8*blur;u+=du) {
+                    double x=u+du*.5,p=x<core?(core>0?1:level):(soft>0 && x<core+soft?level*exp(-WXG_RIM_SOFT_FALLOFF*((x-core)/soft)*((x-core)/soft)):0);
+                    if(x<0)p=core>0?1:level;
+                    sum+=p*exp(-(t-x)*(t-x)/(2*blur*blur))*du;
+                }
+                sum/=blur*sqrt(2*M_PI);
+                CHECK(fabs(sum-WXGRimBlurredLevel(t,core,soft,level,blur))<2e-3,"closed form %zu/%.2f at %.3f (%.5f %.5f)",c,blur,t,sum,WXGRimBlurredLevel(t,core,soft,level,blur));
+            }
+            n=WXGRimBlurredBands(core,soft,level,blur,0,sc,WXG_RIM_GLOW_MAX_BANDS,inset,width,alpha);
+            CHECK(n>=1 && n<=WXG_RIM_GLOW_MAX_BANDS,"blurred %zu/%.2f: count %d",c,blur,n);
+            double reach=core+soft+WXG_RIM_BLUR_REACH*blur;
+            CHECK(fabs(width[n-1]-reach)<1e-9 && WXGRimGlowComposite(width,alpha,n,reach+.01)==0,"blurred %zu/%.2f: ends at the reach",c,blur);
+            double previous=2,sum=0,start=0,jump=0;
+            for(int j=0;j<n;j++) {
+                CHECK(inset[j]==0 && width[j]>start && alpha[j]>=0 && alpha[j]<=1,"blurred band %d",j);
+                double shown=WXGRimGlowComposite(width,alpha,n,(start+width[j])*.5);
+                CHECK(shown<=previous+1e-9,"blurred %zu/%.2f: not brighter inward (%d)",c,blur,j);
+                if(j)jump=fmax(jump,previous-shown);
+                previous=shown;sum+=shown*(width[j]-start);start=width[j];
+            }
+            double total=0;for(double t=0;t<reach;t+=.0005)total+=WXGRimBlurredLevel(t+.00025,core,soft,level,blur)*.0005;
+            CHECK(fabs(sum-total)<2e-3,"blurred %zu/%.2f: total light (%.5f %.5f)",c,blur,sum,total);
+            if(core>=2*blur)CHECK(WXGRimBlurredLevel(0,core,soft,level,blur)>.97,"blurred %zu/%.2f: the outline at the line's level",c,blur);
+            if(core>0 && soft==0)CHECK(fabs(WXGRimBlurredLevel(core,core,0,level,blur)-.5)<1e-9,"blurred %zu/%.2f: half at the line's width",c,blur);
+            if(core>0 && blur>=.35 && level<.999)CHECK(jump<1-level,"blurred %zu/%.2f: no step between line and glow (%.3f)",c,blur,jump);
+        }
+        n=WXGRimBlurredBands(1,.8,.5,.35,1.2,3,WXG_RIM_GLOW_MAX_BANDS,inset,width,alpha);
+        CHECK(n>=1 && fabs(width[n-1]-1.2)<1e-9,"limited to half the short side");
+        CHECK(WXGRimBlurredBands(0,0,.5,.3,0,3,20,inset,width,alpha)==0 && WXGRimBlurredBands(0,1,0,.3,0,3,20,inset,width,alpha)==0 && WXGRimBlurredBands(1,1,.5,.3,0,3,0,inset,width,alpha)==0,"blurred: nothing");
+    }
+
     if(failures){printf("RimGlowTests: %d failure(s)\n",failures);return 1;}
-    printf("PASS: iOS 27-like rim (FIX86/87): along the outline full where it faces the highlight angle (0 top / bottom, 90 ends, diagonals), end level across it, monotonic, sharpness, symmetric; across the edge about 1 px steps as nested bands from the outline, composited to the curve at each step's middle, fading inward, scale independent, capped. FIX109 B soft line: the line solid, a Gaussian glow inside it in quarter-pixel steps, each its average, total light exact, opacity folded into the alphas.\n");
+    printf("PASS: iOS 27-like rim (FIX86/87): along the outline full where it faces the highlight angle (0 top / bottom, 90 ends, diagonals), end level across it, monotonic, sharpness, symmetric; across the edge about 1 px steps as nested bands from the outline, composited to the curve at each step's middle, fading inward, scale independent, capped. FIX109 B soft line: the line solid, a Gaussian glow inside it in quarter-pixel steps, each its average, total light exact, opacity folded into the alphas. FIX116 blurred line: blur 0 identical, closed form = convolution, crisp outline, half at the width, no line / glow step, total light kept.\n");
     return 0;
 }

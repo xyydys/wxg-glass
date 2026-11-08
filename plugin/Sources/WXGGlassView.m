@@ -730,11 +730,14 @@ static WXGRimBands WXGRimFullBand(double w) {WXGRimBands b;b.count=1;b.inset[0]=
 // the shape's width at `softLevel` (WXGRimSoftBands).
 @property(nonatomic) BOOL uniform;
 @property(nonatomic) double softCore,softLevel;
+// FIX116: the line and its glow blurred (sigma, pt), clipped at the outline
+// (WXGRimBlurredBands); 0 = FIX109 B's line exactly.
+@property(nonatomic) double softBlur;
 @end
 @implementation WXGRimGlowLayer {
     WXGRimLevelLayer *_level;
     NSMutableArray<CALayer *> *_bands;
-    double _key[10];
+    double _key[11];
 }
 - (instancetype)init {
     if((self=[super init])) {
@@ -749,7 +752,9 @@ static WXGRimBands WXGRimFullBand(double w) {WXGRimBands b;b.count=1;b.inset[0]=
     _uniform=uniform;self.mask=uniform?nil:_level;_key[9]=-1;   // laid out again
 }
 - (void)applyShape:(WXGRimGlowShape)shape bounds:(CGRect)bounds radius:(CGFloat)r scale:(CGFloat)scale {
-    if(shape.alpha<.002 || shape.width<.01){self.hidden=YES;return;}
+    // FIX116: the uniform line blurred is drawn with no glow too.
+    BOOL blurredLine=_uniform && _softBlur>.001 && _softCore>.01;
+    if(shape.alpha<.002 || (shape.width<.01 && !blurredLine)){self.hidden=YES;return;}
     self.hidden=NO;
     // FIX109: the uniform (普通) fade takes its opacity into the bands' own
     // alphas (one colour, so exact): no group opacity, no offscreen pass.
@@ -760,7 +765,7 @@ static WXGRimBands WXGRimFullBand(double w) {WXGRimBands b;b.count=1;b.inset[0]=
     // Never past the middle of the shorter side.
     double width=MIN(shape.width,MIN(size.width,size.height)*.5);
     double core=_uniform?MIN(_softCore,MIN(size.width,size.height)*.5):0,soft=_uniform?MAX(0.,MIN(shape.width,MIN(size.width,size.height)*.5-core)):0;
-    double key[10]={size.width,size.height,r,scale,width,_uniform?_softCore*1000+_softLevel:shape.falloff,shape.red,shape.green,shape.blue,_uniform?2+opacity:1};
+    double key[11]={size.width,size.height,r,scale,width,_uniform?_softCore*1000+_softLevel:shape.falloff,shape.red,shape.green,shape.blue,_uniform?2+opacity:1,_uniform?_softBlur:0};
     if(!memcmp(key,_key,sizeof key))return;
     memcpy(_key,key,sizeof key);
     self.frame=bounds;
@@ -769,7 +774,7 @@ static WXGRimBands WXGRimFullBand(double w) {WXGRimBands b;b.count=1;b.inset[0]=
     // otherwise reach under the top / bottom edges' full level.
     if(!_uniform)[_level layoutForBounds:(CGRect){CGPointZero,size} radius:MAX(r,(CGFloat)MIN(width,MIN(size.width,size.height)*.5))];
     WXGRimBands bands;
-    bands.count=_uniform?WXGRimSoftBands(core,soft,_softLevel,scale,WXG_RIM_GLOW_MAX_BANDS,bands.inset,bands.width,bands.alpha)
+    bands.count=_uniform?WXGRimBlurredBands(core,soft,_softLevel,_softBlur,MIN(size.width,size.height)*.5,scale,WXG_RIM_GLOW_MAX_BANDS,bands.inset,bands.width,bands.alpha)
                         :WXGRimGlowBands(width,shape.falloff,scale,WXG_RIM_GLOW_MAX_BANDS,bands.inset,bands.width,bands.alpha);
     if(_uniform)WXGRimScaleBands(bands.alpha,bands.count,opacity);
     NSUInteger used=WXGRimPlaceBands(self,_bands,0,&bands,size,r,shape.red,shape.green,shape.blue,scale);
@@ -789,7 +794,11 @@ static NSHashTable *WXGRimViews;            // FIX74: every rim, for the export
 // right inside it: from `level` of the line down to nothing over `width` pt
 // (0 = the plain line), the same along the whole outline, under the line's
 // 左下 / 右上 fade.
-- (void)configureSoftWidth:(CGFloat)width level:(CGFloat)level;
+// FIX116: `blur` (pt, the sigma): the line (and its glow) as a blurred
+// stroke clipped at the outline, as Kyant's Backdrop draws its highlight:
+// the outline stays sharp, the line's inner edge rolls off instead of
+// ending in a hard step; drawn so even without the glow. 0 = as before.
+- (void)configureSoftWidth:(CGFloat)width level:(CGFloat)level blur:(CGFloat)blur;
 // FIX76: the line is drawn by the colour-sampling view above; this one keeps
 // the inner shadow only.
 @property(nonatomic) BOOL lineHidden;
@@ -814,6 +823,7 @@ static NSHashTable *WXGRimViews;            // FIX74: every rim, for the export
     WXGRimGlowShape _glowShapes[WXGRimGlowCount];
     NSMutableArray<WXGRimGlowLayer *> *_glowLayers;
     CGFloat _softWidth,_softLevel;   // FIX109 B
+    CGFloat _softBlur;               // FIX116
     WXGRimGlowLayer *_softLayer;
 }
 - (instancetype)init {
@@ -854,13 +864,14 @@ static NSHashTable *WXGRimViews;            // FIX74: every rim, for the export
     if(glow)memcpy(_glowShapes,shapes,sizeof(WXGRimGlowShape)*(size_t)count);
     [self applyLine];[self setNeedsLayout];
 }
-- (void)configureSoftWidth:(CGFloat)width level:(CGFloat)level {
+- (void)configureSoftWidth:(CGFloat)width level:(CGFloat)level blur:(CGFloat)blur {
     width=width>.01 && level>.005?width:0;
-    if(fabs(width-_softWidth)<.0005 && fabs(level-_softLevel)<.0005)return;
-    _softWidth=width;_softLevel=level;
+    blur=blur>.001?blur:0;
+    if(fabs(width-_softWidth)<.0005 && fabs(level-_softLevel)<.0005 && fabs(blur-_softBlur)<.0005)return;
+    _softWidth=width;_softLevel=level;_softBlur=blur;
     [self applyLine];[self setNeedsLayout];
 }
-- (BOOL)soft {return !_glow && _softWidth>0;}
+- (BOOL)soft {return !_glow && (_softWidth>0 || (_softBlur>0 && _width>.01));}
 - (BOOL)stepped {return !_glow && ![self soft] && _detailed && WXGRimStepped(_width,_detail.outer,_detail.inner,_detail.edge);}
 // Plain line (no details, or nothing to shade): the view's own border, as in
 // FIX72. Shaded sides: the bands in `_lineStack` instead.
@@ -885,7 +896,7 @@ static NSHashTable *WXGRimViews;            // FIX74: every rim, for the export
     // FIX109: an inward fade wider than the corner radius: the corner windows
     // of the 左下 / 右上 fade at least as large (as the iOS 27 level's), or the
     // light deeper than the radius near a corner fell under an edge's level.
-    [_fadeMask layoutForBounds:self.bounds radius:[self soft]?MAX(r,MIN(_width+_softWidth,MIN(w,h)*.5)):r];
+    [_fadeMask layoutForBounds:self.bounds radius:[self soft]?MAX(r,MIN(_width+_softWidth+WXG_RIM_BLUR_REACH*_softBlur,MIN(w,h)*.5)):r];
     CGFloat scale=self.window.screen.scale?:UIScreen.mainScreen.scale;
     [self layoutShadowRadius:r scale:scale];
     [self layoutLineRadius:r scale:scale];
@@ -903,7 +914,7 @@ static NSHashTable *WXGRimViews;            // FIX74: every rim, for the export
     }
     CGFloat cr=1,cg=1,cb=1,ca=0;
     if(![_color getRed:&cr green:&cg blue:&cb alpha:&ca]){cr=cg=cb=1;ca=0;}
-    _softLayer.softCore=_width;_softLayer.softLevel=WXGClamp(_softLevel,0,1);
+    _softLayer.softCore=_width;_softLayer.softLevel=WXGClamp(_softLevel,0,1);_softLayer.softBlur=_softBlur;
     WXGRimGlowShape shape={_softWidth,1,1,1,0,cr,cg,cb,ca};
     [_softLayer applyShape:shape bounds:self.bounds radius:r scale:scale];
 }
@@ -998,7 +1009,7 @@ static NSHashTable *WXGRimViews;            // FIX74: every rim, for the export
              @"fade":@(_fadeMask.fade),@"size":@[@(round(self.bounds.size.width*10)/10),@(round(self.bounds.size.height*10)/10)],
              @"cornerRadius":@(round(self.layer.cornerRadius*10)/10),@"lineHidden":@(_lineHidden),@"onScreen":@(self.window!=nil && !self.hidden),
              @"glow":_glow?[self glowEvidence]:@NO,
-             @"softGlow":[self soft]?@{@"width":@(round(_softWidth*100)/100),@"level":@(round(_softLevel*100)/100),@"bands":@(_softLayer.bandsShown)}:@NO};
+             @"softGlow":[self soft]?@{@"width":@(round(_softWidth*100)/100),@"level":@(round(_softLevel*100)/100),@"blur":@(round(_softBlur*100)/100),@"bands":@(_softLayer.bandsShown)}:@NO};
 }
 @end
 // FIX76/78: the line coloured from what is behind the glass. The view's own
@@ -1030,7 +1041,7 @@ static NSHashTable *WXGRimTintViews;
 - (BOOL)configureWidth:(CGFloat)width alpha:(CGFloat)alpha outer:(CGFloat)outer inner:(CGFloat)inner edge:(CGFloat)edge
              overBlack:(BOOL)overBlack fade:(CGFloat)fade sample:(const WXGRimSample *)sample;
 // FIX109 C: the sampled line with a soft glow inside it (0 = the plain line); set before configuring.
-- (void)setSoftWidth:(CGFloat)width level:(CGFloat)level;
+- (void)setSoftWidth:(CGFloat)width level:(CGFloat)level blur:(CGFloat)blur;   // FIX116: blurred, as WXGRimView's
 - (NSDictionary *)tintEvidence;
 @end
 @implementation WXGRimTintView {
@@ -1041,6 +1052,7 @@ static NSHashTable *WXGRimTintViews;
     NSString *_appliedGroup;
     CGFloat _width,_alpha,_outer,_inner,_edge,_appliedScale,_appliedBlur;
     CGFloat _softWidth,_softLevel;   // FIX109 C: the line with a glow inside it (WXGRimSoftBands)
+    CGFloat _softBlur;               // FIX116: blurred (WXGRimBlurredBands)
     WXGRimSample _sample;
     BOOL _on,_overBlack,_matrixApplied,_appliedPlus,_blendSet;
     WXGRimMatrix _appliedMatrix;
@@ -1062,10 +1074,11 @@ static NSHashTable *WXGRimTintViews;
     return self;
 }
 - (BOOL)live {Class cls=WXGBackdropLayerClass();return cls && [self.layer isKindOfClass:cls];}
-- (void)setSoftWidth:(CGFloat)width level:(CGFloat)level {
+- (void)setSoftWidth:(CGFloat)width level:(CGFloat)level blur:(CGFloat)blur {
     width=width>.01 && level>.005?width:0;
-    if(fabs(width-_softWidth)<.0005 && fabs(level-_softLevel)<.0005)return;
-    _softWidth=width;_softLevel=level;if(_on)[self setNeedsLayout];
+    blur=blur>.001?blur:0;
+    if(fabs(width-_softWidth)<.0005 && fabs(level-_softLevel)<.0005 && fabs(blur-_softBlur)<.0005)return;
+    _softWidth=width;_softLevel=level;_softBlur=blur;if(_on)[self setNeedsLayout];
 }
 - (BOOL)configureWidth:(CGFloat)width alpha:(CGFloat)alpha outer:(CGFloat)outer inner:(CGFloat)inner edge:(CGFloat)edge
              overBlack:(BOOL)overBlack fade:(CGFloat)fade sample:(const WXGRimSample *)sample {
@@ -1096,13 +1109,14 @@ static NSHashTable *WXGRimTintViews;
     // the glow, the line then the glow's steps (the mask's alpha; the colour
     // is the backdrop's).
     WXGRimBands steps;
-    if(_softWidth>0) {
+    BOOL soft=_softWidth>0 || (_softBlur>0 && _width>.01);
+    if(soft) {
         CGFloat half=MIN(w,h)*.5,core=MIN(_width,half);
-        steps.count=WXGRimSoftBands(core,MAX(0,MIN(_softWidth,half-core)),_softLevel,scale,WXG_RIM_GLOW_MAX_BANDS,steps.inset,steps.width,steps.alpha);
+        steps.count=WXGRimBlurredBands(core,MAX(0,MIN(_softWidth,half-core)),_softLevel,_softBlur,half,scale,WXG_RIM_GLOW_MAX_BANDS,steps.inset,steps.width,steps.alpha);
     }else steps=WXGRimAlphaBands(_width,_outer,_inner,_edge);
     NSUInteger used=WXGRimPlaceBands(_ringHolder,_bands,0,&steps,bounds.size,r,1,1,1,scale);
     WXGRimHideBands(_bands,used);_bandsShown=used;
-    [_fadeMask layoutForBounds:bounds radius:_softWidth>0?MAX(r,MIN(_width+_softWidth,MIN(w,h)*.5)):r];
+    [_fadeMask layoutForBounds:bounds radius:soft?MAX(r,MIN(_width+_softWidth+WXG_RIM_BLUR_REACH*_softBlur,MIN(w,h)*.5)):r];
     _ringHolder.opacity=(float)WXGClamp(_alpha,0,1);
 }
 - (void)applyStyle {
@@ -1976,7 +1990,10 @@ NSDictionary *WXGDropShadowEvidence(void) {
     // colour-sampling view, or by this line where the glass has no backdrop
     // of its own (lightweight: settings cards, bubbles).
     CGFloat softWidth=[c rimSoftWidthForScope:rimScope dark:rimDark],softLevel=[c rimSoftLevelForScope:rimScope dark:rimDark];
-    [_bodyRim configureSoftWidth:(style==WXGRimStyleClassic || (sampling && _lightweight))?softWidth:0 level:softLevel];
+    // FIX116: 普通 / 取自背景 as a blurred stroke clipped at the outline.
+    CGFloat edgeBlur=[c rimEdgeSoftnessForScope:rimScope];
+    BOOL bodySoftLine=style==WXGRimStyleClassic || (sampling && _lightweight);
+    [_bodyRim configureSoftWidth:bodySoftLine?softWidth:0 level:softLevel blur:bodySoftLine?edgeBlur:0];
     // FIX113 X (user: the lens' border set like every other glass's, on its
     // own): the 透镜 range of 边框与渐隐 (the dock's lens and the segment
     // bar's), any of the three styles with its own values, shown as the lens
@@ -1995,7 +2012,9 @@ NSDictionary *WXGDropShadowEvidence(void) {
         [_lensRim configureGlows:lensGlow?lensGlows:NULL count:lensGlow?WXGRimGlowCount:0];
     }
     CGFloat lensSoftWidth=[c rimSoftWidthForScope:rimLens dark:rimDark],lensSoftLevel=[c rimSoftLevelForScope:rimLens dark:rimDark];
-    [_lensRim configureSoftWidth:(lensStyle==WXGRimStyleClassic || (lensStyle==WXGRimStyleSampled && _lightweight))?lensSoftWidth:0 level:lensSoftLevel];
+    CGFloat lensEdgeBlur=[c rimEdgeSoftnessForScope:rimLens];   // FIX116
+    BOOL lensSoftLine=lensStyle==WXGRimStyleClassic || (lensStyle==WXGRimStyleSampled && _lightweight);
+    [_lensRim configureSoftWidth:lensSoftLine?lensSoftWidth:0 level:lensSoftLevel blur:lensSoftLine?lensEdgeBlur:0];
     // 取自背景: the colour of what the lens shows at its rim (its own capture:
     // the refracted bar and page beneath), through the shared tuning.
     _lensRimTint.frame=_lensRect;_lensRimTint.maximumCornerRadius=_maximumCornerRadius*_lensRect.size.height/MAX(1,_glassRect.size.height);
@@ -2006,7 +2025,7 @@ NSDictionary *WXGDropShadowEvidence(void) {
         if(c.performanceMode)capture=MIN(capture,2);
         WXGRimSample sample={tuning.saturation,tuning.contrast,tuning.gain,tuning.lift,lensRim.brightness,tuning.blur,capture,c.rimSamplePlusLighter,{0,0,0,0}};
         WXGRimOverlayOf(c,rimLens,rimDark,sample.overlay);   // FIX114 J
-        [_lensRimTint setSoftWidth:lensSoftWidth level:lensSoftLevel];
+        [_lensRimTint setSoftWidth:lensSoftWidth level:lensSoftLevel blur:lensEdgeBlur];
         lensTintLine=[_lensRimTint configureWidth:lensRim.width alpha:lensRim.opacity*lensLift outer:0 inner:0 edge:1 overBlack:NO fade:lensRim.fade sample:&sample];
     }else [_lensRimTint configureWidth:0 alpha:0 outer:0 inner:0 edge:1 overBlack:NO fade:0 sample:NULL];
     if(lensStyle==WXGRimStyleSampled && _lightweight) {   // no backdrop of its own: the veil through the same processing
@@ -2056,8 +2075,8 @@ NSDictionary *WXGDropShadowEvidence(void) {
         // Darkened sides: black under the line (the rim view), the sampled
         // colour added over it at each step's level. With plus-lighter on,
         // adding less is already the darker step.
-        BOOL overBlack=c.rimDetails && detail.darken && !sample.plusLighter && softWidth<=0 && WXGRimStepped(rim.width,detail.outer,detail.inner,detail.edge);
-        [_bodyTint setSoftWidth:softWidth level:softLevel];
+        BOOL overBlack=c.rimDetails && detail.darken && !sample.plusLighter && softWidth<=0 && edgeBlur<=.001 && WXGRimStepped(rim.width,detail.outer,detail.inner,detail.edge);
+        [_bodyTint setSoftWidth:softWidth level:softLevel blur:edgeBlur];
         BOOL on=[_bodyTint configureWidth:rim.width alpha:rim.opacity outer:detail.outer inner:detail.inner edge:detail.edge
                                 overBlack:overBlack fade:sideFade sample:&sample];
         _bodyRim.underlayAlpha=on && overBlack?rim.opacity:0;

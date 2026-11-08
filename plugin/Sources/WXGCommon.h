@@ -267,6 +267,7 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (WXGRimGlowShape)rimGlowForScope:(WXGGlassScope)scope index:(NSInteger)index dark:(BOOL)dark;   // FIX89: highlight 0 or 1 (FIX113 Z: of that appearance)
 - (CGFloat)rimSoftWidthForScope:(WXGGlassScope)scope dark:(BOOL)dark;   // FIX109 B: the 普通 line's soft glow (0 = off)
 - (CGFloat)rimSoftLevelForScope:(WXGGlassScope)scope dark:(BOOL)dark;
+- (CGFloat)rimEdgeSoftnessForScope:(WXGGlassScope)scope;   // FIX116: 普通 / 取自背景's line blurred (sigma pt, 0 = off; iOS 27 0)
 - (WXGRimStyle)rimStyleValue;                                // the other glass's
 - (WXGRimStyle)rimStyleForScope:(WXGGlassScope)scope;        // FIX86: each range its own
 // FIX113 O: a range's material, its edge weakening, and a lens's parameters.

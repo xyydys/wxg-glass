@@ -358,6 +358,18 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockDarkRimSampleSoftLevel",'n',.5,0,1,"dockDarkRimSoftLevel",NULL},
     {"bubbleRimSampleSoftLevel",'n',.5,0,1,"bubbleRimSoftLevel",NULL},
     {"bubbleDarkRimSampleSoftLevel",'n',.5,0,1,"bubbleDarkRimSoftLevel",NULL},
+    // FIX116 (user: 普通 / 取自背景 still end in an edge that is too solid):
+    // the line (and its glow) as a blurred stroke clipped at the outline, as
+    // Kyant's Backdrop draws its highlight (WXGRimBlurredBands): the blur's
+    // sigma in pt, per range, both appearances and both styles; 0 = FIX109 B.
+    {"rimEdgeSoftness",'n',.35,0,2,NULL,NULL},
+    {"dockRimEdgeSoftness",'n',.35,0,2,"rimEdgeSoftness",NULL},
+    {"bubbleRimEdgeSoftness",'n',.35,0,2,"rimEdgeSoftness",NULL},
+    {"segmentRimEdgeSoftness",'n',.35,0,2,"dockRimEdgeSoftness",NULL},
+    {"cardRimEdgeSoftness",'n',.35,0,2,"rimEdgeSoftness",NULL},
+    {"lensGlassRimEdgeSoftness",'n',.35,0,2,"dockRimEdgeSoftness",NULL},
+    {"segmentLensGlassRimEdgeSoftness",'n',.35,0,2,"lensGlassRimEdgeSoftness",NULL},
+    {"finderGlassRimEdgeSoftness",'n',.35,0,2,"rimEdgeSoftness",NULL},
     {"lensDispersionWidth",'n',10,1,60,"lensEdgeWidth",NULL},
     {"lensDispersionTopRatio",'n',1,0.1,1,"lensTopEdgeRatio",NULL},
     // FIX88: 平稳背景时加强材质 again (FIX85, removed in FIX86).
@@ -1851,6 +1863,11 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
     scope=[self sharedScope:scope page:WXGSharePageBorder];   // FIX114 L
     BOOL sampled=[self rimStyleForScope:scope]==WXGRimStyleSampled;
     return WXGClamp([self extraNumber:WXGScopedKey(scope,dark,sampled?@"RimSampleSoftLevel":@"RimSoftLevel")],0,1);
+}
+- (CGFloat)rimEdgeSoftnessForScope:(WXGGlassScope)scope {   // FIX116
+    scope=[self sharedScope:scope page:WXGSharePageBorder];
+    if([self rimStyleForScope:scope]==WXGRimStyleGlow)return 0;
+    return WXGClamp([self extraNumber:WXGScopedKey(scope,NO,@"RimEdgeSoftness")],0,2);
 }
 - (NSString *)rimHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {
     scope=[self sharedScope:scope page:WXGSharePageBorder];   // FIX114 L
