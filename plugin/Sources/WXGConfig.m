@@ -642,6 +642,16 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"navOffsetY",'n',0,0,16,NULL,NULL},
     {"lensElasticKeepStrip",'n',1,0,1,NULL,NULL},
     {"segmentLensElasticKeepStrip",'n',1,0,1,"lensElasticKeepStrip",NULL},
+    // FIX122 C (user: only Kyant's 跟随滑动速度形变, in place of the dock's
+    // own, adjustable): WXGKyantElastic.h, his values by default, shared by
+    // the dock and the segment bar (each keeps its own on / off switch).
+    {"lensElasticKyWidth",'n',.75,0,2,NULL,NULL},
+    {"lensElasticKyHeight",'n',.25,0,2,NULL,NULL},
+    {"lensElasticKyLimit",'n',.2,0,.5,NULL,NULL},
+    {"lensElasticKySensitivity",'n',1,0,3,NULL,NULL},
+    {"lensElasticKyDamping",'n',.5,.05,1.5,NULL,NULL},
+    {"lensElasticKyStiffness",'n',300,20,1500,NULL,NULL},
+    {"lensElasticKySymmetric",'b',0,0,1,NULL,NULL},
     // FIX113 Z: iOS 27 rims per appearance: dark mode's own two highlights
     // (…Rim27DarkMode…), first taken from the light mode's (the ones above).
     {"rim27DarkModeHex",'h',0,0,0,"rim27Hex","#FFFFFFFF"},
@@ -1767,6 +1777,15 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
     return scope==WXGGlassScopeDock?_dockMaterialEdgeFade:_materialEdgeFade;
 }
 // FIX113 O: the lens of a range: the segment bar's own, every other the dock's.
+// FIX122 C: Kyant's drag-speed deformation, as set (WXGKyantElastic.h).
+- (WXGKyantElasticParams)kyantElasticParams {
+    WXGKyantElasticParams p;
+    p.width=WXGClamp([self extraNumber:@"lensElasticKyWidth"],0,2);p.height=WXGClamp([self extraNumber:@"lensElasticKyHeight"],0,2);
+    p.limit=WXGClamp([self extraNumber:@"lensElasticKyLimit"],0,.5);p.sensitivity=WXGClamp([self extraNumber:@"lensElasticKySensitivity"],0,3);
+    p.damping=WXGClamp([self extraNumber:@"lensElasticKyDamping"],.05,1.5);p.stiffness=WXGClamp([self extraNumber:@"lensElasticKyStiffness"],20,1500);
+    p.symmetric=[self extraNumber:@"lensElasticKySymmetric"]>.5;
+    return p;
+}
 - (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark {
     WXGLensSettings l;
     if(scope==WXGGlassScopeSegment) {

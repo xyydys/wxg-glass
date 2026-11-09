@@ -1,6 +1,14 @@
 # 交接说明（给新对话）· WeChat Liquid Glass TEST4 · 当前 FIX114 G（用户 01:48 导出的参数作为这版默认；手机上没改过的设置换成新默认、改过的保留；基于 FIX114 F）
 
 
+## FIX122 C（用户 11-09：试了 FIX122 B 的整套 Kyant 底栏“比较卡，效果也不是特别好，还是用我自己的”；回退到 FIX122，只把“跟随滑动速度形变”换成 Kyant 的，参数可调）
+
+- FIX122 B 整个回退（git revert，代码回到 FIX122 一模一样）。
+- 跟随滑动速度形变换成 Kyant 的（`WXGKyantElastic.h`，纯 C，`Tests/KyantElasticTests.c`）：透镜速度 ÷ 整段距离（首尾两格中心之间）= 每秒几段，经弹簧 spring(阻尼 .5, 刚度 300) 平滑，v = 它 / 10 × 灵敏度；宽 ÷ (1 − clamp(v × .75, ±.2))，高 × (1 − clamp(v × .25, ±.2))，以透镜中心缩放，宽不超过底栏 + 两端外包。带方向（他的写法：往右变宽变扁，往左变窄变高），可选“左右对称”（|v|）。
+- 底栏 `WXGDemoBar` 和分组栏 `WXGChatSegments`：开关仍是各自的“跟随滑动速度形变”（`lensElasticOn` / `segmentLensElasticOn`），打开时用 Kyant 的；原来的速度拉长（|vx|/2200）和 `WXGElasticLayoutLimited` / `WXGSegElastic` 不再用（`WXGSegElastic` 留着标 unused，`WXGElasticStep` 照跑但不影响形状）。透镜大小、位置、按压、外扩都是自己的；`lensRestHeight` 为未形变高度，“形变时保持里面上下那条的宽度”照旧。分组栏静止判断加上 Kyant 速度也停了。
+- 参数（底栏和分组栏共用）：`lensElasticKyWidth` .75（0–2）、`lensElasticKyHeight` .25（0–2）、`lensElasticKyLimit` .2（0–.5）、`lensElasticKySensitivity` 1（0–3）、`lensElasticKyDamping` .5（.05–1.5）、`lensElasticKyStiffness` 300（20–1500）、`lensElasticKySymmetric` 关。设置：底栏页“透镜”组和分组页“透镜（按住时）”组，替换掉不再用的“形变时高度变化”。`WXGConfig kyantElasticParams`。
+- 验证：`KyantElasticTests`（默认值、公式、方向、上限、对称、灵敏度 / 系数、速度弹簧过冲与停下、防护）；27 个源文件 `-Werror` 编译、链接通过；C 测试除 main 上本来就编不过的 `LensInsetAlongTests` 外都过。真机未看。
+
 ## FIX122（用户 11-09：“直接用 Kyant 的方式给我新建一个底栏透镜的模式，我现在的透镜不管怎么调参数，内部的折射和上下镂空区域的色散都不对”）
 
 - 新开关“Kyant 透镜模式”（折射强度和色散 › 底栏范围一组；分组页的透镜里也有一组，键 `lensKyant…` / `segmentLensKyant…`，分组的第一次从底栏继承）。默认关，关着时和以前逐位相同（`kyHeight` = 0 走原来的折射带）。

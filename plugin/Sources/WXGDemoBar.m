@@ -381,6 +381,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     CGFloat _tabTextW[WXGDiscreteTabs];
     CGPoint _tabIconCentre[WXGDiscreteTabs];
     WXGDiscreteMetrics _discreteMetrics;
+    WXGKyantElastic _kyElastic;   // FIX122 C: Kyant's drag-speed deformation (its velocity)
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
@@ -1667,6 +1668,9 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     // stops it shaping the lens, in updateGeometry); Reduce Motion disables it.
     if(!reduceMotion)WXGElasticStep(&_elasticMotion,_velocityX,dt);
     else _elasticMotion=(WXGElasticMotion){0};
+    // FIX122 C: Kyant's deformation follows the lens' speed per tab range.
+    if(!reduceMotion)WXGKyantElasticStep(&_kyElastic,_velocityX,[self centerForIndex:3]-[self centerForIndex:0],WXGConfig.shared.kyantElasticParams,dt);
+    else _kyElastic=(WXGKyantElastic){0};
     if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];   // FIX68
     [self updateGeometry]; [self layoutBadges]; [_glass tick:link.timestamp];
 }
@@ -1678,13 +1682,19 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     CGFloat press=WXGClamp(_press,0,1);
     // FIX113 Y: the drag-speed deformation can be off, and its height change limited.
     BOOL elastic=!UIAccessibilityIsReduceMotionEnabled() && [c extraNumber:@"lensElasticOn"]>.5;
-    CGFloat stretch=!elastic?0:WXGClamp(fabs(_velocityX)/2200,0,.10)*press;
+    // FIX122 C: the dock's own lens (size, growth, position, press), then
+    // Kyant's drag-speed deformation (WXGKyantElastic.h) instead of the
+    // dock's own (its speed stretch and WXGElasticLayoutLimited): width and
+    // height scaled about the lens' centre, the width no wider than the bar
+    // and its end wraps.
     WXGDockGeometry g=WXGDockLayout(_materialRect.size.width,_materialRect.size.height,[self selectionGap],
-        _lensX-_materialRect.origin.x,press,c.lensGrowth,stretch,c.barGrowth,c.endWrap);
-    _glass.lensRestHeight=WXGDockLayout(_materialRect.size.width,_materialRect.size.height,[self selectionGap],
-        _lensX-_materialRect.origin.x,press,c.lensGrowth,0,c.barGrowth,c.endWrap).lensHeight;   // FIX113 Y: undeformed
-    if(elastic)g=WXGElasticLayoutLimited(_materialRect.size.width,_materialRect.size.height,[self selectionGap],
-        _lensX-_materialRect.origin.x,press,c.lensGrowth,stretch,_elasticMotion,c.barGrowth,c.endWrap,(float)[c extraNumber:@"lensElasticHeight"]);
+        _lensX-_materialRect.origin.x,press,c.lensGrowth,0,c.barGrowth,c.endWrap);
+    _glass.lensRestHeight=g.lensHeight;   // FIX113 Y: undeformed
+    if(elastic) {
+        double sx=1,sy=1;WXGKyantElasticScale(_kyElastic,c.kyantElasticParams,&sx,&sy);
+        float w=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*(float)c.endWrap),h=(float)(g.lensHeight*sy);
+        g.lensX+=(g.lensWidth-w)*.5f;g.lensY+=(g.lensHeight-h)*.5f;g.lensWidth=w;g.lensHeight=h;
+    }
     CGRect bar=CGRectMake(_materialRect.origin.x+g.barX,_materialRect.origin.y+g.barY,g.barWidth,g.barHeight);
     CGRect lens=CGRectMake(_materialRect.origin.x+g.lensX,_materialRect.origin.y+g.lensY,g.lensWidth,g.lensHeight);
     _glass.barScale=g.scale; _glass.lensAnchorX=_materialRect.origin.x+g.anchorX;
