@@ -1158,88 +1158,85 @@ static NSHashTable *WXGRimTintViews;
              @"size":@[@(round(self.bounds.size.width*10)/10),@(round(self.bounds.size.height*10)/10)]};
 }
 @end
-// FIX122 F iOS 26 边框 (WXGRim26.h): one profile across the edge as two
-// band stacks on the glass' own continuous corners, the falling part
-// (nested from the outline) masked by the rising part (all ending at the
-// same inner edge), and (optionally) along the outline by the level of
-// WXGRimLevelLayer (the iOS 27 rim's: |n . d|^sharpness from its end
-// level). White bands make it a mask (for a background-sampling paint),
-// coloured ones paint it.
-@interface WXGRim26Stack : CALayer
-- (void)applyProfile:(WXGRim26Profile)p levelOn:(BOOL)levelOn angle:(CGFloat)angle endLevel:(CGFloat)endLevel sharpness:(CGFloat)sharpness
-              bounds:(CGRect)bounds radius:(CGFloat)r scale:(CGFloat)scale red:(CGFloat)red green:(CGFloat)green blue:(CGFloat)blue;
-@property(nonatomic,readonly) NSUInteger bandsShown;
-// What changes every frame (a lens lifting): the inner group's opacity, the bands kept.
-@property(nonatomic) CGFloat strength;
-@end
-@implementation WXGRim26Stack {
-    CALayer *_ring,*_fall,*_rise;WXGRimLevelLayer *_level;
-    NSMutableArray<CALayer *> *_fallBands,*_riseBands;double _key[16];
-}
-- (instancetype)init {
-    if((self=[super init])) {
-        _ring=[CALayer layer];_fall=[CALayer layer];_rise=[CALayer layer];_level=[WXGRimLevelLayer layer];
-        [self addSublayer:_ring];[_ring addSublayer:_fall];_fall.mask=_rise;
-        _fallBands=[NSMutableArray array];_riseBands=[NSMutableArray array];_strength=1;
+// FIX122 F / G iOS 26 边框 (WXGRim26.h). Every part is one image computed
+// per pixel with the sketch's formulas (alpha only for a mask, or white /
+// black with that alpha), cached by its shape and size, stretched along
+// straight edges (contentsCenter), so a glass keeps its images while it
+// sits still or grows along its edges; nothing is rebuilt per frame.
+static UIImage *WXGRim26Image(WXGRim26Part part,WXGRim26Shape s,BOOL levelOff,CGSize size,CGFloat r,CGFloat scale,int colour,WXGRim26Canvas *canvasOut) {
+    // colour: -1 an alpha mask, 0 black, 1 white (premultiplied).
+    // Whole points: a lens growing through a press reuses the same few images
+    // (the layer stretches the last fraction).
+    double w=MAX(1,round(size.width)),h=MAX(1,round(size.height)),rq=MAX(.5,round(r));
+    WXGRim26Canvas c=WXGRim26CanvasFor(w,h,rq,WXGRim26PartReach(part,s),scale);
+    if(canvasOut)*canvasOut=c;
+    if(c.columns>1600 || c.rows>1600)return nil;
+    static NSCache<NSString *,UIImage *> *cache;static dispatch_once_t once;
+    dispatch_once(&once,^{cache=[NSCache new];cache.countLimit=96;});
+    NSString *key=[NSString stringWithFormat:@"%d|%d|%d|%.1f|%.1f|%.1f|%.2f|%.3f|%.3f|%.3f|%.2f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f|%.3f",
+                   part,levelOff,colour,c.width,c.height,rq,scale,s.peak,s.outer,s.inner,s.angle,s.endLevel,s.sharpness,s.paleShift,s.paleInner,s.split,s.splitWidth,s.shadowLength];
+    UIImage *hit=[cache objectForKey:key];if(hit)return hit;
+    size_t W=(size_t)c.columns,H=(size_t)c.rows;
+    NSMutableData *alpha=[NSMutableData dataWithLength:W*H];
+    WXGRim26Fill(alpha.mutableBytes,(int)W,c,rq,scale,part,s,levelOff,1);
+    CGImageRef image=NULL;
+    if(colour<0) {
+        CGContextRef ctx=CGBitmapContextCreate(NULL,W,H,8,W,NULL,(CGBitmapInfo)kCGImageAlphaOnly);
+        if(ctx){uint8_t *dst=CGBitmapContextGetData(ctx);size_t stride=CGBitmapContextGetBytesPerRow(ctx);const uint8_t *src=alpha.bytes;
+            for(size_t j=0;j<H;j++)memcpy(dst+j*stride,src+j*W,W);
+            image=CGBitmapContextCreateImage(ctx);CGContextRelease(ctx);}
+    }else {
+        CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
+        CGContextRef ctx=CGBitmapContextCreate(NULL,W,H,8,W*4,space,(CGBitmapInfo)kCGImageAlphaPremultipliedLast);CGColorSpaceRelease(space);
+        if(ctx){uint8_t *dst=CGBitmapContextGetData(ctx);size_t stride=CGBitmapContextGetBytesPerRow(ctx);const uint8_t *src=alpha.bytes;
+            for(size_t j=0;j<H;j++)for(size_t i=0;i<W;i++){uint8_t a=src[j*W+i],v=colour?a:0;uint8_t *q=dst+j*stride+i*4;q[0]=v;q[1]=v;q[2]=v;q[3]=a;}
+            image=CGBitmapContextCreateImage(ctx);CGContextRelease(ctx);}
     }
-    return self;
+    if(!image)return nil;
+    UIImage *result=[UIImage imageWithCGImage:image scale:scale orientation:UIImageOrientationUp];CGImageRelease(image);
+    [cache setObject:result forKey:key];
+    return result;
 }
-- (void)setStrength:(CGFloat)strength {
-    strength=WXGClamp(strength,0,1);
-    if(fabs(strength-_strength)<.0005)return;
-    _strength=strength;
-    [CATransaction begin];[CATransaction setDisableActions:YES];_ring.opacity=(float)strength;[CATransaction commit];
+// The image on a layer of `bounds`, its stretchable middle (2 pt of each
+// straight edge) stretched to the glass' length.
+static void WXGRim26Show(CALayer *layer,UIImage *image,WXGRim26Canvas c,CGRect bounds,CGFloat scale) {
+    if(!image){layer.hidden=YES;return;}
+    layer.hidden=NO;
+    if(layer.contents!=(__bridge id)image.CGImage)layer.contents=(__bridge id)image.CGImage;
+    layer.contentsScale=scale;layer.contentsGravity=kCAGravityResize;
+    CGFloat x=c.stretchX?(CGFloat)(c.edgeX/c.width):0,wx=c.stretchX?(CGFloat)(2./c.width):1;
+    CGFloat y=c.stretchY?(CGFloat)(c.edgeY/c.height):0,wy=c.stretchY?(CGFloat)(2./c.height):1;
+    layer.contentsCenter=CGRectMake(x,y,wx,wy);
+    layer.frame=bounds;
 }
-- (void)applyProfile:(WXGRim26Profile)p levelOn:(BOOL)levelOn angle:(CGFloat)angle endLevel:(CGFloat)endLevel sharpness:(CGFloat)sharpness
-              bounds:(CGRect)bounds radius:(CGFloat)r scale:(CGFloat)scale red:(CGFloat)red green:(CGFloat)green blue:(CGFloat)blue {
-    if(!(p.amplitude>.002) || bounds.size.width<1 || bounds.size.height<1){self.hidden=YES;return;}
-    self.hidden=NO;
-    CGSize size=bounds.size;
-    double key[16]={size.width,size.height,r,scale,p.centre,p.outer,p.inner,p.amplitude,p.exponential,levelOn,angle,endLevel,sharpness,red,green,blue};
-    if(!memcmp(key,_key,sizeof key))return;
-    memcpy(_key,key,sizeof key);
-    self.frame=bounds;_ring.frame=(CGRect){CGPointZero,size};_fall.frame=_ring.bounds;_rise.frame=_ring.bounds;
-    // Never past the middle of the shorter side.
-    double half=MIN(size.width,size.height)*.5,reach=WXGRim26Reach(p);
-    if(reach>half){double k=half/reach;p.centre*=k;p.outer*=k;p.inner*=k;reach=half;}
-    if(levelOn) {
-        _ring.mask=_level;
-        [_level setEndLevel:endLevel sharpness:sharpness angle:angle];
-        [_level layoutForBounds:(CGRect){CGPointZero,size} radius:MAX(r,(CGFloat)MIN(reach,half))];
-    }else _ring.mask=nil;
-    WXGRimBands fall,rise;
-    fall.count=WXGRim26FallBands(p,scale,WXG_RIM_GLOW_MAX_BANDS,fall.inset,fall.width,fall.alpha);
-    rise.count=WXGRim26RiseBands(p,scale,WXG_RIM_GLOW_MAX_BANDS,rise.inset,rise.width,rise.alpha);
-    NSUInteger used=WXGRimPlaceBands(_fall,_fallBands,0,&fall,size,r,red,green,blue,scale);WXGRimHideBands(_fallBands,used);_bandsShown=used;
-    used=WXGRimPlaceBands(_rise,_riseBands,0,&rise,size,r,1,1,1,scale);WXGRimHideBands(_riseBands,used);_bandsShown+=used;
-}
-@end
-// FIX122 F: a colour taken from the background as the user asked: the
-// capture blurred first, then the colour matrix (brightness, saturation),
-// shown through a WXGRim26Stack (its mask). Glass with no backdrop of its
-// own (settings cards, bubbles) gets the veil through the same matrix,
-// as a solid layer under the same mask.
+// FIX122 F / G: the colour of what lies under the rim (its own backdrop
+// group: the glass and the page around it, captured at a low resolution),
+// blurred first, then brightened and saturated (a colour matrix), shown
+// through one image mask. Glass with no backdrop of its own: the veil
+// through the same matrix, as a solid layer under the same mask.
 @interface WXGRim26Paint : UIView
-@property(nonatomic,readonly) WXGRim26Stack *stack;
+@property(nonatomic,readonly) CALayer *maskImage;   // its opacity is the part's strength
 - (void)configureGroup:(NSString *)group blur:(CGFloat)blur matrix:(WXGRimMatrix)m captureScale:(CGFloat)captureScale solid:(UIColor *)solid;
 @end
-@implementation WXGRim26Paint {CALayer *_solid;NSString *_appliedGroup;CGFloat _appliedScale,_appliedBlur;WXGRimMatrix _appliedMatrix;BOOL _matrixApplied,_enabled;}
+@implementation WXGRim26Paint {CALayer *_solid,*_maskRoot;NSString *_appliedGroup;CGFloat _appliedScale,_appliedBlur;WXGRimMatrix _appliedMatrix;BOOL _matrixApplied,_enabled;}
 + (Class)layerClass {return WXGBackdropLayerClass()?:CALayer.class;}
 - (instancetype)initWithFrame:(CGRect)frame {
     if((self=[super initWithFrame:frame])) {
         self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;self.hidden=YES;
         _solid=[CALayer layer];_solid.hidden=YES;[self.layer addSublayer:_solid];
-        _stack=[WXGRim26Stack layer];self.layer.mask=_stack;
+        _maskRoot=[CALayer layer];_maskImage=[CALayer layer];[_maskRoot addSublayer:_maskImage];self.layer.mask=_maskRoot;
+        _enabled=YES;
     }
     return self;
 }
 - (BOOL)live {Class cls=WXGBackdropLayerClass();return cls && [self.layer isKindOfClass:cls];}
+- (void)layoutSubviews {[super layoutSubviews];_maskRoot.frame=self.bounds;_solid.frame=self.bounds;}
 - (void)configureGroup:(NSString *)group blur:(CGFloat)blur matrix:(WXGRimMatrix)m captureScale:(CGFloat)captureScale solid:(UIColor *)solid {
     BOOL useSolid=solid!=nil || ![self live];
     [CATransaction begin];[CATransaction setDisableActions:YES];
-    _solid.frame=self.bounds;_solid.hidden=!useSolid;
+    _maskRoot.frame=self.bounds;_solid.frame=self.bounds;_solid.hidden=!useSolid;
     if(useSolid) {
-        double in[3]={1,1,1},out[3];CGFloat r=1,g=1,b=1,a=1;[solid?:UIColor.whiteColor getRed:&r green:&g blue:&b alpha:&a];
+        double in[3],out[3];CGFloat r=1,g=1,b=1,a=1;[solid?:UIColor.grayColor getRed:&r green:&g blue:&b alpha:&a];
         in[0]=r;in[1]=g;in[2]=b;WXGRimApplyMatrix(m,in,out);
         _solid.backgroundColor=[UIColor colorWithRed:WXGClamp(out[0],0,1) green:WXGClamp(out[1],0,1) blue:WXGClamp(out[2],0,1) alpha:1].CGColor;
     }
@@ -1248,8 +1245,7 @@ static NSHashTable *WXGRimTintViews;
             if(_enabled==useSolid){[self.layer setValue:@(!useSolid) forKey:@"enabled"];_enabled=!useSolid;}
             if(!useSolid) {
                 if(group && ![_appliedGroup isEqual:group]){[self.layer setValue:group forKey:@"groupName"];_appliedGroup=group;}
-                CGFloat screen=self.window.screen.scale?:UIScreen.mainScreen.scale,scale=captureScale>.01?captureScale:screen;
-                if(fabs(scale-_appliedScale)>.01){[self.layer setValue:@(scale) forKey:@"scale"];self.layer.contentsScale=MAX(scale,screen);_appliedScale=scale;}
+                if(fabs(captureScale-_appliedScale)>.005){[self.layer setValue:@(captureScale) forKey:@"scale"];_appliedScale=captureScale;}
                 if(!_matrixApplied || memcmp(&m,&_appliedMatrix,sizeof m) || fabs(_appliedBlur-blur)>.01) {
                     NSMutableArray *filters=[NSMutableArray array];
                     id blurFilter=blur>=.2?WXGMakeBlurFilter(blur):nil;   // blurred first, then the colour
@@ -1267,45 +1263,52 @@ static NSHashTable *WXGRimTintViews;
     [CATransaction commit];
 }
 @end
-// FIX122 F: the two iOS 26 rims and the standalone inner shadow over one
-// glass (its body, or its lens). 自身色: the peak (the background, blurred,
-// brightened and saturated) and on its outer flank a paler copy (less
-// saturated); 叠白叠深: the peak, a thin white band just outside it and a
-// dark band just inside. The shadow: black from the outline, falling
-// exponentially, the same all round. Nothing of the three earlier styles
-// is used.
+// FIX122 F / G: the two iOS 26 rims and the standalone inner shadow over
+// one glass (its body, or its lens). 自身色: the line (the colour under it,
+// blurred, brightened and saturated) and on its outer flank a paler copy;
+// 叠浅叠深: the line, then white over its outer flank and black over its
+// inner flank, each at the line's own level times its share (so the line's
+// colour turns lighter outside and deeper inside, and nothing else). The
+// shadow: black from the outline, falling exponentially, the same all
+// round. Nothing of the three earlier styles is used.
 @interface WXGRim26View : UIView
 @property(nonatomic) CGFloat maximumCornerRadius;
-- (void)configureStyle:(WXGRimStyle)style settings:(WXGRim26Settings)settings group:(NSString *)group captureScale:(CGFloat)captureScale
-                 solid:(UIColor *)solid strength:(CGFloat)strength;
+- (void)configureStyle:(WXGRimStyle)style settings:(WXGRim26Settings)settings solid:(UIColor *)solid strength:(CGFloat)strength;
 - (NSDictionary *)rim26Evidence;
 @end
 @implementation WXGRim26View {
-    WXGRim26Paint *_peak,*_pale;WXGRim26Stack *_white,*_dark,*_shadow;
+    WXGRim26Paint *_line,*_pale;CALayer *_lighter,*_deeper,*_shadow;NSString *_group;
     WXGRimStyle _style;WXGRim26Settings _settings;CGFloat _strength;BOOL _on;
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if((self=[super initWithFrame:frame])) {
         self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;self.hidden=YES;
-        _peak=[[WXGRim26Paint alloc]initWithFrame:CGRectZero];_pale=[[WXGRim26Paint alloc]initWithFrame:CGRectZero];
-        [self addSubview:_peak];[self addSubview:_pale];
-        _white=[WXGRim26Stack layer];_dark=[WXGRim26Stack layer];_shadow=[WXGRim26Stack layer];
-        [self.layer addSublayer:_white];[self.layer addSublayer:_dark];[self.layer addSublayer:_shadow];
+        _group=[NSString stringWithFormat:@"wxg.rim26.%p",self];
+        _shadow=[CALayer layer];[self.layer addSublayer:_shadow];
+        _line=[[WXGRim26Paint alloc]initWithFrame:CGRectZero];_pale=[[WXGRim26Paint alloc]initWithFrame:CGRectZero];
+        [self addSubview:_line];[self addSubview:_pale];
+        _lighter=[CALayer layer];_deeper=[CALayer layer];
+        [self.layer addSublayer:_lighter];[self.layer addSublayer:_deeper];
     }
     return self;
 }
-- (void)configureStyle:(WXGRimStyle)style settings:(WXGRim26Settings)settings group:(NSString *)group captureScale:(CGFloat)captureScale
-                 solid:(UIColor *)solid strength:(CGFloat)strength {
+- (void)configureStyle:(WXGRimStyle)style settings:(WXGRim26Settings)settings solid:(UIColor *)solid strength:(CGFloat)strength {
     BOOL on=(style==WXGRimStyle26Own || style==WXGRimStyle26Overlay) && strength>.002;
     _on=on;self.hidden=!on;
-    if(!on){_peak.hidden=_pale.hidden=YES;return;}
+    if(!on){_line.hidden=_pale.hidden=YES;return;}
+    BOOL changed=style!=_style || memcmp(&settings,&_settings,sizeof settings);
     _style=style;_settings=settings;_strength=WXGClamp(strength,0,1);
-    WXGRimMatrix peak=WXGRimSampleMatrix(settings.saturation,1,settings.gain,0,1);
-    [_peak configureGroup:group blur:settings.blur matrix:peak captureScale:captureScale solid:solid];
+    [_line configureGroup:_group blur:settings.blur matrix:WXGRimSampleMatrix(settings.chroma,1,settings.brightness,0,1) captureScale:settings.captureScale solid:solid];
     BOOL pale=style==WXGRimStyle26Own && settings.paleLevel>.002;
-    if(pale)[_pale configureGroup:group blur:settings.blur matrix:WXGRimSampleMatrix(settings.paleSaturation,1,settings.gain,0,1) captureScale:captureScale solid:solid];
-    _peak.hidden=NO;_pale.hidden=!pale;
-    [self setNeedsLayout];
+    if(pale)[_pale configureGroup:_group blur:settings.blur matrix:WXGRimSampleMatrix(settings.paleSaturation,1,settings.brightness,0,1) captureScale:settings.captureScale solid:solid];
+    _line.hidden=NO;_pale.hidden=!pale;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    float k=(float)(_strength*settings.opacity);
+    _line.maskImage.opacity=k;_pale.maskImage.opacity=(float)(k*settings.paleLevel);
+    _lighter.opacity=(float)(k*settings.lighten);_deeper.opacity=(float)(k*settings.deepen);
+    _shadow.opacity=(float)(_strength*settings.shadowOpacity);
+    [CATransaction commit];
+    if(changed)[self setNeedsLayout];
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -1314,29 +1317,23 @@ static NSHashTable *WXGRimTintViews;
     CGRect b=self.bounds;CGFloat r=MIN(b.size.width,b.size.height)*.5;
     if(_maximumCornerRadius>0)r=MIN(r,_maximumCornerRadius);
     CGFloat scale=self.window.screen.scale?:UIScreen.mainScreen.scale;
-    WXGRim26Settings s=_settings;double k=s.opacity;   // the lens' lift: the stacks' strength (no bands rebuilt as it lifts)
-    _peak.frame=b;_pale.frame=b;
-    WXGRim26Profile line={s.peak,s.outer,s.inner,k,0};
-    [_peak.stack applyProfile:line levelOn:YES angle:s.angle endLevel:s.endLevel sharpness:s.sharpness bounds:b radius:r scale:scale red:1 green:1 blue:1];
-    if(!_pale.hidden) {
-        WXGRim26Profile pale={MAX(0.,s.peak+s.paleShift),s.outer,s.paleInner,k*s.paleLevel,0};
-        [_pale.stack applyProfile:pale levelOn:YES angle:s.angle endLevel:s.endLevel sharpness:s.sharpness bounds:b radius:r scale:scale red:1 green:1 blue:1];
-    }
+    WXGRim26Settings s=_settings;
+    WXGRim26Shape shape={s.peak,s.outer,s.inner,s.angle,s.endLevel,s.sharpness,s.paleShift,s.paleInner,s.split,s.splitWidth,s.shadowLength};
+    _line.frame=b;_pale.frame=b;
+    WXGRim26Canvas c;UIImage *image;
+    image=WXGRim26Image(WXGRim26PartLine,shape,NO,b.size,r,scale,-1,&c);WXGRim26Show(_line.maskImage,image,c,(CGRect){CGPointZero,b.size},scale);
+    if(!_pale.hidden){image=WXGRim26Image(WXGRim26PartPale,shape,NO,b.size,r,scale,-1,&c);WXGRim26Show(_pale.maskImage,image,c,(CGRect){CGPointZero,b.size},scale);}
     BOOL overlay=_style==WXGRimStyle26Overlay;
-    WXGRim26Profile white={MAX(0.,s.peak+s.whiteShift),s.whiteWidth,s.whiteWidth,overlay?k*s.white:0,0};
-    WXGRim26Profile dark={MAX(0.,s.peak+s.darkShift),s.darkWidth,s.darkWidth,overlay?k*s.dark:0,0};
-    WXGRim26Profile shadow={0,0,s.shadowLength,s.shadowOn?s.shadowOpacity:0,1};
-    _peak.stack.strength=_pale.stack.strength=_white.strength=_dark.strength=_shadow.strength=_strength;
-    [_white applyProfile:white levelOn:YES angle:s.angle endLevel:s.endLevel sharpness:s.sharpness bounds:b radius:r scale:scale red:1 green:1 blue:1];
-    [_dark applyProfile:dark levelOn:YES angle:s.angle endLevel:s.endLevel sharpness:s.sharpness bounds:b radius:r scale:scale red:0 green:0 blue:0];
-    [_shadow applyProfile:shadow levelOn:NO angle:0 endLevel:1 sharpness:1 bounds:b radius:r scale:scale red:0 green:0 blue:0];
+    if(overlay && s.lighten>.002){image=WXGRim26Image(WXGRim26PartLighter,shape,NO,b.size,r,scale,1,&c);WXGRim26Show(_lighter,image,c,b,scale);}else _lighter.hidden=YES;
+    if(overlay && s.deepen>.002){image=WXGRim26Image(WXGRim26PartDeeper,shape,NO,b.size,r,scale,0,&c);WXGRim26Show(_deeper,image,c,b,scale);}else _deeper.hidden=YES;
+    if(s.shadowOn && s.shadowOpacity>.002){image=WXGRim26Image(WXGRim26PartShadow,shape,YES,b.size,r,scale,0,&c);WXGRim26Show(_shadow,image,c,b,scale);}else _shadow.hidden=YES;
     [CATransaction commit];
 }
 - (NSDictionary *)rim26Evidence {
     return @{@"on":@(_on),@"style":@(_style),@"peak":@(_settings.peak),@"outer":@(_settings.outer),@"inner":@(_settings.inner),
-             @"gain":@(_settings.gain),@"saturation":@(_settings.saturation),@"blur":@(_settings.blur),@"strength":@(_strength*_settings.opacity),
-             @"bands":@(_peak.stack.bandsShown+_pale.stack.bandsShown+_white.bandsShown+_dark.bandsShown+_shadow.bandsShown),
-             @"shadow":@(_settings.shadowOn),@"size":@[@(round(self.bounds.size.width*10)/10),@(round(self.bounds.size.height*10)/10)]};
+             @"brightness":@(_settings.brightness),@"chroma":@(_settings.chroma),@"blur":@(_settings.blur),@"captureScale":@(_settings.captureScale),
+             @"strength":@(_strength*_settings.opacity),@"lighten":@(_settings.lighten),@"deepen":@(_settings.deepen),@"shadow":@(_settings.shadowOn),
+             @"size":@[@(round(self.bounds.size.width*10)/10),@(round(self.bounds.size.height*10)/10)]};
 }
 @end
 // FIX74: every rim at once, for the diagnostics export (any page).
@@ -2269,22 +2266,18 @@ NSDictionary *WXGDropShadowEvidence(void) {
         [_bodyTint configureWidth:0 alpha:0 outer:0 inner:0 edge:1 overBlack:NO fade:0 sample:NULL];
         _bodyRim.underlayAlpha=0;_bodyRim.lineHidden=rim26;   // FIX122 F: its line off for the iOS 26 rims
     }
-    // FIX122 F: the iOS 26 rims: the glass' own backdrop group (the lens':
-    // the lens rim's group, what the lens shows), or the veil for glass with
-    // no backdrop of its own.
+    // FIX122 F / G: the iOS 26 rims: each samples what lies under it (its own
+    // low-resolution capture), or the veil for glass with no backdrop of its own.
     {
-        CGFloat screen=self.window.screen.scale?:UIScreen.mainScreen.scale,capture=c.syncCaptureScale>.01?c.syncCaptureScale:screen;
-        if(c.performanceMode)capture=MIN(capture,2);
-        BOOL live=WXGEffectiveRenderMode()>=2 && !_lightweight;
+        BOOL live=WXGEffectiveRenderMode()>=2 && !_lightweight;   // the colour sample: each rim its own low-resolution capture
         UIColor *veil=live?nil:(_veilOverride?:WXGColor([c materialHexForScope:scope dark:dark]));
         _body26.frame=drawnBar;_body26.maximumCornerRadius=_bodyRim.maximumCornerRadius;
-        [_body26 configureStyle:rim26?style:WXGRimStyleClassic settings:[c rim26ForScope:rimScope dark:rimDark] group:[self bodyGroup] captureScale:capture solid:veil strength:1];
+        [_body26 configureStyle:rim26?style:WXGRimStyleClassic settings:[c rim26ForScope:rimScope dark:rimDark] solid:veil strength:1];
         WXGGlassScope lens26Scope=[self lensRimScope];WXGRimStyle lens26Style=[c rimStyleForScope:lens26Scope];
         BOOL lens26=(lens26Style==WXGRimStyle26Own || lens26Style==WXGRimStyle26Overlay) && !_lensSuppressed && !CGRectIsEmpty(_lensRect);
         CGFloat lift=MAX(WXGPressedBorderAlpha(_pressAmount),[self lensSettings].rimAtRest);
         _lens26.frame=_lensRect;_lens26.maximumCornerRadius=_maximumCornerRadius*_lensRect.size.height/MAX(1,_glassRect.size.height);
-        [_lens26 configureStyle:lens26?lens26Style:WXGRimStyleClassic settings:[c rim26ForScope:lens26Scope dark:rimDark] group:_lensRimGroup
-                   captureScale:capture solid:veil strength:lift];
+        [_lens26 configureStyle:lens26?lens26Style:WXGRimStyleClassic settings:[c rim26ForScope:lens26Scope dark:rimDark] solid:veil strength:lift];
         if(lens26){_lensRim.lineHidden=YES;[_lensRim configureGlows:NULL count:0];}
     }
     [_bodyRim layoutIfNeeded]; [_lensRim layoutIfNeeded];

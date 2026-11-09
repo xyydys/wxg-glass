@@ -1,32 +1,29 @@
 #ifndef WXG_RIM26_H
 #define WXG_RIM26_H
 #include <math.h>
+#include "WXGOptics.h"
 #include "WXGRimGlow.h"
-/* FIX122 F iOS 26 边框 (user, 11-09, with two zoomed screenshots of an iOS 26
-   button): two new rim styles, standalone (the three earlier ones are left
-   as they are), and a standalone inner shadow.
+/* FIX122 F / G iOS 26 边框 (user, 11-09, with two zoomed screenshots of an
+   iOS 26 button): two rim styles and an inner shadow, standalone (the three
+   earlier styles are left as they are).
 
-   Measured on the screenshots: across the edge the line is not flat but a
-   peak about 0.45 pt inside the outline, rising over ~0.3 pt from outside
-   and falling over ~0.5 pt inward (the inner side about 1.6x the outer);
-   its colour is the background's own, brightened (x1.84) and more
-   saturated (x1.29 over the glass, x1.55 over the page); at equal
-   brightness the outer flank is paler and the inner deeper; along the
-   outline the brightness follows |cos(angle - 135 deg)| (top-left and
-   bottom-right brightest, none at top-right and bottom-left) at a constant
-   width (it fades, it does not narrow). No inner shadow could be measured
-   on that button (the shadow is its own switch).
+   Measured on the screenshots: across the edge the line is a peak about
+   0.45 pt inside the outline, rising over ~0.25 pt (sigma) from outside
+   and falling over ~0.42 pt inward; its colour is what lies under it,
+   brightened (x1.84) and more saturated (x1.29); along the outline the
+   brightness follows |cos(angle - 135 deg)| at a constant width.
 
-   Every profile here is an asymmetric Gaussian across the edge: level
-   exp(-((t - c) / s)^2 / 2) with s = `outer` before its centre c and
-   `inner` after (t: points inward from the outline), or (the shadow) an
-   exponential exp(-t / length). Drawn as the rims before it are: Core
-   Animation borders on the glass' own continuous corners (exactly its
-   shape at every size). A level that rises then falls is the product of
-   two monotone stacks: the falling part (1 out to the centre, then down)
-   as bands nested from the outline (WXGRimSolveSteps), masked by the rising
-   part (0 at the outline up to 1 at the centre) as bands that all end at
-   the same inner edge (WXGRim26RiseBands). */
+   FIX122 G (user, on the phone: far worse than the sketches, "叠浅叠深
+   should be that colour made lighter and deeper, not white and black", and
+   the phone ran hot): F drew each profile as dozens of nested Core
+   Animation borders under nested masks, two full-resolution blurred
+   backdrops per glass. Now every part is one image computed per pixel with
+   exactly the sketch's formulas (and cached), stretched along straight
+   edges (nine-part stretch): the line's mask over one low-resolution,
+   blurred, brightened and saturated sample of what lies under the rim;
+   the lighter / deeper flanks and the shadow as plain white / black
+   images whose alpha is the line's own profile times their share, so they
+   only ever lighten or deepen the line's colour where the line is. */
 typedef struct { double centre,outer,inner,amplitude; int exponential; } WXGRim26Profile;
 static inline double WXGRim26Rise(double t,WXGRim26Profile p) {
     if(p.exponential || t>=p.centre)return 1.;
@@ -39,7 +36,7 @@ static inline double WXGRim26Fall(double t,WXGRim26Profile p) {
     if(t<=p.centre)return 1.;
     double x=(t-p.centre)/s;return exp(-.5*x*x);
 }
-/* The level at depth t, amplitude included (tests, the evidence). */
+/* The level at depth t (points inward from the outline), amplitude included. */
 static inline double WXGRim26Level(double t,WXGRim26Profile p) {
     if(t<0.)return 0.;
     return (p.amplitude<0.?0.:p.amplitude>1.?1.:p.amplitude)*WXGRim26Rise(t,p)*WXGRim26Fall(t,p);
@@ -49,103 +46,85 @@ static inline double WXGRim26Reach(WXGRim26Profile p) {
     double s=p.inner>1e-3?p.inner:1e-3;
     return p.exponential?5.*s:(p.centre>0.?p.centre:0.)+3.*s;
 }
-/* The step levels (each the level's average over its quarter-pixel step,
-   by Simpson) of a monotone part on [a, b): f(t) sampled. */
-static inline double WXGRim26Average(double a,double b,WXGRim26Profile p,int rise) {
-    double h=b-a,sum=0;const int q=8;
-    for(int i=0;i<=q;i++){double t=a+h*i/q,w=(i==0 || i==q)?1.:(i&1?4.:2.);sum+=w*(rise?WXGRim26Rise(t,p):WXGRim26Fall(t,p));}
-    return sum/(3.*q);
-}
-/* Merge and solve, as WXGRimSoftBands does inline: m steps from the
-   outline (step k ends at hi[k], light[k] its level integrated over it);
-   past `max` the two neighbours closest in level are joined; then nested
-   bands from the outline whose composite is each step's average
-   (b_k = 1 - (1 - L_k) / (1 - L_{k+1})). */
-static inline int WXGRim26SolveSteps(double *hi,double *light,int m,int max,double *inset,double *bandWidth,double *alpha) {
-    while(m>max) {
-        int best=0;double bestGap=-1.;
-        for(int i=0;i+1<m;i++) {
-            double a0=i?hi[i-1]:0.,l0=light[i]/(hi[i]-a0),l1=light[i+1]/(hi[i+1]-hi[i]);
-            double gap=fabs(l0-l1);
-            if(bestGap<0. || gap<bestGap){bestGap=gap;best=i;}
+
+/* The parts and their shares across the edge (no strength). */
+typedef enum { WXGRim26PartLine=0,WXGRim26PartPale=1,WXGRim26PartLighter=2,WXGRim26PartDeeper=3,WXGRim26PartShadow=4 } WXGRim26Part;
+typedef struct {
+    double peak,outer,inner;            /* the line */
+    double angle,endLevel,sharpness;    /* along the outline (WXGRimGlowLevel) */
+    double paleShift,paleInner;         /* 自身色: the paler copy's centre (from the peak) and inner fall */
+    double split,splitWidth;            /* 叠浅叠深: where the lighter outer flank turns into the deeper inner one (from the peak), over how much */
+    double shadowLength;
+} WXGRim26Shape;
+static inline double WXGRim26Smooth(double x) {x=x<0.?0.:x>1.?1.:x;return x*x*(3.-2.*x);}
+static inline double WXGRim26Share(WXGRim26Part part,double d,WXGRim26Shape s) {
+    if(d<0.)return 0.;
+    WXGRim26Profile line={s.peak,s.outer,s.inner,1,0};
+    switch(part) {
+        case WXGRim26PartLine:return WXGRim26Level(d,line);
+        case WXGRim26PartPale:{WXGRim26Profile p={s.peak+s.paleShift>0.?s.peak+s.paleShift:0.,s.outer,s.paleInner,1,0};return WXGRim26Level(d,p);}
+        case WXGRim26PartLighter:
+        case WXGRim26PartDeeper: {
+            double c=s.peak+s.split,w=s.splitWidth>.01?s.splitWidth:.01;
+            double outer=1.-WXGRim26Smooth((d-(c-w))/(2.*w));
+            return WXGRim26Level(d,line)*(part==WXGRim26PartLighter?outer:1.-outer);
         }
-        hi[best]=hi[best+1];light[best]+=light[best+1];
-        for(int i=best+1;i+1<m;i++){hi[i]=hi[i+1];light[i]=light[i+1];}
-        --m;
+        case WXGRim26PartShadow:{WXGRim26Profile p={0,0,s.shadowLength,1,1};return WXGRim26Level(d,p);}
     }
-    double lv[WXG_RIM_GLOW_MAX_BANDS+1];
-    for(int k=0;k<m;k++){double a=k?hi[k-1]:0.,b=hi[k],l=b>a?light[k]/(b-a):0.;lv[k]=l>1.?1.:l<0.?0.:l;}
-    lv[m]=0.;
-    for(int k=0;k<m;k++) {
-        inset[k]=0;bandWidth[k]=hi[k];
-        double a=lv[k+1]<1.?1.-(1.-lv[k])/(1.-lv[k+1]):1.;
-        alpha[k]=a<0.?0.:a>1.?1.:a;
-    }
-    return m;
+    return 0.;
 }
-/* The falling part, nested from the outline: level `amplitude` out to the
-   centre, then the fall in quarter-pixel steps to the reach (at most
-   `max` bands; neighbours closest in level merged). */
-static inline int WXGRim26FallBands(WXGRim26Profile p,double scale,int max,double *inset,double *bandWidth,double *alpha) {
-    if(max<1 || !inset || !bandWidth || !alpha)return 0;
-    double amp=p.amplitude<0.?0.:p.amplitude>1.?1.:p.amplitude;
-    if(amp<=0.)return 0;
-    if(!(scale>0.))scale=3.;
-    if(max>WXG_RIM_GLOW_MAX_BANDS)max=WXG_RIM_GLOW_MAX_BANDS;
-    double reach=WXGRim26Reach(p),centre=p.exponential?0.:(p.centre>0.?p.centre:0.);
-    if(!(reach>centre))return 0;
-    double hi[WXG_RIM_SOFT_MAX_STEPS+1],light[WXG_RIM_SOFT_MAX_STEPS+1];int m=0;
-    if(centre>0.){hi[m]=centre;light[m]=amp*centre;++m;}
-    double steps=ceil((reach-centre)*scale*4.-1e-9);
-    int n=steps<1.?1:steps>(double)WXG_RIM_SOFT_MAX_STEPS-1?WXG_RIM_SOFT_MAX_STEPS-1:(int)steps;
-    for(int k=0;k<n;k++) {
-        double a=centre+(reach-centre)*k/n,b=k+1==n?reach:centre+(reach-centre)*(k+1)/n;
-        hi[m]=b;light[m]=amp*WXGRim26Average(a,b,p,0)*(b-a);++m;
-    }
-    return WXGRim26SolveSteps(hi,light,m,max,inset,bandWidth,alpha);
+static inline double WXGRim26PartReach(WXGRim26Part part,WXGRim26Shape s) {
+    WXGRim26Profile line={s.peak,s.outer,s.inner,1,0};
+    if(part==WXGRim26PartShadow){WXGRim26Profile p={0,0,s.shadowLength,1,1};return WXGRim26Reach(p);}
+    if(part==WXGRim26PartPale){WXGRim26Profile p={s.peak+s.paleShift>0.?s.peak+s.paleShift:0.,s.outer,s.paleInner,1,0};
+        double a=WXGRim26Reach(p),b=WXGRim26Reach(line);return a>b?a:b;}
+    return WXGRim26Reach(line);
 }
-/* The rising part: bands that all end at `reach`, band j from step j's
-   start inward; where steps 0..j overlap the composite is the rise's
-   average over step j (c_j = 1 - (1 - R_j) / (1 - R_{j-1})); from the
-   centre on, 1 (the last band solid). Neighbours closest in level merged
-   past `max`. A profile with no rise (exponential, or centre 0) gives one
-   solid band. */
-static inline int WXGRim26RiseBands(WXGRim26Profile p,double scale,int max,double *inset,double *bandWidth,double *alpha) {
-    if(max<1 || !inset || !bandWidth || !alpha)return 0;
-    if(!(scale>0.))scale=3.;
-    if(max>WXG_RIM_GLOW_MAX_BANDS)max=WXG_RIM_GLOW_MAX_BANDS;
-    double reach=WXGRim26Reach(p),centre=p.exponential?0.:(p.centre>0.?p.centre:0.);
-    double lo[WXG_RIM_SOFT_MAX_STEPS+1],level[WXG_RIM_SOFT_MAX_STEPS+1],len[WXG_RIM_SOFT_MAX_STEPS+1];int m=0;
-    if(centre>0.) {
-        double steps=ceil(centre*scale*4.-1e-9);
-        int n=steps<1.?1:steps>(double)WXG_RIM_SOFT_MAX_STEPS-1?WXG_RIM_SOFT_MAX_STEPS-1:(int)steps;
-        for(int k=0;k<n;k++){double a=centre*k/n,b=k+1==n?centre:centre*(k+1)/n;lo[m]=a;len[m]=b-a;level[m]=WXGRim26Average(a,b,p,1);++m;}
-    }
-    lo[m]=centre;len[m]=reach-centre;level[m]=1.;++m;
-    while(m>max) {   /* join the two neighbours closest in level (never the solid last one with a step below it unless needed) */
-        int best=0;double gap=-1.;
-        for(int i=0;i+1<m;i++){double g=fabs(level[i+1]-level[i]);if(gap<0. || g<gap){gap=g;best=i;}}
-        double l=len[best]+len[best+1];
-        level[best]=best+1==m-1?1.:(level[best]*len[best]+level[best+1]*len[best+1])/l;len[best]=l;
-        if(best+1==m-1)level[best]=1.;
-        for(int i=best+1;i+1<m;i++){lo[i]=lo[i+1];len[i]=len[i+1];level[i]=level[i+1];}
-        --m;
-    }
-    double previous=0.;
-    for(int k=0;k<m;k++) {
-        double L=level[k]<previous?previous:level[k]>1.?1.:level[k];
-        inset[k]=lo[k];bandWidth[k]=reach-lo[k];
-        alpha[k]=previous<1.?1.-(1.-L)/(1.-previous):0.;
-        alpha[k]=alpha[k]<0.?0.:alpha[k]>1.?1.:alpha[k];
-        previous=L;
-    }
-    return m;
+
+/* A part's image for a glass of w x h points with corner radius r (a
+   capsule when r reaches half the short side): the corners plus 2 pt of
+   each straight edge, which the layer stretches (nine-part) to any longer
+   size, so a glass growing along its straight edges needs no new image.
+   `ext`: how far the corners' area reaches (the corner, or the part if it
+   reaches further), within half the side. */
+typedef struct { double width,height;int columns,rows;int stretchX,stretchY;double edgeX,edgeY; } WXGRim26Canvas;
+static inline WXGRim26Canvas WXGRim26CanvasFor(double w,double h,double r,double reach,double scale) {
+    WXGRim26Canvas c;
+    double ext=(r>reach?r:reach)+1.;
+    c.stretchX=w>2.*ext+2.;c.stretchY=h>2.*ext+2.;
+    c.width=c.stretchX?2.*ext+2.:w;c.height=c.stretchY?2.*ext+2.:h;
+    c.edgeX=c.stretchX?ext:0.;c.edgeY=c.stretchY?ext:0.;
+    c.columns=(int)ceil(c.width*scale-1e-9);c.rows=(int)ceil(c.height*scale-1e-9);
+    c.columns=c.columns<1?1:c.columns;c.rows=c.rows<1?1:c.rows;
+    return c;
 }
-/* The composite of a band stack at depth t (tests): 1 - prod(1 - alpha) of
-   the bands covering t. */
-static inline double WXGRim26Cover(const double *inset,const double *bandWidth,const double *alpha,int n,double t) {
-    double keep=1.;
-    for(int k=0;k<n;k++)if(t>=inset[k] && t<inset[k]+bandWidth[k])keep*=1.-alpha[k];
-    return 1.-keep;
+/* The field of the canvas' shape at (x, y) from its centre: a capsule as
+   the glass' continuous outline (WXGCapsuleOpticalField), else a rounded
+   rectangle. */
+static inline WXGShapeSample WXGRim26Field(double x,double y,WXGRim26Canvas c,double r) {
+    double half=(c.width<c.height?c.width:c.height)*.5;
+    return r>=half-1e-3?WXGCapsuleOpticalField((float)x,(float)y,(float)c.width,(float)c.height)
+                       :WXGRoundedOpticalField((float)x,(float)y,(float)c.width,(float)c.height,(float)r);
+}
+/* Fills one byte per pixel (0..255): coverage of the outline (anti-aliased),
+   times the level along the outline (unless levelOff), times the part's
+   share across the edge, times `strength`; 2 x 2 samples per pixel. */
+static inline void WXGRim26Fill(unsigned char *bytes,int stride,WXGRim26Canvas c,double r,double scale,WXGRim26Part part,WXGRim26Shape s,
+                                int levelOff,double strength) {
+    strength=strength<0.?0.:strength>1.?1.:strength;
+    for(int j=0;j<c.rows;j++)for(int i=0;i<c.columns;i++) {
+        double sum=0;
+        for(int sy=0;sy<2;sy++)for(int sx=0;sx<2;sx++) {
+            double x=(i+.25+.5*sx)/scale-c.width*.5,y=(j+.25+.5*sy)/scale-c.height*.5;
+            WXGShapeSample f=WXGRim26Field(x,y,c,r);
+            double cover=.5-f.distance*scale;cover=cover<0.?0.:cover>1.?1.:cover;
+            if(cover<=0.)continue;
+            double d=-f.distance;
+            double level=levelOff?1.:WXGRimGlowLevel(f.nx,f.ny,s.angle,s.endLevel,s.sharpness);
+            sum+=cover*level*WXGRim26Share(part,d<0.?0.:d,s);
+        }
+        double v=sum*.25*strength;
+        bytes[j*stride+i]=(unsigned char)lround((v<0.?0.:v>1.?1.:v)*255.);
+    }
 }
 #endif
