@@ -77,6 +77,9 @@ typedef struct {
        toward the centre (normalize(normal + depth x normalize(p - centre))),
        a dome rather than a rim; his dialog, magnifier and control centre. */
     float kyDepth;
+    /* FIX122 E (zero = his): the most the outermost ring may squeeze the
+       picture (WXGKyantOffsetCapped). */
+    float kyRimMax;
 } WXGMeshOptics;
 /* The full inset of the smaller bar, and the inset ramped by `along` (as
    WXGInnerInsetAlong, either sign). */
@@ -219,7 +222,7 @@ static inline void WXGMeshKyantSource(WXGMeshOptics o,float px,float py,float *s
             if(gl>1e-5f){f.nx=gx/gl;f.ny=gy/gl;}
         }
     }
-    float off=WXGKyantOffset(-f.distance,o.kyHeight,o.kyAmount)*s;
+    float off=WXGKyantOffsetCapped(-f.distance,o.kyHeight,o.kyAmount,o.kyRimMax)*s;
     float spread=o.dispersion>0.f?o.dispersion*WXGKyantChannelWeight(o.channel)*WXGKyantDispersionIntensity(x,y,w*.5f,h*.5f):0.f;
     float bx=cx+(px-cx)/zb,by=cy+(py-cy)/zb;   /* FIX122 D: a button's press zoom before (1 for a lens) */
     float rx=bx-f.nx*off*(1.f+spread),ry=by-f.ny*off*(1.f+spread);
@@ -287,7 +290,7 @@ typedef struct { float cx,cy,nx,ny,u; int kind; } WXGContourSample; /* kind 0 st
 static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,float t,float channel) {
     /* FIX122: Kyant's lens; a channel at most WXG_KYANT_CHANNEL_SPAN of the
        shift from green (|I| <= 1), so the rings follow the steepest one. */
-    if(o.kyHeight>0.f)return t+WXGKyantOffset(t,o.kyHeight,o.kyAmount)*(1.f+channel*(o.dispersion>0.f?o.dispersion*WXG_KYANT_CHANNEL_SPAN:0.f));
+    if(o.kyHeight>0.f)return t+WXGKyantOffsetCapped(t,o.kyHeight,o.kyAmount,o.kyRimMax)*(1.f+channel*(o.dispersion>0.f?o.dispersion*WXG_KYANT_CHANNEL_SPAN:0.f));
     float d=-t;
     float off=WXGMeshOffset(o,d,width);   /* FIX113 I, FIX114 I */
     return t+off-channel*o.dispersion*wxgEdgeC(d,dwidth);

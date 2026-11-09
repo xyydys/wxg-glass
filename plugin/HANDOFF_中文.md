@@ -1,6 +1,13 @@
 # 交接说明（给新对话）· WeChat Liquid Glass TEST4 · 当前 FIX114 G（用户 01:48 导出的参数作为这版默认；手机上没改过的设置换成新默认、改过的保留；基于 FIX114 F）
 
 
+## FIX122 E（用户 11-09：“确实比我现有的过渡自然很多；它是不是有一个参数控制往最边上画一圈折射的很细的边？会导致毛刺毛边特别严重，能不能关掉？”）
+
+- 那一圈不是单独的参数，是他曲线本身：circleMap 在轮廓处斜率无穷，最外不到 1 pt 把往里好几 pt 的内容挤成一圈极细的线（取样深度 t + 位移 的变化率趋于无穷），渲染服务器的网格没有过滤，就是毛刺 / 毛边。
+- `WXGKyantOffsetCapped(depth, height, amount, maxCompression)`（`WXGKyantLens.h`）：压缩率 |d(t + 位移)/dt| = (amount/height)·g'(u) − 1 到上限的那一点 u0 = c/√(1+c²)，c = (1 + 上限)·height/amount，外侧换成那一点的切线（C1 连续、无折角），往里仍是他的曲线；上限 0 = 他的原样。3 倍时（他的按钮 amount/height = 2）轮廓处位移约为原来的 0.76。`WXGMeshOptics.kyRimMax`，网格取样和环的排布（`WXGMeshDepthSource`）都用它；进缓存 key / Close。
+- 开关和参数：其余玻璃 `kyantOtherRimFine`（默认关 = 截掉细边）+ `kyantOtherRimMax`（3，1–20）；底栏透镜 `lensKyantRimFine`（默认开 = 和之前一样）+ `lensKyantRimMax`；分组透镜 `segmentLensKyantRimFine / RimMax`（继承底栏）。`WXGLensSettings.kyantRimMax`、`WXGKyantBody.rimMax`（0 = 原样）。点按的过渡透镜同样。
+- 验证：`KyantLensTests`（上限 0 与原曲线逐位相同、切点以内与原曲线一致、切点 C1、压缩率不超过上限而原曲线超过 20、轮廓外保持、网格能建）；27 个源文件 `-Werror` 编译、链接通过；C 测试除 `LensInsetAlongTests`（main 上本来就编不过）外都过。真机未看。
+
 ## FIX122 D（用户 11-09：“就先给其余玻璃这个部分搬过去，我测试一下”——Kyant 的折射带做法，带的内边看不出来）
 
 - 折射强度和色散 › 其余玻璃范围新组“Kyant 折射”：开关 `kyantOtherOn`（默认关；关着时逐位如前），`kyantOtherHeight` 带宽 = 短边 × .25、`kyantOtherAmount` 边缘取样深度 = 短边 × .5（他 LiquidButton 的 lens(12, 24) / 48 dp），`kyantOtherMaxHeight` 带宽上限 24 pt（超过时带宽取上限、深度按比例缩小；他的对话框 24 dp，滚动容器 16 dp），`kyantOtherDepth` depthEffect（默认关，他的大面板用），`kyantOtherDispersion` 色散强度（默认 0，他的按钮没有）。

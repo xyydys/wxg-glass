@@ -368,6 +368,10 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensKyantHeight",'n',10./56.,.02,.5,NULL,NULL},
     {"lensKyantAmount",'n',14./56.,0,.8,NULL,NULL},
     {"lensKyantDispersion",'n',1,0,3,NULL,NULL},
+    // FIX122 E: the outermost thin ring (his curve's infinitely steep
+    // start): kept (his) or capped at this squeeze (WXGKyantOffsetCapped).
+    {"lensKyantRimFine",'b',1,0,1,NULL,NULL},
+    {"lensKyantRimMax",'n',3,1,20,NULL,NULL},
     // FIX88: 平稳背景时加强材质 again (FIX85, removed in FIX86).
     // FIX113 O: the chat list's segment bar's own lens and pill (user: not the
     // dock's parameters; its pill's inset, colour and border its own), first
@@ -392,6 +396,8 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentLensKyantHeight",'n',10./56.,.02,.5,"lensKyantHeight",NULL},
     {"segmentLensKyantAmount",'n',14./56.,0,.8,"lensKyantAmount",NULL},
     {"segmentLensKyantDispersion",'n',1,0,3,"lensKyantDispersion",NULL},
+    {"segmentLensKyantRimFine",'b',1,0,1,"lensKyantRimFine",NULL},   // FIX122 E
+    {"segmentLensKyantRimMax",'n',3,1,20,"lensKyantRimMax",NULL},
     {"segmentLensRimHex",'h',0,0,0,"lensRimHex","#FFFFFFFF"},
     {"segmentDarkLensRimHex",'h',0,0,0,"darkLensRimHex","#FFFFFFFF"},
     {"segmentLensRimOpacity",'n',.5,0,1,"lensRimOpacity",NULL},
@@ -663,7 +669,9 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"kyantOtherAmount",'n',.5,0,1,NULL,NULL},
     {"kyantOtherDepth",'b',0,0,1,NULL,NULL},
     {"kyantOtherDispersion",'n',0,0,3,NULL,NULL},
-    {"kyantOtherMaxHeight",'n',24,4,80,NULL,NULL},   // the band at most this (pt), the shift with it in proportion (his panels: 16-24 dp)
+    {"kyantOtherMaxHeight",'n',24,4,80,NULL,NULL},
+    {"kyantOtherRimFine",'b',0,0,1,NULL,NULL},   // FIX122 E: the thin outermost ring off (capped) by default here
+    {"kyantOtherRimMax",'n',3,1,20,NULL,NULL},   // the band at most this (pt), the shift with it in proportion (his panels: 16-24 dp)
     // FIX113 Z: iOS 27 rims per appearance: dark mode's own two highlights
     // (…Rim27DarkMode…), first taken from the light mode's (the ones above).
     {"rim27DarkModeHex",'h',0,0,0,"rim27Hex","#FFFFFFFF"},
@@ -1792,11 +1800,12 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
 // FIX122 D: Kyant's lens() on a glass' body: 其余玻璃's, and any range
 // sharing its refraction page.
 - (WXGKyantBody)kyantBodyForScope:(WXGGlassScope)scope {
-    WXGKyantBody k={NO,0,0,0,0,0};
+    WXGKyantBody k={NO,0,0,0,0,0,0};
     if([self sharedScope:scope page:WXGSharePageRefraction]!=WXGGlassScopeOther || [self extraNumber:@"kyantOtherOn"]<=.5)return k;
     k.on=YES;k.height=WXGClamp([self extraNumber:@"kyantOtherHeight"],.02,.5);k.amount=WXGClamp([self extraNumber:@"kyantOtherAmount"],0,1);
     k.depth=[self extraNumber:@"kyantOtherDepth"]>.5?1:0;k.dispersion=WXGClamp([self extraNumber:@"kyantOtherDispersion"],0,3);
     k.maxHeight=WXGClamp([self extraNumber:@"kyantOtherMaxHeight"],4,80);
+    k.rimMax=[self extraNumber:@"kyantOtherRimFine"]>.5?0:WXGClamp([self extraNumber:@"kyantOtherRimMax"],1,20);   // FIX122 E
     return k;
 }
 // FIX122 C: Kyant's drag-speed deformation, as set (WXGKyantElastic.h).
@@ -1828,6 +1837,7 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
         l.elasticKeepStrip=[self extraNumber:@"segmentLensElasticKeepStrip"];
         l.kyantOn=[self extraNumber:@"segmentLensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"segmentLensKyantHeight"];   // FIX122
         l.kyantAmount=[self extraNumber:@"segmentLensKyantAmount"];l.kyantDispersion=[self extraNumber:@"segmentLensKyantDispersion"];
+        l.kyantRimMax=[self extraNumber:@"segmentLensKyantRimFine"]>.5?0:WXGClamp([self extraNumber:@"segmentLensKyantRimMax"],1,20);   // FIX122 E
     }else {
         l.refraction=_lensRefraction;l.dispersion=_lensDispersion;l.edgeWidth=_lensEdgeWidth;l.topRatio=_lensTopEdgeRatio;l.sharpness=_lensEdgeSharpness;
         l.dispersionWidth=[self extraNumber:@"lensDispersionWidth"];l.dispersionTopRatio=[self extraNumber:@"lensDispersionTopRatio"];
@@ -1843,6 +1853,7 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
         l.elasticKeepStrip=[self extraNumber:@"lensElasticKeepStrip"];
         l.kyantOn=[self extraNumber:@"lensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"lensKyantHeight"];   // FIX122
         l.kyantAmount=[self extraNumber:@"lensKyantAmount"];l.kyantDispersion=[self extraNumber:@"lensKyantDispersion"];
+        l.kyantRimMax=[self extraNumber:@"lensKyantRimFine"]>.5?0:WXGClamp([self extraNumber:@"lensKyantRimMax"],1,20);   // FIX122 E
     }
     return l;
 }

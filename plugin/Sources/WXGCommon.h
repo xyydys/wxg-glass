@@ -80,7 +80,7 @@ typedef struct { CGFloat opacity,blur,offset,spread; } WXGDropShadowSettings;
 typedef NS_ENUM(NSInteger,WXGSharePage) {WXGSharePageRefraction=0,WXGSharePageBlur=1,WXGSharePageMaterial=2,WXGSharePageBorder=3};
 typedef struct { CGFloat opacity,width,brightness,fade; } WXGScopeRim;
 // FIX122 D: Kyant's lens() on a glass' body (shares of its short side; depthEffect 0 / 1; split strength).
-typedef struct { BOOL on; CGFloat height,amount,depth,dispersion,maxHeight; } WXGKyantBody;   // maxHeight: the band's cap (pt)
+typedef struct { BOOL on; CGFloat height,amount,depth,dispersion,maxHeight,rimMax; } WXGKyantBody;   // maxHeight: the band's cap (pt); rimMax: FIX122 E (0 = his thin ring)
 // FIX85: the three groups of glass with their own optics and rims (the
 // liquid chat bubbles are the third), and the three rim styles.
 typedef NS_ENUM(NSInteger,WXGGlassScope) {WXGGlassScopeOther=0,WXGGlassScopeDock=1,WXGGlassScopeBubble=2,
@@ -101,7 +101,7 @@ typedef struct {
     CGFloat iconTopRatio,iconSharpness;     // FIX113 Y: and their top / bottom band ratio and narrowing curve
     BOOL elasticOn;CGFloat elasticHeight;   // FIX113 Y: the drag-speed deformation, the share of its height change kept
     CGFloat elasticKeepStrip;               // FIX113 Y: how much of the strip inside the lens is kept as it deforms
-    BOOL kyantOn;CGFloat kyantHeight,kyantAmount,kyantDispersion;   // FIX122: Kyant 透镜模式 (shares of the lens' short side; split strength)
+    BOOL kyantOn;CGFloat kyantHeight,kyantAmount,kyantDispersion,kyantRimMax;   // FIX122 E: kyantRimMax 0 = his thin outermost ring   // FIX122: Kyant 透镜模式 (shares of the lens' short side; split strength)
 } WXGLensSettings;
 // FIX113: Telegram's tab icons for the dock (WXGTelegramIcons.m): on, the
 // frames of a tab (0 Chats, 1 Contacts, 2 Calls, 3 Settings; template

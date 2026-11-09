@@ -156,6 +156,29 @@ int main(void) {
         CHECK(fabsf(zx-(80+20/1.04f))<1e-3f && fabsf(zy-35)<1e-3f,"zoom before about the centre (%.4f)",zx);
     }
 
+    /* FIX122 E: the thin outermost ring capped. Cap 0: his curve exactly;
+       capped: his curve deeper than the tangent point, C1 there, the squeeze
+       |d(t + offset)/dt| never above the cap, less shift at the outline. */
+    {
+        for(float t=0;t<=10;t+=.01f)CHECK(WXGKyantOffsetCapped(t,10,20,0)==WXGKyantOffset(t,10,20),"cap 0 is his at %.2f",t);
+        float K=3,H=10,A=20,c=(1+K)*H/A,u0=c/sqrtf(1+c*c),t0=(1-u0)*H;
+        for(float t=t0+.01f;t<=H;t+=.05f)CHECK(fabsf(WXGKyantOffsetCapped(t,H,A,K)-WXGKyantOffset(t,H,A))<1e-4f,"his curve past the tangent point (%.2f)",t);
+        float h=1e-3f,l=WXGKyantOffsetCapped(t0-h,H,A,K),m=WXGKyantOffsetCapped(t0,H,A,K),r=WXGKyantOffsetCapped(t0+h,H,A,K);
+        CHECK(fabsf((m-l)/h-(r-m)/h)<.05f,"C1 at the tangent point (%.4f %.4f)",(m-l)/h,(r-m)/h);
+        float worst=0;
+        for(float t=0;t<H;t+=.001f){float d=fabsf(1.f+(WXGKyantOffsetCapped(t+.001f,H,A,K)-WXGKyantOffsetCapped(t,H,A,K))/.001f);if(d>worst)worst=d;}
+        CHECK(worst<=K+.05f,"the squeeze at most the cap (%.3f)",worst);
+        float hisWorst=0;
+        for(float t=0;t<H;t+=.001f){float d=fabsf(1.f+(WXGKyantOffset(t+.001f,H,A)-WXGKyantOffset(t,H,A))/.001f);if(d>hisWorst)hisWorst=d;}
+        CHECK(hisWorst>20,"his squeezes far more at the outline (%.1f)",hisWorst);
+        float rim=WXGKyantOffsetCapped(0,H,A,K)/A;
+        CHECK(rim>.7f && rim<.8f,"3x: about three quarters of the shift at the outline (%.3f)",rim);
+        CHECK(WXGKyantOffsetCapped(-2,H,A,K)==WXGKyantOffsetCapped(0,H,A,K),"outside: held");
+        WXGMeshOptics m2=kyant(1,1);m2.kyRimMax=3;
+        static WXGMeshPoint P2[20000];static unsigned int F2[20000][4];int f2=0;
+        CHECK(WXGBuildContourMesh(m2,(WXGMeshQuality){.20f,.16f,24.f},P2,20000,F2,20000,&f2)>0 && f2>0,"capped mesh builds");
+    }
+
     /* The contour mesh builds, within the capacity, for every channel and
        with the smaller bar; every vertex is the source of its point. */
     enum { CAP=20000 };
@@ -178,6 +201,6 @@ int main(void) {
     }
 
     if(failures){printf("KyantLensTests: %d failure(s)\n",failures);return 1;}
-    printf("PASS: Kyant lens (FIX122): circleMap shift (whole amount at the outline, zero slope at the band's end, mirrored rim), 7-tap channel means, x*y split by quarter, mesh source (zoom, smaller bar), off = the old lens bit for bit, contour meshes built and exact; FIX122 D depthEffect as his, zoom before.\n");
+    printf("PASS: Kyant lens (FIX122): circleMap shift (whole amount at the outline, zero slope at the band's end, mirrored rim), 7-tap channel means, x*y split by quarter, mesh source (zoom, smaller bar), off = the old lens bit for bit, contour meshes built and exact; FIX122 D depthEffect as his, zoom before; FIX122 E thin ring capped (his past the tangent, C1, squeeze <= cap).\n");
     return 0;
 }

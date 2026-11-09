@@ -39,6 +39,29 @@ static inline float WXGKyantOffset(float depth,float height,float amount) {
     if(t>=height)return 0.f;
     return amount*WXGKyantCircleMap(1.f-t/height);
 }
+/* FIX122 E (user: "the very thin ring it draws at the outermost edge makes
+   bad jaggies; can it be turned off?"): the curve starts infinitely steep,
+   so the outermost fraction of a point shows a wide strip of what lies
+   further in, squeezed (the source depth t + offset changes ever faster
+   toward the outline): a hair-thin ring the render server's mesh cannot
+   filter. Capped: where the squeeze would pass `maxCompression` (how many
+   points of the picture one point shows), the curve goes on as its tangent
+   to the outline (C1, no kink), so the squeeze never exceeds it; deeper the
+   curve is his exactly. 0 = his (no cap).
+   The squeeze is |d(t + offset)/dt| = (amount / height) g'(u) - 1 on the
+   folded side, g(u) = circleMap(u), g'(u) = u / sqrt(1 - u^2), u = 1 - t /
+   height; capped where (amount / height) g'(u0) = 1 + maxCompression, i.e.
+   u0 = c / sqrt(1 + c^2) with c = (1 + maxCompression) height / amount. */
+static inline float WXGKyantOffsetCapped(float depth,float height,float amount,float maxCompression) {
+    if(!(maxCompression>0.f))return WXGKyantOffset(depth,height,amount);
+    if(!(height>0.f) || !(amount>0.f))return 0.f;
+    float t=depth>0.f?depth:0.f;
+    if(t>=height)return 0.f;
+    float u=1.f-t/height,c=(1.f+maxCompression)*height/amount,u0=c/sqrtf(1.f+c*c);
+    if(u<=u0)return amount*WXGKyantCircleMap(u);
+    float g0=1.f-sqrtf(1.f-u0*u0),slope=u0/sqrtf(1.f-u0*u0);
+    return amount*(g0+slope*(u-u0));
+}
 /* A channel's mean share of d x I: +1 red, 0 green, -1 blue. */
 static inline float WXGKyantChannelWeight(float channel) {
     return channel>.5f?3.f/7.f:channel<-.5f?-2.f/3.f:2.f/21.f;
