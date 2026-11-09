@@ -116,7 +116,16 @@ FOUNDATION_EXPORT NSArray<UIImage *> *WXGTelegramFrames(NSInteger tab);
 FOUNDATION_EXPORT UIImage *WXGTelegramTabImage(NSInteger tab,NSInteger frame,UIColor *color);
 // FIX113 F: the resting glyph's ink width as a share of the frame's (main thread).
 FOUNDATION_EXPORT CGFloat WXGTelegramRestInkWidth(NSInteger tab);
-typedef NS_ENUM(NSInteger,WXGRimStyle) {WXGRimStyleClassic=0,WXGRimStyleSampled=1,WXGRimStyleGlow=2};
+typedef NS_ENUM(NSInteger,WXGRimStyle) {WXGRimStyleClassic=0,WXGRimStyleSampled=1,WXGRimStyleGlow=2,
+    WXGRimStyle26Own=3,WXGRimStyle26Overlay=4};   // FIX122 F: iOS 26 边框, its own colour changed / white and dark laid over
+// FIX122 F: an iOS 26 rim range's values (WXGRim26.h; points; along the outline as WXGRimGlowLevel).
+typedef struct {
+    CGFloat peak,outer,inner,angle,endLevel,sharpness,blur;   // the line's shape, where it is brightest along the outline, the sampling blur
+    CGFloat opacity,gain,saturation;                          // this appearance's: strength, brightness and saturation at the peak
+    CGFloat paleSaturation,paleLevel,paleShift,paleInner;     // 自身色: the paler outer flank
+    CGFloat white,whiteShift,whiteWidth,dark,darkShift,darkWidth;   // 叠白叠深: the white and dark bands
+    BOOL shadowOn;CGFloat shadowOpacity,shadowLength;         // the standalone inner shadow
+} WXGRim26Settings;
 // FIX86: the iOS 27-like rim (WXGRimGlow.h): a light that fades inward from
 // the outline over `width` (its curve `falloff`), brightest along the top and
 // bottom and down to `endLevel` at the two ends, the change by `sharpness`.
@@ -273,6 +282,7 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (CGFloat)rimSoftLevelForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (WXGRimStyle)rimStyleValue;                                // the other glass's
 - (WXGRimStyle)rimStyleForScope:(WXGGlassScope)scope;        // FIX86: each range its own
+- (WXGRim26Settings)rim26ForScope:(WXGGlassScope)scope dark:(BOOL)dark;   // FIX122 F
 // FIX113 O: a range's material, its edge weakening, and a lens's parameters.
 - (NSString *)materialHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (CGFloat)materialOpacityForScope:(WXGGlassScope)scope dark:(BOOL)dark;
