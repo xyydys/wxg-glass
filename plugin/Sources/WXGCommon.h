@@ -98,6 +98,7 @@ typedef struct {
     CGFloat iconTopRatio,iconSharpness;     // FIX113 Y: and their top / bottom band ratio and narrowing curve
     BOOL elasticOn;CGFloat elasticHeight;   // FIX113 Y: the drag-speed deformation, the share of its height change kept
     CGFloat elasticKeepStrip;               // FIX113 Y: how much of the strip inside the lens is kept as it deforms
+    BOOL kyantOn;CGFloat kyantHeight,kyantAmount,kyantDispersion;   // FIX122: Kyant 透镜模式 (shares of the lens' short side; split strength)
 } WXGLensSettings;
 // FIX113: Telegram's tab icons for the dock (WXGTelegramIcons.m): on, the
 // frames of a tab (0 Chats, 1 Contacts, 2 Calls, 3 Settings; template

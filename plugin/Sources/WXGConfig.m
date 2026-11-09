@@ -360,6 +360,14 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"bubbleDarkRimSampleSoftLevel",'n',.5,0,1,"bubbleDarkRimSoftLevel",NULL},
     {"lensDispersionWidth",'n',10,1,60,"lensEdgeWidth",NULL},
     {"lensDispersionTopRatio",'n',1,0.1,1,"lensTopEdgeRatio",NULL},
+    // FIX122 Kyant 透镜模式 (WXGKyantLens.h): the dock's lens refracted and
+    // split as Kyant's Backdrop lens(): on, the band and the shift at the
+    // outline as shares of the lens' short side (the catalog's 10 / 56 and
+    // 14 / 56), the colour split's strength (1 = his). Off = as before.
+    {"lensKyantOn",'b',0,0,1,NULL,NULL},
+    {"lensKyantHeight",'n',10./56.,.02,.5,NULL,NULL},
+    {"lensKyantAmount",'n',14./56.,0,.8,NULL,NULL},
+    {"lensKyantDispersion",'n',1,0,3,NULL,NULL},
     // FIX88: 平稳背景时加强材质 again (FIX85, removed in FIX86).
     // FIX113 O: the chat list's segment bar's own lens and pill (user: not the
     // dock's parameters; its pill's inset, colour and border its own), first
@@ -380,6 +388,10 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentLensBlur",'n',0,0,12,"lensBlur",NULL},
     {"segmentLensBlurCoverage",'n',0,0,100,"lensBlurCoverage",NULL},
     {"segmentLensOffsetCancel",'n',0,0,1,"lensOffsetCancel",NULL},
+    {"segmentLensKyantOn",'b',0,0,1,"lensKyantOn",NULL},   // FIX122
+    {"segmentLensKyantHeight",'n',10./56.,.02,.5,"lensKyantHeight",NULL},
+    {"segmentLensKyantAmount",'n',14./56.,0,.8,"lensKyantAmount",NULL},
+    {"segmentLensKyantDispersion",'n',1,0,3,"lensKyantDispersion",NULL},
     {"segmentLensRimHex",'h',0,0,0,"lensRimHex","#FFFFFFFF"},
     {"segmentDarkLensRimHex",'h',0,0,0,"darkLensRimHex","#FFFFFFFF"},
     {"segmentLensRimOpacity",'n',.5,0,1,"lensRimOpacity",NULL},
@@ -1773,6 +1785,8 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
         l.iconTopRatio=[self extraNumber:@"segmentLensIconTopEdgeRatio"];l.iconSharpness=[self extraNumber:@"segmentLensIconEdgeSharpness"];
         l.elasticOn=[self extraNumber:@"segmentLensElasticOn"]>.5;l.elasticHeight=[self extraNumber:@"segmentLensElasticHeight"];
         l.elasticKeepStrip=[self extraNumber:@"segmentLensElasticKeepStrip"];
+        l.kyantOn=[self extraNumber:@"segmentLensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"segmentLensKyantHeight"];   // FIX122
+        l.kyantAmount=[self extraNumber:@"segmentLensKyantAmount"];l.kyantDispersion=[self extraNumber:@"segmentLensKyantDispersion"];
     }else {
         l.refraction=_lensRefraction;l.dispersion=_lensDispersion;l.edgeWidth=_lensEdgeWidth;l.topRatio=_lensTopEdgeRatio;l.sharpness=_lensEdgeSharpness;
         l.dispersionWidth=[self extraNumber:@"lensDispersionWidth"];l.dispersionTopRatio=[self extraNumber:@"lensDispersionTopRatio"];
@@ -1786,6 +1800,8 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
         l.iconTopRatio=[self extraNumber:@"lensIconTopEdgeRatio"];l.iconSharpness=[self extraNumber:@"lensIconEdgeSharpness"];
         l.elasticOn=[self extraNumber:@"lensElasticOn"]>.5;l.elasticHeight=[self extraNumber:@"lensElasticHeight"];
         l.elasticKeepStrip=[self extraNumber:@"lensElasticKeepStrip"];
+        l.kyantOn=[self extraNumber:@"lensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"lensKyantHeight"];   // FIX122
+        l.kyantAmount=[self extraNumber:@"lensKyantAmount"];l.kyantDispersion=[self extraNumber:@"lensKyantDispersion"];
     }
     return l;
 }

@@ -3,6 +3,7 @@
 #include "WXGOptics.h"
 #include "WXGLensOptics.h"
 #include "WXGSoftEdge.h"
+#include "WXGKyantLens.h"
 /* FIX20: TEST9 refraction as a Core Animation mesh for render-server glass.
 
    A mesh transform on the backdrop layer is evaluated by the render server
@@ -66,6 +67,12 @@ typedef struct {
        (WXGSoftShape: the most the outline is magnified, the curve's power,
        the band in points). */
     float softStretch,softPower,softWidth;
+    /* FIX122 (zero = off): Kyant's lens (WXGKyantLens.h) instead of the
+       band above: the refraction band and the shift at the outline (points,
+       field units). With it the topRatio / sharpness / bar* / end* / cancel /
+       dispersionWidth rules are not used; `dispersion` is the colour split's
+       strength (1 = Kyant's), `channel` picks the channel's mean weight. */
+    float kyHeight,kyAmount;
 } WXGMeshOptics;
 /* The full inset of the smaller bar, and the inset ramped by `along` (as
    WXGInnerInsetAlong, either sign). */
@@ -185,7 +192,30 @@ static inline void WXGMeshShrinkBar(WXGMeshOptics o,float yx,float yy,float za,f
     if(t<-half)t2=t;
     *sx+=q.nx*(t2-t);*sy+=q.ny*(t2-t);
 }
+/* FIX122: Kyant's lens. The shape's field (its normals, for a rounded
+   rectangle, from 1.5x its radius, as the shader's gradRadius), the shift
+   along the normal, each channel's share of the colour split, then the zoom
+   and the smaller bar exactly as the band path. */
+static inline void WXGMeshKyantSource(WXGMeshOptics o,float px,float py,float *sx,float *sy) {
+    float cx=o.width*.5f,cy=o.height*.5f,s=o.fieldScale>0.f?o.fieldScale:1.f;
+    float za=o.zoomAfter>0.f?o.zoomAfter:1.f;
+    float x=(px-cx)/s,y=(py-cy)/s,w=WXGMeshShapeWidth(o)/s,h=WXGMeshShapeHeight(o)/s;
+    WXGShapeSample f=o.radius>0.f?WXGRoundedOpticalField(x,y,w,h,o.radius):WXGCapsuleOpticalField(x,y,w,h);
+    if(o.radius>0.f) {
+        float half=WXG_MIN(w,h)*.5f,gr=WXG_MIN(o.radius*1.5f,half);
+        if(gr>o.radius+1e-3f) {
+            WXGShapeSample g=gr>=half-1e-3f?WXGCapsuleOpticalField(x,y,w,h):WXGRoundedOpticalField(x,y,w,h,gr);
+            if(g.nx!=0.f || g.ny!=0.f){f.nx=g.nx;f.ny=g.ny;}
+        }
+    }
+    float off=WXGKyantOffset(-f.distance,o.kyHeight,o.kyAmount)*s;
+    float spread=o.dispersion>0.f?o.dispersion*WXGKyantChannelWeight(o.channel)*WXGKyantDispersionIntensity(x,y,w*.5f,h*.5f):0.f;
+    float rx=px-f.nx*off*(1.f+spread),ry=py-f.ny*off*(1.f+spread);
+    *sx=cx+(rx-cx)/za;*sy=cy+(ry-cy)/za;
+    if(WXGMeshShrinks(o))WXGMeshShrinkBar(o,px-f.nx*off,py-f.ny*off,za,sx,sy);   /* FIX113 U, as the band path */
+}
 static inline void WXGMeshSource(WXGMeshOptics o,float px,float py,float *sx,float *sy) {
+    if(o.kyHeight>0.f){WXGMeshKyantSource(o,px,py,sx,sy);return;}   /* FIX122 */
     float cx=o.width*.5f,cy=o.height*.5f,s=o.fieldScale>0.f?o.fieldScale:1.f;
     float zb=o.zoomBefore>0.f?o.zoomBefore:1.f,za=o.zoomAfter>0.f?o.zoomAfter:1.f;
     float x=(px-cx)/s,y=(py-cy)/s,w=WXGMeshShapeWidth(o)/s,h=WXGMeshShapeHeight(o)/s;
@@ -243,6 +273,9 @@ typedef struct { float cx,cy,nx,ny,u; int kind; } WXGContourSample; /* kind 0 st
 /* Inward depth of the source point along the normal, for depth t (outside < 0).
    FIX88: the colour split over its own band width `dwidth`. */
 static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,float t,float channel) {
+    /* FIX122: Kyant's lens; a channel at most WXG_KYANT_CHANNEL_SPAN of the
+       shift from green (|I| <= 1), so the rings follow the steepest one. */
+    if(o.kyHeight>0.f)return t+WXGKyantOffset(t,o.kyHeight,o.kyAmount)*(1.f+channel*(o.dispersion>0.f?o.dispersion*WXG_KYANT_CHANNEL_SPAN:0.f));
     float d=-t;
     float off=WXGMeshOffset(o,d,width);   /* FIX113 I, FIX114 I */
     return t+off-channel*o.dispersion*wxgEdgeC(d,dwidth);

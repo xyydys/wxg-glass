@@ -190,7 +190,8 @@ static BOOL WXGMeshOpticsClose(WXGMeshOptics a,WXGMeshOptics b) {
         fabsf(a.sbRadius-b.sbRadius)<.05f && fabsf(a.shrinkPress-b.shrinkPress)<.005f && fabsf(a.shrinkPinch-b.shrinkPinch)<.0005f &&   // FIX113 U
         fabsf(a.shrinkExtra-b.shrinkExtra)<.125f &&   // FIX113 Y
         fabsf(a.transition-b.transition)<.0005f &&   // FIX114 I
-        fabsf(a.softStretch-b.softStretch)<.005f && fabsf(a.softPower-b.softPower)<.005f && fabsf(a.softWidth-b.softWidth)<.05f;   // FIX114 J
+        fabsf(a.softStretch-b.softStretch)<.005f && fabsf(a.softPower-b.softPower)<.005f && fabsf(a.softWidth-b.softWidth)<.05f &&   // FIX114 J
+        fabsf(a.kyHeight-b.kyHeight)<.01f && fabsf(a.kyAmount-b.kyAmount)<.01f;   // FIX122
 }
 // FIX114 A: while the lens moves (pressed, travelling, deforming with the
 // drag), a mesh a little off still serves: within 1.5 pt of size and of the
@@ -216,6 +217,8 @@ static BOOL WXGMeshOpticsNear(WXGMeshOptics a,WXGMeshOptics b) {
     if(fabsf(a.dispersion-b.dispersion)<.08f)t.dispersion=a.dispersion;
     if(fabsf(a.dispersionWidth-b.dispersionWidth)<.4f)t.dispersionWidth=a.dispersionWidth;
     if(fabsf(a.radius-b.radius)<.75f)t.radius=a.radius;
+    if(fabsf(a.kyHeight-b.kyHeight)<.4f)t.kyHeight=a.kyHeight;   // FIX122
+    if(fabsf(a.kyAmount-b.kyAmount)<.4f)t.kyAmount=a.kyAmount;
     return WXGMeshOpticsClose(a,t);
 }
 // FIX23: contour-following mesh (see WXGBuildContourMesh). Static glass gets
@@ -247,7 +250,7 @@ static NSUInteger WXGMeshCacheHits,WXGMeshCacheMisses;
 static id WXGBuildMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUInteger *vertexCount,NSMutableData **storage,NSInteger *subdivision);
 static id WXGMakeMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUInteger *vertexCount,NSMutableData **storage,NSInteger *subdivision) {
     // Key: the exact optics and quality, rounded so float noise cannot split it.
-    float key[40]={roundf(optics.width*100),roundf(optics.height*100),roundf(optics.fieldScale*1000),roundf(optics.radius*100),
+    float key[42]={roundf(optics.width*100),roundf(optics.height*100),roundf(optics.fieldScale*1000),roundf(optics.radius*100),
         roundf(optics.edgeWidth*100),roundf(optics.refraction*1000),roundf(optics.offsetScale*1000),roundf(optics.zoomBefore*1000),
         roundf(optics.zoomAfter*1000),roundf(optics.dispersion*1000),optics.channel,roundf(optics.topRatio*1000),roundf(optics.sharpness*100),
         roundf(quality.ringError*1000),roundf(quality.arcStep*1000),roundf(quality.straightStep*100),
@@ -256,7 +259,8 @@ static id WXGMakeMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUIn
         roundf(optics.padX*10),roundf(optics.padY*10),roundf(optics.cancel*1000),
         roundf(optics.sbLeft*10),roundf(optics.sbTop*10),roundf(optics.sbRight*10),roundf(optics.sbBottom*10),roundf(optics.sbRadius*100),
         roundf(optics.shrinkPress*1000),roundf(optics.shrinkPinch*10000),roundf(optics.shrinkExtra*4),roundf(optics.transition*1000),
-        roundf(optics.softStretch*100),roundf(optics.softPower*100),roundf(optics.softWidth*4)};   // FIX113 H / I / U / Y, FIX114 I / J
+        roundf(optics.softStretch*100),roundf(optics.softPower*100),roundf(optics.softWidth*4),
+        roundf(optics.kyHeight*100),roundf(optics.kyAmount*100)};   // FIX113 H / I / U / Y, FIX114 I / J, FIX122
     NSData *cacheKey=[NSData dataWithBytes:key length:sizeof key];
     WXGMeshCacheEntry *entry=[WXGMeshCache() objectForKey:cacheKey];
     if(entry) {
@@ -530,6 +534,10 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
     WXGOpticalValues pressed={(float)c.lensRefraction,(float)c.lensDispersion,(float)c.lensEdgeWidth};
     WXGOpticalValues optical=WXGPressedOptics(resting,pressed,(float)press);
     BOOL split=c.syncDispersion && WXGFilterFactoryAvailable() && !c.performanceMode;   // FIX59
+    // FIX122: Kyant 透镜模式 for the tap lens too (the dock's lens settings).
+    WXGLensSettings TL=[c lensSettingsForScope:WXGGlassScopeDock dark:NO];
+    float kd=TL.kyantOn?roundf((float)WXGClamp(TL.kyantDispersion,0,3)*100.f)/100.f:0.f;
+    if(TL.kyantOn)split=kd>0.f && c.syncDispersion && WXGFilterFactoryAvailable();
     NSMutableArray<UIView *> *views=[NSMutableArray array];
     CGSize padded=size;
     for(NSInteger i=0;i<(split?3:1);i++) {
@@ -542,9 +550,16 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
         WXGMeshOptics o={(float)padded.width,(float)padded.height,1.f,0.f,optical.edgeWidth,optical.refraction,(float)press,1.f,1.f+(float)(press*(c.lensZoom-1)),
             split?optical.dispersion*1.55f*(float)press:0.f,split?(i==0?1.f:i==2?-1.f:0.f):0.f,(float)c.lensTopEdgeRatio,(float)c.lensEdgeSharpness};
         o.cancel=(float)WXGLensCancel();   // FIX113 I
+        if(TL.kyantOn) {   // FIX122: as the dock's pressed lens (applySyncMode)
+            float shortSide=(float)MIN(padded.width,padded.height);
+            float ky=roundf((float)WXGClamp(TL.kyantHeight,.02,.5)*shortSide*(float)press*4.f)/4.f,ka=roundf((float)WXGClamp(TL.kyantAmount,0,.8)*shortSide*(float)press*4.f)/4.f;
+            o.kyHeight=ky>.01f && ka>.01f?ky:0.f;o.kyAmount=ka;
+            o.edgeWidth=WXG_MAX(ky,.5f);o.refraction=0.f;o.offsetScale=1.f;o.cancel=0.f;o.topRatio=0.f;o.sharpness=0.f;
+            o.dispersion=split?kd:0.f;
+        }
         // FIX88: the lens's own dispersion range, only with dispersion on (0 =
         // the refraction band, so no wider mesh band for nothing).
-        if(split && optical.dispersion>0.f){o.dispersionWidth=(float)(dock.edgeWidth+(c.lensDispersionWidth-dock.edgeWidth)*press);o.dispersionTopRatio=(float)c.lensDispersionTopRatio;}
+        if(split && optical.dispersion>0.f && !TL.kyantOn){o.dispersionWidth=(float)(dock.edgeWidth+(c.lensDispersionWidth-dock.edgeWidth)*press);o.dispersionTopRatio=(float)c.lensDispersionTopRatio;}
         // FIX113 U: seeing the bar, the smaller bar as the dock's lens shows
         // it (centred on the lens; the travel crosses the bar, so no ends).
         if(seesBar && barHeight>2 && barHeight<padded.height) {
@@ -2336,6 +2351,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
     [self applyStack:_edgeStack visible:ring split:split radius:0 optics:bodyOptics quality:WXGMeshQualityBody mesh:ring group:[self bodyGroup] plain:NO];
     if(ring)[self updateEdgeMask:c];
     WXGMeshOptics lensOptics=bodyOptics;CGFloat lensBlur=0;BOOL lensMesh=NO;
+    BOOL lensSplit=split;   // FIX122: Kyant 透镜模式 splits the lens' colours even in 流畅模式
     _lensSeesBarApplied=mode>=2 && [self lensSeesBarWanted];
     BOOL seesBar=lens && _lensSeesBarApplied;
     _endReachLeft=_endReachRight=0.f;
@@ -2381,6 +2397,26 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         lensBlur=(seesBar?L.blur*press:scoped.blur+(L.blur-scoped.blur)*press)*scale;
         lensMesh=mesh && size.width>1 && size.height>1;
         if(_dockSurface)lensOptics.cancel=(float)[self lensCancelFor:L];   // FIX113 I: as the shader's lens
+        // FIX122 Kyant 透镜模式 (WXGKyantLens.h): the lens' band and colour
+        // split as Kyant's Backdrop lens(): its band and the shift at the
+        // outline as shares of the lens' short side, times the press (his
+        // effect scales with the press and with the indicator's layer); none
+        // of the band path's rules (top ratio, narrowing, the bar's ends,
+        // cancel, the split's own band). Zoom, the smaller bar, blur and
+        // padding as before. The split in three channel layers whenever the
+        // RGB switch is on (流畅模式 too: only the lens, only while pressed).
+        if(L.kyantOn) {
+            float shortSide=(float)MIN(size.width,size.height);
+            float ky=roundf((float)WXGClamp(L.kyantHeight,.02,.5)*shortSide*press*4.f)/4.f,ka=roundf((float)WXGClamp(L.kyantAmount,0,.8)*shortSide*press*4.f)/4.f;
+            lensOptics.kyHeight=ky>.01f && ka>.01f?ky:0.f;lensOptics.kyAmount=ka;
+            lensOptics.edgeWidth=WXG_MAX(ky,.5f);lensOptics.refraction=0.f;lensOptics.offsetScale=1.f;lensOptics.cancel=0.f;
+            lensOptics.topRatio=0.f;lensOptics.sharpness=0.f;lensOptics.endLeft=lensOptics.endRight=0.f;
+            lensOptics.barLeft=lensOptics.barTop=lensOptics.barRight=lensOptics.barBottom=0.f;
+            lensOptics.dispersionWidth=0.f;lensOptics.dispersionTopRatio=0.f;
+            float kd=roundf((float)WXGClamp(L.kyantDispersion,0,3)*100.f)/100.f;
+            lensOptics.dispersion=kd;
+            lensSplit=mesh && kd>0.f && c.syncDispersion && WXGFilterFactoryAvailable() && !_lightweight;
+        }
         // FIX113 U: seeing the bar, the lens shows that bar made smaller (the
         // shader's inset), its own veil, edge ring and rim, then refracted. The
         // bar's far ends are pushed far out (only a near end shapes it).
@@ -2439,7 +2475,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
     // FIX114 A: a near mesh while the lens moves; the exact one when it rests
     // (looked at again shortly after the last move).
     BOOL moving=CACurrentMediaTime()-_lensMovedAt<.08;
-    BOOL kept=![self applyStack:_lensStack visible:lens && (!seesBar || press>0.f) split:split radius:lensBlur optics:lensOptics
+    BOOL kept=![self applyStack:_lensStack visible:lens && (!seesBar || press>0.f) split:lensSplit radius:lensBlur optics:lensOptics
              quality:WXGMeshShrinks(lensOptics)?WXGMeshQualityLensBar:WXGMeshQualityLens mesh:lensMesh group:seesBar?_lensGroup:[self bodyGroup] plain:seesBar loose:moving];
     if(kept)++_lensMeshKept;
     if(kept && !_lensSettlePending) {
@@ -2627,7 +2663,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
     // page behind it as the shader assumes it (black in dark mode, white in
     // light), for the channels CA's single alpha covers too much.
     // FIX98: w 1 + the selection colour's weight when the dock sets one.
-    BOOL barSplit=_dockSurface && L.barDispersionOn;
+    BOOL barSplit=_dockSurface && L.barDispersionOn && !L.kyantOn;   // FIX122: Kyant's lens splits the bar it refracts itself
     u.extra2=(WXGFloat4){barSplit?(float)L.barDispersion:0.f,barSplit?(float)L.barDispersionNearRim:0.f,[self darkAppearance]?0.f:1.f,
                          _selectionWeight>=0?(float)(1+_selectionWeight):0.f};
     CGFloat r=0,g=0,b=0,a=0;
@@ -2886,6 +2922,8 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         @"lensSeesBar":@{@"on":@([self lensSeesBar]),@"lensGroupOwn":@([_lensBackdrop.group isEqualToString:_lensGroup]),
                          @"lensBlur":@(_lensBackdrop.radius),@"lensShown":@(!_lensBackdrop.hidden),@"lensPad":@(_lensPad),
                          @"lensRestHeight":@(_lensRestHeight),@"lensHeight":@(_lensRect.size.height),@"meshKeptWhileMoving":@(_lensMeshKept)},   // FIX113 U / Y, FIX114 A
+        @"kyantLens":@{@"on":@([self lensSettings].kyantOn),@"height":@([self lensSettings].kyantHeight),@"amount":@([self lensSettings].kyantAmount),
+                       @"dispersion":@([self lensSettings].kyantDispersion),@"channelsShown":@((NSInteger)(!_lensStack[0].hidden)+(!_lensStack[1].hidden)+(!_lensStack[2].hidden))},   // FIX122
         @"meshTransformClass":@(WXGMeshTransformClass()!=nil),@"bodyMeshApplied":@(_bodyBackdrop.meshApplied),@"bodyMeshAccepted":@(_bodyBackdrop.meshAccepted),
         @"bodyMeshVertices":@(_bodyBackdrop.meshVertices),@"refractionTransition":[self transitionEvidence],
         @"dropShadow":@{@"shown":@(!_dropShadow.hidden),@"opacity":@(_dropShadow.opacity),@"key":_dropShadowKey?:@"none",@"off":@(_dropShadowOff),
