@@ -213,11 +213,6 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                          WXGSlider(@"透镜色散范围（两端）",@"lensDispersionWidth",nil,1,60,@"%.1f pt"),
                                          WXGSlider(@"上下色散范围比例",@"lensDispersionTopRatio",nil,.1,1,nil)],
                  @"图标和文字的折射强度 / 宽度（FIX113 X）：透镜里的图标和标题（以及静止时的选中色，它按压时就淡掉了）单独用这一组（第一次打开时和上面的透镜折射强度、宽度一样；FIX113 Y：上下宽度比例和收窄曲线也各用各的，第一次打开时和下面的一样），透镜里的其余部分——缩小的底栏、它的边框和背景、外面的页面——还用上面的“透镜折射强度”“透镜折射宽度”。只在“透镜直接折射底下的底栏”开着时分开（关着时透镜里的底栏是另画的，和图标一起用上面的）。色散、放大倍数两边共用。透镜的边框（FIX96）：透镜和选中胶囊用系统的连续圆角（iOS 的形状）；着色器算折射、透镜里的底栏和描边时，也按在你手机上量出的连续圆角曲线走（以前按圆形算，在顶边转进圆角处和系统外框差约 0.4 pt，看起来边框在圆角处最细、顶上又变宽），所以边框从两端到上下边一路变窄，上下最细。透镜的折射和色散独立于底栏本体。上下比例 1 为与两端相同；收窄曲线越大，离开两端越快收窄。到底栏两端时，弯曲底栏和页面的折射范围放松到上下边的宽度（FIX57）。色散有自己的范围（FIX88，像 iOS 26 的透镜）：从轮廓往里多宽内有颜色分离，可以比折射宽度更宽或更窄，上下同样按比例收窄（收窄曲线和折射共用）；第一次打开时和折射宽度、上下比例相同，看起来不变。"),
-        WXGGroup(@"Kyant 透镜模式",@"dock",@[WXGSwitch(@"用 Kyant 的透镜折射和色散",@"lensKyantOn",nil),
-                                          WXGSlider(@"折射带宽（透镜高度的比例）",@"lensKyantHeight",nil,.02,.5,@"%.3f"),
-                                          WXGSlider(@"边缘取样深度（透镜高度的比例）",@"lensKyantAmount",nil,0,.8,@"%.3f"),
-                                          WXGSlider(@"色散强度",@"lensKyantDispersion",nil,0,3,@"%.2f")],
-                 @"FIX122 Kyant 透镜模式：打开后，按住时透镜里的折射和色散改用 Kyant 的 AndroidLiquidGlass（Backdrop 库 lens() 效果，它的底栏 demo 按住时那个浮起的放大镜）的算法，上面“透镜（按压时）”里的折射强度、折射宽度、上下比例、收窄曲线、色散、色散范围、边缘偏移抵消和“镜内底栏色散”都不再用；放大倍数、外扩、内收、模糊、形变、图标和文字的折射照旧。\n· 折射：只在轮廓往里“折射带宽”这么宽的一圈里，按四分之一圆弧（1 − √(1 − x²)）往里取内容：最外沿取到“边缘取样深度”那么深，往里平滑减到 0，到带宽处斜率也是 0（看不出折射带的内边）；最外面一小条会把更里面的东西镜像过来，就是圆润玻璃边的那种反光。两个数都是透镜短边（高度）的比例，随按压从 0 长到设定值，透镜外扩时跟着变大（Kyant 的是 10 / 56 = 0.18 和 14 / 56 = 0.25）。\n· 色散：沿同一方向，按 (x / 半宽) × (y / 半高) 分配：上下边正中和两端正中没有颜色分离，往四个角越来越强，左上 / 右下和右上 / 左下两组颜色顺序相反——不是一整圈红外蓝内。它的着色器取 7 个光谱样本，这里用红绿蓝三层，每层取它那几个样本的平均位置（红 +3/7、绿 +2/21、蓝 −2/3）。“色散强度”1 就是 Kyant 的；0 关掉。\n· 打开后，即使开着流畅模式，透镜按住时也用红绿蓝三层（只在按住时，底栏本体不变）；“RGB 色散”总开关关着时没有色散。只在同步渲染模式（渲染模式 2、网格折射开着）下生效。"),
         WXGGroup(@"镜内底栏色散",@"dock",@[WXGSwitch(@"镜内底栏边缘色散",@"lensBarDispersionOn",nil),
                                        WXGSlider(@"整片透镜的色散（边缘处）",@"lensBarDispersion",nil,0,2,@"%.2f pt"),
                                        WXGSlider(@"两端加强（透镜色散的比例）",@"lensBarDispersionNearRim",nil,0,1,nil)],
@@ -434,6 +429,33 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
     // dock's parameters; the pill's inset and border; its lens separate; the
     // floating switch); its glass (refraction, blur, material, border) is the
     // 分组 range of the glass pages.
+    // FIX122 B (user, 11-09): Kyant's whole bottom bar in one page: on, the
+    // dock (and the segment bar on its own switch) uses only these (his
+    // defaults); the range's refraction, blur, material, lens and motion
+    // settings elsewhere are not read meanwhile (kept as they are).
+    if([module isEqual:@"kyant"])return @{@"title":@"Kyant 底栏",@"groups":@[
+        WXGGroup(@"开关",nil,@[WXGSwitch(@"底栏用 Kyant 的方式",@"kyantDockOn",nil),WXGSwitch(@"分组栏用 Kyant 的方式",@"kyantSegmentOn",nil)],
+                 @"照 Kyant 的 AndroidLiquidGlass（Backdrop 库和它 demo 里的 LiquidBottomTabs）整套搬过来：透镜和本体的折射、透镜的色散、透镜按住时怎么浮起 / 移动 / 落下、按住时的形变、本体变大、透镜里的底栏缩小、镜内图标放大、按压光晕，默认值都是他的。打开后这个范围在“折射强度和色散”“模糊”“材质”“底栏 / 分组”页里的折射、色散、模糊、材质、透镜、动画参数暂时不读（数值保留，关掉就回到原来的样子）；边框与渐隐（描边、外阴影）、图标、颜色、切换页面的时机照旧。只在同步渲染（渲染模式 2、网格折射）下完整生效。"),
+        WXGGroup(@"透镜（按住时）",nil,@[WXGSlider(@"折射带宽（透镜高度的比例）",@"kyantLensHeight",nil,.02,.5,@"%.3f"),
+                                     WXGSlider(@"边缘取样深度（透镜高度的比例）",@"kyantLensAmount",nil,0,.8,@"%.3f"),
+                                     WXGSlider(@"色散强度",@"kyantLensDispersion",nil,0,3,@"%.2f"),
+                                     WXGSlider(@"按住放大",@"kyantPressedScale",nil,1,1.8,@"%.3f 倍"),
+                                     WXGSlider(@"镜内图标和文字放大",@"kyantIconZoom",nil,1,1.6,@"%.2f 倍"),
+                                     WXGSlider(@"胶囊内边距（也是镜内底栏的内收）",@"kyantInset",nil,2,14,@"%.1f pt"),
+                                     WXGSwitch(@"跟随滑动速度形变",@"kyantElastic",nil)],
+                 @"他的指示器：静止时一个格子宽、底栏高减去上下内边距；按住时宽高都放大到 78 / 56 ≈ 1.393 倍（宽用阻尼 0.6、高用 0.7 的弹簧，所以会轻轻晃一下）。折射只在轮廓往里“折射带宽”内，按四分之一圆弧往里取样，最外沿取到“边缘取样深度”那么深（他的 10 / 56 和 14 / 56），随按压从 0 长出来。色散：上下边正中和两端正中没有，往四个角越来越强，左上 / 右下和右上 / 左下颜色顺序相反（他的着色器 7 个光谱样本，这里红绿蓝三层取各自的平均位置）；打开后即使流畅模式，透镜按住时也分三层。透镜里看到的底栏是静止胶囊那么高（上下各内收一个内边距），图标和文字放大 1.2 倍，背景不放大。图标和文字是服务器下发的着色器画的，没法用他的圆弧曲线，按同样的带宽和边缘位移换算成着色器的参数，不做色散（他的图标在折射带以内）。速度形变照他的写法：往右快速滑变宽变扁，往左变窄变高（左右不对称是他代码本来就这样）。位置和按压都是阻尼 1、刚度 1000 的弹簧；松手后透镜保持浮起，滑到离目标格不到整段 2.5% 时才落下；点按也是“浮起—滑过去—落下”。拖动时整条底栏跟手偏移最多 4 pt。"),
+        WXGGroup(@"本体",nil,@[WXGSlider(@"按住时变宽",@"kyantBarGrowth",nil,0,40,@"%.1f pt"),
+                             WXGSlider(@"折射带宽（底栏高度的比例）",@"kyantBodyHeight",nil,.02,.5,@"%.3f"),
+                             WXGSlider(@"边缘取样深度（底栏高度的比例）",@"kyantBodyAmount",nil,0,.8,@"%.3f"),
+                             WXGSlider(@"模糊半径",@"kyantBodyBlur",nil,0,12,@"%.2f pt"),
+                             WXGSlider(@"背景饱和度",@"kyantBodySaturation",nil,0,3,@"%.2f"),
+                             WXGColorRow(@"浅色模式底色",@"kyantMaterialHex",nil),WXGColorRow(@"深色模式底色",@"kyantDarkMaterialHex",nil),
+                             WXGColorRow(@"浅色模式静止胶囊",@"kyantSelectionHex",nil),WXGColorRow(@"深色模式静止胶囊",@"kyantDarkSelectionHex",nil)],
+                 @"他的底栏：按住时整体放大，宽度多出 16 pt（高度同比例）；自己的折射 lens(24, 24)（64 高的底栏上，即 0.375 和 0.375），没有色散；背景模糊 8 dp（换算成这里的半径约 4.6，按手机上的感觉调）、饱和度 1.5 倍；底色浅色 #FAFAFA、深色 #121212，都是 40%（颜色里的透明度就是最终遮盖，不再乘材质遮盖）。静止的选中胶囊是 10% 黑（深色模式 10% 白），按住时淡掉。"),
+        WXGGroup(@"按压光晕",nil,@[WXGSwitch(@"按住时底栏发亮",@"kyantGlowOn",nil),
+                                 WXGSlider(@"整条底栏",@"kyantGlowWash",nil,0,.5,@"%.2f"),WXGSlider(@"透镜周围",@"kyantGlowSpot",nil,0,.6,@"%.2f")],
+                 @"他的 InteractiveHighlight：手指按下时整条底栏叠一层 8% 的白（相加），再在透镜位置叠一团 15% 的白光，半径是底栏高度的 1.5 倍，一半以内满亮、往外平滑消失；跟着透镜走，按下 / 松开用阻尼 0.5 的弹簧（会弹一下）。"),
+        WXGGroup(@"恢复",nil,@[WXGAction(@"恢复本页默认（Kyant 的参数）",@"resetPage",YES)],@"开关也会回到关闭。")]};
     if([module isEqual:@"segments"])return @{@"title":@"分组",@"groups":@[
         WXGGroup(@"分组栏",nil,@[WXGSwitch(@"分组栏取代聊天列表搜索框",@"chatSegments",nil),WXGSwitch(@"悬浮，不随列表滚走",@"searchFloat",nil)],
                  @"聊天列表顶部的搜索框换成分组栏，默认 全部 / 未读（有未读或 @ 的）/ 单聊（个人聊天，不含公众号、服务通知这类）/ 群聊（含折叠的群聊），在上面的“管理分组”里可以新建、改名、排序，或做自己选聊天的分组。点哪个分组，聊天列表就只显示那一组（置顶的照样在前），“全部”就是微信原来的列表；每次重新打开微信从第一个“全部”开始。万一这台微信的会话列表结构对不上，会自动回到“全部”并在诊断里写明原因，不会动列表。FIX113 P 起它就是一条小底栏：玻璃、边框、选中胶囊、文字颜色、透镜都从底栏的参数开始，再在这里和各玻璃页的“分组”范围里微调。位置和大小（FIX114 E）：分组栏就在微信搜索框原来的位置、和它一样大（以前的宽度、加高、与标题胶囊的间距三项去掉了），下拉时也跟着微信的搜索框走；只有“顶部按钮往下移”大于 0 时跟着标题行往下挪同样多。悬浮：分组栏（以及首页、通讯录的搜索框）和标题胶囊在同一层，列表往上滚时停在标题栏下面，不跟着滚走；首页、通讯录的搜索框停住后点它，列表会回到顶部再打开微信自己的搜索。只在同步渲染模式下生效。"),
@@ -470,11 +492,6 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                       WXGSlider(@"镜内分组栏统一内收",@"segmentBodyPinch",nil,0,.30,@"%.3f"),
                                       WXGSlider(@"透镜模糊半径",@"segmentLensBlur",nil,0,12,@"%.2f pt"),WXGSlider(@"透镜模糊覆盖扩展",@"segmentLensBlurCoverage",nil,0,100,@"%.0f%%")],
                  @"分组栏自己的透镜，第一次打开时和底栏的透镜相同，之后各调各的。文字的折射强度 / 宽度（FIX113 X）：透镜里的分组名单独用这一组，其余部分用上面的透镜折射强度、宽度；上下宽度比例、收窄曲线也各用各的（FIX113 Y）。跟随滑动速度形变、形变时高度变化、形变时保持里面上下那条的宽度（FIX113 Y）：和底栏“透镜”组里的一样，分组栏自己一套。透镜直接折射底下的分组栏（FIX113 U，跟着底栏“透镜”组里的“透镜直接折射底下的底栏”开关，默认开）：透镜里那条缩小的分组栏就是真实的分组栏（底色、边框）按“镜内分组栏统一内收”缩小后再被透镜折射，不再另画一份；开着时“镜内分组栏色散”不起作用。边缘偏移抵消需要服务器的 FIX113 I 着色器。点按切换的动画时长、胶囊变透镜的快慢和两端拉长仍用底栏的设置。"),
-        WXGGroup(@"Kyant 透镜模式",nil,@[WXGSwitch(@"用 Kyant 的透镜折射和色散",@"segmentLensKyantOn",nil),
-                                      WXGSlider(@"折射带宽（透镜高度的比例）",@"segmentLensKyantHeight",nil,.02,.5,@"%.3f"),
-                                      WXGSlider(@"边缘取样深度（透镜高度的比例）",@"segmentLensKyantAmount",nil,0,.8,@"%.3f"),
-                                      WXGSlider(@"色散强度",@"segmentLensKyantDispersion",nil,0,3,@"%.2f")],
-                 @"分组栏透镜的 Kyant 透镜模式，第一次打开时和底栏的一样，之后各调各的；说明见“折射强度和色散”页底栏范围里的同名一组。打开后上面“透镜（按住时）”里的折射强度、折射宽度、上下比例、收窄曲线、色散、色散范围、边缘偏移抵消不再用。"),
         WXGGroup(@"透镜滤镜色",nil,@[WXGSwitch(@"透镜滤镜色",@"segmentLensTintOn",nil),
                                   WXGColorRow(@"浅色模式颜色",@"segmentLensTintHex",nil),WXGSlider(@"浅色模式浓度",@"segmentLensTintOpacity",nil,0,1,nil),
                                   WXGColorRow(@"深色模式颜色",@"segmentDarkLensTintHex",nil),WXGSlider(@"深色模式浓度",@"segmentDarkLensTintOpacity",nil,0,1,nil)],nil),

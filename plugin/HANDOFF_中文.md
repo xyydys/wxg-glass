@@ -1,9 +1,22 @@
 # 交接说明（给新对话）· WeChat Liquid Glass TEST4 · 当前 FIX114 G（用户 01:48 导出的参数作为这版默认；手机上没改过的设置换成新默认、改过的保留；基于 FIX114 F）
 
 
+## FIX122 B（用户 11-09：“底栏的感觉很完美，但透镜里图标的折射不对味，像被现在底栏透镜的设置干扰了；它的透镜怎么运动形变也搬过来，整个底栏包括本体和透镜都用它的方式、他的默认参数，系统不同的东西可以不搬；我的色散只有浅色模式正常；给透镜新建一个模块设置，临时屏蔽之前分组和底栏有关透镜的设置”）
+
+- 新设置页“Kyant 底栏”（设置首页“通用”里，模块 `kyant`），两个开关：`kyantDockOn`（底栏）、`kyantSegmentOn`（分组栏），其余参数两者共用，默认值都是 Kyant demo（`LiquidBottomTabs`）的。FIX122 的 `lensKyant…` / `segmentLensKyant…` 键和两处设置组删掉，改用这一页（FIX122 没合进 main，没有旧值要迁）。
+- 开着时这个范围不读旧设置（数值保留，关掉即恢复），在 `WXGConfig` 的范围取值处挡住：`kyantForScope:`；`opticsForScope` → 折射 0、色散 0、模糊 `kyantBodyBlur`、覆盖 100；`materialHexForScope / OpacityForScope` → `kyantMaterialHex`（颜色自己的透明度就是最终遮盖，opacity 抵掉着色器的 1.22）；`materialEdgeFadeOn` 关；`backdropToneForScope` → 饱和度 `kyantBodySaturation`（他的 vibrancy 1.5）；`refractionTransition` 0；`lensSettingsForScope` 整个换成 Kyant 的（缩放 1、内收 .125、模糊 0、无滤镜色、无镜内底栏色散、无偏移抵消；描边的不透明度 / 宽度仍取边框页）。别的范围“共用”底栏设置时拿到的仍是原来的底栏值。
+- 动画（`WXGKyantMotion.h`，纯 C，`Tests/KyantMotionTests.c`）照 `DampedDragAnimation` / `InteractiveHighlight`：位置、按压 spring(1, 1000)；宽 / 高缩放 spring(.6, 250) / spring(.7, 250) 到 78/56；速度 spring(.5, 300)（每秒多少个“整段”），形变 scaleX /(1−clamp(.75·v/10)) 、scaleY ×(1−clamp(.25·v/10))，±20%，带符号（他的代码就是往右变宽变扁、往左变窄变高）；拖动时底栏和透镜跟手漂移 4 pt × EaseOut(|拖动|/宽)，松手 spring(1, 300) 回去；松手后按压保持到透镜离目标不到整段 2.5% 才落下；点按（分组栏的程序切换）也是浮起—滑过去—落下。`WXGDemoBar` / `WXGChatSegments` 开着时不建 glide / travel 脚本、不用原来的弹簧和 elastic、不用两端拉长；底栏点按换页的请求、选中、触感都照旧。
+- 几何：静止透镜 = 一个格子 × (高 − 2 × 内边距 `kyantInset` 4)，按住乘他的缩放，中心就是透镜 x（不随本体放大移动）；本体按住 1 + `kyantBarGrowth`(16 pt)/宽，两向等比；镜内底栏内收 = 内边距（`shrinkPinch` = 2 × 内边距 / 底栏高）；网格不放大（zoomAfter 1），图标和文字放大 `kyantIconZoom` 1.2（图标图集按 1.2 × 本体放大画，换开关会重画）。
+- 本体折射：网格走 `WXGMeshKyantSource`（`kyHeight / kyAmount` = `kyantBody…` × 底栏短边，他的 24/64；无色散），网格 Kyant 分支现在也认 zoomBefore（底栏为 1）。
+- 透镜里的图标和文字（服务器着色器画的，不改着色器）：透镜那一遍的 uniform 换成他的：带宽 = 他的带宽 × 按压，按 TEST9 的振幅公式反算出强度，使轮廓处位移 = 他的 amount × 按压（`material.y / optics.w` 设成同样的值，按压过程中不再从底栏本体的 13.15 / 10.3 混过来）；上下比例 1、无收窄、无抵消；图标色散 0（他的图标在折射带以内；着色器的图标色散在深色模式假设背后是黑色，`extra2.z`，深色底栏上会出脏边，这就是之前“深色模式色散不对”的主要来源）；放大 = `kyantIconZoom`。
+- 选中胶囊：`kyantSelectionHex`（10% 黑）/ `kyantDarkSelectionHex`（10% 白），按压时照常淡掉。
+- 按压光晕：`WXGGlassView` 在本体裁剪层最上面加一层（相加混合）：整条 `kyantGlowWash` 8% 白 + 透镜处径向 `kyantGlowSpot` 15%，半径 1.5 × 底栏短边，一半以内满亮，smoothstep 消失；手指按下时开，弹簧 (.5, 300)，位置也是。透镜看底栏时会一起折射进去（他的隐藏副本也有）。属性 `kyantGlow / kyantGlowX`。
+- 没搬：描边 / 外阴影 / 内阴影（边框页照旧）、他指示器按住时的 3% 黑、他“只有按在指示器上才能拖”的手势（这里按哪都能拖）、只在着色器里能做的图标圆弧曲线和图标色散。
+- 验证：`KyantMotionTests`（弹簧临界阻尼 / 过冲 / 0.123 s 到 90%、EaseOut、78/56、16 pt、带符号形变和 20% 上限、每段速度、4 pt 漂移、2.5% 落下、光晕）、`KyantLensTests` 照旧；27 个源文件 `-Werror` 编译、链接通过；全部 C 测试除 main 上本来就编不过的 `LensInsetAlongTests` 外都过。真机未看。
+
 ## FIX122（用户 11-09：“直接用 Kyant 的方式给我新建一个底栏透镜的模式，我现在的透镜不管怎么调参数，内部的折射和上下镂空区域的色散都不对”）
 
-- 新开关“Kyant 透镜模式”（折射强度和色散 › 底栏范围一组；分组页的透镜里也有一组，键 `lensKyant…` / `segmentLensKyant…`，分组的第一次从底栏继承）。默认关，关着时和以前逐位相同（`kyHeight` = 0 走原来的折射带）。
+- 新开关“Kyant 透镜模式”（FIX122 B 起挪到单独的“Kyant 底栏”页，键改为 `kyant…`）。默认关，关着时和以前逐位相同（`kyHeight` = 0 走原来的折射带）。
 - 算法（`WXGKyantLens.h`，纯 C）照 Kyant 的 AndroidLiquidGlass / Backdrop `lens()`（`RoundedRectRefractionWithDispersionShaderString`），他 demo 底栏按住时浮起的指示器用的是 `lens(10dp × 按压, 14dp × 按压, chromaticAberration = true)`：
   - 折射：只在轮廓往里 H 宽的一圈，取样点沿法线往里移 A × circleMap(1 − 深度 / H)，circleMap(x) = 1 − √(1 − x²)。轮廓处移满 A（起头斜率无穷，最外一小条把更里面的东西镜像过来，圆润玻璃边的反光），到 H 处平滑归零、斜率也为 0。轮廓外按轮廓处的值。圆角矩形的法线按 1.5 倍圆角取（他的 gradRadius），胶囊不变。
   - 色散：同一位移乘 I = (x / 半宽)(y / 半高)：上下边正中、两端正中为 0，往四角变强，左上 / 右下与右上 / 左下颜色顺序相反。他的着色器取 7 个光谱样本，每个通道权重和为 1；三层渲染只能各取均值：红 +3/7、绿 +2/21、蓝 −2/3（`WXGKyantChannelWeight`，测试里由 7 个样本的表算出来核对）。

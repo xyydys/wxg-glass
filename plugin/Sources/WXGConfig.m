@@ -360,14 +360,34 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"bubbleDarkRimSampleSoftLevel",'n',.5,0,1,"bubbleDarkRimSoftLevel",NULL},
     {"lensDispersionWidth",'n',10,1,60,"lensEdgeWidth",NULL},
     {"lensDispersionTopRatio",'n',1,0.1,1,"lensTopEdgeRatio",NULL},
-    // FIX122 Kyant 透镜模式 (WXGKyantLens.h): the dock's lens refracted and
-    // split as Kyant's Backdrop lens(): on, the band and the shift at the
-    // outline as shares of the lens' short side (the catalog's 10 / 56 and
-    // 14 / 56), the colour split's strength (1 = his). Off = as before.
-    {"lensKyantOn",'b',0,0,1,NULL,NULL},
-    {"lensKyantHeight",'n',10./56.,.02,.5,NULL,NULL},
-    {"lensKyantAmount",'n',14./56.,0,.8,NULL,NULL},
-    {"lensKyantDispersion",'n',1,0,3,NULL,NULL},
+    // FIX122 / FIX122 B Kyant 底栏 (its own settings module, WXGKyantLens.h /
+    // WXGKyantMotion.h): the dock (and, on its own switch, the segment bar)
+    // drawn and moved as Kyant's LiquidBottomTabs, with his defaults; while
+    // on, the range's own refraction, blur, material, lens and motion
+    // settings are not read (kept as they are). The lens' band and shift
+    // and the bar's are shares of the lens' / bar's short side (his
+    // 10 / 56, 14 / 56 and 24 / 64); scale, zoom, inset and growth his.
+    {"kyantDockOn",'b',0,0,1,NULL,NULL},
+    {"kyantSegmentOn",'b',0,0,1,NULL,NULL},
+    {"kyantLensHeight",'n',10./56.,.02,.5,NULL,NULL},
+    {"kyantLensAmount",'n',14./56.,0,.8,NULL,NULL},
+    {"kyantLensDispersion",'n',1,0,3,NULL,NULL},
+    {"kyantPressedScale",'n',78./56.,1,1.8,NULL,NULL},
+    {"kyantIconZoom",'n',1.2,1,1.6,NULL,NULL},
+    {"kyantInset",'n',4,2,14,NULL,NULL},
+    {"kyantBarGrowth",'n',16,0,40,NULL,NULL},
+    {"kyantElastic",'b',1,0,1,NULL,NULL},
+    {"kyantBodyHeight",'n',24./64.,.02,.5,NULL,NULL},
+    {"kyantBodyAmount",'n',24./64.,0,.8,NULL,NULL},
+    {"kyantBodyBlur",'n',4.6,0,12,NULL,NULL},
+    {"kyantBodySaturation",'n',1.5,0,3,NULL,NULL},
+    {"kyantMaterialHex",'h',0,0,0,NULL,"#FAFAFA66"},
+    {"kyantDarkMaterialHex",'h',0,0,0,NULL,"#12121266"},
+    {"kyantSelectionHex",'h',0,0,0,NULL,"#0000001A"},
+    {"kyantDarkSelectionHex",'h',0,0,0,NULL,"#FFFFFF1A"},
+    {"kyantGlowOn",'b',1,0,1,NULL,NULL},
+    {"kyantGlowWash",'n',.08,0,.5,NULL,NULL},
+    {"kyantGlowSpot",'n',.15,0,.6,NULL,NULL},
     // FIX88: 平稳背景时加强材质 again (FIX85, removed in FIX86).
     // FIX113 O: the chat list's segment bar's own lens and pill (user: not the
     // dock's parameters; its pill's inset, colour and border its own), first
@@ -388,10 +408,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentLensBlur",'n',0,0,12,"lensBlur",NULL},
     {"segmentLensBlurCoverage",'n',0,0,100,"lensBlurCoverage",NULL},
     {"segmentLensOffsetCancel",'n',0,0,1,"lensOffsetCancel",NULL},
-    {"segmentLensKyantOn",'b',0,0,1,"lensKyantOn",NULL},   // FIX122
-    {"segmentLensKyantHeight",'n',10./56.,.02,.5,"lensKyantHeight",NULL},
-    {"segmentLensKyantAmount",'n',14./56.,0,.8,"lensKyantAmount",NULL},
-    {"segmentLensKyantDispersion",'n',1,0,3,"lensKyantDispersion",NULL},
     {"segmentLensRimHex",'h',0,0,0,"lensRimHex","#FFFFFFFF"},
     {"segmentDarkLensRimHex",'h',0,0,0,"darkLensRimHex","#FFFFFFFF"},
     {"segmentLensRimOpacity",'n',.5,0,1,"lensRimOpacity",NULL},
@@ -1674,7 +1690,16 @@ static BOOL WXGTableScope(WXGGlassScope scope) {return scope==WXGGlassScopeBubbl
     return [self rawOpticsForDock:scope==WXGGlassScopeDock];
 }
 // FIX114 L: refraction from the range 折射 shares with, blur from 模糊's.
+// FIX122 B: Kyant 底栏 for the dock (and the segment bar on its own switch).
+- (BOOL)kyantForScope:(WXGGlassScope)scope {
+    if(scope==WXGGlassScopeDock)return [self extraNumber:@"kyantDockOn"]>.5;
+    if(scope==WXGGlassScopeSegment)return [self extraNumber:@"kyantSegmentOn"]>.5;
+    return NO;
+}
 - (WXGScopeOptics)opticsForScope:(WXGGlassScope)scope {
+    // FIX122 B: Kyant's bar: no band refraction here (the glass gives its
+    // mesh his lens() instead), no split, his blur over the whole glass.
+    if([self kyantForScope:scope]){WXGScopeOptics k={0,0,10,WXGClamp([self extraNumber:@"kyantBodyBlur"],0,12),100};return k;}
     WXGGlassScope r=[self sharedScope:scope page:WXGSharePageRefraction],b=[self sharedScope:scope page:WXGSharePageBlur];
     WXGScopeOptics o=[self ownOpticsForScope:r];
     if(b!=r){WXGScopeOptics ob=[self ownOpticsForScope:b];o.blur=ob.blur;o.blurCoverage=ob.blurCoverage;}
@@ -1708,6 +1733,7 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
            scope==WXGGlassScopeSegment || scope==WXGGlassScopeSegmentLens?3:scope==WXGGlassScopeCard?4:0;
 }
 - (WXGTransitionSettings)refractionTransitionForScope:(WXGGlassScope)scope {
+    if([self kyantForScope:scope]){WXGTransitionSettings k={0,0,0,0};return k;}   // FIX122 B
     static NSString *const keys[5][4]={
         {@"refractionTransition",@"refractionTransitionWidth",@"refractionTransitionStretch",@"refractionTransitionCurve"},
         {@"dockRefractionTransition",@"dockRefractionTransitionWidth",@"dockRefractionTransitionStretch",@"dockRefractionTransitionCurve"},
@@ -1720,6 +1746,7 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
 }
 // FIX114 J: a range's backdrop saturation and brightness.
 - (WXGBackdropTone)backdropToneForScope:(WXGGlassScope)scope {
+    if([self kyantForScope:scope]){WXGBackdropTone k={WXGClamp([self extraNumber:@"kyantBodySaturation"],0,3),0};return k;}   // FIX122 B: vibrancy()
     static NSString *const keys[5][2]={{@"backdropSaturation",@"backdropBrightness"},{@"dockBackdropSaturation",@"dockBackdropBrightness"},
         {@"bubbleBackdropSaturation",@"bubbleBackdropBrightness"},{@"segmentBackdropSaturation",@"segmentBackdropBrightness"},
         {@"cardBackdropSaturation",@"cardBackdropBrightness"}};
@@ -1745,18 +1772,22 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
 }
 // FIX113 O: a range's material (the bubbles tint themselves: the other glass's).
 - (NSString *)materialHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {
+    if([self kyantForScope:scope])return [self extraHex:dark?@"kyantDarkMaterialHex":@"kyantMaterialHex"];   // FIX122 B: his container colour
     scope=[self sharedScope:scope page:WXGSharePageMaterial];   // FIX114 L
     if(scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard)return [self extraHex:WXGScopedKey(scope,dark,@"MaterialHex")];
     if(scope==WXGGlassScopeDock)return dark?_dockDarkMaterialHex:_dockMaterialHex;
     return dark?_darkMaterialHex:_materialHex;
 }
 - (CGFloat)materialOpacityForScope:(WXGGlassScope)scope dark:(BOOL)dark {
+    // FIX122 B: the colour's own alpha, exactly (the veil multiplies by 1.22 unless 清透材质).
+    if([self kyantForScope:scope])return 1/(1.22-.22*(self.clearMaterial?1:0));
     scope=[self sharedScope:scope page:WXGSharePageMaterial];   // FIX114 L
     if(scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard)return WXGClamp([self extraNumber:WXGScopedKey(scope,dark,@"MaterialOpacity")],0,1);
     if(scope==WXGGlassScopeDock)return dark?_dockDarkMaterialOpacity:_dockMaterialOpacity;
     return dark?_darkMaterialOpacity:_materialOpacity;
 }
 - (BOOL)materialEdgeFadeOnForScope:(WXGGlassScope)scope {
+    if([self kyantForScope:scope])return NO;   // FIX122 B
     scope=[self sharedScope:scope page:WXGSharePageMaterial];   // FIX114 L
     if(scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard)return [self extraNumber:WXGScopedKey(scope,NO,@"MaterialEdgeFadeEnabled")]>.5;
     return scope==WXGGlassScopeDock?_dockMaterialEdgeFadeEnabled:_materialEdgeFadeEnabled;
@@ -1768,7 +1799,7 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
 }
 // FIX113 O: the lens of a range: the segment bar's own, every other the dock's.
 - (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    WXGLensSettings l;
+    WXGLensSettings l;memset(&l,0,sizeof l);
     if(scope==WXGGlassScopeSegment) {
         // Literal keys: this runs a few times a frame while the bar draws.
         l.refraction=[self extraNumber:@"segmentLensRefraction"];l.dispersion=[self extraNumber:@"segmentLensDispersion"];l.edgeWidth=[self extraNumber:@"segmentLensEdgeWidth"];
@@ -1785,8 +1816,6 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
         l.iconTopRatio=[self extraNumber:@"segmentLensIconTopEdgeRatio"];l.iconSharpness=[self extraNumber:@"segmentLensIconEdgeSharpness"];
         l.elasticOn=[self extraNumber:@"segmentLensElasticOn"]>.5;l.elasticHeight=[self extraNumber:@"segmentLensElasticHeight"];
         l.elasticKeepStrip=[self extraNumber:@"segmentLensElasticKeepStrip"];
-        l.kyantOn=[self extraNumber:@"segmentLensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"segmentLensKyantHeight"];   // FIX122
-        l.kyantAmount=[self extraNumber:@"segmentLensKyantAmount"];l.kyantDispersion=[self extraNumber:@"segmentLensKyantDispersion"];
     }else {
         l.refraction=_lensRefraction;l.dispersion=_lensDispersion;l.edgeWidth=_lensEdgeWidth;l.topRatio=_lensTopEdgeRatio;l.sharpness=_lensEdgeSharpness;
         l.dispersionWidth=[self extraNumber:@"lensDispersionWidth"];l.dispersionTopRatio=[self extraNumber:@"lensDispersionTopRatio"];
@@ -1800,8 +1829,24 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
         l.iconTopRatio=[self extraNumber:@"lensIconTopEdgeRatio"];l.iconSharpness=[self extraNumber:@"lensIconEdgeSharpness"];
         l.elasticOn=[self extraNumber:@"lensElasticOn"]>.5;l.elasticHeight=[self extraNumber:@"lensElasticHeight"];
         l.elasticKeepStrip=[self extraNumber:@"lensElasticKeepStrip"];
-        l.kyantOn=[self extraNumber:@"lensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"lensKyantHeight"];   // FIX122
-        l.kyantAmount=[self extraNumber:@"lensKyantAmount"];l.kyantDispersion=[self extraNumber:@"lensKyantDispersion"];
+    }
+    // FIX122 B: Kyant 底栏 on for this range: the lens' own settings are not
+    // read; his (the refraction and split by WXGKyantLens.h in the glass, the
+    // icons there too). The rim's opacity and width stay the border page's.
+    if([self kyantForScope:scope]) {
+        CGFloat rimOpacity=l.rimOpacity,borderWidth=l.borderWidth,rimAtRest=l.rimAtRest;
+        memset(&l,0,sizeof l);
+        l.rimOpacity=rimOpacity;l.borderWidth=borderWidth;l.rimAtRest=rimAtRest;
+        l.edgeWidth=10;l.topRatio=1;l.sharpness=1;l.dispersionWidth=10;l.dispersionTopRatio=1;
+        l.zoom=1;l.growth=WXGClamp([self extraNumber:@"kyantPressedScale"],1,1.8);l.barGrowth=1;l.endWrap=0;
+        l.pinch=.125;l.blur=0;l.blurCoverage=0;l.cancelSetting=0;
+        l.selectionInset=WXGClamp([self extraNumber:@"kyantInset"],2,14);
+        l.iconTopRatio=1;l.iconSharpness=1;l.iconEdgeWidth=10;
+        l.elasticOn=[self extraNumber:@"kyantElastic"]>.5;
+        l.kyantOn=YES;l.kyantHeight=WXGClamp([self extraNumber:@"kyantLensHeight"],.02,.5);
+        l.kyantAmount=WXGClamp([self extraNumber:@"kyantLensAmount"],0,.8);l.kyantDispersion=WXGClamp([self extraNumber:@"kyantLensDispersion"],0,3);
+        l.kyantIconZoom=WXGClamp([self extraNumber:@"kyantIconZoom"],1,1.6);
+        l.dispersion=l.kyantDispersion;
     }
     return l;
 }

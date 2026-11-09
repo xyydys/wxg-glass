@@ -98,7 +98,7 @@ typedef struct {
     CGFloat iconTopRatio,iconSharpness;     // FIX113 Y: and their top / bottom band ratio and narrowing curve
     BOOL elasticOn;CGFloat elasticHeight;   // FIX113 Y: the drag-speed deformation, the share of its height change kept
     CGFloat elasticKeepStrip;               // FIX113 Y: how much of the strip inside the lens is kept as it deforms
-    BOOL kyantOn;CGFloat kyantHeight,kyantAmount,kyantDispersion;   // FIX122: Kyant 透镜模式 (shares of the lens' short side; split strength)
+    BOOL kyantOn;CGFloat kyantHeight,kyantAmount,kyantDispersion,kyantIconZoom;   // FIX122 B: Kyant 底栏 (shares of the lens' short side; split strength; icon zoom)
 } WXGLensSettings;
 // FIX113: Telegram's tab icons for the dock (WXGTelegramIcons.m): on, the
 // frames of a tab (0 Chats, 1 Contacts, 2 Calls, 3 Settings; template
@@ -276,6 +276,7 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (BOOL)materialEdgeFadeOnForScope:(WXGGlassScope)scope;
 - (CGFloat)materialEdgeFadeForScope:(WXGGlassScope)scope;
 - (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark;
+- (BOOL)kyantForScope:(WXGGlassScope)scope;   // FIX122 B: Kyant 底栏 on for this range (dock / segment bar)
 - (NSString *)lensRimHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 // FIX113 X: the 透镜 range's border as one line (the tap animation's lens,
 // a plain layer border): its colour with opacity, and width.
@@ -390,6 +391,8 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 // tap's scripted fade); < 0 (the default): by the press (WXGRestingSelectionWeight).
 @property(nonatomic) CGFloat selectionWeight;
 @property(nonatomic) CGFloat barScale, lensAnchorX;
+// FIX122 B: Kyant 底栏's press glow (0..~1.2, his spring) and its centre x (this view's points).
+@property(nonatomic) CGFloat kyantGlow, kyantGlowX;
 @property(nonatomic) CGFloat maximumCornerRadius;
 
 @property(nonatomic) BOOL active;
