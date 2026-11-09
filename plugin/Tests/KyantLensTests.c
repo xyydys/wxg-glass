@@ -25,13 +25,16 @@ static void kGrad(float px,float py,float hx,float hy,float r,float *gx,float *g
     if(cx>=0 || cy>=0){float ox=fmaxf(cx,0),oy=fmaxf(cy,0),l=sqrtf(ox*ox+oy*oy);*gx=sx*ox/l;*gy=sy*oy/l;}
     else{float g=cy<=cx?1.f:0.f;*gx=sx*g;*gy=sy*(1-g);}
 }
-static void kyantShader(float w,float h,float height,float amount,float channel,float x,float y,float *ox,float *oy){
+static void kyantShaderD(float w,float h,float height,float amount,float channel,float depth,float x,float y,float *ox,float *oy);
+static void kyantShader(float w,float h,float height,float amount,float channel,float x,float y,float *ox,float *oy){kyantShaderD(w,h,height,amount,channel,0,x,y,ox,oy);}
+static void kyantShaderD(float w,float h,float height,float amount,float channel,float depth,float x,float y,float *ox,float *oy){
     float hx=w*.5f,hy=h*.5f,r=fminf(hx,hy),cx=x-hx,cy=y-hy;
     float sd=kSd(cx,cy,hx,hy,r);*ox=x;*oy=y;
     if(-sd>=height)return;
     sd=fminf(sd,0);
     float u=1-(-sd/height),d=(1-sqrtf(1-u*u))*-amount,gx,gy;
     kGrad(cx,cy,hx,hy,fminf(r*1.5f,fminf(hx,hy)),&gx,&gy);
+    float cl=sqrtf(cx*cx+cy*cy);if(depth>0 && cl>0){gx+=depth*cx/cl;gy+=depth*cy/cl;}
     float l=sqrtf(gx*gx+gy*gy);gx/=l;gy/=l;
     float I=(cx*cy)/(hx*hy),k=channel>.5f?3.f/7.f:channel<-.5f?-2.f/3.f:2.f/21.f;
     *ox=x+d*gx+d*gx*I*k;*oy=y+d*gy+d*gy*I*k;
@@ -135,6 +138,24 @@ int main(void) {
         CHECK(ends>100 && endBad*50<ends,"round ends: the shader's direction and channel order (%d of %d off)",endBad,ends);
         printf("vs shader: straight %.5f pt; round ends %d of %d samples off\n",worstStraight,endBad,ends);
     }
+    /* FIX122 D: depthEffect (his normalize(normal + normalize(p - centre)))
+       on the straight part exactly his; zoom before (a button's press) about
+       the centre, then the shift. */
+    {
+        float worst=0;
+        for(int c=-1;c<=1;c++)for(float x=53;x<108;x+=1.5f)for(float y=.25f;y<70;y+=.75f) {
+            WXGMeshOptics m=kyant(1,(float)c);m.kyDepth=1;
+            float ax,ay,bx2,by2;WXGMeshSource(m,x,y,&ax,&ay);kyantShaderD(160,70,12.5f,17.5f,(float)c,1,x,y,&bx2,&by2);
+            float e=hypotf(ax-bx2,ay-by2);if(e>worst)worst=e;
+        }
+        CHECK(worst<1e-3f,"depthEffect: his sample on the straight part (%.5f)",worst);
+        WXGMeshOptics d=kyant(0,0);d.kyDepth=1;float dx,dy;WXGMeshSource(d,60,1,&dx,&dy);
+        CHECK(dx>60.5f,"depthEffect bends toward the centre (%.3f)",dx);
+        WXGMeshOptics z=kyant(0,0);z.zoomBefore=1.04f;float zx,zy;
+        WXGMeshSource(z,100,35,&zx,&zy);
+        CHECK(fabsf(zx-(80+20/1.04f))<1e-3f && fabsf(zy-35)<1e-3f,"zoom before about the centre (%.4f)",zx);
+    }
+
     /* The contour mesh builds, within the capacity, for every channel and
        with the smaller bar; every vertex is the source of its point. */
     enum { CAP=20000 };
@@ -157,6 +178,6 @@ int main(void) {
     }
 
     if(failures){printf("KyantLensTests: %d failure(s)\n",failures);return 1;}
-    printf("PASS: Kyant lens (FIX122): circleMap shift (whole amount at the outline, zero slope at the band's end, mirrored rim), 7-tap channel means, x*y split by quarter, mesh source (zoom, smaller bar), off = the old lens bit for bit, contour meshes built and exact.\n");
+    printf("PASS: Kyant lens (FIX122): circleMap shift (whole amount at the outline, zero slope at the band's end, mirrored rim), 7-tap channel means, x*y split by quarter, mesh source (zoom, smaller bar), off = the old lens bit for bit, contour meshes built and exact; FIX122 D depthEffect as his, zoom before.\n");
     return 0;
 }

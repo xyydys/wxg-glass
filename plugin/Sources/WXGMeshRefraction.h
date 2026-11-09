@@ -73,6 +73,10 @@ typedef struct {
        dispersionWidth rules are not used; `dispersion` is the colour split's
        strength (1 = Kyant's), `channel` picks the channel's mean weight. */
     float kyHeight,kyAmount;
+    /* FIX122 D (zero = off): his depthEffect: the shift's direction tilted
+       toward the centre (normalize(normal + depth x normalize(p - centre))),
+       a dome rather than a rim; his dialog, magnifier and control centre. */
+    float kyDepth;
 } WXGMeshOptics;
 /* The full inset of the smaller bar, and the inset ramped by `along` (as
    WXGInnerInsetAlong, either sign). */
@@ -198,7 +202,7 @@ static inline void WXGMeshShrinkBar(WXGMeshOptics o,float yx,float yy,float za,f
    and the smaller bar exactly as the band path. */
 static inline void WXGMeshKyantSource(WXGMeshOptics o,float px,float py,float *sx,float *sy) {
     float cx=o.width*.5f,cy=o.height*.5f,s=o.fieldScale>0.f?o.fieldScale:1.f;
-    float za=o.zoomAfter>0.f?o.zoomAfter:1.f;
+    float zb=o.zoomBefore>0.f?o.zoomBefore:1.f,za=o.zoomAfter>0.f?o.zoomAfter:1.f;
     float x=(px-cx)/s,y=(py-cy)/s,w=WXGMeshShapeWidth(o)/s,h=WXGMeshShapeHeight(o)/s;
     WXGShapeSample f=o.radius>0.f?WXGRoundedOpticalField(x,y,w,h,o.radius):WXGCapsuleOpticalField(x,y,w,h);
     if(o.radius>0.f) {
@@ -208,11 +212,19 @@ static inline void WXGMeshKyantSource(WXGMeshOptics o,float px,float py,float *s
             if(g.nx!=0.f || g.ny!=0.f){f.nx=g.nx;f.ny=g.ny;}
         }
     }
+    if(o.kyDepth>0.f) {   /* FIX122 D: depthEffect */
+        float r=WXG_SQRT(x*x+y*y);
+        if(r>1e-4f) {
+            float gx=f.nx+o.kyDepth*x/r,gy=f.ny+o.kyDepth*y/r,gl=WXG_SQRT(gx*gx+gy*gy);
+            if(gl>1e-5f){f.nx=gx/gl;f.ny=gy/gl;}
+        }
+    }
     float off=WXGKyantOffset(-f.distance,o.kyHeight,o.kyAmount)*s;
     float spread=o.dispersion>0.f?o.dispersion*WXGKyantChannelWeight(o.channel)*WXGKyantDispersionIntensity(x,y,w*.5f,h*.5f):0.f;
-    float rx=px-f.nx*off*(1.f+spread),ry=py-f.ny*off*(1.f+spread);
+    float bx=cx+(px-cx)/zb,by=cy+(py-cy)/zb;   /* FIX122 D: a button's press zoom before (1 for a lens) */
+    float rx=bx-f.nx*off*(1.f+spread),ry=by-f.ny*off*(1.f+spread);
     *sx=cx+(rx-cx)/za;*sy=cy+(ry-cy)/za;
-    if(WXGMeshShrinks(o))WXGMeshShrinkBar(o,px-f.nx*off,py-f.ny*off,za,sx,sy);   /* FIX113 U, as the band path */
+    if(WXGMeshShrinks(o))WXGMeshShrinkBar(o,bx-f.nx*off,by-f.ny*off,za,sx,sy);   /* FIX113 U, as the band path */
 }
 static inline void WXGMeshSource(WXGMeshOptics o,float px,float py,float *sx,float *sy) {
     if(o.kyHeight>0.f){WXGMeshKyantSource(o,px,py,sx,sy);return;}   /* FIX122 */

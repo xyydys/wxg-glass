@@ -652,6 +652,18 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensElasticKyDamping",'n',.5,.05,1.5,NULL,NULL},
     {"lensElasticKyStiffness",'n',300,20,1500,NULL,NULL},
     {"lensElasticKySymmetric",'b',0,0,1,NULL,NULL},
+    // FIX122 D (user: Kyant's refraction for 其余玻璃 next): the other glass'
+    // body refracted by his lens() (WXGKyantLens.h) instead of its band:
+    // the band and the shift at the outline as shares of the glass' short
+    // side (his LiquidButton: lens(12, 24) on 48 dp), depthEffect (his large
+    // panels), his colour split's strength (his buttons have none). Ranges
+    // sharing 其余玻璃's refraction page (共用) follow it.
+    {"kyantOtherOn",'b',0,0,1,NULL,NULL},
+    {"kyantOtherHeight",'n',.25,.02,.5,NULL,NULL},
+    {"kyantOtherAmount",'n',.5,0,1,NULL,NULL},
+    {"kyantOtherDepth",'b',0,0,1,NULL,NULL},
+    {"kyantOtherDispersion",'n',0,0,3,NULL,NULL},
+    {"kyantOtherMaxHeight",'n',24,4,80,NULL,NULL},   // the band at most this (pt), the shift with it in proportion (his panels: 16-24 dp)
     // FIX113 Z: iOS 27 rims per appearance: dark mode's own two highlights
     // (…Rim27DarkMode…), first taken from the light mode's (the ones above).
     {"rim27DarkModeHex",'h',0,0,0,"rim27Hex","#FFFFFFFF"},
@@ -1777,6 +1789,16 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
     return scope==WXGGlassScopeDock?_dockMaterialEdgeFade:_materialEdgeFade;
 }
 // FIX113 O: the lens of a range: the segment bar's own, every other the dock's.
+// FIX122 D: Kyant's lens() on a glass' body: 其余玻璃's, and any range
+// sharing its refraction page.
+- (WXGKyantBody)kyantBodyForScope:(WXGGlassScope)scope {
+    WXGKyantBody k={NO,0,0,0,0,0};
+    if([self sharedScope:scope page:WXGSharePageRefraction]!=WXGGlassScopeOther || [self extraNumber:@"kyantOtherOn"]<=.5)return k;
+    k.on=YES;k.height=WXGClamp([self extraNumber:@"kyantOtherHeight"],.02,.5);k.amount=WXGClamp([self extraNumber:@"kyantOtherAmount"],0,1);
+    k.depth=[self extraNumber:@"kyantOtherDepth"]>.5?1:0;k.dispersion=WXGClamp([self extraNumber:@"kyantOtherDispersion"],0,3);
+    k.maxHeight=WXGClamp([self extraNumber:@"kyantOtherMaxHeight"],4,80);
+    return k;
+}
 // FIX122 C: Kyant's drag-speed deformation, as set (WXGKyantElastic.h).
 - (WXGKyantElasticParams)kyantElasticParams {
     WXGKyantElasticParams p;

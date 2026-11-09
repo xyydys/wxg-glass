@@ -79,6 +79,8 @@ typedef struct { CGFloat opacity,blur,offset,spread; } WXGDropShadowSettings;
 // range's settings of a page (共用).
 typedef NS_ENUM(NSInteger,WXGSharePage) {WXGSharePageRefraction=0,WXGSharePageBlur=1,WXGSharePageMaterial=2,WXGSharePageBorder=3};
 typedef struct { CGFloat opacity,width,brightness,fade; } WXGScopeRim;
+// FIX122 D: Kyant's lens() on a glass' body (shares of its short side; depthEffect 0 / 1; split strength).
+typedef struct { BOOL on; CGFloat height,amount,depth,dispersion,maxHeight; } WXGKyantBody;   // maxHeight: the band's cap (pt)
 // FIX85: the three groups of glass with their own optics and rims (the
 // liquid chat bubbles are the third), and the three rim styles.
 typedef NS_ENUM(NSInteger,WXGGlassScope) {WXGGlassScopeOther=0,WXGGlassScopeDock=1,WXGGlassScopeBubble=2,
@@ -277,7 +279,8 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (BOOL)materialEdgeFadeOnForScope:(WXGGlassScope)scope;
 - (CGFloat)materialEdgeFadeForScope:(WXGGlassScope)scope;
 - (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark;
-- (WXGKyantElasticParams)kyantElasticParams;   // FIX122 C: Kyant's drag-speed deformation (dock and segment bar)
+- (WXGKyantElasticParams)kyantElasticParams;
+- (WXGKyantBody)kyantBodyForScope:(WXGGlassScope)scope;   // FIX122 D: Kyant's refraction on 其余玻璃 (and ranges sharing it)   // FIX122 C: Kyant's drag-speed deformation (dock and segment bar)
 - (NSString *)lensRimHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 // FIX113 X: the 透镜 range's border as one line (the tap animation's lens,
 // a plain layer border): its colour with opacity, and width.

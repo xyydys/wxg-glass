@@ -1,6 +1,13 @@
 # 交接说明（给新对话）· WeChat Liquid Glass TEST4 · 当前 FIX114 G（用户 01:48 导出的参数作为这版默认；手机上没改过的设置换成新默认、改过的保留；基于 FIX114 F）
 
 
+## FIX122 D（用户 11-09：“就先给其余玻璃这个部分搬过去，我测试一下”——Kyant 的折射带做法，带的内边看不出来）
+
+- 折射强度和色散 › 其余玻璃范围新组“Kyant 折射”：开关 `kyantOtherOn`（默认关；关着时逐位如前），`kyantOtherHeight` 带宽 = 短边 × .25、`kyantOtherAmount` 边缘取样深度 = 短边 × .5（他 LiquidButton 的 lens(12, 24) / 48 dp），`kyantOtherMaxHeight` 带宽上限 24 pt（超过时带宽取上限、深度按比例缩小；他的对话框 24 dp，滚动容器 16 dp），`kyantOtherDepth` depthEffect（默认关，他的大面板用），`kyantOtherDispersion` 色散强度（默认 0，他的按钮没有）。
+- 作用于其余玻璃范围的本体网格，以及“共用”其余玻璃折射页的范围（`kyantBodyForScope:` 按 `sharedScope:page:WXGSharePageRefraction` 判断）。`applySyncMode` 里本体 `bodyOptics` 换成 `kyHeight / kyAmount / kyDepth`（玻璃自己的未缩放短边），折射带强度 / 边界过渡清零；按钮按压的 zoomBefore 照旧（网格 Kyant 分支现在先做 zoomBefore）；色散仍按本体原来的三层规则（流畅模式下没有）。着色器在同步模式下本体不弯图标，不受影响。
+- `WXGMeshOptics.kyDepth`：方向 = normalize(法线 + kyDepth × normalize(p − 中心))，和他的 depthEffect 一样；进网格缓存 key / Close。
+- 验证：`KyantLensTests` 加 depthEffect（直边部分与移植的他的着色器逐点一致）、往中心弯、zoomBefore；大玻璃网格（390×844 圆角 38、带宽 24）4.7k 顶点，远低于 2 万上限；27 个源文件 `-Werror` 编译、链接通过；C 测试除 main 上本来就编不过的 `LensInsetAlongTests` 外都过。真机未看。
+
 ## FIX122 C（用户 11-09：试了 FIX122 B 的整套 Kyant 底栏“比较卡，效果也不是特别好，还是用我自己的”；回退到 FIX122，只把“跟随滑动速度形变”换成 Kyant 的，参数可调）
 
 - FIX122 B 整个回退（git revert，代码回到 FIX122 一模一样）。

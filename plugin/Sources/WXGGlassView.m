@@ -191,7 +191,7 @@ static BOOL WXGMeshOpticsClose(WXGMeshOptics a,WXGMeshOptics b) {
         fabsf(a.shrinkExtra-b.shrinkExtra)<.125f &&   // FIX113 Y
         fabsf(a.transition-b.transition)<.0005f &&   // FIX114 I
         fabsf(a.softStretch-b.softStretch)<.005f && fabsf(a.softPower-b.softPower)<.005f && fabsf(a.softWidth-b.softWidth)<.05f &&   // FIX114 J
-        fabsf(a.kyHeight-b.kyHeight)<.01f && fabsf(a.kyAmount-b.kyAmount)<.01f;   // FIX122
+        fabsf(a.kyHeight-b.kyHeight)<.01f && fabsf(a.kyAmount-b.kyAmount)<.01f && a.kyDepth==b.kyDepth;   // FIX122, FIX122 D
 }
 // FIX114 A: while the lens moves (pressed, travelling, deforming with the
 // drag), a mesh a little off still serves: within 1.5 pt of size and of the
@@ -250,7 +250,7 @@ static NSUInteger WXGMeshCacheHits,WXGMeshCacheMisses;
 static id WXGBuildMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUInteger *vertexCount,NSMutableData **storage,NSInteger *subdivision);
 static id WXGMakeMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUInteger *vertexCount,NSMutableData **storage,NSInteger *subdivision) {
     // Key: the exact optics and quality, rounded so float noise cannot split it.
-    float key[42]={roundf(optics.width*100),roundf(optics.height*100),roundf(optics.fieldScale*1000),roundf(optics.radius*100),
+    float key[43]={roundf(optics.width*100),roundf(optics.height*100),roundf(optics.fieldScale*1000),roundf(optics.radius*100),
         roundf(optics.edgeWidth*100),roundf(optics.refraction*1000),roundf(optics.offsetScale*1000),roundf(optics.zoomBefore*1000),
         roundf(optics.zoomAfter*1000),roundf(optics.dispersion*1000),optics.channel,roundf(optics.topRatio*1000),roundf(optics.sharpness*100),
         roundf(quality.ringError*1000),roundf(quality.arcStep*1000),roundf(quality.straightStep*100),
@@ -260,7 +260,7 @@ static id WXGMakeMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUIn
         roundf(optics.sbLeft*10),roundf(optics.sbTop*10),roundf(optics.sbRight*10),roundf(optics.sbBottom*10),roundf(optics.sbRadius*100),
         roundf(optics.shrinkPress*1000),roundf(optics.shrinkPinch*10000),roundf(optics.shrinkExtra*4),roundf(optics.transition*1000),
         roundf(optics.softStretch*100),roundf(optics.softPower*100),roundf(optics.softWidth*4),
-        roundf(optics.kyHeight*100),roundf(optics.kyAmount*100)};   // FIX113 H / I / U / Y, FIX114 I / J, FIX122
+        roundf(optics.kyHeight*100),roundf(optics.kyAmount*100),roundf(optics.kyDepth*100)};   // FIX113 H / I / U / Y, FIX114 I / J, FIX122
     NSData *cacheKey=[NSData dataWithBytes:key length:sizeof key];
     WXGMeshCacheEntry *entry=[WXGMeshCache() objectForKey:cacheKey];
     if(entry) {
@@ -2345,6 +2345,22 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         bodyOptics.softPower=fabs(transition.curve-2)>.005?(float)(roundf((float)transition.curve*100.f)/100.f):0.f;
     }
     _backdropTone=[c backdropToneForScope:self.glassScope];   // FIX114 J
+    // FIX122 D: Kyant's lens() on this glass' body (其余玻璃, or a range
+    // sharing its refraction page): his band and shift as shares of the
+    // glass' short side (unscaled; the clip stretches it with a press), his
+    // depthEffect if set, his colour split's strength (the body's split as
+    // before: not in 流畅模式). The button press' zoom stays.
+    WXGKyantBody kyBody=[c kyantBodyForScope:self.glassScope];
+    if(kyBody.on) {
+        float sh=(float)MIN(_glassRect.size.width,_glassRect.size.height);
+        // The band at most its cap (pt), the shift kept in proportion to it.
+        float band=(float)kyBody.height*sh,cap=(float)kyBody.maxHeight,shift=(float)kyBody.amount*sh;
+        if(band>cap && band>0.f){shift*=cap/band;band=cap;}
+        float kh=roundf(band*4.f)/4.f,ka=roundf(shift*4.f)/4.f;
+        bodyOptics.kyHeight=kh>.01f && ka>.01f?kh:0.f;bodyOptics.kyAmount=ka;bodyOptics.kyDepth=(float)kyBody.depth;
+        bodyOptics.edgeWidth=WXG_MAX(kh,.5f);bodyOptics.refraction=0.f;bodyOptics.offsetScale=1.f;bodyOptics.transition=0.f;
+        bodyOptics.dispersion=roundf((float)kyBody.dispersion*100.f)/100.f;
+    }
     BOOL bodyMesh=mesh && body && bodyOptics.width>1 && bodyOptics.height>1;
     [self applyStack:_bodyStack visible:body split:split radius:scoped.blur*scale optics:bodyOptics quality:WXGMeshQualityBody mesh:bodyMesh group:[self bodyGroup] plain:NO];
     BOOL ring=bodyMesh && scoped.blurCoverage<99.5 && scoped.blur*scale>.01 && !lean;
@@ -2922,6 +2938,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         @"lensSeesBar":@{@"on":@([self lensSeesBar]),@"lensGroupOwn":@([_lensBackdrop.group isEqualToString:_lensGroup]),
                          @"lensBlur":@(_lensBackdrop.radius),@"lensShown":@(!_lensBackdrop.hidden),@"lensPad":@(_lensPad),
                          @"lensRestHeight":@(_lensRestHeight),@"lensHeight":@(_lensRect.size.height),@"meshKeptWhileMoving":@(_lensMeshKept)},   // FIX113 U / Y, FIX114 A
+        @"kyantBody":@{@"on":@([WXGConfig.shared kyantBodyForScope:self.glassScope].on),@"scope":@(self.glassScope)},   // FIX122 D
         @"kyantLens":@{@"on":@([self lensSettings].kyantOn),@"height":@([self lensSettings].kyantHeight),@"amount":@([self lensSettings].kyantAmount),
                        @"dispersion":@([self lensSettings].kyantDispersion),@"channelsShown":@((NSInteger)(!_lensStack[0].hidden)+(!_lensStack[1].hidden)+(!_lensStack[2].hidden))},   // FIX122
         @"meshTransformClass":@(WXGMeshTransformClass()!=nil),@"bodyMeshApplied":@(_bodyBackdrop.meshApplied),@"bodyMeshAccepted":@(_bodyBackdrop.meshAccepted),
