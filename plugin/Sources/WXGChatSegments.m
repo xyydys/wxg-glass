@@ -3,7 +3,6 @@
 #import "WXGDockTouchPolicy.h"
 #import "WXGPressStretch.h"
 #import "WXGDockScript.h"
-#import "WXGKyantMotion.h"
 #import <malloc/malloc.h>
 #import <stdatomic.h>
 
@@ -117,7 +116,6 @@ static WXGDockGeometry WXGSegElastic(float width,float height,float gap,float an
     NSArray<WXGSegmentItem *> *_items;
     double _lensX,_velocityX,_targetX,_press,_pressVelocity,_targetPress;
     WXGElasticMotion _elastic;WXGStretchState _endStretch;int _endStretchSide;
-    WXGKyantMotion _kyMotion;CGFloat _kyLastX;BOOL _kyWasOn;   // FIX122 B: Kyant 底栏 (its switch for the segment bar)
     CFTimeInterval _lastTime,_stillSince;
     BOOL _fingerDown,_dragging;CGPoint _touchStart;
     NSInteger _initialSelected,_touchDownIndex,_resumeIndex;
@@ -213,13 +211,10 @@ static WXGDockGeometry WXGSegElastic(float width,float height,float gap,float an
 }
 // FIX113 O: the segment bar's own lens (size, growth, zoom, pill inset).
 - (WXGLensSettings)lens {return [WXGConfig.shared lensSettingsForScope:WXGGlassScopeSegment dark:self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark];}
-- (BOOL)kyant {return [WXGConfig.shared kyantForScope:WXGGlassScopeSegment];}   // FIX122 B
 - (CGFloat)selectionGap {return WXGSelectionGap([self lens].selectionInset,_materialRect.size.height);}
 - (CGFloat)centerForIndex:(NSInteger)index {return CGRectGetMinX(_materialRect)+WXGSegCenter(_materialRect.size.width,[self selectionGap],(int)index,(int)self.count);}
 - (CGFloat)atlasScale {
     WXGLensSettings l=[self lens];
-    if(l.kyantOn)return WXGCaptureScale(self.window.screen.scale?:UIScreen.mainScreen.scale)*MAX(1,l.kyantIconZoom)*   // FIX122 B: his title zoom and growth
-        (1+WXGClamp([WXGConfig.shared extraNumber:@"kyantBarGrowth"],0,40)/MAX(1,_materialRect.size.width));
     return WXGCaptureScale(self.window.screen.scale?:UIScreen.mainScreen.scale)*MAX(1,l.zoom)*MAX(1,l.barGrowth);
 }
 // The four titles at their segments' centres, the whole view's size (the
@@ -292,18 +287,10 @@ static WXGDockGeometry WXGSegElastic(float width,float height,float gap,float an
     CGFloat stretch=reduce?0:WXGClamp(fabs(_velocityX)/2200,0,.10)*press;
     float w=(float)_materialRect.size.width,h=(float)_materialRect.size.height,gap=(float)[self selectionGap],anchor=(float)(_lensX-_materialRect.origin.x);
     int n=(int)self.count;
-    WXGDockGeometry g;
-    if(c.kyantOn) {   // FIX122 B: Kyant's lens and bar (as the dock's, WXGKyantLayout)
-        WXGKyantPose k=WXGKyantLayout(_kyMotion,WXGSegWidth(w,gap,n),h-2*gap,w,press,WXGClamp([WXGConfig.shared extraNumber:@"kyantBarGrowth"],0,40),
-                                      !UIAccessibilityIsReduceMotionEnabled() && c.elasticOn);
-        g.scale=(float)k.barScale;g.barWidth=w*g.scale;g.barHeight=h*g.scale;g.barX=(w-g.barWidth)*.5f;g.barY=(h-g.barHeight)*.5f;
-        g.lensWidth=(float)k.width;g.lensHeight=(float)k.height;g.anchorX=anchor;g.lensX=anchor-g.lensWidth*.5f;g.lensY=(h-g.lensHeight)*.5f;
-        _glass.kyantGlow=[WXGConfig.shared extraNumber:@"kyantGlowOn"]>.5?_kyMotion.glow:0;_glass.kyantGlowX=_kyMotion.glowX;
-    }else
-    g=reduce?WXGSegLayout(w,h,gap,anchor,(float)press,(float)c.growth,(float)stretch,(float)c.barGrowth,(float)c.endWrap,n)
+    WXGDockGeometry g=reduce?WXGSegLayout(w,h,gap,anchor,(float)press,(float)c.growth,(float)stretch,(float)c.barGrowth,(float)c.endWrap,n)
                             :WXGSegElastic(w,h,gap,anchor,(float)press,(float)c.growth,(float)stretch,_elastic,(float)c.barGrowth,(float)c.endWrap,n,(float)c.elasticHeight);
     CGRect lens=CGRectMake(_materialRect.origin.x+g.lensX,_materialRect.origin.y+g.lensY,g.lensWidth,g.lensHeight);
-    _glass.lensRestHeight=c.kyantOn?g.lensHeight:WXGSegLayout(w,h,gap,anchor,(float)press,(float)c.growth,0,(float)c.barGrowth,(float)c.endWrap,n).lensHeight;   // FIX113 Y: undeformed
+    _glass.lensRestHeight=WXGSegLayout(w,h,gap,anchor,(float)press,(float)c.growth,0,(float)c.barGrowth,(float)c.endWrap,n).lensHeight;   // FIX113 Y: undeformed
     _glass.barScale=g.scale;_glass.lensAnchorX=_materialRect.origin.x+g.anchorX;
     CGFloat selection=_script.phase?_selectionShown:WXGClamp(WXGRestingSelectionWeight((float)press)+_selectionCarry,0,1);
     _selectionShown=selection;
@@ -335,7 +322,7 @@ static WXGDockGeometry WXGSegElastic(float width,float height,float gap,float an
 }
 - (void)returnToIndex:(NSInteger)index {
     if(_script.phase)[self endScript];
-    _fingerDown=NO;_targetPress=0;_kyMotion.dragging=0;[self selectIndex:index haptic:NO];[self beginTravelToIndex:_selectedIndex];[self wake];
+    _fingerDown=NO;_targetPress=0;[self selectIndex:index haptic:NO];[self beginTravelToIndex:_selectedIndex];[self wake];
 }
 // Accessibility: a switch as a tap does it.
 - (void)commitIndex:(NSInteger)index {
@@ -351,15 +338,13 @@ static WXGDockGeometry WXGSegElastic(float width,float height,float gap,float an
     CGFloat pressBefore=WXGClamp(_press,0,1),selectionBefore=WXGClamp(_selectionShown,0,1);
     _resumeIndex=_script.phase==2?_script.index:-1;
     if(_script.phase)[self endScript];
-    BOOL kyant=[self kyant];   // FIX122 B: his springs, no glide script
-    _targetPress=1;if(!kyant)_press=MAX(_press,.10);[_feedback prepare];[self trackPoint:point];_touchDownIndex=_selectedIndex;
-    if(kyant){_kyMotion.dragging=1;_kyMotion.drag=0;_kyMotion.hold=0;_kyLastX=point.x;}
+    _targetPress=1;_press=MAX(_press,.10);[_feedback prepare];[self trackPoint:point];_touchDownIndex=_selectedIndex;
     CGFloat slot=WXGSegWidth(_materialRect.size.width,[self selectionGap],(int)self.count);
     CGFloat steps=fabs(_targetX-_lensX)/MAX(1,slot);
     _dragging=NO;_touchStart=point;_jumpPlanEnd=0;
     // As the dock's tap: the real lens glides to the touched segment on the
     // FIX43 timing (x 点按动画时长倍数), lifted, from the press and colour it had.
-    if(steps>.3 && !UIAccessibilityIsReduceMotionEnabled() && !kyant) {
+    if(steps>.3 && !UIAccessibilityIsReduceMotionEnabled()) {
         WXGConfig *c=WXGConfig.shared;double duration=.28*(.85+.05*MIN(steps,3.));
         _script=WXGScriptGlide(CACurrentMediaTime(),_lensX,[self centerForIndex:_selectedIndex],duration*c.dockTapDurationScale,pressBefore,selectionBefore,_selectedIndex,c.dockTapLensShare);
         _jumpPlanEnd=_script.planEnd;++_glides;
@@ -374,7 +359,6 @@ static WXGDockGeometry WXGSegElastic(float width,float height,float gap,float an
         _dragging=YES;_jumpPlanEnd=0;
         if(_script.phase==1){[self endScript];++_drags;_targetPress=1;}
     }
-    if([self kyant]){_kyMotion.drag+=point.x-_kyLastX;_kyLastX=point.x;}   // FIX122 B
     [self trackPoint:point];[self wake];return YES;
 }
 - (void)trackPoint:(CGPoint)p {
@@ -420,15 +404,13 @@ static WXGDockGeometry WXGSegElastic(float width,float height,float gap,float an
     _fingerDown=NO;
     if(!inside)[self selectIndex:_initialSelected haptic:NO];
     _targetX=[self centerForIndex:_selectedIndex];_targetPress=0;
-    BOOL kyant=[self kyant];
-    if(kyant){_targetPress=1;_kyMotion.hold=1;_kyMotion.dragging=0;}   // FIX122 B: held until it is on its segment
     WXGDockTouchForget(&_trackingPoint);
     BOOL scriptOnTab=_script.phase==1 && inside && _selectedIndex==_script.index && _selectedIndex!=_initialSelected;
     if(_script.phase==1 && !scriptOnTab)[self endScript];
     if(inside) {
         ++_commits;
         if(scriptOnTab){WXGScriptDrop(&_script,CACurrentMediaTime(),WXGConfig.shared.dockTapDropDuration);++_drops;}
-        else if(!kyant && (_selectedIndex!=_initialSelected || _resumeIndex==_selectedIndex))[self beginTravelToIndex:_selectedIndex];
+        else if(_selectedIndex!=_initialSelected || _resumeIndex==_selectedIndex)[self beginTravelToIndex:_selectedIndex];
         if(_selectedIndex!=_initialSelected)[self sendActionsForControlEvents:UIControlEventValueChanged];
     }
     _resumeIndex=-1;[self wake];
@@ -441,8 +423,6 @@ static WXGDockGeometry WXGSegElastic(float width,float height,float gap,float an
 // A release animation from where the lens is (WXGScriptTravel, the dock's timing).
 - (void)beginTravelToIndex:(NSInteger)index {
     if(UIAccessibilityIsReduceMotionEnabled() || CGRectIsEmpty(_materialRect)){_targetX=[self centerForIndex:index];_targetPress=0;return;}
-    // FIX122 B: Kyant's animateToValue: lift, move, set down once there.
-    if([self kyant]){if(_script.phase)[self endScript];_targetX=[self centerForIndex:index];_targetPress=1;_kyMotion.hold=1;_kyMotion.dragging=0;return;}
     WXGConfig *c=WXGConfig.shared;CGFloat slot=MAX(1,WXGSegWidth(_materialRect.size.width,[self selectionGap],(int)self.count));
     _script=WXGScriptTravel(CACurrentMediaTime(),_lensX,[self centerForIndex:index],slot,WXGClamp(_press,0,1),WXGClamp(_selectionShown,0,1),_jumpPlanEnd,index,
                             c.dockTapDurationScale,c.dockTapDropDuration,c.dockTapLensShare);
@@ -456,7 +436,6 @@ static WXGDockGeometry WXGSegElastic(float width,float height,float gap,float an
     if(_script.phase)[self endScript];
     _resumeIndex=-1;WXGDockTouchForget(&_trackingPoint);
     _fingerDown=NO;_targetPress=0;_targetX=[self centerForIndex:_selectedIndex];
-    _kyMotion.dragging=0;_kyMotion.hold=0;   // FIX122 B
     [self releaseEndStretch];
     if(!_active || !self.window) {
         _elastic=(WXGElasticMotion){0};_press=0;_pressVelocity=0;_lensX=_targetX;_velocityX=0;_selectionCarry=0;
@@ -483,30 +462,14 @@ static WXGDockGeometry WXGSegElastic(float width,float height,float gap,float an
         _selectionCarry*=exp(-dt/.08);
         if(fabs(_selectionCarry)<.002)_selectionCarry=0;
     }
-    BOOL kyant=[self kyant];   // FIX122 B: Kyant's springs (WXGKyantMotion.h)
-    if(kyant!=_kyWasOn){_kyWasOn=kyant;_kyMotion.started=0;if(!kyant)_glass.kyantGlow=0;}
-    if(kyant && !scripted) {
-        WXGConfig *kc=WXGConfig.shared;
-        CGFloat range=[self centerForIndex:self.count-1]-[self centerForIndex:0];
-        if(_kyMotion.hold && !_fingerDown && WXGKyantArrived(_lensX,_targetX,range)){_kyMotion.hold=0;_targetPress=0;}
-        WXGKyantSpring(&_lensX,&_velocityX,_targetX,1,1000,dt);
-        WXGKyantSpring(&_press,&_pressVelocity,_targetPress,1,1000,dt);
-        WXGKyantMotionStep(&_kyMotion,_velocityX,range,_targetPress>0,WXGClamp([kc extraNumber:@"kyantPressedScale"],1,1.8),
-                           _fingerDown && [kc extraNumber:@"kyantGlowOn"]>.5,_lensX,_materialRect.size.width,dt);
-    }
-    if(!scripted && !kyant)WXGSpring(&_lensX,&_velocityX,_targetX,_fingerDown?620:340,_fingerDown?39:29,dt);
+    if(!scripted)WXGSpring(&_lensX,&_velocityX,_targetX,_fingerDown?620:340,_fingerDown?39:29,dt);
     double motionDT=dt;
     if(!_fingerDown && _targetPress<=0 && !reduce)dt*=.80;
-    if(!scripted && !kyant)WXGSpring(&_press,&_pressVelocity,_targetPress,reduce?600:420,reduce?49:31,dt);
+    if(!scripted)WXGSpring(&_press,&_pressVelocity,_targetPress,reduce?600:420,reduce?49:31,dt);
     dt=motionDT;
     if(!reduce)WXGElasticStep(&_elastic,_velocityX,dt);else _elastic=(WXGElasticMotion){0};
-    if(kyant) {   // FIX122 B: the drift with the drag, no end stretch
-        CGAffineTransform t=CGAffineTransformMakeTranslation(_kyMotion.drift,0);
-        if(!CGAffineTransformEqualToTransform(_glass.transform,t)){[CATransaction begin];[CATransaction setDisableActions:YES];_glass.transform=t;[CATransaction commit];}
-    }else if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];
-    BOOL kyStill=!kyant || (!_kyMotion.hold && fabs(_kyMotion.scaleX-1)<.0005 && fabs(_kyMotion.scaleY-1)<.0005 && fabs(_kyMotion.scaleXV)<.01 && fabs(_kyMotion.scaleYV)<.01 &&
-                            fabs(_kyMotion.velocity)<.001 && fabs(_kyMotion.drift)<.01 && fabs(_kyMotion.glow)<.002 && fabs(_kyMotion.glowV)<.01);
-    BOOL still=kyStill && !_fingerDown && !scripted && fabs(_press)<.002 && fabs(_pressVelocity)<.01 && fabs(_lensX-_targetX)<.05 && fabs(_velocityX)<1 &&
+    if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];
+    BOOL still=!_fingerDown && !scripted && fabs(_press)<.002 && fabs(_pressVelocity)<.01 && fabs(_lensX-_targetX)<.05 && fabs(_velocityX)<1 &&
                fabs(_elastic.stretch)<.0005 && fabs(_elastic.velocity)<.01 && !_endStretch.tracking && fabs(_endStretch.x)<.01 && _selectionCarry==0;
     if(still){_press=0;_pressVelocity=0;_lensX=_targetX;_velocityX=0;}
     [self updateGeometry];[_glass tick:link.timestamp];++_draws;

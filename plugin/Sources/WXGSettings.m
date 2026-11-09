@@ -887,8 +887,6 @@ void WXGConfirmResetAll(UIViewController *page,void (^done)(void)) {
                                       @[@"dock",@"底栏",@"尺寸 · 搜索 · 透镜 · 胶囊",@[@"dock.rectangle",@"rectangle.bottomthird.inset.filled",@"rectangle.bottomthird.inset.fill",@"rectangle"]],
                                       // FIX113 O: the chat list's segment bar (its own module).
                                       @[@"segments",@"分组",@"小底栏 · 胶囊 · 透镜 · 悬浮",@[@"rectangle.split.3x1",@"square.split.2x1",@"rectangle.split.2x1",@"rectangle"]],
-                                      // FIX122 B: Kyant's whole bottom bar (its own page; on, the dock's / segment bar's own settings are not read).
-                                      @[@"kyant",@"Kyant 底栏",@"透镜 · 动画 · 本体 · 光晕",@[@"capsule.portrait",@"capsule",@"oval"]],
                                       @[@"tools",@"帧率与参数",@"帧率日志 · 参数导入导出",@[@"speedometer",@"gauge",@"chart.bar"]],
                                       @[@"bubble",@"液态气泡",@"文字气泡 · 单行圆角 · 颜色",@[@"bubble.left.and.bubble.right.fill",@"bubble.left.and.bubble.right",@"message"]],
                                       // FIX115 H: not a page: asks, then every parameter back to this build's standard set.

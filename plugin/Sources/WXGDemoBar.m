@@ -9,7 +9,6 @@
 #import "WXGTravelVeil.h"
 #import "WXGDockScript.h"
 #import "WXGDockDiscrete.h"
-#import "WXGKyantMotion.h"
 
 // FIX21: everything the dock icon atlas depends on, captured on the main
 // thread, so the two large atlases are drawn and uploaded on a background
@@ -382,11 +381,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     CGFloat _tabTextW[WXGDiscreteTabs];
     CGPoint _tabIconCentre[WXGDiscreteTabs];
     WXGDiscreteMetrics _discreteMetrics;
-    // FIX122 B Kyant 底栏: his lens scale / velocity / drift / glow springs,
-    // the finger's last x (the drift follows the drag), and whether it was on.
-    WXGKyantMotion _kyMotion;CGFloat _kyLastX;BOOL _kyWasOn;
 }
-- (BOOL)kyant {return [WXGConfig.shared kyantForScope:WXGGlassScopeDock];}   // FIX122 B
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
         self.backgroundColor=UIColor.clearColor; self.opaque=NO; self.clipsToBounds=NO;
@@ -502,7 +497,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 - (UIView *)hitTest:(CGPoint)p withEvent:(UIEvent *)event {
     return !self.hidden && self.alpha>.01 && self.userInteractionEnabled && self.enabled && [self pointInside:p withEvent:event]?self:nil;
 }
-- (CGFloat)selectionGap { return WXGSelectionGap([self kyant]?[WXGConfig.shared extraNumber:@"kyantInset"]:WXGConfig.shared.selectionInset,_materialRect.size.height); }   // FIX122 B: his inset
+- (CGFloat)selectionGap { return WXGSelectionGap(WXGConfig.shared.selectionInset,_materialRect.size.height); }
 - (CGFloat)slotWidth { return WXGSelectionWidth(_materialRect.size.width,[self selectionGap]); }
 - (CGFloat)centerForIndex:(NSInteger)index { return CGRectGetMinX(_materialRect)+WXGSelectionCenter(_materialRect.size.width,[self selectionGap],(int)index); }
 - (void)layoutSubviews {
@@ -558,7 +553,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 - (WXGIconJob *)iconJob {
     if(self.bounds.size.width<1 || self.bounds.size.height<1)return nil;
     WXGIconJob *job=[WXGIconJob new];job.size=self.bounds.size;
-    job.scale=WXGCaptureScale(self.window.screen.scale ?: UIScreen.mainScreen.scale)*[self iconZoomScale];
+    job.scale=WXGCaptureScale(self.window.screen.scale ?: UIScreen.mainScreen.scale)*WXGConfig.shared.lensZoom*WXGConfig.shared.barGrowth;
     job.materialRect=_materialRect;job.darkInk=_darkInk;job.useNative=WXGDockNativeIcons();job.nativeSize=job.useNative && !WXGTelegramTabIconsOn();job.themeFirst=WXGDockThemeFirst();   // FIX115 Djob.selectedIndex=_selectedIndex;
     NSMutableArray<NSNumber *> *centers=[NSMutableArray array];
     for(NSInteger i=0;i<4;i++)[centers addObject:@([self centerForIndex:i])];
@@ -654,17 +649,9 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 // the two, and the offset moves both.
 - (CGFloat)iconShift {WXGConfig *c=WXGConfig.shared;return c.dockIconOffset-(c.dockIconTitleGap-5)*.5;}
 - (CGFloat)titleShift {WXGConfig *c=WXGConfig.shared;return c.dockIconOffset+(c.dockIconTitleGap-5)*.5;}
-// The icons' atlas is drawn for the most they are magnified: the lens' zoom
-// times the bar's growth (FIX122 B: Kyant's icon zoom and his growth).
-- (CGFloat)iconZoomScale {
-    WXGConfig *c=WXGConfig.shared;
-    if(![self kyant])return c.lensZoom*c.barGrowth;
-    CGFloat w=MAX(1,_materialRect.size.width);
-    return WXGClamp([c extraNumber:@"kyantIconZoom"],1,1.6)*(1+WXGClamp([c extraNumber:@"kyantBarGrowth"],0,40)/w);
-}
 - (NSString *)iconLayoutKey {
     WXGConfig *c=WXGConfig.shared;
-    return [NSString stringWithFormat:@"%.2f/%.2f/%.2f/%ld/%d/%d/%.3f/%@",[self iconShift],[self titleShift],c.dockTitleSize,(long)c.dockTitleWeight,c.dockTitleBolderSelected,WXGDockThemeFirst(),[self iconZoomScale],   // FIX115 D, FIX122 B
+    return [NSString stringWithFormat:@"%.2f/%.2f/%.2f/%ld/%d/%d/%@",[self iconShift],[self titleShift],c.dockTitleSize,(long)c.dockTitleWeight,c.dockTitleBolderSelected,WXGDockThemeFirst(),   // FIX115 D
         [[c extraHex:@"dockAccentHex"] stringByAppendingString:[self badgeLayoutKey]]];   // FIX113 C: a new accent redraws the icons; G: so do the badges
 }
 - (UIImage *)iconImageSelected:(BOOL)selected fallback:(BOOL)fallback {
@@ -672,7 +659,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 }
 - (void)rebuildIcons {
     _iconLayout=[self iconLayoutKey];   // FIX89
-    _iconMaterialRect=_materialRect; _iconScale=WXGCaptureScale(self.window.screen.scale?:UIScreen.mainScreen.scale)*[self iconZoomScale];
+    _iconMaterialRect=_materialRect; _iconScale=WXGCaptureScale(self.window.screen.scale?:UIScreen.mainScreen.scale)*WXGConfig.shared.lensZoom*WXGConfig.shared.barGrowth;
     WXGIconJob *job=[self iconJob];NSUInteger generation=++_iconGeneration;
     if(!_iconsReady || !job) {
         // First atlas synchronously, so the dock never shows without icons.
@@ -889,9 +876,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     if(_script.phase)[self endScript];
     // FIX35: touch-down moves the lifted lens to the touched tab at once, so
     // it can be slid left and right (FIX33's lift-in-place is gone).
-    BOOL kyant=[self kyant];   // FIX122 B: his press springs up from where it is (no bump); no glide script
-    _targetPress=1; if(!kyant)_press=MAX(_press,.10); [_feedback prepare]; [self trackPoint:point];_touchDownIndex=_selectedIndex;   // FIX88
-    if(kyant){_kyMotion.dragging=1;_kyMotion.drag=0;_kyMotion.hold=0;_kyLastX=point.x;}
+    _targetPress=1; _press=MAX(_press,.10); [_feedback prepare]; [self trackPoint:point];_touchDownIndex=_selectedIndex;   // FIX88
     // FIX42: a touch on another tab glides there on the release animation's
     // curve instead of the drag spring (which crossed the bar in ~0.1 s).
     // FIX43 (user): nearly distance-independent: 0.28 s x (0.85 + 0.05 x tabs),
@@ -900,7 +885,6 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     CGFloat slot=MAX(1,([self centerForIndex:3]-[self centerForIndex:0])/3);
     CGFloat steps=fabs(_targetX-_lensX)/slot;
     _dragging=NO;_touchStart=point;_jumping=steps>.3;_jumpPlanEnd=0;
-    if(kyant)_jumping=NO;   // FIX122 B: his position spring takes it there
     if(_jumping){_jumpFromX=_lensX;_jumpStart=CACurrentMediaTime();_jumpDuration=.28*(.85+.05*MIN(steps,3.));_jumpPlanEnd=_jumpStart+_jumpDuration;}
     // FIX44: the glide runs in the render server (main-thread tween only as a
     // fallback), so a busy main thread cannot make it stutter.
@@ -947,7 +931,6 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
         if(_travelling && _travelPhase==1)[self handOverTravelToFinger];
         if(_script.phase==1){[self endScript];++_scriptDrags;_targetPress=1;}   // FIX95: the drag spring from where the glide is
     }
-    if([self kyant]){_kyMotion.drag+=point.x-_kyLastX;_kyLastX=point.x;}   // FIX122 B: the bar drifts with the drag
     [self trackPoint:point]; return YES;
 }
 - (void)trackPoint:(CGPoint)p {
@@ -1019,9 +1002,6 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     if (!inside) [self selectIndex:_initialSelected haptic:NO];
     [self telegramSettle];   // FIX113 C: the tab the touch ends on plays now (none if it went back to where it was)
     _targetX=[self centerForIndex:_selectedIndex]; _targetPress=0;
-    // FIX122 B: Kyant's release: the lens stays lifted until it is (nearly) on its tab.
-    BOOL kyant=[self kyant];
-    if(kyant){_targetPress=1;_kyMotion.hold=1;_kyMotion.dragging=0;}
     _lastTrackingReason=inactive?@"ended_inactive":(cancelledPhase?@"ended_cancelled":(!confirmedEnd?@"nil_end_unconfirmed":
         (inside?(touch?@"committed":@"committed_saved_point"):(hasPoint?@"ended_outside":@"ended_without_point"))));
     if(keptEarly)_lastTrackingReason=@"kept_touch_down_switch";
@@ -1050,7 +1030,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
         // only pauses the lens (the script's clock).
         if(_travelling && _travelPhase==1)[self dropTravel];
         else if(scriptOnTab){WXGScriptDrop(&_script,[self animationNow],WXGConfig.shared.dockTapDropDuration);++_scriptDrops;}
-        else if(!kyant && (_selectedIndex!=_initialSelected || _resumeIndex==_selectedIndex))[self beginTravelToIndex:_selectedIndex];
+        else if(_selectedIndex!=_initialSelected || _resumeIndex==_selectedIndex)[self beginTravelToIndex:_selectedIndex];
         _switchedAtTouchDown=_earlySent && _earlyIndex==_selectedIndex;   // FIX100
         [self sendActionsForControlEvents:UIControlEventValueChanged];
         _switchedAtTouchDown=NO;
@@ -1592,7 +1572,6 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     _resumeIndex=-1;_earlyIndex=-1;_earlySent=NO;
     WXGDockTouchForget(&_trackingPoint);
     _fingerDown=NO; _previewStart=0; _targetPress=0; _targetX=[self centerForIndex:_selectedIndex];
-    _kyMotion.dragging=0;_kyMotion.hold=0;   // FIX122 B
     [self releaseEndStretch];   // FIX68
     if (!_active) { _elasticMotion=(WXGElasticMotion){0};_press=0; _pressVelocity=0; _lensX=_targetX; _velocityX=0; _endStretch=(WXGStretchState){0};[self applyEndStretch]; }
 }
@@ -1669,19 +1648,6 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         _selectionCarry*=exp(-dt/.08);   // FIX98: a script's colour hands over to the press' in ~0.2 s
         if(fabs(_selectionCarry)<.002)_selectionCarry=0;
     }
-    // FIX122 B Kyant 底栏: his springs (WXGKyantMotion.h) instead of the
-    // dock's; released, the press holds until the lens is on its tab.
-    BOOL kyant=[self kyant];
-    if(kyant!=_kyWasOn){_kyWasOn=kyant;_kyMotion.started=0;if(!kyant){_glass.kyantGlow=0;}}
-    if(kyant && !scripted) {
-        WXGConfig *kc=WXGConfig.shared;
-        CGFloat range=[self centerForIndex:3]-[self centerForIndex:0];
-        if(_kyMotion.hold && !_fingerDown && WXGKyantArrived(_lensX,_targetX,range)){_kyMotion.hold=0;_targetPress=0;}
-        WXGKyantSpring(&_lensX,&_velocityX,_targetX,1,1000,dt);
-        WXGKyantSpring(&_press,&_pressVelocity,_targetPress,1,1000,dt);
-        WXGKyantMotionStep(&_kyMotion,_velocityX,range,_targetPress>0,WXGClamp([kc extraNumber:@"kyantPressedScale"],1,1.8),
-                           _fingerDown && [kc extraNumber:@"kyantGlowOn"]>.5,_lensX,_materialRect.size.width,dt);
-    }else
     // Lift, travel and release stay concurrent; native tab selection commits at touch-up.
     if(!scripted && _jumping && _fingerDown) {
         CFTimeInterval u=(CACurrentMediaTime()-_jumpStart)/MAX(.05,_jumpDuration);
@@ -1695,16 +1661,13 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     } else if(!scripted)WXGSpring(&_lensX,&_velocityX,_targetX,_fingerDown?620:340,_fingerDown?39:29,dt);
     double motionDT=dt;
     if(!_fingerDown && _targetPress<=0 && !reduceMotion)dt*=.80;
-    if(!scripted && !kyant)WXGSpring(&_press,&_pressVelocity,_targetPress,reduceMotion?600:420,reduceMotion?49:31,dt);
+    if(!scripted)WXGSpring(&_press,&_pressVelocity,_targetPress,reduceMotion?600:420,reduceMotion?49:31,dt);
     dt=motionDT;
     // The elastic state always steps (FIX113 Y: the 跟随滑动速度形变 switch only
     // stops it shaping the lens, in updateGeometry); Reduce Motion disables it.
     if(!reduceMotion)WXGElasticStep(&_elasticMotion,_velocityX,dt);
     else _elasticMotion=(WXGElasticMotion){0};
-    if(kyant) {   // FIX122 B: the bar and lens drift with the drag (his panelOffset), no end stretch
-        CGAffineTransform t=CGAffineTransformMakeTranslation(_kyMotion.drift,0);
-        if(!CGAffineTransformEqualToTransform(_glass.transform,t)){[CATransaction begin];[CATransaction setDisableActions:YES];_glass.transform=t;[CATransaction commit];}
-    }else if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];   // FIX68
+    if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];   // FIX68
     [self updateGeometry]; [self layoutBadges]; [_glass tick:link.timestamp];
 }
 - (void)updateGeometry {
@@ -1716,28 +1679,12 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     // FIX113 Y: the drag-speed deformation can be off, and its height change limited.
     BOOL elastic=!UIAccessibilityIsReduceMotionEnabled() && [c extraNumber:@"lensElasticOn"]>.5;
     CGFloat stretch=!elastic?0:WXGClamp(fabs(_velocityX)/2200,0,.10)*press;
-    WXGDockGeometry g;
-    if([self kyant]) {
-        // FIX122 B Kyant 底栏 (WXGKyantLayout): the lens one slot by the bar
-        // less its inset, his scale and drag-speed deformation, centred on
-        // the lens' x (not moved by the bar's growth); the bar grows by his
-        // points across its width.
-        float W=(float)_materialRect.size.width,H=(float)_materialRect.size.height,gap=(float)[self selectionGap];
-        BOOL ky=!UIAccessibilityIsReduceMotionEnabled() && [c extraNumber:@"kyantElastic"]>.5;
-        WXGKyantPose k=WXGKyantLayout(_kyMotion,WXGSelectionWidth(W,gap),H-2*gap,W,press,WXGClamp([c extraNumber:@"kyantBarGrowth"],0,40),ky);
-        g.scale=(float)k.barScale;g.barWidth=W*g.scale;g.barHeight=H*g.scale;g.barX=(W-g.barWidth)*.5f;g.barY=(H-g.barHeight)*.5f;
-        g.lensWidth=(float)k.width;g.lensHeight=(float)k.height;g.anchorX=(float)(_lensX-_materialRect.origin.x);
-        g.lensX=g.anchorX-g.lensWidth*.5f;g.lensY=(H-g.lensHeight)*.5f;
-        _glass.lensRestHeight=k.height;
-        _glass.kyantGlow=[c extraNumber:@"kyantGlowOn"]>.5?_kyMotion.glow:0;_glass.kyantGlowX=_kyMotion.glowX;
-    }else {
-    g=WXGDockLayout(_materialRect.size.width,_materialRect.size.height,[self selectionGap],
+    WXGDockGeometry g=WXGDockLayout(_materialRect.size.width,_materialRect.size.height,[self selectionGap],
         _lensX-_materialRect.origin.x,press,c.lensGrowth,stretch,c.barGrowth,c.endWrap);
     _glass.lensRestHeight=WXGDockLayout(_materialRect.size.width,_materialRect.size.height,[self selectionGap],
         _lensX-_materialRect.origin.x,press,c.lensGrowth,0,c.barGrowth,c.endWrap).lensHeight;   // FIX113 Y: undeformed
     if(elastic)g=WXGElasticLayoutLimited(_materialRect.size.width,_materialRect.size.height,[self selectionGap],
         _lensX-_materialRect.origin.x,press,c.lensGrowth,stretch,_elasticMotion,c.barGrowth,c.endWrap,(float)[c extraNumber:@"lensElasticHeight"]);
-    }
     CGRect bar=CGRectMake(_materialRect.origin.x+g.barX,_materialRect.origin.y+g.barY,g.barWidth,g.barHeight);
     CGRect lens=CGRectMake(_materialRect.origin.x+g.lensX,_materialRect.origin.y+g.lensY,g.lensWidth,g.lensHeight);
     _glass.barScale=g.scale; _glass.lensAnchorX=_materialRect.origin.x+g.anchorX;

@@ -16,7 +16,6 @@ _Static_assert(sizeof(WXGFloat4)==16,"Float4 ABI");
 #include "WXGMeshRefraction.h"
 #include "WXGEdgeMaskBand.h"
 #include "WXGRimGlow.h"
-#include "WXGKyantMotion.h"
 #include "WXGRimDetail.h"
 #include "WXGDropShadow.h"
 #include <pthread.h>
@@ -556,7 +555,7 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
             float ky=roundf((float)WXGClamp(TL.kyantHeight,.02,.5)*shortSide*(float)press*4.f)/4.f,ka=roundf((float)WXGClamp(TL.kyantAmount,0,.8)*shortSide*(float)press*4.f)/4.f;
             o.kyHeight=ky>.01f && ka>.01f?ky:0.f;o.kyAmount=ka;
             o.edgeWidth=WXG_MAX(ky,.5f);o.refraction=0.f;o.offsetScale=1.f;o.cancel=0.f;o.topRatio=0.f;o.sharpness=0.f;
-            o.dispersion=split?kd:0.f;o.zoomAfter=1.f;   // FIX122 B: his backdrop is not magnified
+            o.dispersion=split?kd:0.f;
         }
         // FIX88: the lens's own dispersion range, only with dispersion on (0 =
         // the refraction band, so no wider mesh band for nothing).
@@ -1289,7 +1288,6 @@ void WXGDropDeferredGlassTicks(void) {
 }
 
 @implementation WXGGlassView {
-    CALayer *_kyGlow,*_kyGlowWash;CAGradientLayer *_kyGlowSpot;   // FIX122 B: Kyant's press glow
     CALayer *_dropShadow;NSString *_dropShadowKey;   // FIX114 K
     NSHashTable<UIView *> *_shadowClips;              // FIX114 L: ancestors opened for the shadow
     CGRect _shadowNeed;BOOL _shadowNeedValid;         // FIX114 M: what of the shadow shows (this view's coordinates)
@@ -1341,14 +1339,6 @@ void WXGDropDeferredGlassTicks(void) {
         }
         _metal=[self makeMetalView]; _lensMetal=[self makeMetalView];
         [_bodyClip addSubview:_metal]; [_lensClip addSubview:_lensMetal];
-        // FIX122 B: Kyant's press glow (InteractiveHighlight), added on the
-        // bar over everything it draws, inside its clip (the lens, seeing
-        // the bar, refracts it too, as his hidden copy has it).
-        _kyGlow=[CALayer layer];_kyGlow.hidden=YES;_kyGlow.compositingFilter=WXGMakePlusLighter();
-        _kyGlowWash=[CALayer layer];_kyGlowWash.backgroundColor=UIColor.whiteColor.CGColor;
-        _kyGlowSpot=[CAGradientLayer layer];_kyGlowSpot.type=kCAGradientLayerRadial;
-        [_kyGlow addSublayer:_kyGlowWash];[_kyGlow addSublayer:_kyGlowSpot];
-        [_bodyClip.layer addSublayer:_kyGlow];
         _syncGroup=[NSString stringWithFormat:@"wxg.glass.%p",self];_lensGroup=[NSString stringWithFormat:@"wxg.glass.lens.%p",self];
         _lensRimGroup=[NSString stringWithFormat:@"wxg.glass.lensrim.%p",self];
         // Bottom to top inside the body clip: body R,G,B, edge-ring R,G,B, Metal.
@@ -1515,37 +1505,6 @@ void WXGDropDeferredGlassTicks(void) {
 }
 // FIX113 O: whose lens this is (the segment bar's own, else the dock's), its
 // parameters, and the rim offset cancelled (when the served shader knows it).
-// FIX122 B: Kyant's press glow: white over the bar at 8% and a round light
-// at the lens at 15% (full within half its radius, gone at 1.5 x the bar's
-// short side), both times the glow (his own bouncy spring, set by the bar).
-- (void)setKyantGlow:(CGFloat)glow {_kyantGlow=glow;[self setNeedsLayout];}
-- (void)setKyantGlowX:(CGFloat)x {_kyantGlowX=x;if(_kyantGlow>.001)[self setNeedsLayout];}
-- (void)layoutKyantGlow:(CGRect)drawnBar {
-    WXGConfig *c=WXGConfig.shared;
-    CGFloat g=_kyantGlow;
-    BOOL show=g>.002 && [c kyantForScope:self.glassScope] && !CGRectIsEmpty(drawnBar);
-    [CATransaction begin];[CATransaction setDisableActions:YES];
-    _kyGlow.hidden=!show;
-    if(show) {
-        // His glow springs past 1 and back (damping .5): the overshoot is kept, never below 0.
-        g=MAX(0,g);
-        _kyGlow.frame=(CGRect){CGPointZero,drawnBar.size};_kyGlowWash.frame=_kyGlow.bounds;_kyGlowSpot.frame=_kyGlow.bounds;
-        _kyGlowWash.opacity=(float)WXGClamp([c extraNumber:@"kyantGlowWash"]*g,0,1);
-        CGFloat w=MAX(1,drawnBar.size.width),h=MAX(1,drawnBar.size.height),radius=1.5*MIN(w,h);
-        CGFloat cx=WXGClamp(_kyantGlowX-drawnBar.origin.x,0,w),cy=h*.5;
-        CGFloat spot=WXGClamp([c extraNumber:@"kyantGlowSpot"]*g,0,1);
-        NSMutableArray *colors=[NSMutableArray array];NSMutableArray<NSNumber *> *stops=[NSMutableArray array];
-        for(int i=0;i<=10;i++) {
-            double u=i/10.;   // distance / radius
-            [stops addObject:@(u)];
-            [colors addObject:(id)[UIColor colorWithWhite:1 alpha:spot*WXGKyantGlowSpot(u*radius,radius)].CGColor];
-        }
-        _kyGlowSpot.colors=colors;_kyGlowSpot.locations=stops;
-        _kyGlowSpot.startPoint=CGPointMake(cx/w,cy/h);_kyGlowSpot.endPoint=CGPointMake((cx+radius)/w,(cy+radius)/h);
-        _kyGlow.contentsScale=_kyGlowSpot.contentsScale=self.window.screen.scale?:UIScreen.mainScreen.scale;
-    }
-    [CATransaction commit];
-}
 - (WXGGlassScope)lensScope {return self.glassScope==WXGGlassScopeSegment?WXGGlassScopeSegment:WXGGlassScopeDock;}
 // FIX114 C (user: the segment bar's lens border set apart from the dock's
 // icons-and-titles lens): the 边框与渐隐 range of this glass's lens border.
@@ -2130,7 +2089,6 @@ NSDictionary *WXGDropShadowEvidence(void) {
     for(WXGSyncBackdropView *v in _lensStack)v.frame=CGRectInset(_lensClip.bounds,-_lensPad,-_lensPad);   // FIX113 U: with the smaller bar's margin
     for(CALayer *mask in _edgeMasks)mask.frame=_edgeBackdrop.bounds;
     _metal.frame=CGRectMake(-drawnBar.origin.x,-drawnBar.origin.y,self.bounds.size.width,self.bounds.size.height);
-    [self layoutKyantGlow:drawnBar];   // FIX122 B
     _lensMetal.frame=CGRectMake(-_lensRect.origin.x,-_lensRect.origin.y,self.bounds.size.width,self.bounds.size.height);
     _metal.contentScaleFactor=scale; _lensMetal.contentScaleFactor=scale;
     if(!CGSizeEqualToSize(_metal.drawableSize,size)) {
@@ -2387,14 +2345,6 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         bodyOptics.softPower=fabs(transition.curve-2)>.005?(float)(roundf((float)transition.curve*100.f)/100.f):0.f;
     }
     _backdropTone=[c backdropToneForScope:self.glassScope];   // FIX114 J
-    // FIX122 B Kyant 底栏: the bar's own lens(24 dp, 24 dp) on his 64 dp
-    // bar (WXGKyantLens.h), as shares of its short side; no split.
-    if([c kyantForScope:self.glassScope]) {
-        float sh=(float)MIN(_glassRect.size.width,_glassRect.size.height);
-        float kh=roundf((float)WXGClamp([c extraNumber:@"kyantBodyHeight"],.02,.5)*sh*4.f)/4.f,ka=roundf((float)WXGClamp([c extraNumber:@"kyantBodyAmount"],0,.8)*sh*4.f)/4.f;
-        bodyOptics.kyHeight=kh>.01f && ka>.01f?kh:0.f;bodyOptics.kyAmount=ka;
-        bodyOptics.edgeWidth=WXG_MAX(kh,.5f);bodyOptics.refraction=0.f;bodyOptics.offsetScale=1.f;bodyOptics.dispersion=0.f;bodyOptics.transition=0.f;
-    }
     BOOL bodyMesh=mesh && body && bodyOptics.width>1 && bodyOptics.height>1;
     [self applyStack:_bodyStack visible:body split:split radius:scoped.blur*scale optics:bodyOptics quality:WXGMeshQualityBody mesh:bodyMesh group:[self bodyGroup] plain:NO];
     BOOL ring=bodyMesh && scoped.blurCoverage<99.5 && scoped.blur*scale>.01 && !lean;
@@ -2480,9 +2430,6 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             lensOptics.sbBottom=(float)(round((CGRectGetMaxY(bar)-CGRectGetMinY(_lensRect))*2)/2);
             lensOptics.sbRadius=0;   // the dock and the segment bar are capsules (a rounded field's normals jump across its middle lines)
             lensOptics.shrinkPress=press;lensOptics.shrinkPinch=(float)(round(WXGClamp(L.pinch,0,.30)*1000)/1000);
-            // FIX122 B: Kyant's copy of the bar in the lens is the resting
-            // lens' height (the bar less its inset each side).
-            if(L.kyantOn)lensOptics.shrinkPinch=(float)(round(WXGClamp(2*L.selectionInset/MAX(1,bar.size.height),0,.30)*1000)/1000);
             // FIX113 Y: the drag-speed deformation must not open / close the
             // strip between the smaller bar and the rim: inset more / less by
             // what the lens lost / gained in half height (quarter points).
@@ -2727,9 +2674,6 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         r=sr;g=sg;b=sb;a=sa;selectionAlpha=1;
         if(_selectionOverridePressedAlpha>=0)a=sa+(_selectionOverridePressedAlpha-sa)*WXGClamp(_pressAmount,0,1);   // FIX113 P: fading as the dock's
     }
-    if([c kyantForScope:self.glassScope]) {   // FIX122 B: his resting indicator (10% black, white in dark mode)
-        [WXGColor([c extraHex:[self darkAppearance]?@"kyantDarkSelectionHex":@"kyantSelectionHex"]) getRed:&r green:&g blue:&b alpha:&a];selectionAlpha=1;
-    }
     u.selectionColor=(WXGFloat4){(float)r,(float)g,(float)b,(float)(a*selectionAlpha)};
     // FIX27: the bar contour seen inside the lens uses the bar rim of this appearance.
     [WXGBrightened(WXGColor([c rimHexForScope:[self rimScope] dark:rimDark]),rim.brightness) getRed:&r green:&g blue:&b alpha:&a];
@@ -2813,22 +2757,6 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         }else if(surface && _dockSurface) {
             if(!lensOutline){u.borderColor.w=0;u.glowColor2.w=0;}
             if(!lensVeil)u.tintColor.w=0;
-        }
-        if(surface && L.kyantOn) {
-            // FIX122 B: the icons / titles in the lens as close to Kyant's
-            // lens as the served shader's curve allows: his band (height x
-            // press) and his shift at the outline (amount x press), the same
-            // at every press (no blend from the bar's optics), round all the
-            // way (no top / bottom narrowing), no cancel; no colour split of
-            // the icons (his are inside the band's reach; the shader's split
-            // assumed a black page in dark mode); his icon zoom.
-            float pr=(float)WXGClamp(_pressAmount,0,1),sh=(float)MIN(_lensRect.size.width,_lensRect.size.height);
-            float band=(float)L.kyantHeight*sh*pr,amp=pr>.05f && L.kyantHeight>.001?(float)(L.kyantAmount/L.kyantHeight)/pr:0.f;
-            float strength=amp<=.40f?amp/.32f:2.f+(amp-.40f)/.32f;
-            u.lensOptics.x=strength;u.lensOptics.y=0;u.lensOptics.z=MAX(1.f,band);
-            u.material.y=strength;u.material.z=0;u.optics.w=MAX(1.f,band);
-            u.sync.y=1;u.sync.z=1;u.style.w=0;
-            u.optics.x=(float)L.kyantIconZoom;
         }
         MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
         pass.colorAttachments[0].texture=surface?lensDrawable.texture:bodyDrawable.texture;
