@@ -272,6 +272,8 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (WXGScopeOptics)opticsForScope:(WXGGlassScope)scope;
 - (WXGTransitionSettings)refractionTransitionForScope:(WXGGlassScope)scope;   // FIX114 I / J: 边界过渡 (amount 0 = TEST9 as before)
 - (WXGBackdropTone)backdropToneForScope:(WXGGlassScope)scope;   // FIX114 J
+- (WXGBackdropTone)backdropToneForScope:(WXGGlassScope)scope dark:(BOOL)dark;   // FIX124: the appearance's (本体照 iOS 26: its material's)
+- (CGFloat)ios26BlurForScope:(WXGGlassScope)scope side:(CGFloat)side;   // FIX124: the system's blur for a glass of that short side; < 0: off
 - (WXGDropShadowSettings)dropShadowForScope:(WXGGlassScope)scope dark:(BOOL)dark;   // FIX114 K
 - (WXGGlassScope)sharedScope:(WXGGlassScope)scope page:(WXGSharePage)page;   // FIX114 L: the range whose settings of that page it uses
 - (NSString *)rimSampleOverlayHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;   // FIX114 J: 取自背景's colour overlay (alpha 0 = none)

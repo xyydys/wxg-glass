@@ -1,8 +1,9 @@
-/* FIX123: iOS 26 边框, the system's own recipe (Sources/WXGRim26.h), against
+/* FIX123 / FIX124: iOS 26 边框, the system's own recipe (Sources/WXGRim26.h), against
    what GlassProbe captured on iOS 26.6 (8x captures, 24 px per point). */
 #include "../Sources/WXGRim26.h"
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 static int failures;
 #define CHECK(cond,...) do{if(!(cond)){++failures;printf("FAIL %s:%d: ",__FILE__,__LINE__);printf(__VA_ARGS__);printf("\n");}}while(0)
@@ -76,13 +77,14 @@ int main(void) {
     WXGRim26Canvas b=WXGRim26CanvasFor(44,44,22,WXGRim26PartReach(WXGRim26PartLine,s),3);
     CHECK(!b.stretchX && !b.stretchY && b.columns==132 && b.rows==132,"button: whole (%d x %d)",b.columns,b.rows);
     WXGRim26Canvas bar=WXGRim26CanvasFor(330,64,32,WXGRim26PartReach(WXGRim26PartLine,s),3);
-    CHECK(bar.stretchX && !bar.stretchY && fabs(bar.width-68)<1e-9 && bar.rows==192,"bar: ends + 2 pt (%.1f x %.1f)",bar.width,bar.height);
+    CHECK(bar.stretchX && !bar.stretchY && fabs(bar.width-106.4)<1e-9 && bar.rows==192 && bar.realWidth==330,"bar: ends (1.6 r each) + 2 pt (%.1f x %.1f)",bar.width,bar.height);
     WXGRim26Canvas panel=WXGRim26CanvasFor(390,844,38,WXGRim26PartReach(WXGRim26PartShadow,s),3);
-    CHECK(panel.stretchX && panel.stretchY && panel.columns*panel.rows<60000,"panel: corners only (%d x %d)",panel.columns,panel.rows);
+    CHECK(panel.stretchX && panel.stretchY && panel.columns*panel.rows<150000,"panel: corners only (%d x %d)",panel.columns,panel.rows);
 
     /* The button's pixels at 3x: three pixels of rim, brightest outermost, nothing inside or outside. */
     unsigned char *px=calloc((size_t)b.columns*b.rows,1);
-    WXGRim26Fill(px,b.columns,b,22,3,WXGRim26PartLine,s,0);
+    WXGRim26Native none;memset(&none,0,sizeof none);
+    WXGRim26Fill(px,b.columns,b,22,3,WXGRim26PartLine,s,0,none);
     {
         int n=0,beyond=0;
         for(int j=0;j<b.rows;j++)for(int i=0;i<b.columns;i++) {
@@ -103,7 +105,7 @@ int main(void) {
        inside, the outline's own level carried one pixel past it. */
     {
         unsigned char *pe=calloc((size_t)b.columns*b.rows,1);
-        WXGRim26Fill(pe,b.columns,b,22,3,WXGRim26PartLine,s,1);
+        WXGRim26Fill(pe,b.columns,b,22,3,WXGRim26PartLine,s,1,none);
         int same=1,more=0,far=0;
         for(int j=0;j<b.rows;j++)for(int i=0;i<b.columns;i++) {
             double x=(i+.5)/3-22,y=(j+.5)/3-22,d=22-sqrt(x*x+y*y);
@@ -118,20 +120,71 @@ int main(void) {
     free(px);
     /* The bar's stretched columns are all alike (a straight edge). */
     unsigned char *pb=calloc((size_t)bar.columns*bar.rows,1);
-    WXGRim26Fill(pb,bar.columns,bar,32,3,WXGRim26PartLine,s,0);
+    WXGRim26Fill(pb,bar.columns,bar,32,3,WXGRim26PartLine,s,0,none);
     int a0=(int)(bar.edgeX*3)+1,diff=0,lit=0;
     for(int j=0;j<bar.rows;j++)for(int i=a0;i<a0+4;i++){diff+=abs(pb[j*bar.columns+i]-pb[j*bar.columns+a0]);lit+=pb[j*bar.columns+i]>0;}
     CHECK(diff==0 && lit==4*6,"stretch columns alike (%d), 3 px of rim top and bottom (%d)",diff,lit);
     free(pb);
+    /* FIX124: the bar's ends are the real capsule's (continuous), not a small round canvas': its
+       field is the 330 x 64 capsule's at the same distance from the end. */
+    {
+        double worst=0;
+        for(double y=-31;y<=31;y+=2.)for(double xe=0;xe<52;xe+=2.) {   /* xe: from the left end */
+            WXGShapeSample a=WXGRim26Field(-bar.width*.5+xe,y,bar,32),t=WXGCapsuleOpticalField((float)(-165+xe),(float)y,330,64);
+            double e=fabs(a.distance-t.distance);if(e>worst)worst=e;
+        }
+        /* FIX123's canvas was 68 x 64: nearly round, so its ends were a circle's; at the join
+           (6 degrees round the end) that is about 1.2 % of the radius off the real outline. */
+        double jx=32-32*sin(6*M_PI/180),jy=-32*cos(6*M_PI/180);   /* from the left end, from the middle line */
+        WXGShapeSample small=WXGCapsuleOpticalField((float)(-34+jx),(float)jy,68,64),real=WXGRim26Field(-bar.width*.5+jx,jy,bar,32);
+        CHECK(worst<1e-4 && fabs(real.distance-small.distance)>.25,"the canvas' field is the real capsule's (worst %.5f); a 68 pt canvas' own was %.2f pt off at the join",worst,fabs(real.distance-small.distance));
+    }
+    /* FIX124: the outline as drawn. A synthetic "native" corner: the 44 pt circle drawn 0.25 pt
+       larger (as coverage, 6 px per point, 2 pt of margin), plain and mirrored; the correction
+       reads 0.25 pt all round, and the rim moves out with it. */
+    {
+        const double pp=6,margin=2,grow=.25;
+        int W=(int)ceil((22+2*margin)*pp),H=W;
+        unsigned char *cov=calloc((size_t)W*H,1),*mir=calloc((size_t)W*H,1);
+        for(int j=0;j<H;j++)for(int i=0;i<W;i++) {
+            int in=0;
+            for(int sy=0;sy<8;sy++)for(int sx=0;sx<8;sx++) {
+                double u=(i+(sx+.5)/8)/pp-margin,v=(j+(sy+.5)/8)/pp-margin;
+                if(hypot(u-22,v-22)<=22+grow)++in;
+            }
+            cov[j*W+i]=(unsigned char)lround(in*255./64.);
+            mir[(H-1-j)*W+i]=cov[j*W+i];
+        }
+        WXGRim26Native nat={cov,W,H,W,pp,margin,0,0},flipped={mir,W,H,W,pp,margin,0,1};
+        double worst=0,worstFlipped=0;
+        for(int a=0;a<360;a+=15)for(double depth=-.5;depth<=1.5;depth+=.5) {
+            double x=(22-depth)*cos(a*M_PI/180),y=(22-depth)*sin(a*M_PI/180);
+            WXGShapeSample f=WXGRim26Field(x,y,b,22);
+            double e=fabs(WXGRim26Correction(nat,b,x,y,f)-grow),e2=fabs(WXGRim26Correction(flipped,b,x,y,f)-grow);
+            if(e>worst)worst=e;
+            if(e2>worstFlipped)worstFlipped=e2;
+        }
+        CHECK(worst<.03 && worstFlipped<.03,"native outline 0.25 pt out: read within %.3f pt (mirrored image %.3f)",worst,worstFlipped);
+        WXGShapeSample f0=WXGRim26Field(10,10,b,22);
+        CHECK(WXGRim26Correction(none,b,10,10,f0)==0,"no native image: no correction");
+        unsigned char *pn=calloc((size_t)b.columns*b.rows,1);
+        WXGRim26Fill(pn,b.columns,b,22,3,WXGRim26PartLine,s,1,nat);
+        /* the right side's middle row: the rim's inner cut lies 0.25 pt further out (the 3rd pixel in holds a quarter less) */
+        unsigned char *p0=calloc((size_t)b.columns*b.rows,1);
+        WXGRim26Fill(p0,b.columns,b,22,3,WXGRim26PartLine,s,1,none);
+        int third0=p0[66*b.columns+(b.columns-3)],third=pn[66*b.columns+(b.columns-3)],first0=p0[66*b.columns+(b.columns-1)],first=pn[66*b.columns+(b.columns-1)];
+        CHECK(third<third0*.45 && third>third0*.1 && first<first0*.9 && first>first0*.7,"the rim follows the native outline: 3rd pixel %d -> %d, 1st %d -> %d",third0,third,first0,first);
+        free(cov);free(mir);free(pn);free(p0);
+    }
     /* The optional shadow: exponential, the same all round. */
     CHECK(fabs(WXGRim26Shadow(0,s)-1)<1e-12 && fabs(WXGRim26Shadow(2.5,s)-exp(-1))<1e-12 && WXGRim26Shadow(-.1,s)==0,"shadow: exponential from the outline");
     unsigned char *ps=calloc((size_t)b.columns*b.rows,1);
-    WXGRim26Fill(ps,b.columns,b,22,3,WXGRim26PartShadow,s,0);
+    WXGRim26Fill(ps,b.columns,b,22,3,WXGRim26PartShadow,s,0,none);
     int st=ps[3*b.columns+66],sr=ps[66*b.columns+(b.columns-1-3)];   /* the same depth from the top and from the right */
     CHECK(abs(st-sr)<=2 && st>120 && st<200,"shadow even all round (%d %d)",st,sr);
     free(ps);
 
     if(failures){printf("Rim26Tests: %d failure(s)\n",failures);return 1;}
-    printf("PASS: iOS 26 rim (FIX123, the system's recipe): 1 -> .30 over 1 pt then cut; |cos| about lower right / upper left; ring where the lights are out; dark matrix = the dumped one; dark button over slate and the light grey button all round match the captures; canvases; pixels within the 1 pt band, 3 px at 3x; bleed past the outline for the clipped layer; stretched columns alike; shadow.\n");
+    printf("PASS: iOS 26 rim (FIX123, the system's recipe): 1 -> .30 over 1 pt then cut; |cos| about lower right / upper left; ring where the lights are out; dark matrix = the dumped one; dark button over slate and the light grey button all round match the captures; canvases; pixels within the 1 pt band, 3 px at 3x; bleed past the outline for the clipped layer; stretched columns alike; the real capsule's ends on the canvas and the native outline's correction (FIX124); shadow.\n");
     return 0;
 }

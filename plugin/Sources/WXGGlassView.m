@@ -1164,6 +1164,65 @@ static NSHashTable *WXGRimTintViews;
 // that alpha), cached by its shape and size, stretched along straight edges
 // (contentsCenter), so a glass keeps its images while it sits still or
 // grows along its edges; nothing is rebuilt per frame.
+// FIX124: one corner of the glass' own layer as Core Animation draws it
+// (its size, corner radius and continuous corner curve), as coverage at
+// twice the screen's pixels, for WXGRim26Correction: the rim's depth is then
+// measured from that outline (the analytic field is a few tenths of a point
+// off it on rounded rectangles). Cached; nil bytes when it cannot be made
+// or read (then the field alone, as before).
+static NSUInteger WXGRim26NativeMade,WXGRim26NativeFailed;
+static WXGRim26Native WXGRim26NativeFor(double w,double h,double r,WXGRim26Canvas c,CGFloat scale,NSData * __strong *owner) {
+    WXGRim26Native n;memset(&n,0,sizeof n);
+    if(!(w>=8.) || !(h>=8.) || !(scale>0.))return n;
+    static NSCache<NSString *,NSArray *> *cache;static dispatch_once_t once;
+    dispatch_once(&once,^{cache=[NSCache new];cache.countLimit=48;});
+    NSString *key=[NSString stringWithFormat:@"%.1f|%.1f|%.2f|%.2f|%.1f|%.1f",w,h,r,scale,c.width,c.height];
+    NSArray *hit=[cache objectForKey:key];
+    if(!hit) {
+        const double margin=2.,pp=scale*2.;
+        double tw=c.width*.5+2.*margin,th=c.height*.5+2.*margin;
+        size_t W=(size_t)ceil(tw*pp),H=(size_t)ceil(th*pp);
+        NSMutableData *cover=nil;int flipX=0,flipY=0;BOOL ok=NO;
+        if(W>=8 && H>=8 && W<=2400 && H<=2400) {
+            @try {
+                CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
+                CGContextRef ctx=CGBitmapContextCreate(NULL,W,H,8,W*4,space,(CGBitmapInfo)kCGImageAlphaPremultipliedLast);CGColorSpaceRelease(space);
+                if(ctx) {
+                    CGContextClearRect(ctx,CGRectMake(0,0,W,H));
+                    CALayer *shape=[CALayer layer];shape.bounds=CGRectMake(0,0,w,h);shape.anchorPoint=CGPointZero;shape.position=CGPointZero;
+                    shape.cornerRadius=r;shape.cornerCurve=kCACornerCurveContinuous;shape.masksToBounds=YES;
+                    shape.contentsScale=pp;shape.backgroundColor=UIColor.whiteColor.CGColor;
+                    CGContextScaleCTM(ctx,pp,pp);CGContextTranslateCTM(ctx,margin,margin);
+                    [shape renderInContext:ctx];
+                    const uint8_t *src=CGBitmapContextGetData(ctx);size_t stride=CGBitmapContextGetBytesPerRow(ctx);
+                    if(src) {
+                        cover=[NSMutableData dataWithLength:W*H];uint8_t *dst=cover.mutableBytes;
+                        for(size_t j=0;j<H;j++)for(size_t i=0;i<W;i++)dst[j*W+i]=src[j*stride+i*4+3];
+                        // Which image corner is the shape's: the one opposite the only
+                        // corner that lies inside the shape (1 pt in from each).
+                        size_t q=(size_t)(pp*1.);
+                        BOOL tl=dst[q*W+q]>=250,tr=dst[q*W+(W-1-q)]>=250,bl=dst[(H-1-q)*W+q]>=250,br=dst[(H-1-q)*W+(W-1-q)]>=250;
+                        BOOL tlOut=dst[q*W+q]<=5,trOut=dst[q*W+(W-1-q)]<=5,blOut=dst[(H-1-q)*W+q]<=5,brOut=dst[(H-1-q)*W+(W-1-q)]<=5;
+                        if(br && tlOut && trOut && blOut){flipX=0;flipY=0;ok=YES;}
+                        else if(tr && tlOut && blOut && brOut){flipX=0;flipY=1;ok=YES;}
+                        else if(bl && tlOut && trOut && brOut){flipX=1;flipY=0;ok=YES;}
+                        else if(tl && trOut && blOut && brOut){flipX=1;flipY=1;ok=YES;}
+                    }
+                    CGContextRelease(ctx);
+                }
+            } @catch(__unused NSException *error) {ok=NO;}
+        }
+        if(ok)++WXGRim26NativeMade;else ++WXGRim26NativeFailed;
+        hit=ok?@[cover,@(W),@(H),@(flipX),@(flipY),@(pp),@(margin)]:@[];
+        [cache setObject:hit forKey:key];
+    }
+    if(hit.count<7)return n;
+    NSData *data=hit[0];
+    if(owner)*owner=data;
+    n.bytes=data.bytes;n.columns=[hit[1] intValue];n.rows=[hit[2] intValue];n.stride=n.columns;
+    n.flipX=[hit[3] intValue];n.flipY=[hit[4] intValue];n.pxPerPt=[hit[5] doubleValue];n.margin=[hit[6] doubleValue];
+    return n;
+}
 static UIImage *WXGRim26Image(WXGRim26Part part,WXGRim26Shape s,CGSize size,CGFloat r,CGFloat scale,int colour,int bleed,WXGRim26Canvas *canvasOut) {
     // colour: -1 an alpha mask, 0 black, 1 white (premultiplied). bleed: pixels
     // past the outline (for a layer clipped by the glass' own corner).
@@ -1185,7 +1244,12 @@ static UIImage *WXGRim26Image(WXGRim26Part part,WXGRim26Shape s,CGSize size,CGFl
     UIImage *hit=[cache objectForKey:key];if(hit)return hit;
     size_t W=(size_t)c.columns,H=(size_t)c.rows;
     NSMutableData *alpha=[NSMutableData dataWithLength:W*H];
-    WXGRim26Fill(alpha.mutableBytes,(int)W,c,rq,scale,part,s,bleed);
+    // FIX124: the depth from the outline Core Animation draws (the line only;
+    // the soft shadow reaches too far in to need it).
+    NSData * __attribute__((objc_precise_lifetime)) tile=nil;
+    WXGRim26Native native;memset(&native,0,sizeof native);
+    if(part==WXGRim26PartLine)native=WXGRim26NativeFor(w,h,rq,c,scale,&tile);
+    WXGRim26Fill(alpha.mutableBytes,(int)W,c,rq,scale,part,s,bleed,native);
     CGImageRef image=NULL;
     if(colour<0) {
         CGContextRef ctx=CGBitmapContextCreate(NULL,W,H,8,W,NULL,(CGBitmapInfo)kCGImageAlphaOnly);
@@ -1360,6 +1424,7 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
     return @{@"on":@(_on),@"height":@(_settings.height),@"curve":@(_settings.curve),@"angle":@(_settings.angle),@"key":@(_settings.key),@"fill":@(_settings.fill),
              @"gain":@(_settings.gain),@"chroma":@(_settings.chroma),@"lift":@(_settings.lift),@"ring":@(_settings.ring),
              @"captureScale":@(_settings.captureScale),@"systemFilterAsked":@(_settings.systemFilter),@"systemFilterUsed":@(_system),
+             @"nativeOutlinesMade":@(WXGRim26NativeMade),@"nativeOutlinesFailed":@(WXGRim26NativeFailed),   // FIX124 (all rims)
              @"strength":@(_strength*_settings.opacity),@"shadow":@(_settings.shadowOn),
              @"size":@[@(round(self.bounds.size.width*10)/10),@(round(self.bounds.size.height*10)/10)]};
 }
@@ -1704,7 +1769,13 @@ void WXGDropDeferredGlassTicks(void) {
     if(_glassScopeOverride>=0)return (WXGGlassScope)_glassScopeOverride;   // FIX113 O
     return _dockSurface?WXGGlassScopeDock:_bubbleSurface?WXGGlassScopeBubble:WXGGlassScopeOther;
 }
-- (WXGScopeOptics)scopedOptics {return [WXGConfig.shared opticsForScope:self.glassScope];}
+- (WXGScopeOptics)scopedOptics {
+    WXGScopeOptics o=[WXGConfig.shared opticsForScope:self.glassScope];
+    // FIX124 本体照 iOS 26: the blur by the glass' short side (the whole face).
+    CGFloat blur=[WXGConfig.shared ios26BlurForScope:self.glassScope side:MIN(_glassRect.size.width,_glassRect.size.height)];
+    if(blur>=0){o.blur=blur;o.blurCoverage=100;}
+    return o;
+}
 // FIX115 S: whose border range it draws (its own glass range unless set: 视频号).
 - (WXGGlassScope)rimScope {return _rimScopeOverride>=0?(WXGGlassScope)_rimScopeOverride:self.glassScope;}
 - (void)setRimScopeOverride:(NSInteger)scope {
@@ -2571,7 +2642,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         bodyOptics.softStretch=fabs(transition.stretch-2.5)>.005?(float)(roundf((float)transition.stretch*100.f)/100.f):0.f;
         bodyOptics.softPower=fabs(transition.curve-2)>.005?(float)(roundf((float)transition.curve*100.f)/100.f):0.f;
     }
-    _backdropTone=[c backdropToneForScope:self.glassScope];   // FIX114 J
+    _backdropTone=[c backdropToneForScope:self.glassScope dark:[self darkAppearance]];   // FIX114 J (FIX124: the appearance's)
     // FIX122 D: Kyant's lens() on this glass' body (其余玻璃, or a range
     // sharing its refraction page): his band and shift as shares of the
     // glass' short side (unscaled; the clip stretches it with a press), his
@@ -3138,7 +3209,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
     o.transition=(float)t.amount;o.softWidth=(float)t.width;o.softStretch=(float)t.stretch;o.softPower=(float)t.curve;
     WXGSoftShape shape=WXGMeshSoftShape(o);
     float limit=WXGMeshSoftLimit(o),band=WXGSoftBandShaped(o.edgeWidth,o.refraction,limit,shape);
-    WXGBackdropTone tone=[c backdropToneForScope:self.glassScope];
+    WXGBackdropTone tone=[c backdropToneForScope:self.glassScope dark:[self darkAppearance]];
     return @{@"value":@(o.transition),@"widthSetting":@(t.width),@"stretch":@(WXGSoftStretch(shape)),@"curve":@(WXGSoftPower(shape)),
              @"originalRimPt":@(WXGSoftTarget(o.edgeWidth,o.refraction)),@"softBandPt":@(band),
              @"softRimPt":@(WXGSoftRimShaped(o.edgeWidth,o.refraction,band,shape)),@"limitPt":@(limit),@"scope":@(self.glassScope),

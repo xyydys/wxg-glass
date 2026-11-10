@@ -1,6 +1,7 @@
 #ifndef WXG_RIM26_H
 #define WXG_RIM26_H
 #include <math.h>
+#include <stddef.h>
 #include "WXGOptics.h"
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
@@ -107,48 +108,110 @@ static inline void WXGRim26Colour(const float m[20],const double face[3],double 
    capsule when r reaches half the short side): the corners plus 2 pt of
    each straight edge, which the layer stretches (nine-part) to any longer
    size, so a glass growing along its straight edges needs no new image.
-   `ext`: how far the corners' area reaches (the corner, or the part if it
-   reaches further), within half the side. */
-typedef struct { double width,height;int columns,rows;int stretchX,stretchY;double edgeX,edgeY; } WXGRim26Canvas;
+   `ext`: how far a corner's area reaches along an edge. FIX124: 1.6 r, not
+   r: Core Animation's continuous corner leaves the straight edge well
+   before the circle's would (1.53 r for a rounded rectangle, 1.45 r for a
+   capsule's end), and the canvas keeps the glass' real size in mind
+   (realWidth / realHeight): FIX123 took the field of the canvas itself, a
+   nearly round shape for a capsule, whose ends are then a circle's: up to
+   1.2 % of the radius off the glass' own outline (user, on the phone: "not
+   the continuous corner any more, and thinner than iOS 26's": the clip by
+   the real outline cut the rim's brightest part away near the joins). */
+typedef struct { double width,height;int columns,rows;int stretchX,stretchY;double edgeX,edgeY;double realWidth,realHeight; } WXGRim26Canvas;
 static inline WXGRim26Canvas WXGRim26CanvasFor(double w,double h,double r,double reach,double scale) {
     WXGRim26Canvas c;
-    double ext=(r>reach?r:reach)+1.;
+    double ext=(1.6*r>reach?1.6*r:reach)+1.;
     c.stretchX=w>2.*ext+2.;c.stretchY=h>2.*ext+2.;
     c.width=c.stretchX?2.*ext+2.:w;c.height=c.stretchY?2.*ext+2.:h;
     c.edgeX=c.stretchX?ext:0.;c.edgeY=c.stretchY?ext:0.;
     c.columns=(int)ceil(c.width*scale-1e-9);c.rows=(int)ceil(c.height*scale-1e-9);
     c.columns=c.columns<1?1:c.columns;c.rows=c.rows<1?1:c.rows;
+    c.realWidth=w;c.realHeight=h;
     return c;
 }
-/* The field of the canvas' shape at (x, y) from its centre: a capsule as
-   the glass' continuous outline (WXGCapsuleOpticalField), else a rounded
-   rectangle. */
+/* The glass' own field at the canvas' (x, y) from its centre: each half of
+   the canvas is that end of the real shape (a capsule as the glass'
+   continuous outline, WXGCapsuleOpticalField, else a rounded rectangle). */
 static inline WXGShapeSample WXGRim26Field(double x,double y,WXGRim26Canvas c,double r) {
-    double half=(c.width<c.height?c.width:c.height)*.5;
-    return r>=half-1e-3?WXGCapsuleOpticalField((float)x,(float)y,(float)c.width,(float)c.height)
-                       :WXGRoundedOpticalField((float)x,(float)y,(float)c.width,(float)c.height,(float)r);
+    double w=c.realWidth>c.width?c.realWidth:c.width,h=c.realHeight>c.height?c.realHeight:c.height;
+    double rx=x+(x<0.?-1.:1.)*(w-c.width)*.5,ry=y+(y<0.?-1.:1.)*(h-c.height)*.5;
+    double half=(w<h?w:h)*.5;
+    return r>=half-1e-3?WXGCapsuleOpticalField((float)rx,(float)ry,(float)w,(float)h)
+                       :WXGRoundedOpticalField((float)rx,(float)ry,(float)w,(float)h,(float)r);
+}
+
+/* FIX124: the outline as Core Animation itself draws it. `bytes`: the
+   coverage (0..255) of the glass' own layer (its size, corner radius and
+   continuous corner curve) rendered around one of its corners, `pxPerPt`
+   pixels per point; the pixel (0, 0)'s outer corner lies `margin` points
+   outside the shape's bounding box both ways, and the shape's corner is the
+   image's top-left one unless flipX / flipY say it is mirrored (the four
+   corners are alike, so one serves all). nil bytes: no correction (the
+   analytic field alone). */
+typedef struct { const unsigned char *bytes;int columns,rows,stride;double pxPerPt,margin;int flipX,flipY; } WXGRim26Native;
+/* The coverage at (u, v) points from the shape's bounding box corner
+   (bilinear); -1 outside the image. */
+static inline double WXGRim26NativeAt(WXGRim26Native n,double u,double v) {
+    double fx=(u+n.margin)*n.pxPerPt-.5,fy=(v+n.margin)*n.pxPerPt-.5;
+    if(!(fx>=0.) || !(fy>=0.) || fx>n.columns-1.001 || fy>n.rows-1.001)return -1.;
+    int i=(int)fx,j=(int)fy;double ax=fx-i,ay=fy-j;
+    int i0=n.flipX?n.columns-1-i:i,i1=n.flipX?n.columns-2-i:i+1,j0=n.flipY?n.rows-1-j:j,j1=n.flipY?n.rows-2-j:j+1;
+    const unsigned char *a=n.bytes+(size_t)j0*n.stride,*b=n.bytes+(size_t)j1*n.stride;
+    return ((a[i0]*(1.-ax)+a[i1]*ax)*(1.-ay)+(b[i0]*(1.-ax)+b[i1]*ax)*ay)/255.;
+}
+/* How far the real outline lies outside the analytic one near the canvas'
+   (x, y) (points; negative: inside it). From the field's nearest outline
+   point, along its normal, the coverage summed over +-span: a cut across an
+   edge holds as much coverage as the edge lies along it, whatever the
+   renderer's anti-aliasing. 0 where it cannot be read (outside the image,
+   or more than the cut's reach off). */
+#define WXG_RIM26_NATIVE_SPAN 1.0
+static inline double WXGRim26Correction(WXGRim26Native n,WXGRim26Canvas c,double x,double y,WXGShapeSample f) {
+    if(!n.bytes || !(n.pxPerPt>0.))return 0.;
+    double nx=f.nx,ny=f.ny,len=sqrt(nx*nx+ny*ny);
+    if(len<.5)return 0.;
+    nx/=len;ny/=len;
+    /* the nearest point of the analytic outline, mirrored into the canvas' top-left quarter */
+    double px=x-nx*f.distance,py=y-ny*f.distance;
+    if(px>0.){px=-px;nx=-nx;}
+    if(py>0.){py=-py;ny=-ny;}
+    double u=px+c.width*.5,v=py+c.height*.5;
+    const double span=WXG_RIM26_NATIVE_SPAN;const int steps=16;
+    double sum=0;
+    for(int k=0;k<steps;k++) {
+        double t=-span+(k+.5)*2.*span/steps;
+        double cover=WXGRim26NativeAt(n,u+nx*t,v+ny*t);
+        if(cover<0.)return 0.;
+        sum+=cover;
+    }
+    double edge=sum*2.*span/steps-span;   /* where along the cut the coverage ends */
+    if(edge>span*.9 || edge<-span*.9)return 0.;
+    return edge;
 }
 /* Fills one byte per pixel (0..255): the part's alpha, the mean of 4 x 4
    samples per pixel (so the hard inner cut is anti-aliased by coverage
    alone, as the system's own at the screen's scale). `bleed` (pixels): that
    far outside the outline counts as the outline itself, for a layer that is
    then clipped by the glass' own continuous corner (Core Animation's, the
-   same clip as the body: the rim's outer edge is exactly the body's, also
-   where this field's corner is a few tenths of a point off it); 0: the
-   outline anti-aliased here. */
+   same clip as the body: the rim's outer edge is exactly the body's); 0:
+   the outline anti-aliased here. `native`: the depth is measured from the
+   outline Core Animation draws (the field's, corrected per pixel). */
 #define WXG_RIM26_SAMPLES 4
-static inline void WXGRim26Fill(unsigned char *bytes,int stride,WXGRim26Canvas c,double r,double scale,WXGRim26Part part,WXGRim26Shape s,double bleed) {
+static inline void WXGRim26Fill(unsigned char *bytes,int stride,WXGRim26Canvas c,double r,double scale,WXGRim26Part part,WXGRim26Shape s,double bleed,WXGRim26Native native) {
     const int n=WXG_RIM26_SAMPLES;
     double reach=WXGRim26PartReach(part,s),out=(bleed>0.?bleed:0.)/scale;
     for(int j=0;j<c.rows;j++)for(int i=0;i<c.columns;i++) {
         double sum=0;
         /* the pixel's centre first: far outside or far inside, nothing to add up */
-        WXGShapeSample mid=WXGRim26Field((i+.5)/scale-c.width*.5,(j+.5)/scale-c.height*.5,c,r);
-        if(mid.distance>out+1./scale || -mid.distance>reach+1./scale){bytes[j*stride+i]=0;continue;}
+        double mx=(i+.5)/scale-c.width*.5,my=(j+.5)/scale-c.height*.5;
+        WXGShapeSample mid=WXGRim26Field(mx,my,c,r);
+        if(mid.distance>out+1./scale+WXG_RIM26_NATIVE_SPAN || -mid.distance>reach+1./scale+WXG_RIM26_NATIVE_SPAN){bytes[j*stride+i]=0;continue;}
+        double fix=part==WXGRim26PartShadow?0.:WXGRim26Correction(native,c,mx,my,mid);
+        if(mid.distance-fix>out+1./scale || fix-mid.distance>reach+1./scale){bytes[j*stride+i]=0;continue;}
         for(int sy=0;sy<n;sy++)for(int sx=0;sx<n;sx++) {
             double x=(i+(sx+.5)/n)/scale-c.width*.5,y=(j+(sy+.5)/n)/scale-c.height*.5;
             WXGShapeSample f=WXGRim26Field(x,y,c,r);
-            double d=-f.distance;
+            double d=fix-f.distance;
             if(d<-out)continue;
             if(d<0.)d=0.;
             sum+=part==WXGRim26PartShadow?WXGRim26Shadow(d,s):WXGRim26Alpha(d,f.nx,f.ny,s);

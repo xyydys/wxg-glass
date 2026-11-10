@@ -666,12 +666,30 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // sharing 其余玻璃's refraction page (共用) follow it.
     {"kyantOtherOn",'b',0,0,1,NULL,NULL},
     {"kyantOtherHeight",'n',.25,.02,.5,NULL,NULL},
-    {"kyantOtherAmount",'n',.5,0,1,NULL,NULL},
+    {"kyantOtherAmount",'n',.8,0,1,NULL,NULL},   // FIX124: iOS 26's own (InnerRefractionAmount = -0.8 x the short side; was .5)
     {"kyantOtherDepth",'b',0,0,1,NULL,NULL},
     {"kyantOtherDispersion",'n',0,0,3,NULL,NULL},
-    {"kyantOtherMaxHeight",'n',24,4,80,NULL,NULL},
+    {"kyantOtherMaxHeight",'n',20,4,80,NULL,NULL},   // FIX124: iOS 26's band on a 90 pt glass is 20 pt (a quarter of the side up to there; was 24)
     {"kyantOtherRimFine",'b',0,0,1,NULL,NULL},   // FIX122 E: the thin outermost ring off (capped) by default here
     {"kyantOtherRimMax",'n',3,1,20,NULL,NULL},   // the band at most this (pt), the shift with it in proportion (his panels: 16-24 dp)
+    // FIX124 本体照 iOS 26 (其余玻璃, and ranges sharing that page with it): the system's
+    // blur, face and shadow as measured on the GlassProbe captures (iOS 26.6), each on its
+    // own switch (off: the range's own settings, untouched).
+    {"ios26BlurOn",'b',0,0,1,NULL,NULL},
+    {"ios26BlurSmall",'n',1.8,0,10,NULL,NULL},      // a glass up to 48 pt on its short side: BlurRadius 1.33 on a quarter-resolution backdrop, together a line 2.1 pt wide
+    {"ios26BlurLarge",'n',5.5,0,20,NULL,NULL},      // a 90 pt one (6.5 pt wide); in between and beyond in a straight line, to 1.5 x this
+    {"ios26MaterialOn",'b',0,0,1,NULL,NULL},
+    {"ios26VeilOpacity",'n',.65,0,1,NULL,NULL},     // light: white over 65 % (face = .65 + .35 Y; colour kept x .47)
+    {"darkIos26VeilOpacity",'n',.605,0,1,NULL,NULL},// dark: black over 60.5 % (FaceColorMatrix: (1 - .342) x (.108 + .6 Y), colour kept x .658)
+    {"ios26Saturation",'n',1.34,0,3,NULL,NULL},
+    {"darkIos26Saturation",'n',1.67,0,3,NULL,NULL},
+    {"ios26Brightness",'n',-.03,-.3,.3,NULL,NULL},
+    {"darkIos26Brightness",'n',.18,-.3,.3,NULL,NULL},
+    {"ios26ShadowOn",'b',0,0,1,NULL,NULL},
+    {"ios26ShadowOpacity",'n',.25,0,.6,NULL,NULL},  // light, over mid tones (over white the system's is .10)
+    {"darkIos26ShadowOpacity",'n',.05,0,.6,NULL,NULL},
+    {"ios26ShadowBlur",'n',18,.5,40,NULL,NULL},     // sigma (ShadowRadius 24)
+    {"ios26ShadowOffset",'n',8,-10,30,NULL,NULL},   // ShadowOffset (0, 8)
     // FIX113 Z: iOS 27 rims per appearance: dark mode's own two highlights
     // (…Rim27DarkMode…), first taken from the light mode's (the ones above).
     {"rim27DarkModeHex",'h',0,0,0,"rim27Hex","#FFFFFFFF"},
@@ -1927,6 +1945,25 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
                                    WXGClamp([self extraNumber:k[2]],1.2,6),WXGClamp([self extraNumber:k[3]],1.5,4)};
 }
 // FIX114 J: a range's backdrop saturation and brightness.
+// FIX124: 本体照 iOS 26: a switch of 其余玻璃, for the ranges that use its settings of that page.
+- (BOOL)ios26:(NSString *)key scope:(WXGGlassScope)scope page:(WXGSharePage)page {
+    return [self sharedScope:scope page:page]==WXGGlassScopeOther && [self extraNumber:key]>.5;
+}
+// FIX124: the system's face is (1 - a) x (levels of the backdrop's luma + its colour kept) + a x fill;
+// here: the backdrop's saturation and brightness, then the veil. The tone is the appearance's.
+- (WXGBackdropTone)backdropToneForScope:(WXGGlassScope)scope dark:(BOOL)dark {
+    if([self ios26:@"ios26MaterialOn" scope:scope page:WXGSharePageMaterial])
+        return (WXGBackdropTone){WXGClamp([self extraNumber:dark?@"darkIos26Saturation":@"ios26Saturation"],0,3),
+                                 WXGClamp([self extraNumber:dark?@"darkIos26Brightness":@"ios26Brightness"],-.3,.3)};
+    return [self backdropToneForScope:scope];
+}
+// FIX124: the system's blur for a glass whose short side is `side` points; < 0: off (the range's own).
+- (CGFloat)ios26BlurForScope:(WXGGlassScope)scope side:(CGFloat)side {
+    if(![self ios26:@"ios26BlurOn" scope:scope page:WXGSharePageBlur])return -1;
+    CGFloat small=WXGClamp([self extraNumber:@"ios26BlurSmall"],0,10),large=WXGClamp([self extraNumber:@"ios26BlurLarge"],0,20);
+    if(!(side>48))return small;
+    return WXGClamp(small+(large-small)*(side-48)/42.,MIN(small,large),MAX(MAX(small,large)*1.5,small));
+}
 - (WXGBackdropTone)backdropToneForScope:(WXGGlassScope)scope {
     static NSString *const keys[5][2]={{@"backdropSaturation",@"backdropBrightness"},{@"dockBackdropSaturation",@"dockBackdropBrightness"},
         {@"bubbleBackdropSaturation",@"bubbleBackdropBrightness"},{@"segmentBackdropSaturation",@"segmentBackdropBrightness"},
@@ -1936,6 +1973,9 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
 }
 // FIX114 K: a range's drop shadow (the lens borders' ranges are their glass's).
 - (WXGDropShadowSettings)dropShadowForScope:(WXGGlassScope)scope dark:(BOOL)dark {
+    if([self ios26:@"ios26ShadowOn" scope:scope page:WXGSharePageBorder])   // FIX124: the system's (sigma 18 pt, 8 pt down)
+        return (WXGDropShadowSettings){WXGClamp([self extraNumber:dark?@"darkIos26ShadowOpacity":@"ios26ShadowOpacity"],0,.6),
+                                       WXGClamp([self extraNumber:@"ios26ShadowBlur"],.5,40),WXGClamp([self extraNumber:@"ios26ShadowOffset"],-10,30),0};
     static NSString *const keys[5][5]={
         {@"dropShadowOpacity",@"darkDropShadowOpacity",@"dropShadowBlur",@"dropShadowOffset",@"dropShadowSpread"},
         {@"dockDropShadowOpacity",@"dockDarkDropShadowOpacity",@"dockDropShadowBlur",@"dockDropShadowOffset",@"dockDropShadowSpread"},
@@ -1953,18 +1993,23 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
 }
 // FIX113 O: a range's material (the bubbles tint themselves: the other glass's).
 - (NSString *)materialHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {
+    if([self ios26:@"ios26MaterialOn" scope:scope page:WXGSharePageMaterial])return dark?@"#000000FF":@"#FFFFFFFF";   // FIX124
     scope=[self sharedScope:scope page:WXGSharePageMaterial];   // FIX114 L
     if(scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard)return [self extraHex:WXGScopedKey(scope,dark,@"MaterialHex")];
     if(scope==WXGGlassScopeDock)return dark?_dockDarkMaterialHex:_dockMaterialHex;
     return dark?_darkMaterialHex:_materialHex;
 }
 - (CGFloat)materialOpacityForScope:(WXGGlassScope)scope dark:(BOOL)dark {
+    // FIX124: the veil is drawn 22 % stronger unless 通透材质 is on (FIX39); the system's value is the drawn one.
+    if([self ios26:@"ios26MaterialOn" scope:scope page:WXGSharePageMaterial])
+        return WXGClamp([self extraNumber:dark?@"darkIos26VeilOpacity":@"ios26VeilOpacity"]/(self.clearMaterial?1.:1.22),0,1);
     scope=[self sharedScope:scope page:WXGSharePageMaterial];   // FIX114 L
     if(scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard)return WXGClamp([self extraNumber:WXGScopedKey(scope,dark,@"MaterialOpacity")],0,1);
     if(scope==WXGGlassScopeDock)return dark?_dockDarkMaterialOpacity:_dockMaterialOpacity;
     return dark?_darkMaterialOpacity:_materialOpacity;
 }
 - (BOOL)materialEdgeFadeOnForScope:(WXGGlassScope)scope {
+    if([self ios26:@"ios26MaterialOn" scope:scope page:WXGSharePageMaterial])return NO;   // FIX124: the system's face is even to the outline
     scope=[self sharedScope:scope page:WXGSharePageMaterial];   // FIX114 L
     if(scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard)return [self extraNumber:WXGScopedKey(scope,NO,@"MaterialEdgeFadeEnabled")]>.5;
     return scope==WXGGlassScopeDock?_dockMaterialEdgeFadeEnabled:_materialEdgeFadeEnabled;
