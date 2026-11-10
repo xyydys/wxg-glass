@@ -1,4 +1,5 @@
 #import "WXGCommon.h"
+#include "WXGDockScript.h"
 #include <stdarg.h>
 
 NSString * const WXGSettingsChanged = @"com.runyu.WGLiquidDockDemo.settings";
@@ -425,6 +426,10 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockCellExtra",'n',0,0,20,NULL,NULL},        // each tab's cell this much wider than a quarter (they overlap; iOS 26: 10)
     {"dockLensLiftWidth",'n',0,0,40,NULL,NULL},    // > 0: the lifted lens is its cell + this (iOS 26: 16); 0: at least 1.2 cells, as before
     {"dockLensHang",'n',0,0,.5,NULL,NULL},         // the lens stays lifted this long after the finger leaves (iOS 26: 0.18 s)
+    // FIX131: iOS 26's light under a finger on the bar (WXGDockSystem.h): on / off, the spot's and the bar's strength (white).
+    {"dockTouchGlow",'b',0,0,1,NULL,NULL},
+    {"dockTouchGlowSpot",'n',.15,0,.5,NULL,NULL},
+    {"dockTouchGlowBar",'n',.04,0,.2,NULL,NULL},
     {"dockMoveSpring",'b',0,0,1,NULL,NULL},        // the lens goes to a tab on the system's position spring
     {"dockMoveResponse",'n',.40,.2,.8,NULL,NULL},
     {"dockMoveDamping",'n',.86,.5,1.2,NULL,NULL},
@@ -461,15 +466,15 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockGlassDispersion",'n',0,0,3,"glassDispersion",NULL},
     {"dockGlassBlurSmall",'n',1.8,0,10,"glassBlurSmall",NULL},
     {"dockGlassBlurLarge",'n',5.5,0,20,"glassBlurLarge",NULL},
-    {"dockGlassVeil",'n',.65,0,1,"glassVeil",NULL},
+    {"dockGlassVeil",'n',.585,0,1,NULL,NULL},              // FIX131: the bar's own (WXGDockSystem.h), a little clearer than a button
     {"dockDarkGlassVeil",'n',.605,0,1,"darkGlassVeil",NULL},
     {"dockGlassSaturation",'n',1.34,0,3,"glassSaturation",NULL},
     {"dockDarkGlassSaturation",'n',1.67,0,3,"darkGlassSaturation",NULL},
-    {"dockGlassBrightness",'n',-.03,-.3,.3,"glassBrightness",NULL},
+    {"dockGlassBrightness",'n',0,-.3,.3,NULL,NULL},
     {"dockDarkGlassBrightness",'n',.18,-.3,.3,"darkGlassBrightness",NULL},
-    {"dockGlassShadow",'n',.25,0,.6,"glassShadow",NULL},
+    {"dockGlassShadow",'n',.065,0,.6,NULL,NULL},           // FIX131: the bar's shadow, much fainter than a button's
     {"dockDarkGlassShadow",'n',.05,0,.6,"darkGlassShadow",NULL},
-    {"dockGlassShadowBlur",'n',18,.5,40,"glassShadowBlur",NULL},
+    {"dockGlassShadowBlur",'n',15,.5,40,NULL,NULL},
     {"dockGlassShadowOffset",'n',8,-10,30,"glassShadowOffset",NULL},
     {"bubbleGlassBand",'n',.25,.02,.5,"glassBand",NULL},
     {"bubbleGlassDepth",'n',.8,0,1,"glassDepth",NULL},
@@ -1349,7 +1354,23 @@ static NSString *const WXGGlassKeys[5][WXGGlassValueCount]={WXG_GLASS_KEYS("g","
              @"bodyPinch":@(WXG_DOCK26_PINCH),
              @"lensGlassRimStyle":@(WXGRimStyle26),@"lensGlassEdge26Curve":@(WXG_DOCK26_LENS_RIM_CURVE),
              @"lensGlassEdge26Height":@1,@"lensGlassEdge26Opacity":@1,@"lensGlassDarkEdge26Opacity":@1,
-             @"lensElasticOn":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO};
+             @"lensElasticOn":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO,
+             // FIX131: the bar's own glass (the buttons' law but for its light face and its shadow), its iOS 26 border,
+             // the resting selection (its colours are dockSystem26Colours), a tap's lift and drop, the light under a finger.
+             @"dockGlassBand":@.25,@"dockGlassDepth":@.8,@"dockGlassBandMax":@20,@"dockGlassBlurSmall":@1.8,@"dockGlassBlurLarge":@5.5,
+             @"dockGlassVeil":@(WXG_DOCK26_BODY_VEIL),@"dockDarkGlassVeil":@.605,@"dockGlassSaturation":@1.34,@"dockDarkGlassSaturation":@1.67,
+             @"dockGlassBrightness":@(WXG_DOCK26_BODY_BRIGHTNESS),@"dockDarkGlassBrightness":@.18,
+             @"dockGlassShadow":@(WXG_DOCK26_SHADOW),@"dockDarkGlassShadow":@.05,@"dockGlassShadowBlur":@(WXG_DOCK26_SHADOW_BLUR),@"dockGlassShadowOffset":@8,
+             @"dockRimStyle":@(WXGRimStyle26),
+             @"selectionOpacity":@.75,@"pressedOpacity":@0,
+             @"dockTapDropTime":@(WXG_SCRIPT26_DROP_TIME),@"dockTapLensShare":@(WXG_SCRIPT26_LIFT_TIME/WXGDockSpringDuration(WXG_DOCK26_RESPONSE,WXG_DOCK26_DAMPING)),
+             @"dockTouchGlow":@YES,@"dockTouchGlowSpot":@(WXG_DOCK26_GLOW_SPOT),@"dockTouchGlowBar":@(WXG_DOCK26_GLOW_BAR)};
+}
+// FIX131: the colours that go with them: the resting selection, black at 0.07 in light and white at 0.14 in dark
+// (the alpha here x the 0.75 above).
+- (NSDictionary<NSString *,NSString *> *)dockSystem26Colours {
+    return @{@"selectionHex":[NSString stringWithFormat:@"#000000%02lX",lround(WXG_DOCK26_PILL_LIGHT/.75*255)],
+             @"darkSelectionHex":[NSString stringWithFormat:@"#FFFFFF%02lX",lround(WXG_DOCK26_PILL_DARK/.75*255)]};
 }
 static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
 - (BOOL)hasDockSystem26Backup {
@@ -1369,8 +1390,16 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
         @try {value=[self valueForKey:key];} @catch(__unused NSException *error) {value=nil;}
         if([value isKindOfClass:NSNumber.class])before[key]=value;
     }
+    NSDictionary<NSString *,NSString *> *colours=[self dockSystem26Colours];   // FIX131
+    for(NSString *key in colours) {
+        if(before[key])continue;
+        id value=nil;
+        @try {value=[self valueForKey:key];} @catch(__unused NSException *error) {value=nil;}
+        if([value isKindOfClass:NSString.class])before[key]=value;
+    }
     if(![before isEqualToDictionary:kept?:@{}])[suite setObject:before forKey:WXGDockSystem26BackupKey];
     for(NSString *key in values)[self setValue:values[key] forKey:key];
+    for(NSString *key in colours)[self setValue:colours[key] forKey:key];
     [self save];
 }
 // The values from before 套用 back (only the keys it changed); NO: nothing kept.
@@ -1380,6 +1409,8 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
     if(!before.count)return NO;
     NSSet *known=[NSSet setWithArray:[self dockSystem26ValuesForScreenWidth:0].allKeys];
     for(NSString *key in before)if([known containsObject:key] && [before[key] isKindOfClass:NSNumber.class])[self setValue:before[key] forKey:key];
+    NSDictionary *colours=[self dockSystem26Colours];   // FIX131
+    for(NSString *key in before)if(colours[key] && [before[key] isKindOfClass:NSString.class])[self setValue:before[key] forKey:key];
     [suite removeObjectForKey:WXGDockSystem26BackupKey];
     [self save];
     return YES;

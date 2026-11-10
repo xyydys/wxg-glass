@@ -141,4 +141,41 @@ static inline void WXGDockSpringConstants(double response,double damping,double 
    under the lens' top on screen, as recorded (0.113 by the edge alone). */
 #define WXG_DOCK26_PINCH .12
 #define WXG_DOCK26_LENS_RIM_CURVE .8     /* the lens' highlight rim: curvature 0.8 (buttons 0.7) */
+/* FIX131: the bar's own glass, from twelve screenshots of the resting bar
+   (six backdrops, light and dark; 2.7 px / pt) and two recordings of taps.
+   Its refraction is the buttons' law (fitted: a band of 0.248 and a depth of
+   0.79 of its 62 pt, rms 0.08 pt, against 0.25 and 0.8) and so is its blur
+   (sigma 3.15 pt from the stripes' harmonics; the law gives 3.03 at 62 pt).
+   Dark, its face is the buttons' too (black 19, slate 41 against 18 and 42).
+   Light it is a little clearer: slate (luma 61) shows as 174 and white as
+   254, a white veil of 0.585 with nothing added (the buttons: 0.65, -0.03).
+   Its shadow is much fainter than a button's: 4.3 % under it and 1.6 % above
+   on white (0.065 of the shape blurred with sigma 15 pt, 8 pt down). */
+#define WXG_DOCK26_BODY_VEIL .585
+#define WXG_DOCK26_BODY_BRIGHTNESS 0.
+#define WXG_DOCK26_SHADOW .065
+#define WXG_DOCK26_SHADOW_BLUR 15.
+/* The resting selection: 33 levels lighter than the face in dark (white at
+   0.14), 18 darker on white (black at 0.07). */
+#define WXG_DOCK26_PILL_LIGHT .07
+#define WXG_DOCK26_PILL_DARK .14
+/* The light under a finger (_UIFlexInteraction's two glows, in the bar's own
+   outline): the whole bar a little brighter (a white layer at up to 0.81
+   through a colour matrix adding 0.05: about +0.04) and a soft spot under the
+   finger, a 93 pt disc blurred by half its size, which follows the finger;
+   it multiplies what is under it (x 2.4 at its centre in dark, x 1.2 in
+   light: on WeChat's pages about a white of 0.15). Both come in over about
+   0.1 s; at the release the spot grows to 4 x and both fade in about 0.45 s. */
+#define WXG_DOCK26_GLOW_SPOT .15
+#define WXG_DOCK26_GLOW_BAR .04
+#define WXG_DOCK26_GLOW_DISC 93.
+#define WXG_DOCK26_GLOW_GROW 4.
+#define WXG_DOCK_GLOW_STOPS 9
+/* The spot's alpha by distance from its centre, at k / 8 of its reach (the
+   disc's diameter): a disc of that diameter blurred with a Gaussian of a
+   quarter of it (a layer shadow of radius = the disc's). */
+static inline float WXGDockGlowProfile(int k) {
+    static const float v[WXG_DOCK_GLOW_STOPS]={.864f,.834f,.733f,.589f,.404f,.233f,.119f,.047f,0.f};
+    return v[k<0?0:(k>=WXG_DOCK_GLOW_STOPS?WXG_DOCK_GLOW_STOPS-1:k)];
+}
 #endif

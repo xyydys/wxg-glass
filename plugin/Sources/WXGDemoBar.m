@@ -192,6 +192,86 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 - (BOOL)accessibilityActivate { return self.activate?self.activate():NO; }
 @end
 
+// FIX131: iOS 26's light under a finger on the tab bar (WXGDockSystem.h;
+// _UIFlexInteraction's BigGlow and LittleGlow, read from probe 2's dumps and
+// tap recordings): inside the bar's outline, the whole bar a little brighter
+// and a soft spot that follows the finger; at the release the spot grows to
+// four times its size while both fade. Plain white layers (the system
+// multiplies what lies under them through a colour matrix; over WeChat's
+// pages that comes to these whites), animated by Core Animation.
+@interface WXGDockGlowView : UIView
+- (void)touchDownAt:(CGPoint)point spot:(CGFloat)spot bar:(CGFloat)bar;   // in this view's coordinates
+- (void)touchMovedTo:(CGPoint)point;
+- (void)touchUp;
+@end
+@implementation WXGDockGlowView {CALayer *_bar;CAGradientLayer *_spot;BOOL _down;CFTimeInterval _downAt;float _spotLevel,_barLevel;}
+- (instancetype)initWithFrame:(CGRect)frame {
+    if((self=[super initWithFrame:frame])) {
+        self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;
+        self.layer.masksToBounds=YES;self.layer.cornerCurve=kCACornerCurveContinuous;
+        _bar=[CALayer layer];_bar.backgroundColor=UIColor.whiteColor.CGColor;_bar.opacity=0;[self.layer addSublayer:_bar];
+        _spot=[CAGradientLayer layer];_spot.type=kCAGradientLayerRadial;_spot.startPoint=CGPointMake(.5,.5);_spot.endPoint=CGPointMake(1,1);
+        NSMutableArray *colours=[NSMutableArray array],*places=[NSMutableArray array];
+        for(int k=0;k<WXG_DOCK_GLOW_STOPS;k++) {
+            [colours addObject:(id)[UIColor colorWithWhite:1 alpha:WXGDockGlowProfile(k)/WXGDockGlowProfile(0)].CGColor];
+            [places addObject:@((double)k/(WXG_DOCK_GLOW_STOPS-1))];
+        }
+        _spot.colors=colours;_spot.locations=places;
+        _spot.bounds=CGRectMake(0,0,2*WXG_DOCK26_GLOW_DISC,2*WXG_DOCK26_GLOW_DISC);_spot.opacity=0;[self.layer addSublayer:_spot];
+    }
+    return self;
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    self.layer.cornerRadius=MIN(self.bounds.size.width,self.bounds.size.height)*.5;_bar.frame=self.bounds;
+    [CATransaction commit];
+}
+static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;return p?p.opacity:layer.opacity;}
+- (void)touchDownAt:(CGPoint)point spot:(CGFloat)spot bar:(CGFloat)bar {
+    float spotFrom=WXGGlowShown(_spot),barFrom=WXGGlowShown(_bar);
+    _down=YES;_downAt=CACurrentMediaTime();_spotLevel=(float)WXGClamp(spot,0,1);_barLevel=(float)WXGClamp(bar,0,1);
+    [_spot removeAllAnimations];[_bar removeAllAnimations];
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    _spot.position=point;_spot.transform=CATransform3DIdentity;_spot.opacity=_spotLevel;_bar.opacity=_barLevel;
+    [CATransaction commit];
+    CABasicAnimation *a=[CABasicAnimation animationWithKeyPath:@"opacity"];
+    a.fromValue=@(spotFrom);a.toValue=@(_spotLevel);a.duration=.10;a.timingFunction=[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    [_spot addAnimation:a forKey:@"in"];
+    CABasicAnimation *b=[CABasicAnimation animationWithKeyPath:@"opacity"];
+    b.fromValue=@(barFrom);b.toValue=@(_barLevel);b.duration=.15;b.timingFunction=[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    [_bar addAnimation:b forKey:@"in"];
+}
+- (void)touchMovedTo:(CGPoint)point {
+    if(!_down)return;
+    [CATransaction begin];[CATransaction setDisableActions:YES];_spot.position=point;[CATransaction commit];
+}
+// A tap shorter than the way in still shows its light: the way in is finished first (the system's peaks about 0.15 s
+// after the touch), then out.
+- (void)touchUp {
+    if(!_down)return;
+    _down=NO;
+    double wait=WXGClamp(.15-(CACurrentMediaTime()-_downAt),0,.15),out=.45,total=wait+out;
+    float spotFrom=WXGGlowShown(_spot),barFrom=WXGGlowShown(_bar);
+    [_spot removeAllAnimations];[_bar removeAllAnimations];
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    _spot.opacity=0;_bar.opacity=0;_spot.transform=CATransform3DMakeScale(WXG_DOCK26_GLOW_GROW,WXG_DOCK26_GLOW_GROW,1);
+    [CATransaction commit];
+    NSArray *times=@[@0,@(wait/total),@1];
+    CAMediaTimingFunction *rise=[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionEaseOut];
+    CAMediaTimingFunction *fall=[CAMediaTimingFunction functionWithControlPoints:.30:.15:.45:1];
+    CAKeyframeAnimation *fade=[CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+    fade.values=@[@(spotFrom),@(_spotLevel),@0];fade.keyTimes=times;fade.timingFunctions=@[rise,fall];fade.duration=total;
+    [_spot addAnimation:fade forKey:@"out"];
+    CAKeyframeAnimation *grow=[CAKeyframeAnimation animationWithKeyPath:@"transform.scale"];
+    grow.values=@[@1,@1,@(WXG_DOCK26_GLOW_GROW)];grow.keyTimes=times;
+    grow.timingFunctions=@[[CAMediaTimingFunction functionWithName:kCAMediaTimingFunctionLinear],[CAMediaTimingFunction functionWithControlPoints:.20:.60:.35:1]];grow.duration=total;
+    [_spot addAnimation:grow forKey:@"grow"];
+    CAKeyframeAnimation *bar=[CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+    bar.values=@[@(barFrom),@(_barLevel),@0];bar.keyTimes=times;bar.timingFunctions=@[rise,[CAMediaTimingFunction functionWithControlPoints:.25:.35:.40:1]];bar.duration=total;
+    [_bar addAnimation:bar forKey:@"out"];
+}
+@end
 @interface WXGDemoBar ()
 @property(nonatomic) WXGElasticMotion elasticMotion;
 // FIX68: the bar's end pushed out past the last tab (x only), and which end.
@@ -371,6 +451,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
 @end
 
 @implementation WXGDemoBar {
+    WXGDockGlowView *_glow;   // FIX131: made at the first touch with the light on
     // 离散底栏: each tab's expansion (0 ball .. 1 wide) and its velocity, the
     // bridges between neighbours (connected), and where each tab was laid
     // (material space), its text block's width and its icon's centre.
@@ -530,6 +611,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     // FIX68: bounds and centre (the end stretch may transform the glass).
     _glass.bounds=(CGRect){CGPointZero,self.bounds.size};_glass.center=CGPointMake(CGRectGetMidX(self.bounds),CGRectGetMidY(self.bounds));
     _glass.glassRect=outline;
+    _glow.frame=_materialRect;   // FIX131
     _morphView.frame=self.bounds;
     if(_discreteView) {
         _discreteView.frame=self.bounds;_discreteDirty=YES;
@@ -877,6 +959,16 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
                         options:UIViewAnimationOptionBeginFromCurrentState|UIViewAnimationOptionAllowUserInteraction
                      animations:^{self.closeIcon.transform=target;} completion:nil];
 }
+// FIX131: the light under the finger (WXGDockGlowView): the spot at the finger, kept inside the bar's height.
+- (CGPoint)glowPoint:(CGPoint)point {
+    return CGPointMake(point.x-_materialRect.origin.x,WXGClamp(point.y-_materialRect.origin.y,0,_materialRect.size.height));
+}
+- (void)glowDownAt:(CGPoint)point {
+    WXGConfig *c=WXGConfig.shared;
+    if([c extraNumber:@"dockTouchGlow"]<.5)return;
+    if(!_glow){_glow=[[WXGDockGlowView alloc] initWithFrame:_materialRect];[self addSubview:_glow];}
+    [_glow touchDownAt:[self glowPoint:point] spot:[c extraNumber:@"dockTouchGlowSpot"] bar:[c extraNumber:@"dockTouchGlowBar"]];
+}
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
     (void)event;
     if (!_active) return NO;
@@ -897,6 +989,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     // FIX35: touch-down moves the lifted lens to the touched tab at once, so
     // it can be slid left and right (FIX33's lift-in-place is gone).
     _targetPress=1; _press=MAX(_press,.10); [_feedback prepare]; [self trackPoint:point];_touchDownIndex=_selectedIndex;   // FIX88
+    [self glowDownAt:point];   // FIX131
     // FIX42: a touch on another tab glides there on the release animation's
     // curve instead of the drag spring (which crossed the bar in ~0.1 s).
     // FIX43 (user): nearly distance-independent: 0.28 s x (0.85 + 0.05 x tabs),
@@ -956,6 +1049,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
         if(_travelling && _travelPhase==1)[self handOverTravelToFinger];
         if(_script.phase==1){[self endScript];++_scriptDrags;_targetPress=1;}   // FIX95: the drag spring from where the glide is
     }
+    [_glow touchMovedTo:[self glowPoint:point]];   // FIX131
     [self trackPoint:point]; return YES;
 }
 - (void)trackPoint:(CGPoint)p {
@@ -1019,7 +1113,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     BOOL hasPoint=WXGDockTouchResolve(&_trackingPoint,touch!=nil,cancelled,supplied.x,supplied.y);
     CGPoint p=CGPointMake(_trackingPoint.x,_trackingPoint.y);
     BOOL inside=hasPoint && CGRectContainsPoint(CGRectInset(_materialRect,-35,-45),p);
-    _fingerDown=NO;_jumping=NO;
+    _fingerDown=NO;_jumping=NO;[_glow touchUp];   // FIX131
     // FIX100: WeChat already switched at the touch: a release outside (or a
     // touch the system ended) stays on that tab, as WeChat's own bar does.
     BOOL keptEarly=!inside && _earlySent && _earlyIndex>=0;
@@ -1076,6 +1170,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     ++_trackingCancels;_lastTrackingReason=@"tracking_cancelled";
     if(_fingerDown && ++_uncommittedEnds<=20)WXGLog(@"底栏：触摸被系统取消（按下 %.2f s），没有切换",CACurrentMediaTime()-_touchDownTime);   // FIX88
     // FIX100: a switch WeChat already made at the touch stays.
+    [_glow touchUp];   // FIX131
     if (_fingerDown) { _fingerDown=NO; [self selectIndex:_earlySent && _earlyIndex>=0?_earlyIndex:_initialSelected haptic:NO]; }
     [self telegramSettle];   // FIX113 C
     [self cancelInteraction];
@@ -1603,7 +1698,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     if(_script.phase)[self endScript];   // FIX95
     _resumeIndex=-1;_earlyIndex=-1;_earlySent=NO;
     WXGDockTouchForget(&_trackingPoint);
-    _fingerDown=NO; _previewStart=0; _targetPress=0; _hangUntil=0; _targetX=[self centerForIndex:_selectedIndex];
+    _fingerDown=NO; _previewStart=0; _targetPress=0; _hangUntil=0; _targetX=[self centerForIndex:_selectedIndex];[_glow touchUp];
     [self releaseEndStretch];   // FIX68
     if (!_active) { _elasticMotion=(WXGElasticMotion){0};_press=0; _pressVelocity=0; _lensX=_targetX; _velocityX=0; _endStretch=(WXGStretchState){0};[self applyEndStretch]; }
 }

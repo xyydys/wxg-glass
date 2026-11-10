@@ -154,6 +154,13 @@ int main(void) {
     // A glide still held (phase 1) has no drop to move.
     WXGDockScript held=WXGScriptGlide(0,57.75,151.92,T,0,1,1,.4),same=held;
     WXGScriptHang(&held,.1,.18);assert(!memcmp(&held,&same,sizeof held));
+    // FIX131: the spot of light under a finger: a disc blurred by half its size, brightest in the middle, falling
+    // all the way out, about half way down at the disc's edge; the bar's own veil and shadow against a button's.
+    for(int k=0;k+1<WXG_DOCK_GLOW_STOPS;k++)assert(WXGDockGlowProfile(k)>WXGDockGlowProfile(k+1));
+    assert(WXGDockGlowProfile(WXG_DOCK_GLOW_STOPS-1)==0.f && WXGDockGlowProfile(-3)==WXGDockGlowProfile(0) && WXGDockGlowProfile(99)==0.f);
+    near(WXGDockGlowProfile(4)/WXGDockGlowProfile(0),.47,.03);
+    near(WXGDockGlowProfile(0),1-exp(-2.),.002);   // the middle of a disc blurred with a Gaussian of half its radius
+    assert(WXG_DOCK26_GLOW_SPOT>WXG_DOCK26_GLOW_BAR && WXG_DOCK26_BODY_VEIL<.65 && WXG_DOCK26_SHADOW<.25);
     puts("DockSystemTests passed");
     return 0;
 }

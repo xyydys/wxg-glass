@@ -212,6 +212,29 @@ int main(void) {
     for(double x=now-1;x<now+2;x+=.003){double rr=0,v=WXGScriptMoveAt(&t,x,&rr);if(!isfinite(v) || !isfinite(rr))finite=0;v=WXGScriptPressAt(&t,x,&rr);if(!isfinite(v) || !isfinite(rr))finite=0;
         v=WXGScriptSelectValue(&a,x);if(!isfinite(v) || v<-1e-9 || v>1+1e-9)finite=0;}
     CHECK(finite,"finite values and rates, colour within 0..1");
+    /* FIX131: on the system's spring the lift and the drop follow iOS 26's own curves (nine recorded taps): the
+       lift half way after 0.07 s and at 90 % after 0.155 s of its 0.245 s, the drop half down after 0.06 s and
+       90 % down after 0.15 s of its 0.23 s; without the spring the script is as it was, bit for bit. */
+    {
+        double move=WXGDockSpringDuration(.40,.86),share=WXG_SCRIPT26_LIFT_TIME/move;
+        WXGDockScript plain=WXGScriptGlide(10,60,154,move,0,1,1,share),sys=plain,off=plain;
+        WXGScriptUseSpring(&sys,.40,.86);WXGScriptUseSpring(&off,0,.86);
+        int same=1;
+        for(double t=10;t<=10.6;t+=1./240)if(WXGScriptPressValue(&plain,t)!=WXGScriptPressValue(&off,t))same=0;
+        CHECK(same,"no spring: the script's own lift");
+        CHECK(near(WXGScriptPressValue(&sys,10+.068)/.9,.50,.03) && near(WXGScriptPressValue(&sys,10+.155)/.9,.90,.03) && near(WXGScriptPressValue(&sys,10+.245),.9,1e-9),
+              "the system's lift: half at 0.07 s, 90%% at 0.155 s (%.3f %.3f)",WXGScriptPressValue(&sys,10+.068)/.9,WXGScriptPressValue(&sys,10+.155)/.9);
+        CHECK(WXGScriptPressValue(&sys,10+.03)>WXGScriptPressValue(&plain,10+.03)+.05,"quick at once (%.3f against %.3f)",WXGScriptPressValue(&sys,10+.03),WXGScriptPressValue(&plain,10+.03));
+        CHECK(worstStep(&sys,0,10,10.7)<.06,"no jump in the lift (%.3f)",worstStep(&sys,0,10,10.7));
+        WXGDockScript a=sys,b=plain;
+        WXGScriptDrop(&a,10.09,WXG_SCRIPT26_DROP_TIME);WXGScriptDrop(&b,10.09,WXG_SCRIPT26_DROP_TIME);
+        double start=a.dropStart,top=WXGScriptPressValue(&a,start);
+        CHECK(near(a.land-a.dropStart,WXG_SCRIPT26_DROP_TIME,1e-9) && top>.85,"the drop's span (%.3f from %.3f)",a.land-a.dropStart,top);
+        CHECK(near(WXGScriptPressValue(&a,start+.062)/top,.50,.03) && near(WXGScriptPressValue(&a,start+.150)/top,.10,.03) && WXGScriptPressValue(&a,a.land)==0,
+              "the system's drop: half after 0.06 s, 10%% left after 0.15 s (%.3f %.3f)",WXGScriptPressValue(&a,start+.062)/top,WXGScriptPressValue(&a,start+.150)/top);
+        CHECK(WXGScriptPressValue(&a,start+.03)<WXGScriptPressValue(&b,start+.03)-.05,"down quicker at once than the in-out drop");
+        CHECK(worstStep(&a,0,10,10.9)<.06,"no jump in the drop (%.3f)",worstStep(&a,0,10,10.9));
+    }
     if(failures){printf("DockScriptTests: %d failure(s)\n",failures);return 1;}
     printf("PASS: tap animation script (FIX95/98/99): glide (FIX43 timing x scale, lift and colour over 40%%), 0.16 s drop leading the arrival (down 0.05 s after), travel, no jumps, switch moments 0/1/2, clock capped only around a forwarded switch (max 0.5 s behind), finite rates.\n");
     return 0;

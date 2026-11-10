@@ -225,6 +225,7 @@ enum { WXGRimGlowCount=2 };
 - (CGFloat)dockMoveResponse;
 - (CGFloat)dockMoveDamping;
 - (NSDictionary<NSString *,NSNumber *> *)dockSystem26ValuesForScreenWidth:(CGFloat)width;   // every measured value, as settings
+- (NSDictionary<NSString *,NSString *> *)dockSystem26Colours;   // FIX131: the colours that go with them
 - (void)applyDockSystem26ForScreenWidth:(CGFloat)width;   // into the settings (saved); what was there kept
 - (BOOL)hasDockSystem26Backup;
 - (BOOL)restoreDockBeforeSystem26;                        // those back; NO: nothing kept

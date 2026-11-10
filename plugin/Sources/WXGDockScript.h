@@ -49,6 +49,17 @@ typedef struct {
 // FIX99: the lift and the colour share one span (the caller's `share` of the
 // move, 胶囊变透镜); the drop starts 70% of itself before the lens arrives.
 #define WXGScriptDropLead .70      // of the drop: it starts this long before the lens arrives
+/* FIX131: iOS 26's own lift and drop on a tap (probe 2, nine taps on the tab
+   bar, the lens' size frame by frame): the lens starts to grow with its move,
+   quickly at once (half way after 0.07 s, 90 % after 0.155 s, all of it after
+   0.245 s), and falls the same way (half after 0.06 s, 10 % left after 0.15 s,
+   down after 0.23 s): no slow start either way. As cubic eases over those
+   spans (rms 0.8 % and 0.5 % of the lift). Used when the move runs on the
+   system's spring (WXGScriptUseSpring). */
+#define WXG_SCRIPT26_LIFT_EASE .30,.20,.15,.90
+#define WXG_SCRIPT26_DROP_EASE .30,.45,.30,.90
+#define WXG_SCRIPT26_LIFT_TIME .245
+#define WXG_SCRIPT26_DROP_TIME .23
 #define WXGScriptSettle .05        // down, held this long before the script ends
 static inline void WXGScriptTrackAdd(WXGScriptTrack *k,double t,double v,double x1,double y1,double x2,double y2) {
     if(k->count>=WXGScriptMaxKeys)return;
@@ -83,6 +94,8 @@ static inline double WXGScriptDropProgress(const WXGDockScript *s,double time,do
 static inline double WXGScriptPressValue(const WXGDockScript *s,double time) {
     if(s->phase!=2 || time<=s->dropStart)return WXGScriptTrackValue(&s->press,time);
     double from=WXGScriptTrackValue(&s->press,s->dropStart);
+    // FIX131: on the system's spring the drop is the system's too (fast at once, a long soft end).
+    if(s->moveResponse>0)return from*(1-WXGScriptDropProgress(s,time,WXG_SCRIPT26_DROP_EASE));
     return from*(1-WXGScriptDropProgress(s,time,.45,0,.35,1));
 }
 // FIX98: the colour: the track until the drop; then from where it was back to 1.
@@ -177,6 +190,13 @@ static inline WXGDockScript WXGScriptTravel(double now,double from,double to,dou
    for a move from rest). */
 static inline void WXGScriptUseSpring(WXGDockScript *s,double response,double damping) {
     s->moveResponse=response>0?response:0;s->moveDamping=damping;
+    if(!(response>0))return;
+    // FIX131: and the lift on the system's curve (the script's own in-out ease replaced; a held level keeps its line).
+    static const double lift[4]={WXG_SCRIPT26_LIFT_EASE};
+    for(int i=1;i<s->press.count;i++) {
+        double *e=s->press.ease[i];
+        if(e[0]==.42 && e[1]==0 && e[2]==.58 && e[3]==1)for(int k=0;k<4;k++)e[k]=lift[k];
+    }
 }
 /* FIX127 (iOS 26: the lens stays lifted ~0.18 s after the finger leaves,
    then drops): a landing's drop not before `now` + `hang`; the lift and the
