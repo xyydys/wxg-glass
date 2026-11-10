@@ -383,6 +383,8 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     WXGDiscreteMetrics _discreteMetrics;
     WXGKyantElastic _kyElastic;   // FIX122 C: Kyant's drag-speed deformation (its velocity)
     WXGLensFlex _flex;            // FIX126: the system's (two followers of the lens)
+    CGFloat _previousCellExtra;   // FIX127: 每格加宽 as last laid out
+    CFTimeInterval _hangUntil;    // FIX127: released, the lens stays lifted until then (0: no hang)
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
@@ -500,8 +502,24 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     return !self.hidden && self.alpha>.01 && self.userInteractionEnabled && self.enabled && [self pointInside:p withEvent:event]?self:nil;
 }
 - (CGFloat)selectionGap { return WXGSelectionGap(WXGConfig.shared.selectionInset,_materialRect.size.height); }
-- (CGFloat)slotWidth { return WXGSelectionWidth(_materialRect.size.width,[self selectionGap]); }
-- (CGFloat)centerForIndex:(NSInteger)index { return CGRectGetMinX(_materialRect)+WXGSelectionCenter(_materialRect.size.width,[self selectionGap],(int)index); }
+// FIX127: the tabs' cells may overlap as iOS 26's do (WXGDockSystem.h; 每格加宽
+// 0: the quarters as before, the old functions themselves).
+- (CGFloat)centerForIndex:(NSInteger)index {
+    return CGRectGetMinX(_materialRect)+WXGDockCellCenter((float)_materialRect.size.width,(float)[self selectionGap],(float)WXGConfig.shared.dockCellExtra,(int)index);
+}
+// The dock's layout with the lens' anchor at `anchor` (from the bar's left).
+- (WXGDockGeometry)layoutAtAnchor:(CGFloat)anchor press:(CGFloat)press {
+    WXGConfig *c=WXGConfig.shared;
+    return WXGDockLayoutCells((float)_materialRect.size.width,(float)_materialRect.size.height,(float)[self selectionGap],(float)anchor,(float)press,
+                              (float)c.lensGrowth,0,(float)c.barGrowth,(float)c.endWrap,(float)c.dockCellExtra,(float)c.dockLensLiftWidth);
+}
+// Which tab a point is over: the quarters of the inside; with overlapping
+// cells, halfway between two tabs' centres.
+- (NSInteger)tabAtX:(CGFloat)x {
+    if(WXGConfig.shared.dockCellExtra<=0)return WXGSlot(x,CGRectGetMinX(_materialRect)+[self selectionGap],_materialRect.size.width-2*[self selectionGap],4);
+    CGFloat pitch=([self centerForIndex:3]-[self centerForIndex:0])/3;
+    return WXGSlot(x,[self centerForIndex:0]-pitch*.5,pitch*4,4);
+}
 - (void)layoutSubviews {
     [super layoutSubviews];
     _materialRect=CGRectMake(WXGCanvasPaddingX,WXGCanvasPaddingY,MAX(1,self.bounds.size.width-2*WXGCanvasPaddingX),WXGConfig.shared.height);
@@ -518,14 +536,15 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
         _discreteView.frame=self.bounds;_discreteDirty=YES;
         for(WXGGlassView *piece in [_pieces copy]){piece.bounds=(CGRect){CGPointZero,self.bounds.size};piece.center=CGPointMake(CGRectGetMidX(self.bounds),CGRectGetMidY(self.bounds));}
     }
-    if (!CGSizeEqualToSize(_previousSize,self.bounds.size) || _previousInset!=[self selectionGap]) {
-        _previousInset=[self selectionGap];
+    if (!CGSizeEqualToSize(_previousSize,self.bounds.size) || _previousInset!=[self selectionGap] || _previousCellExtra!=WXGConfig.shared.dockCellExtra) {
+        _previousInset=[self selectionGap];_previousCellExtra=WXGConfig.shared.dockCellExtra;   // FIX127: the tabs move with it
         _previousSize=self.bounds.size; [self cancelInteraction];
         _lensX=[self centerForIndex:_selectedIndex]; _targetX=_lensX; _velocityX=0;
         [self rebuildIcons]; [_glass invalidateBackdrop];
     }
+    CGFloat a11yPitch=([self centerForIndex:3]-[self centerForIndex:0])/3;   // (a quarter of the inside, unless the cells overlap)
     for (NSInteger i=0;i<4;i++) {
-        CGRect r=CGRectMake(CGRectGetMinX(_materialRect)+[self selectionGap]+[self slotWidth]*i,CGRectGetMinY(_materialRect),[self slotWidth],_materialRect.size.height);
+        CGRect r=CGRectMake([self centerForIndex:i]-a11yPitch*.5,CGRectGetMinY(_materialRect),a11yPitch,_materialRect.size.height);
         _a11yItems[i].accessibilityFrameInContainerSpace=r;
     }
     [self updateGeometry];
@@ -866,7 +885,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     if(_searchMode){_closeTracking=YES;[self setClosePressed:YES];if(WXGConfig.shared.haptics)[_feedback prepare];return YES;}
     if(_discreteShown)return [self beginDiscreteTracking:touch];   // 离散底栏 (FIX113 D: back while the search's close finishes)
     if(_morphing)return NO;   // the tabs are still coming back
-    ++_downCount; _previewStart=0;
+    ++_downCount; _previewStart=0;_hangUntil=0;   // FIX127
     _lastTrackingReason=@"began";WXGDockTouchForget(&_trackingPoint);
     CGPoint point=[touch locationInView:self]; _initialSelected=_selectedIndex; _fingerDown=YES;_touchDownTime=CACurrentMediaTime();
     if(_travelling)[self endTravel:_travelToken];
@@ -898,8 +917,13 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     // FIX98: slower (点按动画时长倍数 on the FIX43 time), from the press and
     // colour it had, on the script's clock (its plan too, for a travel).
     if(_jumping && !UIAccessibilityIsReduceMotionEnabled() && !WXGConfig.shared.dockTapSimpleTravel) {
-        _script=WXGScriptGlide([self animationNow],_lensX,[self centerForIndex:_selectedIndex],_jumpDuration*WXGConfig.shared.dockTapDurationScale,
+        // FIX127: on iOS 26's position spring when asked (its own duration:
+        // to where it stands still; 点按滑动时长 is the bezier's).
+        WXGConfig *tap=WXGConfig.shared;BOOL spring=tap.dockMoveSpring;
+        double glide=spring?WXGDockSpringDuration(tap.dockMoveResponse,tap.dockMoveDamping):_jumpDuration*tap.dockTapDurationScale;
+        _script=WXGScriptGlide([self animationNow],_lensX,[self centerForIndex:_selectedIndex],glide,
                                pressBefore,selectionBefore,_selectedIndex,WXGConfig.shared.dockTapLensShare);
+        if(spring)WXGScriptUseSpring(&_script,tap.dockMoveResponse,tap.dockMoveDamping);
         [self beginTapRecord:1];
         _jumpPlanEnd=_script.planEnd;
         ++_scriptGlides;_jumping=NO;
@@ -942,7 +966,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     _targetX=WXGClamp(x,[self centerForIndex:0],[self centerForIndex:3]);
     [self followEndStretch:x];   // FIX68
     // p.y deliberately has no influence on lens geometry.
-    [self selectIndex:WXGSlot(x,CGRectGetMinX(_materialRect)+[self selectionGap],_materialRect.size.width-2*[self selectionGap],4) haptic:YES];
+    [self selectIndex:[self tabAtX:x] haptic:YES];
 }
 // FIX68: the finger past the last tab (beyond an 8 pt dead zone) pushes that
 // end of the bar out with a rubber band; the other end stays (WXGPressStretch.h).
@@ -1031,14 +1055,22 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
         // the lens has nearly arrived, or once it is down); a stall after it
         // only pauses the lens (the script's clock).
         if(_travelling && _travelPhase==1)[self dropTravel];
-        else if(scriptOnTab){WXGScriptDrop(&_script,[self animationNow],WXGConfig.shared.dockTapDropDuration);++_scriptDrops;}
+        else if(scriptOnTab){WXGScriptDrop(&_script,[self animationNow],WXGConfig.shared.dockTapDropDuration);WXGScriptHang(&_script,[self animationNow],[self lensHang]);++_scriptDrops;}
         else if(_selectedIndex!=_initialSelected || _resumeIndex==_selectedIndex)[self beginTravelToIndex:_selectedIndex];
         _switchedAtTouchDown=_earlySent && _earlyIndex==_selectedIndex;   // FIX100
         [self sendActionsForControlEvents:UIControlEventValueChanged];
         _switchedAtTouchDown=NO;
     }
     _resumeIndex=-1;_earlyIndex=-1;_earlySent=NO;
+    // FIX127 (iOS 26: the lens stays lifted ~0.18 s after the finger leaves):
+    // a release no script takes over (on the tab it was on, or outside)
+    // keeps the lens up that long (tick lets it down); a script's drop waits
+    // in the script (WXGScriptHang).
+    CGFloat hang=[self lensHang];
+    if(hang>0 && !_script.phase && !_travelling){_targetPress=1;_hangUntil=CACurrentMediaTime()+hang;}
 }
+// FIX127: how long the lens stays lifted after the finger leaves (松手后停留; none with Reduce Motion).
+- (CGFloat)lensHang {return UIAccessibilityIsReduceMotionEnabled()?0:WXGConfig.shared.dockLensHang;}
 - (void)cancelTrackingWithEvent:(UIEvent *)event {
     (void)event;
     if(_closeTracking){_closeTracking=NO;[self setClosePressed:NO];return;}
@@ -1368,16 +1400,14 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     if(!WXGConfig.shared.dockTapSimpleTravel || UIAccessibilityIsReduceMotionEnabled() || !_glass.ready || !_glass.hasPresentedFrame ||
        !_selectedAtlas.CGImage || !_normalAtlas.CGImage || CGRectIsEmpty(_materialRect) || !self.window)return NO;
     CFTimeInterval setupStart=CACurrentMediaTime();
-    WXGConfig *c=WXGConfig.shared;
-    float w=(float)_materialRect.size.width,h=(float)_materialRect.size.height,gap=(float)[self selectionGap];
     CGFloat minX=_materialRect.origin.x,minY=_materialRect.origin.y;
     CGFloat fromX=_lensX,toX=[self centerForIndex:index],fromPress=WXGClamp(_press,0,1);
-    WXGDockGeometry from=WXGDockLayout(w,h,gap,(float)(fromX-minX),(float)fromPress,(float)c.lensGrowth,0,(float)c.barGrowth,(float)c.endWrap);
-    WXGDockGeometry rest=WXGDockLayout(w,h,gap,(float)(toX-minX),0,(float)c.lensGrowth,0,(float)c.barGrowth,(float)c.endWrap);
+    WXGDockGeometry from=[self layoutAtAnchor:fromX-minX press:fromPress];
+    WXGDockGeometry rest=[self layoutAtAnchor:toX-minX press:0];
     // FIX88: lifted with the bar's growth, as the per-frame lens is at 0.9
     // (a held press hands over to it without a jump in size).
-    WXGDockGeometry lift=WXGDockLayout(w,h,gap,(float)(toX-minX),.90f,(float)c.lensGrowth,0,(float)c.barGrowth,(float)c.endWrap);
-    WXGDockGeometry mesh=WXGDockLayout(w,h,gap,w*.5f,.90f,(float)c.lensGrowth,0,(float)c.barGrowth,(float)c.endWrap);
+    WXGDockGeometry lift=[self layoutAtAnchor:toX-minX press:.90];
+    WXGDockGeometry mesh=[self layoutAtAnchor:_materialRect.size.width*.5 press:.90];
     _travelFrom=CGPointMake(minX+from.lensX+from.lensWidth*.5,minY+from.lensY+from.lensHeight*.5);
     _travelTo=CGPointMake(minX+rest.lensX+rest.lensWidth*.5,minY+rest.lensY+rest.lensHeight*.5);
     _travelStartSize=CGSizeMake(from.lensWidth,from.lensHeight);
@@ -1459,11 +1489,9 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
 // (it grows past the bar's ends), and the layout is linear in the anchor
 // between the first and the last tab, so it inverts exactly.
 - (CGFloat)anchorForLensCentreX:(CGFloat)x press:(CGFloat)press {
-    WXGConfig *c=WXGConfig.shared;
-    float w=(float)_materialRect.size.width,h=(float)_materialRect.size.height,gap=(float)[self selectionGap];
     CGFloat minX=_materialRect.origin.x,first=[self centerForIndex:0],last=[self centerForIndex:3];
-    WXGDockGeometry a=WXGDockLayout(w,h,gap,(float)(first-minX),(float)press,(float)c.lensGrowth,0,(float)c.barGrowth,(float)c.endWrap);
-    WXGDockGeometry b=WXGDockLayout(w,h,gap,(float)(last-minX),(float)press,(float)c.lensGrowth,0,(float)c.barGrowth,(float)c.endWrap);
+    WXGDockGeometry a=[self layoutAtAnchor:first-minX press:press];
+    WXGDockGeometry b=[self layoutAtAnchor:last-minX press:press];
     CGFloat c0=minX+a.lensX+a.lensWidth*.5,c1=minX+b.lensX+b.lensWidth*.5;
     if(fabs(c1-c0)<1 || !isfinite(c0) || !isfinite(c1))return x;
     return first+(last-first)*WXGClamp((x-c0)/(c1-c0),0,1);
@@ -1498,8 +1526,12 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     if(!WXGConfig.shared.dockTapSimpleTravel && !UIAccessibilityIsReduceMotionEnabled() && !CGRectIsEmpty(_materialRect)) {
         CGFloat slot=MAX(1,([self centerForIndex:3]-[self centerForIndex:0])/3);
         WXGConfig *c=WXGConfig.shared;
-        _script=WXGScriptTravel([self animationNow],_lensX,[self centerForIndex:index],slot,WXGClamp(_press,0,1),WXGClamp(_selectionShown,0,1),_jumpPlanEnd,index,
-                                c.dockTapDurationScale,c.dockTapDropDuration,c.dockTapLensShare);
+        // FIX127: on iOS 26's position spring when asked, the drop after the hang.
+        BOOL spring=c.dockMoveSpring;
+        _script=WXGScriptTravelTimed([self animationNow],_lensX,[self centerForIndex:index],slot,WXGClamp(_press,0,1),WXGClamp(_selectionShown,0,1),_jumpPlanEnd,index,
+                                     c.dockTapDurationScale,c.dockTapDropDuration,c.dockTapLensShare,spring?WXGDockSpringDuration(c.dockMoveResponse,c.dockMoveDamping):0);
+        if(spring)WXGScriptUseSpring(&_script,c.dockMoveResponse,c.dockMoveDamping);
+        WXGScriptHang(&_script,[self animationNow],[self lensHang]);
         [self beginTapRecord:2];
         _jumpPlanEnd=0;++_scriptTravels;_targetX=[self centerForIndex:index];_targetPress=0;
         return YES;
@@ -1573,7 +1605,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     if(_script.phase)[self endScript];   // FIX95
     _resumeIndex=-1;_earlyIndex=-1;_earlySent=NO;
     WXGDockTouchForget(&_trackingPoint);
-    _fingerDown=NO; _previewStart=0; _targetPress=0; _targetX=[self centerForIndex:_selectedIndex];
+    _fingerDown=NO; _previewStart=0; _targetPress=0; _hangUntil=0; _targetX=[self centerForIndex:_selectedIndex];
     [self releaseEndStretch];   // FIX68
     if (!_active) { _elasticMotion=(WXGElasticMotion){0};_press=0; _pressVelocity=0; _lensX=_targetX; _velocityX=0; _endStretch=(WXGStretchState){0};[self applyEndStretch]; }
 }
@@ -1589,7 +1621,12 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         @"tapDrop":@(WXGConfig.shared.dockTapDropDuration),@"tapSwitchWhen":@(WXGConfig.shared.dockTapSwitchWhen),@"uncommittedEnds":@(_uncommittedEnds),@"travelVeil":@(_travelVeilOn),@"travelVeilBands":@(_travelVeilCount),@"travelSetupMaxMS":@(round(_travelSetupMS*10)/10),
         @"lastPoint":@[@(_trackingPoint.x),@(_trackingPoint.y)],@"hasTrackingPoint":@(_trackingPoint.valid),
         @"searchMode":@(_searchMode),@"morphing":@(_morphing),@"morphs":@(_morphs),
-        @"discrete":@(_discreteShown),@"discretePieces":@(_pieceCount),@"discreteSwitches":@(_discreteSwitches),@"discreteShows":@(_discreteShows)};
+        @"discrete":@(_discreteShown),@"discretePieces":@(_pieceCount),@"discreteSwitches":@(_discreteSwitches),@"discreteShows":@(_discreteShows),
+        // FIX127: iOS 26's cells, lift, hang and position spring as set, and the tabs' centres they give.
+        @"system26":@{@"cellExtra":@(WXGConfig.shared.dockCellExtra),@"liftWidth":@(WXGConfig.shared.dockLensLiftWidth),@"hang":@(WXGConfig.shared.dockLensHang),
+                      @"moveSpring":@(WXGConfig.shared.dockMoveSpring),@"response":@(WXGConfig.shared.dockMoveResponse),@"damping":@(WXGConfig.shared.dockMoveDamping),
+                      @"firstCentre":@(round(([self centerForIndex:0]-_materialRect.origin.x)*100)/100),@"lastCentre":@(round(([self centerForIndex:3]-_materialRect.origin.x)*100)/100),
+                      @"bar":@[@(round(_materialRect.size.width*100)/100),@(_materialRect.size.height)]}};
 }
 - (void)tick:(CADisplayLink *)link {
     if (!_active || !self.window) return;
@@ -1660,7 +1697,16 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
             _velocityX=(_targetX-_jumpFromX)*(e2-e)/(.01*MAX(.05,_jumpDuration));
             if(!isfinite(_velocityX))_velocityX=(_lensX-previous)/MAX(dt,1e-3);
         }
-    } else if(!scripted)WXGSpring(&_lensX,&_velocityX,_targetX,_fingerDown?620:340,_fingerDown?39:29,dt);
+    } else if(!scripted) {
+        // FIX127: released, the lens goes to its tab on iOS 26's position
+        // spring when asked (a finger's own follow spring is the dock's).
+        double stiffness=_fingerDown?620:340,friction=_fingerDown?39:29;
+        WXGConfig *move=WXGConfig.shared;
+        if(!_fingerDown && !reduceMotion && move.dockMoveSpring)WXGDockSpringConstants(move.dockMoveResponse,move.dockMoveDamping,&stiffness,&friction);
+        WXGSpring(&_lensX,&_velocityX,_targetX,stiffness,friction,dt);
+    }
+    // FIX127: the hang after a release is over (or a script took the press).
+    if(_hangUntil>0 && (_fingerDown || scripted || CACurrentMediaTime()>=_hangUntil)){if(!_fingerDown && !scripted)_targetPress=0;_hangUntil=0;}
     double motionDT=dt;
     if(!_fingerDown && _targetPress<=0 && !reduceMotion)dt*=.80;
     if(!scripted)WXGSpring(&_press,&_pressVelocity,_targetPress,reduceMotion?600:420,reduceMotion?49:31,dt);
@@ -1691,8 +1737,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     // dock's own (its speed stretch and WXGElasticLayoutLimited): width and
     // height scaled about the lens' centre, the width no wider than the bar
     // and its end wraps.
-    WXGDockGeometry g=WXGDockLayout(_materialRect.size.width,_materialRect.size.height,[self selectionGap],
-        _lensX-_materialRect.origin.x,press,c.lensGrowth,0,c.barGrowth,c.endWrap);
+    WXGDockGeometry g=[self layoutAtAnchor:_lensX-_materialRect.origin.x press:press];   // FIX127: iOS 26's cells too
     _glass.lensRestHeight=g.lensHeight;   // FIX113 Y: undeformed
     if(elastic) {
         double sx=1,sy=1;WXGLensFlexParams flex=c.lensFlexParams;
@@ -1842,9 +1887,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     if(_discreteShown)return;   // 离散底栏: no lens travel
     if(_travelling || CGRectIsEmpty(_materialRect) || !self.window || !WXGConfig.shared.dockTapSimpleTravel ||
        !_selectedAtlas.CGImage || !_normalAtlas.CGImage)return;
-    WXGConfig *c=WXGConfig.shared;
-    float w=(float)_materialRect.size.width,h=(float)_materialRect.size.height,gap=(float)[self selectionGap];
-    WXGDockGeometry g=WXGDockLayout(w,h,gap,w*.5f,.90f,(float)c.lensGrowth,0,(float)c.barGrowth,(float)c.endWrap);   // as prepareTravelToIndex
+    WXGDockGeometry g=[self layoutAtAnchor:_materialRect.size.width*.5 press:.90];   // as prepareTravelToIndex
     CGSize size=CGSizeMake(g.lensWidth,g.lensHeight);NSString *key=[self travelBackdropKeyForSize:size];
     [self ensureTravelLayers];
     if(!_travelBackdrops.count || ![key isEqual:_travelBackdropKey]){_travelBackdrops=WXGMakeTravelLensBackdrops(size,.90,nil,_glass.lensSeesBar,g.barHeight);_travelBackdropKey=key;}
@@ -2352,10 +2395,8 @@ static const CGFloat WXGDiscreteReturnProgress=.15;
 // The tabs exactly as the overlay draws them at rest.
 - (void)loadMorphContent {
     if(!_morphView || CGRectIsEmpty(_materialRect))return;
-    WXGConfig *c=WXGConfig.shared;[self loadTravelColors];
-    float w=(float)_materialRect.size.width,h=(float)_materialRect.size.height,gap=(float)[self selectionGap];
-    WXGDockGeometry rest=WXGDockLayout(w,h,gap,(float)([self centerForIndex:_selectedIndex]-_materialRect.origin.x),0,
-                                       (float)c.lensGrowth,0,(float)c.barGrowth,(float)c.endWrap);
+    [self loadTravelColors];
+    WXGDockGeometry rest=[self layoutAtAnchor:[self centerForIndex:_selectedIndex]-_materialRect.origin.x press:0];
     CGRect pill=CGRectMake(_materialRect.origin.x+rest.lensX,_materialRect.origin.y+rest.lensY,rest.lensWidth,rest.lensHeight);
     CGSize size=self.bounds.size;
     [CATransaction begin];[CATransaction setDisableActions:YES];

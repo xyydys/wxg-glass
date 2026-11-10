@@ -1,6 +1,41 @@
 # 交接说明（给新对话）· WeChat Liquid Glass TEST4 · 当前 FIX114 G（用户 01:48 导出的参数作为这版默认；手机上没改过的设置换成新默认、改过的保留；基于 FIX114 F）
 
 
+## FIX127（用户 11-10：“把表里那些系统数值也都接进底栏，整个替换我试试效果”——FIX126 回复里那张“顺带量出来的系统数值”表）
+
+**做法：不加总开关，而是一个“套用”按钮 + 一个“还原”按钮。** 系统的数写进底栏原有的滑块 / 开关里（套用后都还能再调）；套用前这些项原来的值存一份（`NSUserDefaults` 套件 `com.runyu.WeChatLiquidGlass` 的 `dockSystem26.before`，只在第一次套用时存），“还原套用前的数值”放回去。没套用时底栏和 FIX126 逐位相同。
+
+**一、原来的底栏表达不了的四样，新加了参数（默认 0 / 关 = 以前的底栏）**
+- `WXGDockSystem.h`（纯 C，新）：
+  - **每格加宽** `dockCellExtra`（系统 10 pt）：系统四个格子各 107.5 pt，比四等分（390 / 4 = 97.5）宽 10 pt，相邻两格重叠；首尾两格仍贴着内边距，所以标签中心是 57.75 / 151.92 / 246.08 / 340.25（间距 94.17，不是 97.5），静止的选中胶囊 = 一整格。`WXGDockCellWidth / Center / Pitch`。
+  - **按压时透镜加宽** `dockLensLiftWidth`（系统 16 pt）：按下的透镜宽 = 一格 + 16（123.5）；原来的规则是“至少 1.2 格”（会得到 117 或 129）。高度仍由“按压透镜外扩倍数”管（系统 70 / 62 = 1.129）。`WXGDockLayoutCells`：两项都是 0 时直接调 `WXGDockLayout`。
+  - **位置弹簧** `dockMoveSpring / dockMoveResponse / dockMoveDamping`（系统 0.4 s / 0.86）：这次又核对了手指点按——和程序切换是同一根弹簧（20 多次点按里干净的都拟合出 ω 16、阻尼比 0.86，起步比触摸晚 20–45 ms）。`WXGDockSpringStep`（阶跃响应）、`WXGDockSpringDuration`（脚本用的时长：到第一个峰值，那里速度为 0、过头 0.5%；0.4 / 0.86 时 0.392 s）、`WXGDockSpringEase`（归一到终点正好是 1）、`WXGDockSpringConstants`（逐帧弹簧的刚度 246.74 / 阻尼 27.02）。
+  - **松手后停留** `dockLensHang`（系统 0.18 s）。
+- `WXGDockScript.h`：脚本多两个字段 `moveResponse / moveDamping`（大于 0 时位移走弹簧曲线而不是贝塞尔）；`WXGScriptUseSpring`；`WXGScriptTravelTimed`（多一个“没有既定计划时的时长”，`WXGScriptTravel` 调它传 0，结果不变）；`WXGScriptHang`（落下不早于松手 + 停留，之前抬起和颜色保持）。
+- `WXGDemoBar.m`：
+  - `centerForIndex:` / 新的 `layoutAtAnchor:press:`（原来 9 处 `WXGDockLayout` 都走它）/ `tabAtX:`（重叠时按相邻中心的中点分）；无障碍框按中心 ± 半个间距；`layoutSubviews` 多记一个 `_previousCellExtra`（变了就重排图标、透镜归位）。
+  - 点按（`WXGScriptGlide`）、拖到别的标签松手（`WXGScriptTravelTimed`）：开着位置弹簧时时长取弹簧的、曲线走弹簧；这时“点按滑动时长”不起作用。松手后没有脚本接管时（回到原标签、松在外面）逐帧弹簧用系统的刚度 / 阻尼；手指按着时的跟手弹簧（620 / 39）没动。
+  - 停留：脚本的落下用 `WXGScriptHang`；没有脚本时 `_targetPress` 保持 1 到 `_hangUntil`（`tick` 里放下；新触摸、取消都清掉）。“减弱动态效果”时两项都不生效。
+  - 着色器没动（它不调用布局函数，透镜的矩形是传进去的）；`WXGOptics.h` 没动。
+
+**二、“套用 iOS 26 实测数值”写的值**（`-[WXGConfig dockSystem26ValuesForScreenWidth:]`）
+- 尺寸：`widthFraction` =（屏幕宽 − 42）/ 屏幕宽（440 宽是 0.9045，414 宽是 0.8986）、`height` 62、`selectionInset` 4。
+- 透镜几何：`dockCellExtra` 10、`dockLensLiftWidth` 16、`lensGrowth` 70 / 62、`endWrap` 8.4（系统在底栏自己的坐标里是 8.15，乘按住时的 1.0355）、`barGrowth` 1.0355、`lensZoom` 1.16。
+- 透镜玻璃：`lensKyantOn` 开、`lensKyantHeight` 0.10、`lensKyantAmount` 0.25、`lensBlur` 0、`lensTintOn` 关。
+- 形变：`lensElasticOn` 开、`lensFlexSystem` 开、强度 1 / 回弹快慢 8 / 阻尼 0.5 / 不对称（**这组键分组栏也在用，会一起变**）。
+- 动作：`dockLensHang` 0.18、`dockMoveSpring` 开、0.4 / 0.86。
+- 设置页：底栏页“尺寸”下面新的一组“iOS 26 系统底栏”（两个按钮 + 四项新参数）。
+
+**三、表里各行的去向**
+- 整条底栏 398×62 / 左右 21 pt、静止胶囊 107.5×54、按下 123.5×70、按住放大 3.5%：几何逐项对上（`DockSystemTests`：四个中心、静止 / 按下的尺寸、透镜到两端的位置 48.4 / 349.5 pt 都在 0.35 pt 内）。
+- 抬起 / 放下：抬起用的还是底栏自己的按压弹簧（420 / 31，约 0.2 s 到位，和系统的 0.2 s 一样，没改）；松手停留 0.18 s 接了。放下的快慢没改（系统时间常数约 0.045 s，底栏约 0.08 s）。
+- 透镜玻璃不模糊不着色、折射带 0.10 / 深度 0.25：接了。
+- 透镜边缘色散 3.7 pt / 最外 14 pt：**没接**。系统是沿整圈边缘的色差，Kyant 透镜模式的色散只在四角附近（公式不同），没有等价的数；“色散”保持用户现在的值。
+- 位置弹簧 0.4 s / 0.86：接了（点按、松手归位）。
+- 仍然没有的：点按前 0.25 s 的那个形变脉冲（FIX126 没解开）；透镜里图标的那层位移（`ContentLensingView`）和透镜底下往外推的那层（+9 / 36 pt）；手指下面的光；按住时底栏朝手指一侧多拉 0.5%；选中胶囊和底栏本身的颜色 / 材质（没动用户的）。
+
+- 验证：27 个源文件 `-Werror` 编译 + 链接；新 `Tests/DockSystemTests.c`（含 `fixtures/dock_move_ios26.h`：录下来的一次程序切换和一次手指点按，弹簧逐帧误差 rms 0.5% / 0.3%）；共 60 项通过（`LensInsetAlongTests` 仍是 main 上原有的问题）。**没上机。**
+
 ## FIX126（用户 11-10：探针 2 的“底栏录制”在 iOS 26.6 上录了四遍发回来——网格浅色、条纹浅色、彩虹深色、纯黑深色；“从左滑向右的时候透镜变成长条状，从右往左的时候挤成更扁的形状”）
 
 **一、系统底栏的结构（`UITabBarController`，iPhone17,2，440 pt 宽）**

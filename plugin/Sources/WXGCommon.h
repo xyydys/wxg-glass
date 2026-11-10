@@ -6,6 +6,7 @@
 #import "WXGLensOptics.h"
 #import "WXGKyantElastic.h"
 #import "WXGLensFlex.h"
+#import "WXGDockSystem.h"
 #import "WXGRenderPolicy.h"
 
 FOUNDATION_EXPORT NSString * const WXGSettingsChanged;
@@ -294,6 +295,17 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (WXGKyantElasticParams)kyantElasticParams;
 - (WXGLensFlexParams)lensFlexParams;   // FIX126: the system's deformation (iOS 26 recorded), `on` when it replaces Kyant's
+// FIX127: iOS 26's tab bar (WXGDockSystem.h; probe 2). All 0 / off: the dock as it was.
+- (CGFloat)dockCellExtra;       // each tab's cell this much wider than a quarter of the inside (they overlap)
+- (CGFloat)dockLensLiftWidth;   // > 0: the lifted lens is its cell plus this
+- (CGFloat)dockLensHang;        // s the lens stays lifted after the finger leaves
+- (BOOL)dockMoveSpring;         // the lens goes to a tab on the system's position spring (response s, damping ratio)
+- (CGFloat)dockMoveResponse;
+- (CGFloat)dockMoveDamping;
+- (NSDictionary<NSString *,NSNumber *> *)dockSystem26ValuesForScreenWidth:(CGFloat)width;   // every measured value, as settings
+- (void)applyDockSystem26ForScreenWidth:(CGFloat)width;   // into the settings (saved); what was there kept
+- (BOOL)hasDockSystem26Backup;
+- (BOOL)restoreDockBeforeSystem26;                        // those back; NO: nothing kept
 - (WXGKyantBody)kyantBodyForScope:(WXGGlassScope)scope;   // FIX122 D: Kyant's refraction on 其余玻璃 (and ranges sharing it)   // FIX122 C: Kyant's drag-speed deformation (dock and segment bar)
 - (NSString *)lensRimHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 // FIX113 X: the 透镜 range's border as one line (the tap animation's lens,

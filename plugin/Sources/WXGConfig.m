@@ -665,6 +665,14 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensFlexSlow",'n',8,3,20,NULL,NULL},         // the slow follower's frequency (rad/s): lower, a longer and softer swing back
     {"lensFlexDamping",'n',.5,.15,1.2,NULL,NULL},  // its damping ratio: lower, more of the opposite shape on stopping
     {"lensFlexSymmetric",'b',0,0,1,NULL,NULL},
+    // FIX127 (user: "wire the table's system values into the dock, the whole thing replaced"): what
+    // the dock could not express of iOS 26's tab bar (WXGDockSystem.h; probe 2). All 0 / off: the dock as it was.
+    {"dockCellExtra",'n',0,0,20,NULL,NULL},        // each tab's cell this much wider than a quarter (they overlap; iOS 26: 10)
+    {"dockLensLiftWidth",'n',0,0,40,NULL,NULL},    // > 0: the lifted lens is its cell + this (iOS 26: 16); 0: at least 1.2 cells, as before
+    {"dockLensHang",'n',0,0,.5,NULL,NULL},         // the lens stays lifted this long after the finger leaves (iOS 26: 0.18 s)
+    {"dockMoveSpring",'b',0,0,1,NULL,NULL},        // the lens goes to a tab on the system's position spring
+    {"dockMoveResponse",'n',.40,.2,.8,NULL,NULL},
+    {"dockMoveDamping",'n',.86,.5,1.2,NULL,NULL},
     // FIX122 D (user: Kyant's refraction for 其余玻璃 next): the other glass'
     // body refracted by his lens() (WXGKyantLens.h) instead of its band:
     // the band and the shift at the outline as shares of the glass' short
@@ -2037,6 +2045,64 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
     k.maxHeight=WXGClamp([self extraNumber:@"kyantOtherMaxHeight"],4,80);
     k.rimMax=[self extraNumber:@"kyantOtherRimFine"]>.5?0:WXGClamp([self extraNumber:@"kyantOtherRimMax"],1,20);   // FIX122 E
     return k;
+}
+// FIX127: iOS 26's tab bar in the dock's own settings.
+- (CGFloat)dockCellExtra {return WXGClamp([self extraNumber:@"dockCellExtra"],0,20);}
+- (CGFloat)dockLensLiftWidth {return WXGClamp([self extraNumber:@"dockLensLiftWidth"],0,40);}
+- (CGFloat)dockLensHang {return WXGClamp([self extraNumber:@"dockLensHang"],0,.5);}
+- (BOOL)dockMoveSpring {return [self extraNumber:@"dockMoveSpring"]>.5;}
+- (CGFloat)dockMoveResponse {return WXGClamp([self extraNumber:@"dockMoveResponse"],.2,.8);}
+- (CGFloat)dockMoveDamping {return WXGClamp([self extraNumber:@"dockMoveDamping"],.5,1.2);}
+/* Every value probe 2 measured on the system's bar, as the dock's settings
+   (WXGDockSystem.h), for a screen `width` points wide: the bar the screen
+   less 21 pt a side and 62 pt high, the selection 4 pt inside it, the cells
+   overlapping by 10 pt, the lens lifted 16 pt wider and taller (70 pt: 70 / 62
+   of the bar) and 8.4 pt past the bar's ends, the bar 3.55% larger while
+   held, the lens' content 1.16x; the lens' glass Kyant's curve with the
+   system's band and depth (0.10 and 0.25 of its height), no blur and no
+   tint; the system's deformation, position spring and hang. */
+- (NSDictionary<NSString *,NSNumber *> *)dockSystem26ValuesForScreenWidth:(CGFloat)width {
+    CGFloat fraction=width>100?WXGClamp((width-2*WXG_DOCK26_SIDE_MARGIN)/width,.65,.98):.9045;
+    return @{@"widthFraction":@(fraction),@"height":@(WXG_DOCK26_HEIGHT),@"selectionInset":@(WXG_DOCK26_INSET),
+             @"lensGrowth":@((WXG_DOCK26_HEIGHT-2*WXG_DOCK26_INSET+WXG_DOCK26_LIFT)/WXG_DOCK26_HEIGHT),
+             @"barGrowth":@(WXG_DOCK26_BAR_GROWTH),@"endWrap":@(WXG_DOCK26_END_WRAP),@"lensZoom":@(WXG_DOCK26_ZOOM),
+             @"dockCellExtra":@(WXG_DOCK26_CELL_EXTRA),@"dockLensLiftWidth":@(WXG_DOCK26_LIFT),@"dockLensHang":@(WXG_DOCK26_HANG),
+             @"dockMoveSpring":@YES,@"dockMoveResponse":@(WXG_DOCK26_RESPONSE),@"dockMoveDamping":@(WXG_DOCK26_DAMPING),
+             @"lensKyantOn":@YES,@"lensKyantHeight":@(WXG_DOCK26_LENS_BAND),@"lensKyantAmount":@(WXG_DOCK26_LENS_AMOUNT),
+             @"lensBlur":@0,@"lensTintOn":@NO,
+             @"lensElasticOn":@YES,@"lensFlexSystem":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO};
+}
+static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
+- (BOOL)hasDockSystem26Backup {
+    return [[[NSUserDefaults alloc] initWithSuiteName:@"com.runyu.WeChatLiquidGlass"] dictionaryForKey:WXGDockSystem26BackupKey].count>0;
+}
+// Those values into the settings (saved). What was there is kept (from before
+// the first time, if applied again) for restoreDockBeforeSystem26.
+- (void)applyDockSystem26ForScreenWidth:(CGFloat)width {
+    NSDictionary<NSString *,NSNumber *> *values=[self dockSystem26ValuesForScreenWidth:width];
+    NSUserDefaults *suite=[[NSUserDefaults alloc] initWithSuiteName:@"com.runyu.WeChatLiquidGlass"];
+    if(![suite dictionaryForKey:WXGDockSystem26BackupKey].count) {
+        NSMutableDictionary *before=[NSMutableDictionary dictionary];
+        for(NSString *key in values) {
+            id value=nil;
+            @try {value=[self valueForKey:key];} @catch(__unused NSException *error) {value=nil;}
+            if([value isKindOfClass:NSNumber.class])before[key]=value;
+        }
+        [suite setObject:before forKey:WXGDockSystem26BackupKey];
+    }
+    for(NSString *key in values)[self setValue:values[key] forKey:key];
+    [self save];
+}
+// The values from before 套用 back (only the keys it changed); NO: nothing kept.
+- (BOOL)restoreDockBeforeSystem26 {
+    NSUserDefaults *suite=[[NSUserDefaults alloc] initWithSuiteName:@"com.runyu.WeChatLiquidGlass"];
+    NSDictionary *before=[suite dictionaryForKey:WXGDockSystem26BackupKey];
+    if(!before.count)return NO;
+    NSSet *known=[NSSet setWithArray:[self dockSystem26ValuesForScreenWidth:0].allKeys];
+    for(NSString *key in before)if([known containsObject:key] && [before[key] isKindOfClass:NSNumber.class])[self setValue:before[key] forKey:key];
+    [suite removeObjectForKey:WXGDockSystem26BackupKey];
+    [self save];
+    return YES;
 }
 // FIX126: the system's deformation, as set (WXGLensFlex.h); `on`: used in place of Kyant's.
 - (WXGLensFlexParams)lensFlexParams {

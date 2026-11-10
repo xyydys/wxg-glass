@@ -435,6 +435,13 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
     if([module isEqual:@"dock"])return @{@"title":@"底栏",@"groups":@[
         WXGGroup(@"尺寸",nil,@[WXGSlider(@"底栏宽度比例",@"widthFraction",nil,.65,.98,nil),WXGSlider(@"底栏高度",@"height",nil,54,90,@"%.1f pt"),
                              WXGSlider(@"底边相对安全区",@"lift",nil,-80,160,@"%.1f pt")],@"lift"),
+        WXGGroup(@"iOS 26 系统底栏",nil,@[WXGAction(@"套用 iOS 26 实测数值",@"dockSystem26",NO),WXGAction(@"还原套用前的数值",@"dockSystem26Restore",NO),
+                             WXGSlider(@"每格加宽（相邻两格重叠）",@"dockCellExtra",nil,0,20,@"%.1f pt"),
+                             WXGSlider(@"按压时透镜加宽",@"dockLensLiftWidth",nil,0,40,@"%.1f pt"),
+                             WXGSlider(@"松手后透镜停留",@"dockLensHang",nil,0,.5,@"%.2f s"),
+                             WXGSwitch(@"切换时用系统的位置弹簧",@"dockMoveSpring",nil),
+                             WXGSlider(@"位置弹簧：响应",@"dockMoveResponse",nil,.2,.8,@"%.2f s"),WXGSlider(@"位置弹簧：阻尼比",@"dockMoveDamping",nil,.5,1.2,@"%.2f")],
+                 @"FIX127：把 iOS 26.6 真机底栏上量出来的数值整套搬进这条底栏。\n\n套用 iOS 26 实测数值：一次把下面这些都改成系统的数（改的就是各页里原有的滑块和开关，套用后都还能自己再调）——\n· 尺寸：宽度 = 屏幕宽 − 左右各 21 pt，高度 62 pt，静置内边距 4 pt；\n· 格子：每格加宽 10 pt（系统四个格子各 107.5 pt 宽，比四等分宽 10 pt，相邻两格互相重叠，所以图标比四等分略往中间靠，静止的选中胶囊就是一整格 107.5 × 54）；\n· 按下的透镜：宽高各加 16 pt（123.5 × 70，上下各比底栏多出 4 pt），到最左 / 最右时伸出底栏约 8.4 pt，整条底栏放大 3.55%，镜内图标放大 1.16 倍；\n· 透镜玻璃：打开“Kyant 透镜模式”，折射带 = 高度 × 0.10，取样深度 = 高度 × 0.25；透镜模糊 0，透镜滤镜色关；\n· 形变：打开“跟随滑动速度形变”和“用 iOS 26 实测的规律”（强度 1、回弹快慢 8、回弹阻尼 0.5、不对称）；这组形变参数分组栏也在用，会一起变；\n· 动作：松手后透镜先停 0.18 秒再落下；切换标签时透镜走系统的位置弹簧（响应 0.4 秒、阻尼比 0.86）。\n\n还原套用前的数值：第一次套用前，这些项原来的值会存一份；点这里全部放回去（只动上面这些项，别的不碰）。套用过多次，还原的也是第一次套用之前的值。\n\n下面四项是这一版为了对上系统新加的，默认都是 0 / 关（就是以前的底栏）：\n· 每格加宽：0 = 四等分。\n· 按压时透镜加宽：0 = 以前的规则（至少 1.2 格宽）；大于 0 时按下的透镜 = 一格 + 这么多，高度仍由“按压透镜外扩倍数”决定。\n· 松手后透镜停留：手指离开后透镜保持抬起的时间，之后再落回胶囊；点按、拖动、按住不动都算。\n· 切换时用系统的位置弹簧：点别的标签、拖到别的标签松手、松手回到原标签时，透镜按这条弹簧滑过去（起步快、收尾软、过头约 0.5%），这时“点按滑动时长”不起作用（时长由响应决定，0.4 秒时约 0.39 秒）；手指按着拖动时的跟手还是原来的。系统“减弱动态效果”打开时这两项不生效。\n\n没法照搬的：系统透镜的色散是沿整圈边缘约 3.7 pt（作用在最外 14 pt），Kyant 透镜模式的色散只在四个角附近，两者不是一种算法，所以“色散”保持你现在的值不动；选中胶囊和底栏本身的颜色、材质也不动。"),
         WXGGroup(@"离散样式",nil,@[WXGSwitch(@"离散底栏",@"dockDiscrete",nil),
                                  WXGSwitch(@"未选中的小球连成一体",@"dockDiscreteConnected",nil),
                                  WXGSlider(@"相连时图标向中间收拢",@"dockDiscreteGather",nil,0,.45,@"%.2f"),
@@ -1445,6 +1452,33 @@ static NSString *WXGLastScope=@"dock";
     // iOS 26 Messages capsule as measured (3x screenshot): about 29 pt high,
     // 17 pt text, a 12 pt chevron (its paddings 14 / 11 pt are fixed).
     if([action isEqual:@"avatarCapsuleIOS"]){WXGRowSet(@"avatarCapsuleHeight",@29.0);WXGRowSet(@"avatarCapsuleTextSize",@17.0);WXGRowSet(@"avatarCapsuleChevronSize",@12.0);[self refreshRows];return;}
+    // FIX127: iOS 26's tab bar values into the dock's settings, and back.
+    if([action isEqual:@"dockSystem26"]) {
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"套用 iOS 26 实测数值？"
+            message:@"底栏的宽高、内边距、透镜大小和放大、透镜折射（Kyant 透镜模式）、形变、松手停留和位置弹簧换成 iOS 26 系统底栏上量出来的值。原来的值会存一份，点“还原套用前的数值”可以全部放回去。" preferredStyle:UIAlertControllerStyleAlert];
+        [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+        __weak WXGSettingsModule *weakSelf=self;
+        [alert addAction:[UIAlertAction actionWithTitle:@"套用" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){
+            CGSize screen=UIScreen.mainScreen.bounds.size;
+            [WXGConfig.shared applyDockSystem26ForScreenWidth:MIN(screen.width,screen.height)];[weakSelf refreshRows];
+        }]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
+    if([action isEqual:@"dockSystem26Restore"]) {
+        BOOL kept=[WXGConfig.shared hasDockSystem26Backup];
+        UIAlertController *alert=[UIAlertController alertControllerWithTitle:kept?@"还原套用前的数值？":@"没有可还原的数值"
+            message:kept?@"“套用 iOS 26 实测数值”改过的那些项回到第一次套用之前的值，其它设置不变。":@"还没有套用过 iOS 26 实测数值（或者已经还原过了）。" preferredStyle:UIAlertControllerStyleAlert];
+        __weak WXGSettingsModule *weakSelf=self;
+        if(kept) {
+            [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+            [alert addAction:[UIAlertAction actionWithTitle:@"还原" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){
+                [WXGConfig.shared restoreDockBeforeSystem26];[weakSelf refreshRows];
+            }]];
+        }else [alert addAction:[UIAlertAction actionWithTitle:@"好" style:UIAlertActionStyleCancel handler:nil]];
+        [self presentViewController:alert animated:YES completion:nil];
+        return;
+    }
     if([action isEqual:@"segmentFromDock"]) {   // FIX113 P
         UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"套用底栏现在的样子？"
             message:@"分组栏的折射、模糊、材质、边框、选中胶囊（颜色、内边距）、透镜和文字颜色换成底栏现在的值；分组栏开关、悬浮、字号字重不变。" preferredStyle:UIAlertControllerStyleAlert];

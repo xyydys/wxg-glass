@@ -1,6 +1,7 @@
 #ifndef WXGDockScript_h
 #define WXGDockScript_h
 #include <math.h>
+#include "WXGDockSystem.h"
 /* FIX95: the tap animation is the real lens (the one a drag summons: Metal,
    refraction, dispersion, the bar under it), driven frame by frame along the
    curves the render-server tap animation used (FIX43 timing, FIX44 / FIX88
@@ -38,6 +39,7 @@ typedef struct {
     int phase;                     // 0 none, 1 glide (finger down), 2 landing (released)
     long index;                    // the tab it goes to
     double moveStart,moveDuration,moveFrom,moveTo;   // the lens's anchor (x)
+    double moveResponse,moveDamping;                 // FIX127: > 0, the move runs on the system's spring (WXGDockSpringEase), not the bezier
     WXGScriptTrack press;          // how far it is lifted (until the drop, in phase 2)
     WXGScriptTrack select;         // FIX98: the selection colour (1 the resting pill, 0 the clear lens)
     double planEnd;                // the move arrives
@@ -68,6 +70,7 @@ static inline double WXGScriptTrackValue(const WXGScriptTrack *k,double time) {
 static inline double WXGScriptMoveValue(const WXGDockScript *s,double time) {
     if(!(s->moveDuration>1e-6))return time>=s->moveStart?s->moveTo:s->moveFrom;
     double u=(time-s->moveStart)/s->moveDuration;
+    if(s->moveResponse>0)return s->moveFrom+(s->moveTo-s->moveFrom)*WXGDockSpringEase(u,s->moveResponse,s->moveDamping);   // FIX127
     return s->moveFrom+(s->moveTo-s->moveFrom)*WXGScriptBezier(u,.40,0,.30,1);
 }
 // The drop's progress at `time` (0 before it, 1 once down), with an ease.
@@ -138,12 +141,15 @@ static inline void WXGScriptDrop(WXGDockScript *s,double now,double drop) {
    independent x the FIX98 scale, a running glide's plan honoured), lifted on
    the way if it goes at least half a tab (the colour clearing as it lifts),
    then the drop as above. `slot`: one tab's distance. */
-static inline WXGDockScript WXGScriptTravel(double now,double from,double to,double slot,double p0,double s0,double planEnd,long index,
-                                            double scale,double drop,double share) {
+/* FIX127: `fresh` > 0: a move that follows no running plan lasts this long
+   (the system's spring: WXGDockSpringDuration) instead of the FIX43 time. */
+static inline WXGDockScript WXGScriptTravelTimed(double now,double from,double to,double slot,double p0,double s0,double planEnd,long index,
+                                                 double scale,double drop,double share,double fresh) {
     WXGDockScript s={0};
     drop=WXGScriptClamp(drop,.06,1.5);scale=WXGScriptClamp(scale,.3,4);share=WXGScriptClamp(share,.15,.90);
     double remaining=fabs(to-from)/(slot>1?slot:1);
-    double move=remaining<.05?0:(planEnd>now?(planEnd-now>.12?planEnd-now:.12):.27*(.85+.05*(remaining<3?remaining:3))*scale);
+    double own=fresh>0?fresh:.27*(.85+.05*(remaining<3?remaining:3))*scale;
+    double move=remaining<.05?0:(planEnd>now?(planEnd-now>.12?planEnd-now:.12):own);
     double lifted=remaining>=.5?(p0>.90?p0:.90):p0;
     int lifts=move>0 && lifted>p0+1e-6;
     s0=WXGScriptClamp(s0,0,1);
@@ -161,6 +167,25 @@ static inline WXGDockScript WXGScriptTravel(double now,double from,double to,dou
     if(s.land<now+move)s.land=now+move;
     s.end=s.land+WXGScriptSettle;
     return s;
+}
+static inline WXGDockScript WXGScriptTravel(double now,double from,double to,double slot,double p0,double s0,double planEnd,long index,
+                                            double scale,double drop,double share) {
+    return WXGScriptTravelTimed(now,from,to,slot,p0,s0,planEnd,index,scale,drop,share,0);
+}
+/* FIX127: the move on the system's spring (response s, damping ratio)
+   instead of the bezier; its duration is the caller's (WXGDockSpringDuration
+   for a move from rest). */
+static inline void WXGScriptUseSpring(WXGDockScript *s,double response,double damping) {
+    s->moveResponse=response>0?response:0;s->moveDamping=damping;
+}
+/* FIX127 (iOS 26: the lens stays lifted ~0.18 s after the finger leaves,
+   then drops): a landing's drop not before `now` + `hang`; the lift and the
+   colour hold where they are until then. */
+static inline void WXGScriptHang(WXGDockScript *s,double now,double hang) {
+    if(s->phase!=2 || !(hang>0))return;
+    double by=now+hang-s->dropStart;
+    if(!(by>0))return;
+    s->dropStart+=by;s->land+=by;s->end+=by;
 }
 /* FIX98: whether WeChat's tab switch still waits (the host asks). `moment`
    0: not at all (it switches at the release, the lens carries on), 1: until
