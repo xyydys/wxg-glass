@@ -192,7 +192,8 @@ static BOOL WXGMeshOpticsClose(WXGMeshOptics a,WXGMeshOptics b) {
         fabsf(a.shrinkExtra-b.shrinkExtra)<.125f &&   // FIX113 Y
         fabsf(a.transition-b.transition)<.0005f &&   // FIX114 I
         fabsf(a.softStretch-b.softStretch)<.005f && fabsf(a.softPower-b.softPower)<.005f && fabsf(a.softWidth-b.softWidth)<.05f &&   // FIX114 J
-        fabsf(a.kyHeight-b.kyHeight)<.01f && fabsf(a.kyAmount-b.kyAmount)<.01f && a.kyDepth==b.kyDepth && fabsf(a.kyRimMax-b.kyRimMax)<.01f;   // FIX122, FIX122 D / E
+        fabsf(a.kyHeight-b.kyHeight)<.01f && fabsf(a.kyAmount-b.kyAmount)<.01f && a.kyDepth==b.kyDepth && fabsf(a.kyRimMax-b.kyRimMax)<.01f &&   // FIX122, FIX122 D / E
+        fabsf(a.ringAmount-b.ringAmount)<.005f && fabsf(a.ringWidth-b.ringWidth)<.05f && fabsf(a.ringAngle-b.ringAngle)<.002f;   // FIX128
 }
 // FIX114 A: while the lens moves (pressed, travelling, deforming with the
 // drag), a mesh a little off still serves: within 1.5 pt of size and of the
@@ -220,6 +221,7 @@ static BOOL WXGMeshOpticsNear(WXGMeshOptics a,WXGMeshOptics b) {
     if(fabsf(a.radius-b.radius)<.75f)t.radius=a.radius;
     if(fabsf(a.kyHeight-b.kyHeight)<.4f)t.kyHeight=a.kyHeight;   // FIX122
     if(fabsf(a.kyAmount-b.kyAmount)<.4f)t.kyAmount=a.kyAmount;
+    if(fabsf(a.ringAmount-b.ringAmount)<.06f)t.ringAmount=a.ringAmount;   // FIX128: it follows the press too
     return WXGMeshOpticsClose(a,t);
 }
 // FIX23: contour-following mesh (see WXGBuildContourMesh). Static glass gets
@@ -251,7 +253,7 @@ static NSUInteger WXGMeshCacheHits,WXGMeshCacheMisses;
 static id WXGBuildMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUInteger *vertexCount,NSMutableData **storage,NSInteger *subdivision);
 static id WXGMakeMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUInteger *vertexCount,NSMutableData **storage,NSInteger *subdivision) {
     // Key: the exact optics and quality, rounded so float noise cannot split it.
-    float key[44]={roundf(optics.width*100),roundf(optics.height*100),roundf(optics.fieldScale*1000),roundf(optics.radius*100),
+    float key[47]={roundf(optics.width*100),roundf(optics.height*100),roundf(optics.fieldScale*1000),roundf(optics.radius*100),
         roundf(optics.edgeWidth*100),roundf(optics.refraction*1000),roundf(optics.offsetScale*1000),roundf(optics.zoomBefore*1000),
         roundf(optics.zoomAfter*1000),roundf(optics.dispersion*1000),optics.channel,roundf(optics.topRatio*1000),roundf(optics.sharpness*100),
         roundf(quality.ringError*1000),roundf(quality.arcStep*1000),roundf(quality.straightStep*100),
@@ -261,7 +263,8 @@ static id WXGMakeMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUIn
         roundf(optics.sbLeft*10),roundf(optics.sbTop*10),roundf(optics.sbRight*10),roundf(optics.sbBottom*10),roundf(optics.sbRadius*100),
         roundf(optics.shrinkPress*1000),roundf(optics.shrinkPinch*10000),roundf(optics.shrinkExtra*4),roundf(optics.transition*1000),
         roundf(optics.softStretch*100),roundf(optics.softPower*100),roundf(optics.softWidth*4),
-        roundf(optics.kyHeight*100),roundf(optics.kyAmount*100),roundf(optics.kyDepth*100),roundf(optics.kyRimMax*100)};   // FIX113 H / I / U / Y, FIX114 I / J, FIX122
+        roundf(optics.kyHeight*100),roundf(optics.kyAmount*100),roundf(optics.kyDepth*100),roundf(optics.kyRimMax*100),   // FIX113 H / I / U / Y, FIX114 I / J, FIX122
+        roundf(optics.ringAmount*200),roundf(optics.ringWidth*20),roundf(optics.ringAngle*1000)};   // FIX128
     NSData *cacheKey=[NSData dataWithBytes:key length:sizeof key];
     WXGMeshCacheEntry *entry=[WXGMeshCache() objectForKey:cacheKey];
     if(entry) {
@@ -538,7 +541,10 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
     // FIX122: Kyant 透镜模式 for the tap lens too (the dock's lens settings).
     WXGLensSettings TL=[c lensSettingsForScope:WXGGlassScopeDock dark:NO];
     float kd=TL.kyantOn?roundf((float)WXGClamp(TL.kyantDispersion,0,3)*100.f)/100.f:0.f;
-    if(TL.kyantOn)split=kd>0.f && c.syncDispersion && WXGFilterFactoryAvailable();
+    // FIX128: iOS 26's split all round the outline in place of his (red / blue each this far at the outline, with the press).
+    float kring=TL.kyantOn && TL.ringOn?roundf((float)(TL.ringAmount*press)*20.f)/20.f:0.f;
+    if(TL.kyantOn && TL.ringOn)kd=0.f;
+    if(TL.kyantOn)split=(kd>0.f || kring>0.f) && c.syncDispersion && WXGFilterFactoryAvailable();
     NSMutableArray<UIView *> *views=[NSMutableArray array];
     CGSize padded=size;
     for(NSInteger i=0;i<(split?3:1);i++) {
@@ -557,6 +563,7 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
             o.kyHeight=ky>.01f && ka>.01f?ky:0.f;o.kyAmount=ka;o.kyRimMax=(float)TL.kyantRimMax;   // FIX122 E
             o.edgeWidth=WXG_MAX(ky,.5f);o.refraction=0.f;o.offsetScale=1.f;o.cancel=0.f;o.topRatio=0.f;o.sharpness=0.f;
             o.dispersion=split?kd:0.f;
+            if(split && kring>0.f && o.kyHeight>0.f){o.ringAmount=kring;o.ringWidth=roundf((float)TL.ringWidth*2.f)/2.f;o.ringAngle=(float)TL.ringAngle;}   // FIX128
         }
         // FIX88: the lens's own dispersion range, only with dispersion on (0 =
         // the refraction band, so no wider mesh band for nothing).
@@ -2709,8 +2716,14 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             lensOptics.barLeft=lensOptics.barTop=lensOptics.barRight=lensOptics.barBottom=0.f;
             lensOptics.dispersionWidth=0.f;lensOptics.dispersionTopRatio=0.f;
             float kd=roundf((float)WXGClamp(L.kyantDispersion,0,3)*100.f)/100.f;
+            // FIX128: iOS 26's split all round the outline in place of his
+            // (toward the corners only): red / blue each moved ringAmount at
+            // the outline, with the press, over ringWidth inward.
+            float kring=L.ringOn && lensOptics.kyHeight>0.f?roundf((float)L.ringAmount*press*20.f)/20.f:0.f;
+            if(L.ringOn)kd=0.f;
             lensOptics.dispersion=kd;
-            lensSplit=mesh && kd>0.f && c.syncDispersion && WXGFilterFactoryAvailable() && !_lightweight;
+            if(kring>0.f){lensOptics.ringAmount=kring;lensOptics.ringWidth=roundf((float)L.ringWidth*2.f)/2.f;lensOptics.ringAngle=(float)L.ringAngle;}
+            lensSplit=mesh && (kd>0.f || kring>0.f) && c.syncDispersion && WXGFilterFactoryAvailable() && !_lightweight;
         }
         // FIX113 U: seeing the bar, the lens shows that bar made smaller (the
         // shader's inset), its own veil, edge ring and rim, then refracted. The
@@ -3220,7 +3233,9 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
                          @"lensRestHeight":@(_lensRestHeight),@"lensHeight":@(_lensRect.size.height),@"meshKeptWhileMoving":@(_lensMeshKept)},   // FIX113 U / Y, FIX114 A
         @"kyantBody":@{@"on":@([WXGConfig.shared kyantBodyForScope:self.glassScope].on),@"scope":@(self.glassScope)},   // FIX122 D
         @"kyantLens":@{@"on":@([self lensSettings].kyantOn),@"height":@([self lensSettings].kyantHeight),@"amount":@([self lensSettings].kyantAmount),
-                       @"dispersion":@([self lensSettings].kyantDispersion),@"channelsShown":@((NSInteger)(!_lensStack[0].hidden)+(!_lensStack[1].hidden)+(!_lensStack[2].hidden))},   // FIX122
+                       @"dispersion":@([self lensSettings].kyantDispersion),@"channelsShown":@((NSInteger)(!_lensStack[0].hidden)+(!_lensStack[1].hidden)+(!_lensStack[2].hidden)),   // FIX122
+                       @"ring":@{@"on":@([self lensSettings].ringOn),@"amount":@([self lensSettings].ringAmount),@"width":@([self lensSettings].ringWidth),
+                                 @"angleDegrees":@(round([self lensSettings].ringAngle*18000/M_PI)/100)}},   // FIX128
         @"meshTransformClass":@(WXGMeshTransformClass()!=nil),@"bodyMeshApplied":@(_bodyBackdrop.meshApplied),@"bodyMeshAccepted":@(_bodyBackdrop.meshAccepted),
         @"bodyMeshVertices":@(_bodyBackdrop.meshVertices),@"refractionTransition":[self transitionEvidence],
         @"dropShadow":@{@"shown":@(!_dropShadow.hidden),@"opacity":@(_dropShadow.opacity),@"key":_dropShadowKey?:@"none",@"off":@(_dropShadowOff),

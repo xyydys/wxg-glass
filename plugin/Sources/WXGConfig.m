@@ -372,6 +372,12 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // start): kept (his) or capped at this squeeze (WXGKyantOffsetCapped).
     {"lensKyantRimFine",'b',1,0,1,NULL,NULL},
     {"lensKyantRimMax",'n',3,1,20,NULL,NULL},
+    // FIX128 (user: "the colour split is not like the system's; which setting?"): Kyant's split is only toward the
+    // corners; iOS 26's runs all round the outline (measured on the recorded lens over the grid). Off by default.
+    {"lensRingDispersionOn",'b',0,0,1,NULL,NULL},
+    {"lensRingDispersion",'n',.8,0,4,NULL,NULL},          // red / blue each moved this far at the outline (pt)
+    {"lensRingDispersionWidth",'n',14,2,40,NULL,NULL},    // down to nothing this far inside (pt)
+    {"lensRingDispersionAngle",'n',15,-45,45,NULL,NULL},  // the direction turned from the normal (degrees; the system's AberrationAngle)
     // FIX88: 平稳背景时加强材质 again (FIX85, removed in FIX86).
     // FIX113 O: the chat list's segment bar's own lens and pill (user: not the
     // dock's parameters; its pill's inset, colour and border its own), first
@@ -2070,6 +2076,9 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
              @"dockMoveSpring":@YES,@"dockMoveResponse":@(WXG_DOCK26_RESPONSE),@"dockMoveDamping":@(WXG_DOCK26_DAMPING),
              @"lensKyantOn":@YES,@"lensKyantHeight":@(WXG_DOCK26_LENS_BAND),@"lensKyantAmount":@(WXG_DOCK26_LENS_AMOUNT),
              @"lensBlur":@0,@"lensTintOn":@NO,
+             // FIX128: the system's colour split, and how far in the bar's edge shows through the lens (3.5 pt of its 31).
+             @"lensRingDispersionOn":@YES,@"lensRingDispersion":@(WXG_DOCK26_SPLIT),@"lensRingDispersionWidth":@(WXG_DOCK26_SPLIT_WIDTH),
+             @"lensRingDispersionAngle":@(WXG_DOCK26_SPLIT_ANGLE),@"bodyPinch":@(WXG_DOCK26_PINCH),
              @"lensElasticOn":@YES,@"lensFlexSystem":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO};
 }
 static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
@@ -2081,15 +2090,16 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
 - (void)applyDockSystem26ForScreenWidth:(CGFloat)width {
     NSDictionary<NSString *,NSNumber *> *values=[self dockSystem26ValuesForScreenWidth:width];
     NSUserDefaults *suite=[[NSUserDefaults alloc] initWithSuiteName:@"com.runyu.WeChatLiquidGlass"];
-    if(![suite dictionaryForKey:WXGDockSystem26BackupKey].count) {
-        NSMutableDictionary *before=[NSMutableDictionary dictionary];
-        for(NSString *key in values) {
-            id value=nil;
-            @try {value=[self valueForKey:key];} @catch(__unused NSException *error) {value=nil;}
-            if([value isKindOfClass:NSNumber.class])before[key]=value;
-        }
-        [suite setObject:before forKey:WXGDockSystem26BackupKey];
+    // FIX128: a key this build's 套用 sets and an earlier build's did not is kept from now.
+    NSDictionary *kept=[suite dictionaryForKey:WXGDockSystem26BackupKey];
+    NSMutableDictionary *before=kept.count?[kept mutableCopy]:[NSMutableDictionary dictionary];
+    for(NSString *key in values) {
+        if(before[key])continue;
+        id value=nil;
+        @try {value=[self valueForKey:key];} @catch(__unused NSException *error) {value=nil;}
+        if([value isKindOfClass:NSNumber.class])before[key]=value;
     }
+    if(![before isEqualToDictionary:kept?:@{}])[suite setObject:before forKey:WXGDockSystem26BackupKey];
     for(NSString *key in values)[self setValue:values[key] forKey:key];
     [self save];
 }
@@ -2143,6 +2153,7 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
         l.kyantOn=[self extraNumber:@"segmentLensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"segmentLensKyantHeight"];   // FIX122
         l.kyantAmount=[self extraNumber:@"segmentLensKyantAmount"];l.kyantDispersion=[self extraNumber:@"segmentLensKyantDispersion"];
         l.kyantRimMax=[self extraNumber:@"segmentLensKyantRimFine"]>.5?0:WXGClamp([self extraNumber:@"segmentLensKyantRimMax"],1,20);   // FIX122 E
+        l.ringOn=NO;l.ringAmount=0;l.ringWidth=0;l.ringAngle=0;   // FIX128: the dock's lens only
     }else {
         l.refraction=_lensRefraction;l.dispersion=_lensDispersion;l.edgeWidth=_lensEdgeWidth;l.topRatio=_lensTopEdgeRatio;l.sharpness=_lensEdgeSharpness;
         l.dispersionWidth=[self extraNumber:@"lensDispersionWidth"];l.dispersionTopRatio=[self extraNumber:@"lensDispersionTopRatio"];
@@ -2159,6 +2170,9 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
         l.kyantOn=[self extraNumber:@"lensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"lensKyantHeight"];   // FIX122
         l.kyantAmount=[self extraNumber:@"lensKyantAmount"];l.kyantDispersion=[self extraNumber:@"lensKyantDispersion"];
         l.kyantRimMax=[self extraNumber:@"lensKyantRimFine"]>.5?0:WXGClamp([self extraNumber:@"lensKyantRimMax"],1,20);   // FIX122 E
+        // FIX128: iOS 26's colour split all round the outline (with Kyant's lens; in place of his split).
+        l.ringOn=[self extraNumber:@"lensRingDispersionOn"]>.5;l.ringAmount=WXGClamp([self extraNumber:@"lensRingDispersion"],0,4);
+        l.ringWidth=WXGClamp([self extraNumber:@"lensRingDispersionWidth"],2,40);l.ringAngle=WXGClamp([self extraNumber:@"lensRingDispersionAngle"],-45,45)*M_PI/180;
     }
     return l;
 }

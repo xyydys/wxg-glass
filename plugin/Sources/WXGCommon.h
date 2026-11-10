@@ -104,6 +104,9 @@ typedef struct {
     BOOL elasticOn;CGFloat elasticHeight;   // FIX113 Y: the drag-speed deformation, the share of its height change kept
     CGFloat elasticKeepStrip;               // FIX113 Y: how much of the strip inside the lens is kept as it deforms
     BOOL kyantOn;CGFloat kyantHeight,kyantAmount,kyantDispersion,kyantRimMax;   // FIX122 E: kyantRimMax 0 = his thin outermost ring   // FIX122: Kyant 透镜模式 (shares of the lens' short side; split strength)
+    // FIX128: iOS 26's colour split all round the outline, in place of Kyant's toward the corners (WXGMeshRefraction.h ring*):
+    // red / blue each moved this many points at the outline, over this many points inward, the direction turned by this (radians).
+    BOOL ringOn;CGFloat ringAmount,ringWidth,ringAngle;
 } WXGLensSettings;
 // FIX113: Telegram's tab icons for the dock (WXGTelegramIcons.m): on, the
 // frames of a tab (0 Chats, 1 Contacts, 2 Calls, 3 Settings; template

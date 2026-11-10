@@ -128,4 +128,18 @@ static inline void WXGDockSpringConstants(double response,double damping,double 
 #define WXG_DOCK26_DAMPING .86
 #define WXG_DOCK26_LENS_BAND .10         /* InnerRefractionHeight 7 on the 70 pt lens */
 #define WXG_DOCK26_LENS_AMOUNT .25       /* InnerRefractionAmount 17.5 */
+/* FIX128, from the lifted lens over the probe's grid (hold screenshots, 3x):
+   the bar's edge mirrored in the outer sliver and seen again further in,
+   each at a different depth per colour. Red always deeper, blue nearer the
+   outline, green between; the gap to green 0.57 pt at 2.5 pt, 0.50 at 2.7,
+   0.27 at 6.5, 0.18 at 7.5, 0.10 at 9 pt: 0.8 pt x (1 - depth / 14)^2, 14 pt
+   being the filter's EdgeStart. Lines crossing the outline also split
+   sideways, opposite ways above and below (about 0.13 pt at 5 pt): the
+   direction is turned from the normal (the filter's AberrationAngle, 15
+   degrees). The bar's edge itself shows 3.5 pt further in than it lies
+   (7.5 pt under the lens' top against 4): 3.5 / 31 of its half height. */
+#define WXG_DOCK26_SPLIT .8              /* red / blue each, at the outline (pt) */
+#define WXG_DOCK26_SPLIT_WIDTH 14.
+#define WXG_DOCK26_SPLIT_ANGLE 15.       /* degrees */
+#define WXG_DOCK26_PINCH .113
 #endif

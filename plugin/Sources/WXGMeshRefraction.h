@@ -80,7 +80,29 @@ typedef struct {
     /* FIX122 E (zero = his): the most the outermost ring may squeeze the
        picture (WXGKyantOffsetCapped). */
     float kyRimMax;
+    /* FIX128 (zero = off; only with Kyant's lens): iOS 26's own colour split,
+       as measured on the system tab bar's lifted lens (probe 2, the grid
+       under it): all round the outline, not only toward the corners. Each
+       colour shows the refracted picture from a point moved along the
+       outline's normal turned by ringAngle (radians): red from ringAmount
+       further out at the outline, blue from as far further in, green where
+       it is; the move falls to nothing ringWidth inside the outline as
+       (1 - depth / ringWidth)^2. Field units, as kyHeight. It is a move of
+       the finished picture (after the refraction, as the system's foreground
+       filter sits above its refracting backdrop), so in the mirrored outer
+       sliver the colours keep their order: red always deeper, blue nearer
+       the outline. */
+    float ringAmount,ringWidth,ringAngle;
 } WXGMeshOptics;
+/* FIX128: how far red's sample moves outward at inward depth `depth`. */
+static inline float WXGMeshRingShift(WXGMeshOptics o,float depth) {
+    if(!(o.ringAmount>0.f) || !(o.ringWidth>0.f))return 0.f;
+    float u=depth>0.f?depth/o.ringWidth:0.f;
+    if(u>=1.f)return 0.f;
+    return o.ringAmount*(1.f-u)*(1.f-u);
+}
+/* The band it needs of the mesh (0 = none). */
+static inline float WXGMeshRingBand(WXGMeshOptics o) {return o.ringAmount>0.f && o.ringWidth>0.f?o.ringWidth:0.f;}
 /* The full inset of the smaller bar, and the inset ramped by `along` (as
    WXGInnerInsetAlong, either sign). */
 static inline float WXGMeshShrinkFull(WXGMeshOptics o) {
@@ -207,6 +229,15 @@ static inline void WXGMeshKyantSource(WXGMeshOptics o,float px,float py,float *s
     float cx=o.width*.5f,cy=o.height*.5f,s=o.fieldScale>0.f?o.fieldScale:1.f;
     float zb=o.zoomBefore>0.f?o.zoomBefore:1.f,za=o.zoomAfter>0.f?o.zoomAfter:1.f;
     float x=(px-cx)/s,y=(py-cy)/s,w=WXGMeshShapeWidth(o)/s,h=WXGMeshShapeHeight(o)/s;
+    if(o.channel!=0.f && o.ringAmount>0.f) {   /* FIX128: this colour's picture, from a point moved along the turned normal */
+        WXGShapeSample r=o.radius>0.f?WXGRoundedOpticalField(x,y,w,h,o.radius):WXGCapsuleOpticalField(x,y,w,h);
+        float a=o.channel*WXGMeshRingShift(o,-r.distance);
+        if(a!=0.f) {
+            float cs=WXG_COS(o.ringAngle),sn=WXG_SIN(o.ringAngle);
+            x+=(r.nx*cs+r.ny*sn)*a;y+=(-r.nx*sn+r.ny*cs)*a;
+            px=cx+x*s;py=cy+y*s;
+        }
+    }
     WXGShapeSample f=o.radius>0.f?WXGRoundedOpticalField(x,y,w,h,o.radius):WXGCapsuleOpticalField(x,y,w,h);
     if(o.radius>0.f) {
         float half=WXG_MIN(w,h)*.5f,gr=WXG_MIN(o.radius*1.5f,half);
@@ -250,7 +281,7 @@ static inline int WXGBuildRefractionMesh(WXGMeshOptics o,WXGMeshPoint *points,in
     enum { WXGMeshAxisCapacity=96 };
     float xs[WXGMeshAxisCapacity],ys[WXGMeshAxisCapacity];
     float s=o.fieldScale>0.f?o.fieldScale:1.f;
-    float edge=WXG_MAX(WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),WXGMeshSoftBand(o,o.edgeWidth)),1.f)*s,radius=(o.radius>0.f?o.radius:WXG_MIN(WXGMeshShapeWidth(o),WXGMeshShapeHeight(o))*.5f/s)*s;
+    float edge=WXG_MAX(WXG_MAX(WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),WXGMeshRingBand(o)),WXGMeshSoftBand(o,o.edgeWidth)),1.f)*s,radius=(o.radius>0.f?o.radius:WXG_MIN(WXGMeshShapeWidth(o),WXGMeshShapeHeight(o))*.5f/s)*s;
     /* Curved ends need resolution over the whole corner, straight sides over the band. */
     float px=o.padX>0.f?o.padX:0.f,py=o.padY>0.f?o.padY:0.f;   /* FIX113 H: the shape's edges lie that far in */
     int cx=WXGMeshAxis(o.width,px+WXG_MAX(edge,radius)+2.f,8,24.f,xs,WXGMeshAxisCapacity);
@@ -290,7 +321,10 @@ typedef struct { float cx,cy,nx,ny,u; int kind; } WXGContourSample; /* kind 0 st
 static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,float t,float channel) {
     /* FIX122: Kyant's lens; a channel at most WXG_KYANT_CHANNEL_SPAN of the
        shift from green (|I| <= 1), so the rings follow the steepest one. */
-    if(o.kyHeight>0.f)return t+WXGKyantOffsetCapped(t,o.kyHeight,o.kyAmount,o.kyRimMax)*(1.f+channel*(o.dispersion>0.f?o.dispersion*WXG_KYANT_CHANNEL_SPAN:0.f));
+    if(o.kyHeight>0.f) {
+        float td=t-channel*WXGMeshRingShift(o,t);   /* FIX128: the ring's split moves where the picture is read (red further out) */
+        return td+WXGKyantOffsetCapped(td,o.kyHeight,o.kyAmount,o.kyRimMax)*(1.f+channel*(o.dispersion>0.f?o.dispersion*WXG_KYANT_CHANNEL_SPAN:0.f));
+    }
     float d=-t;
     float off=WXGMeshOffset(o,d,width);   /* FIX113 I, FIX114 I */
     return t+off-channel*o.dispersion*wxgEdgeC(d,dwidth);
@@ -298,7 +332,7 @@ static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,
 static inline float WXGMeshCurvature(WXGMeshOptics o,float width,float dwidth,float t) {
     const float h=.04f;float worst=0.f;
     for(int c=-1;c<=1;c++) {
-        if(c!=0 && !(o.dispersion>0.f))continue;
+        if(c!=0 && !(o.dispersion>0.f) && !(o.ringAmount>0.f))continue;
         float a=WXGMeshDepthSource(o,width,dwidth,t-h,(float)c),b=WXGMeshDepthSource(o,width,dwidth,t,(float)c),e=WXGMeshDepthSource(o,width,dwidth,t+h,(float)c);
         float k=WXG_ABS(a-2.f*b+e)/(h*h);if(k>worst)worst=k;
     }
@@ -308,7 +342,7 @@ static inline float WXGMeshCurvature(WXGMeshOptics o,float width,float dwidth,fl
 static inline int WXGMeshRings(WXGMeshOptics o,float limit,float pad,WXGMeshQuality q,float *rings,int capacity) {
     float side=WXG_MAX(o.edgeWidth,.5f),top=o.topRatio>0.f?side*WXGOClamp(o.topRatio,.05f,1.f):side;
     float dside=WXG_MAX(WXGMeshDispersionSide(o),.5f),dratio=WXGMeshDispersionRatio(o),dtop=dratio>0.f?dside*WXGOClamp(dratio,.05f,1.f):dside;
-    float band=WXG_MIN(WXG_MAX(WXG_MAX(side,dside),WXGMeshSoftBand(o,side))+.75f,limit),err=WXG_MAX(q.ringError,.01f);   // FIX114 I: and the soft band
+    float band=WXG_MIN(WXG_MAX(WXG_MAX(WXG_MAX(side,dside),WXGMeshRingBand(o)),WXGMeshSoftBand(o,side))+.75f,limit),err=WXG_MAX(q.ringError,.01f);   // FIX114 I: and the soft band
     int n=0;rings[n++]=-pad;
     float t=0.f;
     while(t<band && n<capacity-2) {
