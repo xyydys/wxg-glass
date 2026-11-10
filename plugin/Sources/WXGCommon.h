@@ -117,15 +117,14 @@ FOUNDATION_EXPORT UIImage *WXGTelegramTabImage(NSInteger tab,NSInteger frame,UIC
 // FIX113 F: the resting glyph's ink width as a share of the frame's (main thread).
 FOUNDATION_EXPORT CGFloat WXGTelegramRestInkWidth(NSInteger tab);
 typedef NS_ENUM(NSInteger,WXGRimStyle) {WXGRimStyleClassic=0,WXGRimStyleSampled=1,WXGRimStyleGlow=2,
-    WXGRimStyle26Own=3,WXGRimStyle26Overlay=4};   // FIX122 F: iOS 26 边框, its own colour changed / white and dark laid over
-// FIX122 F / G: an iOS 26 rim range's values (WXGRim26.h; points; along the outline as WXGRimGlowLevel).
+    WXGRimStyle26=3};   // FIX123: iOS 26 边框, the system's own recipe (FIX122 F / G's two styles are gone)
+// FIX123: an iOS 26 rim range's values (WXGRim26.h; points).
 typedef struct {
-    CGFloat peak,outer,inner,angle,endLevel,sharpness;   // the line's shape, where it is brightest along the outline
-    CGFloat blur,captureScale;                            // the colour sample: its blur (pt), its resolution
-    CGFloat opacity,brightness,chroma;                    // this appearance's: strength, brightness and saturation at the peak (of what lies under it)
-    CGFloat paleSaturation,paleLevel,paleShift,paleInner; // 自身色: the paler outer flank
-    CGFloat lighten,deepen,split,splitWidth;              // 叠浅叠深: the line's colour lighter outside, deeper inside, and where they meet
-    BOOL shadowOn;CGFloat shadowOpacity,shadowLength;     // the standalone inner shadow
+    CGFloat height,curve;                  // across the edge: how far in, how much it has fallen at its inner cut
+    CGFloat angle,key,fill,spread;         // along the outline: the key light's direction, the two lights' levels, the lobes' exponent
+    CGFloat opacity,gain,chroma,lift,ring; // this appearance's: strength; the colour matrix (luma gain, colour gain, lift); the faint line all round
+    CGFloat captureScale;BOOL systemFilter;// the copy of what lies under the rim: its resolution; or the system's own blending filter instead
+    BOOL shadowOn;CGFloat shadowOpacity,shadowLength;   // the optional inner shadow (not the system's)
 } WXGRim26Settings;
 // FIX86: the iOS 27-like rim (WXGRimGlow.h): a light that fades inward from
 // the outline over `width` (its curve `falloff`), brightest along the top and
@@ -283,7 +282,7 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (CGFloat)rimSoftLevelForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (WXGRimStyle)rimStyleValue;                                // the other glass's
 - (WXGRimStyle)rimStyleForScope:(WXGGlassScope)scope;        // FIX86: each range its own
-- (WXGRim26Settings)rim26ForScope:(WXGGlassScope)scope dark:(BOOL)dark;   // FIX122 F
+- (WXGRim26Settings)rim26ForScope:(WXGGlassScope)scope dark:(BOOL)dark;   // FIX123
 // FIX113 O: a range's material, its edge weakening, and a lens's parameters.
 - (NSString *)materialHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (CGFloat)materialOpacityForScope:(WXGGlassScope)scope dark:(BOOL)dark;

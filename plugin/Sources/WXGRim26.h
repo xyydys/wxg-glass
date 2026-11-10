@@ -2,83 +2,105 @@
 #define WXG_RIM26_H
 #include <math.h>
 #include "WXGOptics.h"
-#include "WXGRimGlow.h"
-/* FIX122 F / G iOS 26 边框 (user, 11-09, with two zoomed screenshots of an
-   iOS 26 button): two rim styles and an inner shadow, standalone (the three
-   earlier styles are left as they are).
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
+/* FIX123 iOS 26 边框, the system's own recipe (user, 11-10: "彻底抛开这两种
+   尝试", then ran the GlassProbe of probe/ on iOS 26.6 and sent its captures
+   and structure dump). FIX122 F / G guessed the rim from two screenshots;
+   both are gone. What the system draws, read from the dump and checked on
+   the 8x captures (24 px per point):
 
-   Measured on the screenshots: across the edge the line is a peak about
-   0.45 pt inside the outline, rising over ~0.25 pt (sigma) from outside
-   and falling over ~0.42 pt inward; its colour is what lies under it,
-   brightened (x1.84) and more saturated (x1.29); along the outline the
-   brightness follows |cos(angle - 135 deg)| at a constant width.
+   The rim is one layer over the glass (CASDFLayer + CASDFKeyFillHighlight-
+   Effect): key light at -45 deg, fill light at 135 deg, each spread 90 deg,
+   height 1 pt, curvature 0.7. In pixels that is
 
-   FIX122 G (user, on the phone: far worse than the sketches, "叠浅叠深
-   should be that colour made lighter and deeper, not white and black", and
-   the phone ran hot): F drew each profile as dozens of nested Core
-   Animation borders under nested masks, two full-resolution blurred
-   backdrops per glass. Now every part is one image computed per pixel with
-   exactly the sketch's formulas (and cached), stretched along straight
-   edges (nine-part stretch): the line's mask over one low-resolution,
-   blurred, brightened and saturated sample of what lies under the rim;
-   the lighter / deeper flanks and the shadow as plain white / black
-   images whose alpha is the line's own profile times their share, so they
-   only ever lighten or deepen the line's colour where the line is. */
-typedef struct { double centre,outer,inner,amplitude; int exponential; } WXGRim26Profile;
-static inline double WXGRim26Rise(double t,WXGRim26Profile p) {
-    if(p.exponential || t>=p.centre)return 1.;
-    double s=p.outer>1e-3?p.outer:1e-3,x=(t-p.centre)/s;
-    return exp(-.5*x*x);
-}
-static inline double WXGRim26Fall(double t,WXGRim26Profile p) {
-    double s=p.inner>1e-3?p.inner:1e-3;
-    if(p.exponential)return exp(-(t>0.?t:0.)/s);
-    if(t<=p.centre)return 1.;
-    double x=(t-p.centre)/s;return exp(-.5*x*x);
-}
-/* The level at depth t (points inward from the outline), amplitude included. */
-static inline double WXGRim26Level(double t,WXGRim26Profile p) {
-    if(t<0.)return 0.;
-    return (p.amplitude<0.?0.:p.amplitude>1.?1.:p.amplitude)*WXGRim26Rise(t,p)*WXGRim26Fall(t,p);
-}
-/* How far in anything is drawn: 3 sigmas past the centre (5 lengths). */
-static inline double WXGRim26Reach(WXGRim26Profile p) {
-    double s=p.inner>1e-3?p.inner:1e-3;
-    return p.exponential?5.*s:(p.centre>0.?p.centre:0.)+3.*s;
-}
+       alpha(d, n) = (key * max(0, n.k)^p + fill * max(0, -n.k)^p) * (1 - curve * d / height),   0 <= d <= height
 
-/* The parts and their shares across the edge (no strength). */
-typedef enum { WXGRim26PartLine=0,WXGRim26PartPale=1,WXGRim26PartLighter=2,WXGRim26PartDeeper=3,WXGRim26PartShadow=4 } WXGRim26Part;
+   d the depth inward from the outline, n its outward direction, k the
+   lower right at 45 deg; brightest AT the outline, falling in a straight
+   line to 30 % at 1 pt, and cut hard there (nothing beyond; no inner
+   shadow). Fitted: |cos|^1.00, slope 0.70 to 0.75, rms 0.014; with the
+   dumped matrix the lower right reads 1.05, the upper left 1.00 (key, fill). All round there is also a faint
+   line (full to height / 3, gone by 2 height / 3), seen where the lights
+   are out: `ring`.
+
+   Its colour is not white: the layer carries the filter vibrantColorMatrix,
+   so each pixel is the glass under it turned by a colour matrix, mixed by
+   alpha:   out = face + alpha * (clamp(M face) - face),
+   M face = lift + gain * Y + chroma * (face - Y)   (Y its Rec. 709 luma, on
+   the display's encoded values). Dark glass (dumped): gain 1.35, chroma 3.0,
+   lift 0.15 (fitted back from the captures: 1.37, 2.95, 0.147). Light glass
+   (not in the dump; fitted the same way on eight backdrops, rms 0.003):
+   gain 0.174, chroma 1.51, lift 0.847: nearly white, tinted by what is
+   under it.
+
+   Here: alpha as one cached image per shape (computed per pixel, 4 x 4
+   samples), as the mask of a colour-matrix copy of what lies under the rim
+   (WXGGlassView.m). No blur, no bands, nothing per frame. */
 typedef struct {
-    double peak,outer,inner;            /* the line */
-    double angle,endLevel,sharpness;    /* along the outline (WXGRimGlowLevel) */
-    double paleShift,paleInner;         /* 自身色: the paler copy's centre (from the peak) and inner fall */
-    double split,splitWidth;            /* 叠浅叠深: where the lighter outer flank turns into the deeper inner one (from the peak), over how much */
-    double shadowLength;
+    double height,curve;        /* across the edge: how far in (pt), how much it has fallen there (0..1) */
+    double angle,key,fill,spread; /* along the outline: the key light's direction (deg; 45 = lower right, 0 = bottom, 90 = right), the two lights' levels, the lobes' exponent */
+    double ring;                /* the faint line all round */
+    double shadowLength;        /* the optional inner shadow (not the system's) */
 } WXGRim26Shape;
-static inline double WXGRim26Smooth(double x) {x=x<0.?0.:x>1.?1.:x;return x*x*(3.-2.*x);}
-static inline double WXGRim26Share(WXGRim26Part part,double d,WXGRim26Shape s) {
-    if(d<0.)return 0.;
-    WXGRim26Profile line={s.peak,s.outer,s.inner,1,0};
-    switch(part) {
-        case WXGRim26PartLine:return WXGRim26Level(d,line);
-        case WXGRim26PartPale:{WXGRim26Profile p={s.peak+s.paleShift>0.?s.peak+s.paleShift:0.,s.outer,s.paleInner,1,0};return WXGRim26Level(d,p);}
-        case WXGRim26PartLighter:
-        case WXGRim26PartDeeper: {
-            double c=s.peak+s.split,w=s.splitWidth>.01?s.splitWidth:.01;
-            double outer=1.-WXGRim26Smooth((d-(c-w))/(2.*w));
-            return WXGRim26Level(d,line)*(part==WXGRim26PartLighter?outer:1.-outer);
-        }
-        case WXGRim26PartShadow:{WXGRim26Profile p={0,0,s.shadowLength,1,1};return WXGRim26Level(d,p);}
-    }
-    return 0.;
+static inline double WXGRim26Clamp(double v,double lo,double hi) {return !(v==v)?lo:v<lo?lo:v>hi?hi:v;}
+/* The two lights along the outline; (nx, ny) the outward direction, y down. */
+static inline double WXGRim26Along(double nx,double ny,WXGRim26Shape s) {
+    double r=WXGRim26Clamp(s.angle,-360,360)*M_PI/180.,c=nx*sin(r)+ny*cos(r);
+    c=WXGRim26Clamp(c,-1,1);
+    double p=s.spread>.05?s.spread:.05;
+    double v=c>0.?s.key*pow(c,p):s.fill*pow(-c,p);
+    return WXGRim26Clamp(v,0,1);
 }
+/* Across the edge at depth d (pt): a straight line from 1 at the outline to
+   1 - curve at `height`, nothing outside [0, height]. */
+static inline double WXGRim26Across(double d,WXGRim26Shape s) {
+    double h=s.height>.05?s.height:.05;
+    if(d<0. || d>h)return 0.;
+    return 1.-WXGRim26Clamp(s.curve,0,1)*d/h;
+}
+/* The faint line all round: full to height / 3, gone by 2 height / 3. */
+static inline double WXGRim26Ring(double d,WXGRim26Shape s) {
+    double h=s.height>.05?s.height:.05;
+    if(d<0. || d>h)return 0.;
+    return WXGRim26Clamp(s.ring,0,1)*WXGRim26Clamp(2.-3.*d/h,0,1);
+}
+/* The two together: the faint line laid over the lights as one layer over
+   another (it shows where they do not; the captures: 0.15 of the full rim
+   where the lights are out, 0.03 at the sides, none at their brightest). */
+static inline double WXGRim26Alpha(double d,double nx,double ny,WXGRim26Shape s) {
+    double lights=WXGRim26Clamp(WXGRim26Along(nx,ny,s)*WXGRim26Across(d,s),0,1);
+    return WXGRim26Clamp(lights+WXGRim26Ring(d,s)*(1.-lights),0,1);
+}
+/* The optional inner shadow: the same all round, falling exponentially. */
+static inline double WXGRim26Shadow(double d,WXGRim26Shape s) {
+    if(d<0.)return 0.;
+    return exp(-d/(s.shadowLength>1e-3?s.shadowLength:1e-3));
+}
+typedef enum { WXGRim26PartLine=0,WXGRim26PartShadow=1 } WXGRim26Part;
 static inline double WXGRim26PartReach(WXGRim26Part part,WXGRim26Shape s) {
-    WXGRim26Profile line={s.peak,s.outer,s.inner,1,0};
-    if(part==WXGRim26PartShadow){WXGRim26Profile p={0,0,s.shadowLength,1,1};return WXGRim26Reach(p);}
-    if(part==WXGRim26PartPale){WXGRim26Profile p={s.peak+s.paleShift>0.?s.peak+s.paleShift:0.,s.outer,s.paleInner,1,0};
-        double a=WXGRim26Reach(p),b=WXGRim26Reach(line);return a>b?a:b;}
-    return WXGRim26Reach(line);
+    return part==WXGRim26PartShadow?5.*(s.shadowLength>1e-3?s.shadowLength:1e-3):(s.height>.05?s.height:.05);
+}
+
+/* The system's colour matrix: lift + gain * Y + chroma * (c - Y) per channel
+   (rows R, G, B, A of r, g, b, a, offset, as QuartzCore's). */
+static inline void WXGRim26Matrix(double gain,double chroma,double lift,float m[20]) {
+    static const double luma[3]={.2126,.7152,.0722};
+    for(int i=0;i<20;i++)m[i]=0.f;
+    for(int row=0;row<3;row++) {
+        for(int column=0;column<3;column++)m[row*5+column]=(float)((gain-chroma)*luma[column]+(row==column?chroma:0.));
+        m[row*5+4]=(float)lift;
+    }
+    m[18]=1.f;
+}
+/* What a pixel of the rim shows over `face` (0..1 each) at `alpha`. */
+static inline void WXGRim26Colour(const float m[20],const double face[3],double alpha,double out[3]) {
+    for(int row=0;row<3;row++) {
+        double t=m[row*5]*face[0]+m[row*5+1]*face[1]+m[row*5+2]*face[2]+m[row*5+4];
+        t=WXGRim26Clamp(t,0,1);
+        out[row]=face[row]+WXGRim26Clamp(alpha,0,1)*(t-face[row]);
+    }
 }
 
 /* A part's image for a glass of w x h points with corner radius r (a
@@ -106,24 +128,32 @@ static inline WXGShapeSample WXGRim26Field(double x,double y,WXGRim26Canvas c,do
     return r>=half-1e-3?WXGCapsuleOpticalField((float)x,(float)y,(float)c.width,(float)c.height)
                        :WXGRoundedOpticalField((float)x,(float)y,(float)c.width,(float)c.height,(float)r);
 }
-/* Fills one byte per pixel (0..255): coverage of the outline (anti-aliased),
-   times the level along the outline (unless levelOff), times the part's
-   share across the edge, times `strength`; 2 x 2 samples per pixel. */
-static inline void WXGRim26Fill(unsigned char *bytes,int stride,WXGRim26Canvas c,double r,double scale,WXGRim26Part part,WXGRim26Shape s,
-                                int levelOff,double strength) {
-    strength=strength<0.?0.:strength>1.?1.:strength;
+/* Fills one byte per pixel (0..255): the part's alpha, the mean of 4 x 4
+   samples per pixel (so the hard inner cut is anti-aliased by coverage
+   alone, as the system's own at the screen's scale). `bleed` (pixels): that
+   far outside the outline counts as the outline itself, for a layer that is
+   then clipped by the glass' own continuous corner (Core Animation's, the
+   same clip as the body: the rim's outer edge is exactly the body's, also
+   where this field's corner is a few tenths of a point off it); 0: the
+   outline anti-aliased here. */
+#define WXG_RIM26_SAMPLES 4
+static inline void WXGRim26Fill(unsigned char *bytes,int stride,WXGRim26Canvas c,double r,double scale,WXGRim26Part part,WXGRim26Shape s,double bleed) {
+    const int n=WXG_RIM26_SAMPLES;
+    double reach=WXGRim26PartReach(part,s),out=(bleed>0.?bleed:0.)/scale;
     for(int j=0;j<c.rows;j++)for(int i=0;i<c.columns;i++) {
         double sum=0;
-        for(int sy=0;sy<2;sy++)for(int sx=0;sx<2;sx++) {
-            double x=(i+.25+.5*sx)/scale-c.width*.5,y=(j+.25+.5*sy)/scale-c.height*.5;
+        /* the pixel's centre first: far outside or far inside, nothing to add up */
+        WXGShapeSample mid=WXGRim26Field((i+.5)/scale-c.width*.5,(j+.5)/scale-c.height*.5,c,r);
+        if(mid.distance>out+1./scale || -mid.distance>reach+1./scale){bytes[j*stride+i]=0;continue;}
+        for(int sy=0;sy<n;sy++)for(int sx=0;sx<n;sx++) {
+            double x=(i+(sx+.5)/n)/scale-c.width*.5,y=(j+(sy+.5)/n)/scale-c.height*.5;
             WXGShapeSample f=WXGRim26Field(x,y,c,r);
-            double cover=.5-f.distance*scale;cover=cover<0.?0.:cover>1.?1.:cover;
-            if(cover<=0.)continue;
             double d=-f.distance;
-            double level=levelOff?1.:WXGRimGlowLevel(f.nx,f.ny,s.angle,s.endLevel,s.sharpness);
-            sum+=cover*level*WXGRim26Share(part,d<0.?0.:d,s);
+            if(d<-out)continue;
+            if(d<0.)d=0.;
+            sum+=part==WXGRim26PartShadow?WXGRim26Shadow(d,s):WXGRim26Alpha(d,f.nx,f.ny,s);
         }
-        double v=sum*.25*strength;
+        double v=sum/(n*n);
         bytes[j*stride+i]=(unsigned char)lround((v<0.?0.:v>1.?1.:v)*255.);
     }
 }
