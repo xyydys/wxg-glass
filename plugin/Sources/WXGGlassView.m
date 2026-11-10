@@ -18,6 +18,7 @@ _Static_assert(sizeof(WXGFloat4)==16,"Float4 ABI");
 #include "WXGRimGlow.h"
 #include "WXGRim26.h"
 #include "WXGRimDetail.h"
+#include "WXGCapsule26.h"
 #include "WXGDropShadow.h"
 #include <pthread.h>
 
@@ -638,22 +639,65 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
              level:^float(float nx,float ny){return (float)WXGRimGlowLevel(nx,ny,angle,endLevel,sharpness);}];
 }
 @end
+// FIX133: a capsule's outline as iOS 26 draws it (WXGCapsule26.h: its long
+// edges sink toward the round ends from half a radius before them), in its
+// own box moved by (dx, dy), as a closed sub-path.
+static void WXGCapsule26AddOutline(CGMutablePathRef path,CGSize size,CGFloat dx,CGFloat dy) {
+    enum { capacity=4*WXG_CAPSULE26_QUARTER_MAX };
+    double xs[capacity],ys[capacity];
+    int n=WXGCapsule26Outline(size.width,size.height,xs,ys,capacity);
+    if(n<3)return;
+    CGPathMoveToPoint(path,NULL,dx+(CGFloat)xs[0],dy+(CGFloat)ys[0]);
+    for(int i=1;i<n;i++)CGPathAddLineToPoint(path,NULL,dx+(CGFloat)xs[i],dy+(CGFloat)ys[i]);
+    CGPathCloseSubpath(path);
+}
+// The band `width` deep inside that outline (filled even-odd: the outline
+// and the outline of the capsule that much smaller; the dip is a share of
+// the radius, so the two run parallel to within 0.02 pt). Kept by size:
+// every glass of a size shares its bands' paths.
+static CGPathRef WXGCapsule26Band(CGSize size,CGFloat width) {
+    static NSCache<NSString *,UIBezierPath *> *cache;static dispatch_once_t once;
+    dispatch_once(&once,^{cache=[NSCache new];cache.countLimit=160;});
+    NSString *key=[NSString stringWithFormat:@"%.2f|%.2f|%.3f",size.width,size.height,width];
+    UIBezierPath *kept=[cache objectForKey:key];
+    if(kept)return kept.CGPath;
+    CGMutablePathRef path=CGPathCreateMutable();
+    WXGCapsule26AddOutline(path,size,0,0);
+    CGSize inner=CGSizeMake(size.width-2*width,size.height-2*width);
+    if(inner.width>.5 && inner.height>.5)WXGCapsule26AddOutline(path,inner,width,width);
+    kept=[UIBezierPath bezierPathWithCGPath:path];CGPathRelease(path);
+    [cache setObject:kept forKey:key];
+    return kept.CGPath;
+}
 // One border per band: the outline inset by the band's inset, with the corner
 // radius inset with it, the band's width and opacity. Layers are pooled in z
 // order (placed first = lowest); returns how many are in use.
+// FIX133: on a capsule the bands are filled shapes along iOS 26's own
+// outline (WXGCapsule26Band) instead of Core Animation borders, whose
+// capsule stays straight almost up to its round ends.
 static NSUInteger WXGRimPlaceBands(CALayer *holder,NSMutableArray<CALayer *> *pool,NSUInteger used,const WXGRimBands *bands,
                                    CGSize size,CGFloat radius,CGFloat red,CGFloat green,CGFloat blue,CGFloat scale) {
+    BOOL capsule=WXGCapsule26Applies(size.width,size.height,radius);
     for(int k=0;k<bands->count;k++) {
         CGFloat inset=(CGFloat)bands->inset[k],width=(CGFloat)bands->width[k],alpha=(CGFloat)bands->alpha[k];
         CGRect frame=CGRectInset((CGRect){CGPointZero,size},inset,inset);
         if(width<.001 || alpha<.001 || CGRectIsEmpty(frame))continue;
-        CALayer *band;
-        if(used<pool.count)band=pool[used];
-        else {band=[CALayer layer];band.cornerCurve=kCACornerCurveContinuous;[holder addSublayer:band];[pool addObject:band];}
+        CAShapeLayer *band;
+        if(used<pool.count)band=(CAShapeLayer *)pool[used];
+        else {
+            band=[CAShapeLayer layer];band.cornerCurve=kCACornerCurveContinuous;band.fillRule=kCAFillRuleEvenOdd;band.strokeColor=nil;band.lineWidth=0;band.fillColor=nil;
+            [holder addSublayer:band];[pool addObject:band];
+        }
         ++used;
         band.hidden=NO;band.frame=frame;band.contentsScale=scale;
-        band.cornerRadius=MAX(0,radius-inset);band.borderWidth=width;
-        band.borderColor=[UIColor colorWithRed:red green:green blue:blue alpha:WXGClamp(alpha,0,1)].CGColor;
+        UIColor *colour=[UIColor colorWithRed:red green:green blue:blue alpha:WXGClamp(alpha,0,1)];   // (kept while its CGColor is handed over)
+        if(capsule) {
+            band.cornerRadius=0;band.borderWidth=0;
+            band.path=WXGCapsule26Band(frame.size,width);band.fillColor=colour.CGColor;
+        }else {
+            band.path=nil;band.fillColor=nil;
+            band.cornerRadius=MAX(0,radius-inset);band.borderWidth=width;band.borderColor=colour.CGColor;
+        }
     }
     return used;
 }
@@ -1049,6 +1093,25 @@ void WXGDropDeferredGlassTicks(void) {
     for(WXGGlassView *glass in pending)[glass clearPendingTick];
 }
 
+// FIX133: where a glass' backdrops, veil and overlay are cut. A rounded
+// rectangle or a circle: the rect itself on Core Animation's continuous
+// corner, as before. A capsule: iOS 26's outline (WXGCapsule26.h) lies
+// inside the plain stadium, by up to 1.7 % of the radius near the round
+// ends; the backdrops can only be cut to a corner radius (a mask over them
+// would cut them off from what lies behind), so they are cut to the stadium
+// drawn in by the dip at the round end's start (1.36 %: 0.3 pt on a 44 pt
+// capsule): inside iOS 26's outline all round but for a tenth of a point,
+// and the border, drawn on that outline itself, covers the rest. The clip's
+// own coordinates keep their origin at the rect's corner (the bounds'
+// origin moves with the inset), so everything laid out in it stays put.
+static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
+    BOOL capsule=WXGCapsule26Applies(rect.size.width,rect.size.height,radius);
+    CGFloat inset=capsule?(CGFloat)WXG_CAPSULE26_JUNCTION*MIN(rect.size.width,rect.size.height)*.5:0;
+    CGRect frame=CGRectInset(rect,inset,inset);
+    clip.frame=frame;clip.bounds=(CGRect){CGPointMake(inset,inset),frame.size};
+    clip.layer.cornerCurve=capsule?kCACornerCurveCircular:kCACornerCurveContinuous;
+    clip.layer.cornerRadius=MAX(0,radius-inset);
+}
 @implementation WXGGlassView {
     CALayer *_dropShadow;NSString *_dropShadowKey;   // FIX114 K
     NSHashTable<UIView *> *_shadowClips;              // FIX114 L: ancestors opened for the shadow
@@ -1647,7 +1710,8 @@ NSDictionary *WXGDropShadowEvidence(void) {
     CGSize size=CGSizeMake(MAX(1,round(self.bounds.size.width*scale)),MAX(1,round(self.bounds.size.height*scale)));
     [CATransaction begin]; [CATransaction setDisableActions:YES];
     CGRect drawnBar=[self drawnBarRect];
-    _bodyClip.frame=drawnBar; _lensClip.frame=_lensRect;
+    WXGClipToGlass(_bodyClip,drawnBar,[self radiusForRect:drawnBar scale:_barScale]);
+    WXGClipToGlass(_lensClip,_lensRect,[self radiusForRect:_lensRect scale:_lensRect.size.height/MAX(1,_glassRect.size.height)]);   // FIX133
     _lensClip.hidden=_lensSuppressed;
     [self layoutDropShadow:drawnBar];   // FIX114 K
     {
@@ -1672,8 +1736,6 @@ NSDictionary *WXGDropShadowEvidence(void) {
         if(metalAt!=NSNotFound && veilAt+1!=metalAt){[_bodyClip.layer insertSublayer:_veilFallback below:_metal.layer];++_veilReorders;}
         [CATransaction commit];
     }
-    _bodyClip.layer.cornerRadius=[self radiusForRect:drawnBar scale:_barScale];
-    _lensClip.layer.cornerRadius=[self radiusForRect:_lensRect scale:_lensRect.size.height/MAX(1,_glassRect.size.height)];
     // The borders (FIX130: two styles, each range its own): iOS 26's, a
     // highlight over the glass coloured by what lies under it (its own
     // layers: WXGRim26View), or iOS 27's, two highlights fading inward from

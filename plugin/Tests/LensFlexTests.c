@@ -64,6 +64,20 @@ int main(void) {
         double cx,cy,dx,dy;WXGLensFlexScale(c,p,&cx,&cy);WXGLensFlexScale(d,p,&dx,&dy);
         CHECK(fabs(cx-dx)<.003,"60 and 120 frames a second alike (%.4f %.4f)",cx,dx);
     }
+    /* FIX133: the narrow-and-tall half alone scaled; the wide-and-flat half and 1 untouched. */
+    {
+        WXGLensFlex wide={0,0,.30,0},narrow={0,0,-.30,0};   /* e = +0.30 and -0.30 */
+        WXGLensFlexParams half=p;half.squeeze=.5;WXGLensFlexParams none=p;none.squeeze=0;
+        double ax,ay,bx,by;
+        WXGLensFlexScale(wide,p,&ax,&ay);WXGLensFlexScale(wide,half,&bx,&by);
+        CHECK(ax==bx && ay==by && ax>1 && ay<1,"the wide half as it was (%.4f %.4f)",bx,by);
+        WXGLensFlexScale(narrow,p,&ax,&ay);WXGLensFlexScale(narrow,half,&bx,&by);
+        CHECK(fabs((1-bx)-.5*(1-ax))<1e-12 && fabs((by-1)-.5*(ay-1))<1e-12 && ax<1 && ay>1,"the squeeze halved (%.4f x %.4f against %.4f x %.4f)",bx,by,ax,ay);
+        WXGLensFlexScale(narrow,none,&bx,&by);
+        CHECK(bx==1 && by==1,"none of it");
+        WXGLensFlexParams sym=half;sym.symmetric=1;WXGLensFlexScale(narrow,sym,&bx,&by);WXGLensFlexScale(wide,p,&ax,&ay);
+        CHECK(bx==ax && by==ay,"symmetric: always the wide half, whatever the squeeze");
+    }
     if(failures){printf("LensFlexTests: %d failure(s)\n",failures);return 1;}
     printf("PASS: iOS 26 lens deformation (FIX126): the recorded drag reproduced, closer than the velocity spring; builds and fades at a steady speed; the opposite shape on stopping, no ringing; signed, symmetric on request; frame-rate independent.\n");
     return 0;

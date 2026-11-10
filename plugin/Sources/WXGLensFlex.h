@@ -37,10 +37,15 @@
    alone give such a move its later two thirds.
 
    Only speeds are needed: each follower keeps how far it lags the lens. */
-typedef struct { int on; double gainX,gainY,minX,maxX,minY,maxY,fast,slow,slowDamping; int symmetric; } WXGLensFlexParams;
+/* FIX133 (user: "too much, above all the squeezed landing"): `squeeze`
+   scales the narrow-and-tall half alone (e < 0: what a move to the right
+   lands in and a move to the left starts with); 1 is the system's (its
+   recorded taps: 0.95 x 1.07 after one tab, 0.72 x 1.23 at the start of
+   three tabs to the left), 0 none of it. */
+typedef struct { int on; double gainX,gainY,minX,maxX,minY,maxY,fast,slow,slowDamping; int symmetric; double squeeze; } WXGLensFlexParams;
 typedef struct { double lagFast,velFast,lagSlow,velSlow; } WXGLensFlex;
 static inline WXGLensFlexParams WXGLensFlexDefaults(void) {
-    WXGLensFlexParams p={0,.311,.49,.80,1.20,.72,1.20,18.,8.,.5,0};return p;
+    WXGLensFlexParams p={0,.311,.49,.80,1.20,.72,1.20,18.,8.,.5,0,1.};return p;
 }
 /* One frame: lensVelocity in points per second, pitch the distance between
    two neighbouring tabs' centres (points). */
@@ -63,6 +68,7 @@ static inline double WXGLensFlexClamp(double x,double lo,double hi) {return x<lo
 static inline void WXGLensFlexScale(WXGLensFlex f,WXGLensFlexParams p,double *scaleX,double *scaleY) {
     double e=f.lagSlow-f.lagFast;   /* fast - slow */
     if(p.symmetric)e=fabs(e);
+    else if(e<0.)e*=p.squeeze<0.?0.:p.squeeze;
     *scaleX=WXGLensFlexClamp(1.+p.gainX*e,p.minX,p.maxX);
     *scaleY=WXGLensFlexClamp(1.-p.gainY*e,p.minY,p.maxY);
 }

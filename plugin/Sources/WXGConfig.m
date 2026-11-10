@@ -421,6 +421,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensFlexSlow",'n',8,3,20,NULL,NULL},         // the slow follower's frequency (rad/s): lower, a longer and softer swing back
     {"lensFlexDamping",'n',.5,.15,1.2,NULL,NULL},  // its damping ratio: lower, more of the opposite shape on stopping
     {"lensFlexSymmetric",'b',0,0,1,NULL,NULL},
+    {"lensFlexSqueeze",'n',1,0,1.5,NULL,NULL},     // FIX133: the narrow-and-tall half alone x this (1: the system's)
     // FIX127 (user: "wire the table's system values into the dock, the whole thing replaced"): what
     // the dock could not express of iOS 26's tab bar (WXGDockSystem.h; probe 2). All 0 / off: the dock as it was.
     {"dockCellExtra",'n',0,0,20,NULL,NULL},        // each tab's cell this much wider than a quarter (they overlap; iOS 26: 10)
@@ -1362,7 +1363,7 @@ static NSString *const WXGGlassKeys[5][WXGGlassValueCount]={WXG_GLASS_KEYS("g","
              @"bodyPinch":@(WXG_DOCK26_PINCH),
              @"lensGlassRimStyle":@(WXGRimStyle26),@"lensGlassEdge26Curve":@(WXG_DOCK26_LENS_RIM_CURVE),
              @"lensGlassEdge26Height":@1,@"lensGlassEdge26Opacity":@1,@"lensGlassDarkEdge26Opacity":@1,
-             @"lensElasticOn":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO,
+             @"lensElasticOn":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO,@"lensFlexSqueeze":@1,
              // FIX131: the bar's own glass (the buttons' law but for its light face and its shadow), its iOS 26 border,
              // the resting selection (its colours are dockSystem26Colours), a tap's lift and drop, the light under a finger.
              @"dockGlassBand":@.25,@"dockGlassDepth":@.8,@"dockGlassBandMax":@20,@"dockGlassBlurSmall":@1.8,@"dockGlassBlurLarge":@5.5,
@@ -1429,7 +1430,7 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
     p.on=1;
     double k=WXGClamp([self extraNumber:@"lensFlexStrength"],0,3);p.gainX*=k;p.gainY*=k;
     p.slow=WXGClamp([self extraNumber:@"lensFlexSlow"],3,20);p.slowDamping=WXGClamp([self extraNumber:@"lensFlexDamping"],.15,1.2);
-    p.symmetric=[self extraNumber:@"lensFlexSymmetric"]>.5;
+    p.symmetric=[self extraNumber:@"lensFlexSymmetric"]>.5;p.squeeze=WXGClamp([self extraNumber:@"lensFlexSqueeze"],0,1.5);
     return p;
 }
 - (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark {
