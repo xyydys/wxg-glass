@@ -33,6 +33,7 @@
 @property(nonatomic) CGFloat titleSize;              // FIX91
 @property(nonatomic) NSInteger titleWeight;          // FIX91: 0 light .. 4 bold
 @property(nonatomic) BOOL nativeSize;                // FIX114 B: WeChat's own artwork at its own size (not Telegram's, whose animation frames are 26 pt)
+@property(nonatomic) CGFloat iconHeight;             // FIX135: > 0: every icon fitted to this height (iOS 26's tab icons: 26 pt), at most 37 / 26 as wide
 @property(nonatomic) BOOL themeFirst;                // FIX115 D: 底栏主题优先
 @property(nonatomic,copy) NSArray<NSValue *> *normalShown,*selectedShown;   // FIX115 D: the size WeChat / the theme shows each at (CGSize; zero: unknown)
 @property(nonatomic) BOOL bolderSelected;
@@ -146,6 +147,8 @@ static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) 
             // only larger ones fitted to 30 x 30 (was always fitted to 28 x 26:
             // WeChat's 28 pt icons were drawn smaller).
             CGFloat ratio=job.nativeSize?MIN(1,MIN(30/MAX(icon.size.width,1),30/MAX(icon.size.height,1))):MIN(28/MAX(icon.size.width,1),26/MAX(icon.size.height,1));
+            // FIX135: a set height (iOS 26's tab icons are 24.7 - 27.3 pt high in a 26 pt row, up to 37 pt wide).
+            if(job.iconHeight>1)ratio=MIN(job.iconHeight*(37./26.)/MAX(icon.size.width,1),job.iconHeight/MAX(icon.size.height,1));
             // FIX115 D: 底栏主题优先: at the size WeChat / the theme shows it (any
             // size; a PNG's own size depends on the scale it was loaded at).
             NSArray<NSValue *> *shownSizes=useSelected?job.selectedShown:job.normalShown;
@@ -681,6 +684,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
     job.normalShown=normalShown;job.selectedShown=selectedShown;
     job.iconShift=[self iconShift];job.titleShift=[self titleShift];
     WXGConfig *c=WXGConfig.shared;job.titleSize=c.dockTitleSize;job.titleWeight=c.dockTitleWeight;job.bolderSelected=c.dockTitleBolderSelected;
+    job.iconHeight=WXGTelegramTabIconsOn()?0:WXGClamp([c extraNumber:@"dockIconHeight"],0,36);   // FIX135 (Telegram's frames keep their own size)
     job.badges=[self atlasBadgesForCenters:centers iconShift:job.iconShift scale:job.scale];
     return job;
 }
@@ -753,7 +757,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 - (CGFloat)titleShift {WXGConfig *c=WXGConfig.shared;return c.dockIconOffset+(c.dockIconTitleGap-5)*.5;}
 - (NSString *)iconLayoutKey {
     WXGConfig *c=WXGConfig.shared;
-    return [NSString stringWithFormat:@"%.2f/%.2f/%.2f/%ld/%d/%d/%@",[self iconShift],[self titleShift],c.dockTitleSize,(long)c.dockTitleWeight,c.dockTitleBolderSelected,WXGDockThemeFirst(),   // FIX115 D
+    return [NSString stringWithFormat:@"%.2f/%.2f/%.2f/%ld/%d/%d/%.1f/%@",[self iconShift],[self titleShift],c.dockTitleSize,(long)c.dockTitleWeight,c.dockTitleBolderSelected,WXGDockThemeFirst(),[c extraNumber:@"dockIconHeight"],   // FIX115 D; FIX135
         [[c extraHex:@"dockAccentHex"] stringByAppendingString:[self badgeLayoutKey]]];   // FIX113 C: a new accent redraws the icons; G: so do the badges
 }
 - (UIImage *)iconImageSelected:(BOOL)selected fallback:(BOOL)fallback {
@@ -1829,7 +1833,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     WXGDockGeometry g=[self layoutAtAnchor:_lensX-_materialRect.origin.x press:press];   // FIX127: iOS 26's cells too
     _glass.lensRestHeight=g.lensHeight;   // FIX113 Y: undeformed
     if(elastic) {
-        double sx=1,sy=1;WXGLensFlexScale(_flex,c.lensFlexParams,&sx,&sy);
+        double sx=1,sy=1;WXGLensFlexScaleAt(_flex,c.lensFlexParams,press,&sx,&sy);   // FIX135: down, not flatter than the system's pill
         float w=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*(float)c.endWrap),h=(float)(g.lensHeight*sy);
         h=(float)WXGLensFlexRestingHeight(h,g.barHeight,press,1.);   // FIX134: down, never cut by the bar
         g.lensX+=(g.lensWidth-w)*.5f;g.lensY+=(g.lensHeight-h)*.5f;g.lensWidth=w;g.lensHeight=h;

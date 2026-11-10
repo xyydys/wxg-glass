@@ -83,6 +83,29 @@ int main(void) {
     CHECK(WXGLensFlexRestingHeight(64.8,62,0,1)==60 && WXGLensFlexRestingHeight(64.8,62,.5,1)==64.8 && WXGLensFlexRestingHeight(64.8,62,1,1)==64.8,"down 60, lifted free");
     CHECK(fabs(WXGLensFlexRestingHeight(64.8,62,.25,1)-62.4)<1e-9,"half way lifted: half way (%.3f)",WXGLensFlexRestingHeight(64.8,62,.25,1));
     CHECK(WXGLensFlexRestingHeight(57.8,62,0,1)==57.8 && WXGLensFlexRestingHeight(44,62,0,1)==44 && WXGLensFlexRestingHeight(70,0,0,1)==70,"what fits is left alone");
+    /* FIX135: the wide-and-flat half has its own factor; down, the pill is never flatter than restFlattest (0.82:
+       the width then 1.11, as the system's pill come down: 1.13 x 0.82); lifted, the model's own (to 0.72); the
+       narrow-and-tall half is not touched by either. */
+    {
+        WXGLensFlex far={0,0,.9,0},near={0,0,.2,0},narrow={0,0,-.3,0};
+        double lx,ly,dx,dy,mx,my;
+        WXGLensFlexScale(far,p,&lx,&ly);WXGLensFlexScaleAt(far,p,1,&mx,&my);
+        CHECK(lx==mx && ly==my && fabs(ly-.72)<1e-12 && fabs(lx-1.2)<1e-12,"lifted: the model's own, to its bounds (%.3f x %.3f)",lx,ly);
+        WXGLensFlexScaleAt(far,p,0,&dx,&dy);
+        CHECK(fabs(dy-.82)<1e-9 && fabs(dx-(1+.311*(.18/.49)))<1e-9,"down: no flatter than 0.82, the width with it (%.4f x %.4f)",dx,dy);
+        WXGLensFlex mid={0,0,.5,0};double ux,uy,vx,vy;   /* (0.9 is past the model's own bound either way) */
+        WXGLensFlexScaleAt(mid,p,1,&ux,&uy);WXGLensFlexScaleAt(mid,p,0,&vx,&vy);WXGLensFlexScaleAt(mid,p,.25,&mx,&my);
+        CHECK(my<vy && my>uy && mx>vx && mx<ux,"half way lifted: between the two (%.3f x %.3f in %.3f .. %.3f)",mx,my,uy,vy);
+        WXGLensFlexScaleAt(near,p,0,&dx,&dy);WXGLensFlexScale(near,p,&lx,&ly);
+        CHECK(dx==lx && dy==ly && dy>.82,"a little flat: left alone");
+        WXGLensFlexParams half=p;half.flatten=.5;
+        WXGLensFlexScale(near,half,&mx,&my);
+        CHECK(fabs((mx-1)-.5*(lx-1))<1e-12 && fabs((1-my)-.5*(1-ly))<1e-12,"the flat half halved (%.4f x %.4f)",mx,my);
+        WXGLensFlexScale(narrow,p,&lx,&ly);WXGLensFlexScaleAt(narrow,half,0,&mx,&my);
+        CHECK(lx==mx && ly==my && lx<1 && ly>1,"the narrow half as it was");
+        WXGLensFlexParams none=p;none.restFlattest=1;WXGLensFlexScaleAt(far,none,0,&dx,&dy);
+        CHECK(dx==1 && dy==1,"restFlattest 1: down, not flat at all");
+    }
     if(failures){printf("LensFlexTests: %d failure(s)\n",failures);return 1;}
     printf("PASS: iOS 26 lens deformation (FIX126): the recorded drag reproduced, closer than the velocity spring; builds and fades at a steady speed; the opposite shape on stopping, no ringing; signed, symmetric on request; frame-rate independent.\n");
     return 0;

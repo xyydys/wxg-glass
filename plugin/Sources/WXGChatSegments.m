@@ -273,7 +273,7 @@ static WXGDockGeometry WXGSegLayout(float width,float height,float gap,float anc
     WXGDockGeometry g=WXGSegLayout(w,h,gap,anchor,(float)press,(float)c.growth,0,(float)c.barGrowth,(float)c.endWrap,n);
     _glass.lensRestHeight=g.lensHeight;   // FIX113 Y: undeformed
     if(!reduce) {
-        double sx=1,sy=1;WXGLensFlexScale(_flex,WXGConfig.shared.lensFlexParams,&sx,&sy);   // FIX126: as the system's lens
+        double sx=1,sy=1;WXGLensFlexScaleAt(_flex,WXGConfig.shared.lensFlexParams,press,&sx,&sy);   // FIX126: as the system's lens; FIX135: down, not too flat
         float lw=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*(float)c.endWrap),lh=(float)(g.lensHeight*sy);
         lh=(float)WXGLensFlexRestingHeight(lh,g.barHeight,press,1.);   // FIX134: down, never cut by the bar
         g.lensX+=(g.lensWidth-lw)*.5f;g.lensY+=(g.lensHeight-lh)*.5f;g.lensWidth=lw;g.lensHeight=lh;

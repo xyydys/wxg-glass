@@ -42,10 +42,19 @@
    lands in and a move to the left starts with); 1 is the system's (its
    recorded taps: 0.95 x 1.07 after one tab, 0.72 x 1.23 at the start of
    three tabs to the left), 0 none of it. */
-typedef struct { int on; double gainX,gainY,minX,maxX,minY,maxY,fast,slow,slowDamping; int symmetric; double squeeze; } WXGLensFlexParams;
+/* FIX135 (user, a frame of the pill come down after a move to the left:
+   "it is so flat here it cannot be looked at, pressing into the icon and
+   the text; THIS is the squeeze I meant"): the other half. `flatten` scales
+   the wide-and-flat half alone (e > 0: what a move to the left lands in and
+   a move to the right starts with). And down, the pill is never flatter
+   than `restFlattest` of its height (0.82: the flattest the system's own
+   pill was recorded after it had come down, three tabs to the left, 1.13 x
+   0.82; the model's lower bound of 0.72 is the lifted lens', which is 70 pt
+   high and has room): WXGLensFlexScaleAt. */
+typedef struct { int on; double gainX,gainY,minX,maxX,minY,maxY,fast,slow,slowDamping; int symmetric; double squeeze,flatten,restFlattest; } WXGLensFlexParams;
 typedef struct { double lagFast,velFast,lagSlow,velSlow; } WXGLensFlex;
 static inline WXGLensFlexParams WXGLensFlexDefaults(void) {
-    WXGLensFlexParams p={0,.311,.49,.80,1.20,.72,1.20,18.,8.,.5,0,1.};return p;
+    WXGLensFlexParams p={0,.311,.49,.80,1.20,.72,1.20,18.,8.,.5,0,1.,1.,.82};return p;
 }
 /* One frame: lensVelocity in points per second, pitch the distance between
    two neighbouring tabs' centres (points). */
@@ -64,13 +73,28 @@ static inline void WXGLensFlexStep(WXGLensFlex *f,double lensVelocity,double pit
     if(v==0. && fabs(f->lagFast)<1e-5 && fabs(f->lagSlow)<1e-5 && fabs(f->velFast)<1e-5 && fabs(f->velSlow)<1e-5){f->lagFast=f->velFast=f->lagSlow=f->velSlow=0;}
 }
 static inline double WXGLensFlexClamp(double x,double lo,double hi) {return x<lo?lo:x>hi?hi:x;}
-/* The width and height factors now. */
-static inline void WXGLensFlexScale(WXGLensFlex f,WXGLensFlexParams p,double *scaleX,double *scaleY) {
+/* The width and height factors now, of a lens lifted by `press` (0 down ..
+   1): lifted (0.5 and more) as the model has them; down, the wide-and-flat
+   half no further than where the height is restFlattest (the width with it:
+   0.82 goes with 1.11), easing between the two. */
+static inline void WXGLensFlexScaleAt(WXGLensFlex f,WXGLensFlexParams p,double press,double *scaleX,double *scaleY) {
     double e=f.lagSlow-f.lagFast;   /* fast - slow */
     if(p.symmetric)e=fabs(e);
     else if(e<0.)e*=p.squeeze<0.?0.:p.squeeze;
+    if(e>0.) {
+        e*=p.flatten<0.?0.:p.flatten;
+        double flattest=WXGLensFlexClamp(p.restFlattest,.3,1.),most=p.gainY>1e-6?(1.-flattest)/p.gainY:e;
+        if(e>most) {
+            double lifted=press<=0.?0.:press>=.5?1.:press/.5;
+            e=most+(e-most)*lifted;
+        }
+    }
     *scaleX=WXGLensFlexClamp(1.+p.gainX*e,p.minX,p.maxX);
     *scaleY=WXGLensFlexClamp(1.-p.gainY*e,p.minY,p.maxY);
+}
+/* The same of a lifted lens (the model alone). */
+static inline void WXGLensFlexScale(WXGLensFlex f,WXGLensFlexParams p,double *scaleX,double *scaleY) {
+    WXGLensFlexScaleAt(f,p,1.,scaleX,scaleY);
 }
 /* FIX134 (user, a recording of a tap three tabs to the right: "resting, its
    top and bottom are cut, as if two pieces were missing"): the deformation's

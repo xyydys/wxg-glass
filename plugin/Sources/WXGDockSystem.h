@@ -166,6 +166,20 @@ static inline void WXGDockSpringConstants(double response,double damping,double 
    it multiplies what is under it (x 2.4 at its centre in dark, x 1.2 in
    light: on WeChat's pages about a white of 0.15). Both come in over about
    0.1 s; at the release the spot grows to 4 x and both fade in about 0.45 s. */
+/* FIX135: its icons and titles (probe 2's view dump of the bar; a cell is 54
+   pt high in the 62 pt bar): the symbols' image views are 24.7 - 27.3 pt high
+   (26 the row) and up to 37 pt wide, their middles 19 - 20.7 pt under the
+   cell's top: 7 pt above the bar's middle. The titles are 10 pt (their boxes
+   10 pt wide a character), in boxes 14 pt high from 33 pt under the cell's
+   top: 6 pt under the bar's middle, their baseline 16.6 pt under it.
+   As the dock's own settings (its icons' middle is 8 pt above the bar's
+   middle plus the shift, its titles' top 10 pt under it plus theirs; a title
+   drawn in the system font has its baseline 9.5 pt under its top): the
+   icons 1 pt down and the titles 2.9 pt up, i.e. a gap of 1.1 and both 1 pt up. */
+#define WXG_DOCK26_ICON_HEIGHT 26.
+#define WXG_DOCK26_ICON_TITLE_GAP 1.
+#define WXG_DOCK26_ICON_OFFSET (-1.)
+#define WXG_DOCK26_TITLE_SIZE 10.
 #define WXG_DOCK26_GLOW_SPOT .15
 #define WXG_DOCK26_GLOW_BAR .04
 #define WXG_DOCK26_GLOW_DISC 93.

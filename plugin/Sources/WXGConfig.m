@@ -116,6 +116,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // (first: the refraction band's).
     {"dockIconTitleGap",'n',5,0,16,NULL,NULL},    // FIX89: the dock's icons: icon to title (pt)
     {"dockIconOffset",'n',0,-12,12,NULL,NULL},    // FIX89: icon and title together, + down (pt)
+    {"dockIconHeight",'n',0,0,36,NULL,NULL},      // FIX135: > 0: the icons fitted to this height (iOS 26: 26 pt); 0: as before (WeChat's own size)
     {"dockTitleSize",'n',10,8,13,NULL,NULL},      // FIX91: the titles' size (pt; 10.5 before)
     {"dockTitleWeight",'n',1,0,4,NULL,NULL},      // FIX91: 0 light .. 4 bold (2 medium); FIX114 B: regular, as WeChat's own tab titles
     {"dockTitleWeightNative",'b',0,0,1,NULL,NULL},   // FIX114 B: the one-time move from the old default (medium) to regular is done
@@ -422,6 +423,8 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensFlexDamping",'n',.5,.15,1.2,NULL,NULL},  // its damping ratio: lower, more of the opposite shape on stopping
     {"lensFlexSymmetric",'b',0,0,1,NULL,NULL},
     {"lensFlexSqueeze",'n',1,0,1.5,NULL,NULL},     // FIX133: the narrow-and-tall half alone x this (1: the system's)
+    {"lensFlexFlatten",'n',1,0,1.5,NULL,NULL},     // FIX135: the wide-and-flat half alone x this
+    {"lensFlexRestFloor",'n',.82,.5,1,NULL,NULL},  // FIX135: down, the pill never flatter than this share of its height (the system's flattest: 0.82)
     // FIX127 (user: "wire the table's system values into the dock, the whole thing replaced"): what
     // the dock could not express of iOS 26's tab bar (WXGDockSystem.h; probe 2). All 0 / off: the dock as it was.
     {"dockCellExtra",'n',0,0,20,NULL,NULL},        // each tab's cell this much wider than a quarter (they overlap; iOS 26: 10)
@@ -1363,7 +1366,7 @@ static NSString *const WXGGlassKeys[5][WXGGlassValueCount]={WXG_GLASS_KEYS("g","
              @"bodyPinch":@(WXG_DOCK26_PINCH),
              @"lensGlassRimStyle":@(WXGRimStyle26),@"lensGlassEdge26Curve":@(WXG_DOCK26_LENS_RIM_CURVE),
              @"lensGlassEdge26Height":@1,@"lensGlassEdge26Opacity":@1,@"lensGlassDarkEdge26Opacity":@1,
-             @"lensElasticOn":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO,@"lensFlexSqueeze":@1,
+             @"lensElasticOn":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO,@"lensFlexSqueeze":@1,@"lensFlexFlatten":@1,@"lensFlexRestFloor":@.82,
              // FIX131: the bar's own glass (the buttons' law but for its light face and its shadow), its iOS 26 border,
              // the resting selection (its colours are dockSystem26Colours), a tap's lift and drop, the light under a finger.
              @"dockGlassBand":@.25,@"dockGlassDepth":@.8,@"dockGlassBandMax":@20,@"dockGlassBlurSmall":@1.8,@"dockGlassBlurLarge":@5.5,
@@ -1373,7 +1376,11 @@ static NSString *const WXGGlassKeys[5][WXGGlassValueCount]={WXG_GLASS_KEYS("g","
              @"dockRimStyle":@(WXGRimStyle26),
              @"selectionOpacity":@.75,@"pressedOpacity":@0,
              @"dockTapDropTime":@(WXG_SCRIPT26_DROP_TIME),@"dockTapLensShare":@(WXG_SCRIPT26_LIFT_TIME/WXGDockSpringDuration(WXG_DOCK26_RESPONSE,WXG_DOCK26_DAMPING)),
-             @"dockTouchGlow":@YES,@"dockTouchGlowSpot":@(WXG_DOCK26_GLOW_SPOT),@"dockTouchGlowBar":@(WXG_DOCK26_GLOW_BAR)};
+             @"dockTouchGlow":@YES,@"dockTouchGlowSpot":@(WXG_DOCK26_GLOW_SPOT),@"dockTouchGlowBar":@(WXG_DOCK26_GLOW_BAR),
+             // FIX135: its icons and titles (probe 2's view dump: the icons 26 pt high, their middle 7 pt above the bar's;
+             // the titles 10 pt, their box from 6 pt under the bar's middle, 14 pt high; medium, as a tab bar's are).
+             @"dockIconHeight":@(WXG_DOCK26_ICON_HEIGHT),@"dockIconTitleGap":@(WXG_DOCK26_ICON_TITLE_GAP),@"dockIconOffset":@(WXG_DOCK26_ICON_OFFSET),
+             @"dockTitleSize":@(WXG_DOCK26_TITLE_SIZE),@"dockTitleWeight":@2,@"dockTitleBolderSelected":@NO};
 }
 // FIX131: the colours that go with them: the resting selection, black at 0.07 in light and white at 0.14 in dark
 // (the alpha here x the 0.75 above).
@@ -1430,7 +1437,7 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
     p.on=1;
     double k=WXGClamp([self extraNumber:@"lensFlexStrength"],0,3);p.gainX*=k;p.gainY*=k;
     p.slow=WXGClamp([self extraNumber:@"lensFlexSlow"],3,20);p.slowDamping=WXGClamp([self extraNumber:@"lensFlexDamping"],.15,1.2);
-    p.symmetric=[self extraNumber:@"lensFlexSymmetric"]>.5;p.squeeze=WXGClamp([self extraNumber:@"lensFlexSqueeze"],0,1.5);
+    p.symmetric=[self extraNumber:@"lensFlexSymmetric"]>.5;p.squeeze=WXGClamp([self extraNumber:@"lensFlexSqueeze"],0,1.5);p.flatten=WXGClamp([self extraNumber:@"lensFlexFlatten"],0,1.5);p.restFlattest=WXGClamp([self extraNumber:@"lensFlexRestFloor"],.5,1);
     return p;
 }
 - (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark {
