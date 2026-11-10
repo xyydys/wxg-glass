@@ -552,6 +552,7 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
         if(!v.live)return @[];
         // FIX113 U: seeing the bar (its own group), only the lens' own blur.
         CGFloat radius=(seesBar?c.lensBlur*press:dock.blur+(c.lensBlur-dock.blur)*press)*c.syncBlurScale;
+        if(split && kring>0.f)radius+=TL.ringSoft*press*c.syncBlurScale;   // FIX129: the system's split is soft (each colour's copy spread)
         [v configureGroup:group.length?group:@"wxg.travel" radius:radius channel:split?i+1:0 plain:seesBar tone:[c backdropToneForScope:WXGGlassScopeDock]];   // FIX114 J
         v.captureLimit=c.performanceMode?2:0;[v applyCaptureScale];
         WXGMeshOptics o={(float)padded.width,(float)padded.height,1.f,0.f,optical.edgeWidth,optical.refraction,(float)press,1.f,1.f+(float)(press*(c.lensZoom-1)),
@@ -2724,6 +2725,9 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             lensOptics.dispersion=kd;
             if(kring>0.f){lensOptics.ringAmount=kring;lensOptics.ringWidth=roundf((float)L.ringWidth*2.f)/2.f;lensOptics.ringAngle=(float)L.ringAngle;}
             lensSplit=mesh && (kd>0.f || kring>0.f) && c.syncDispersion && WXGFilterFactoryAvailable() && !_lightweight;
+            // FIX129 (user: the system's split is soft and restrained, this was
+            // hard lines): each colour's copy spread by the lens' own blur.
+            if(lensSplit && kring>0.f)lensBlur+=L.ringSoft*press*scale;
         }
         // FIX113 U: seeing the bar, the lens shows that bar made smaller (the
         // shader's inset), its own veil, edge ring and rim, then refracted. The
@@ -3234,7 +3238,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         @"kyantBody":@{@"on":@([WXGConfig.shared kyantBodyForScope:self.glassScope].on),@"scope":@(self.glassScope)},   // FIX122 D
         @"kyantLens":@{@"on":@([self lensSettings].kyantOn),@"height":@([self lensSettings].kyantHeight),@"amount":@([self lensSettings].kyantAmount),
                        @"dispersion":@([self lensSettings].kyantDispersion),@"channelsShown":@((NSInteger)(!_lensStack[0].hidden)+(!_lensStack[1].hidden)+(!_lensStack[2].hidden)),   // FIX122
-                       @"ring":@{@"on":@([self lensSettings].ringOn),@"amount":@([self lensSettings].ringAmount),@"width":@([self lensSettings].ringWidth),
+                       @"ring":@{@"on":@([self lensSettings].ringOn),@"amount":@([self lensSettings].ringAmount),@"width":@([self lensSettings].ringWidth),@"soft":@([self lensSettings].ringSoft),
                                  @"angleDegrees":@(round([self lensSettings].ringAngle*18000/M_PI)/100)}},   // FIX128
         @"meshTransformClass":@(WXGMeshTransformClass()!=nil),@"bodyMeshApplied":@(_bodyBackdrop.meshApplied),@"bodyMeshAccepted":@(_bodyBackdrop.meshAccepted),
         @"bodyMeshVertices":@(_bodyBackdrop.meshVertices),@"refractionTransition":[self transitionEvidence],

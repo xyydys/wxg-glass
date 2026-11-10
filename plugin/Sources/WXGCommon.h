@@ -107,6 +107,7 @@ typedef struct {
     // FIX128: iOS 26's colour split all round the outline, in place of Kyant's toward the corners (WXGMeshRefraction.h ring*):
     // red / blue each moved this many points at the outline, over this many points inward, the direction turned by this (radians).
     BOOL ringOn;CGFloat ringAmount,ringWidth,ringAngle;
+    CGFloat ringSoft;   // FIX129: the blur (the lens' own blur filter's radius) that turns the three colours' hard copies into the system's soft bands
 } WXGLensSettings;
 // FIX113: Telegram's tab icons for the dock (WXGTelegramIcons.m): on, the
 // frames of a tab (0 Chats, 1 Contacts, 2 Calls, 3 Settings; template

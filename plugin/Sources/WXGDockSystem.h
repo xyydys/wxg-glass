@@ -127,7 +127,11 @@ static inline void WXGDockSpringConstants(double response,double damping,double 
 #define WXG_DOCK26_RESPONSE .40
 #define WXG_DOCK26_DAMPING .86
 #define WXG_DOCK26_LENS_BAND .10         /* InnerRefractionHeight 7 on the 70 pt lens */
-#define WXG_DOCK26_LENS_AMOUNT .25       /* InnerRefractionAmount 17.5 */
+/* FIX129: the filter's InnerRefractionAmount is 17.5 (0.25 of the height),
+   but with 0.25 the bar's edge mirrored in the lens' outer sliver shows at
+   1.9 pt under the lens' top and the recording has it at 2.5 pt (the bright
+   band inside the outline is that much wider); 0.30 puts it there. */
+#define WXG_DOCK26_LENS_AMOUNT .30
 /* FIX128, from the lifted lens over the probe's grid (hold screenshots, 3x):
    the bar's edge mirrored in the outer sliver and seen again further in,
    each at a different depth per colour. Red always deeper, blue nearer the
@@ -141,5 +145,12 @@ static inline void WXGDockSpringConstants(double response,double damping,double 
 #define WXG_DOCK26_SPLIT .8              /* red / blue each, at the outline (pt) */
 #define WXG_DOCK26_SPLIT_WIDTH 14.
 #define WXG_DOCK26_SPLIT_ANGLE 15.       /* degrees */
-#define WXG_DOCK26_PINCH .113
+/* FIX129: 0.12, by the softened picture: the bar's edge then reads 7.6 pt
+   under the lens' top on screen, as recorded (0.113 by the edge alone). */
+#define WXG_DOCK26_PINCH .12
+/* FIX129: each colour's copy of an edge is spread on the system's lens (10-90%
+   over about 1 pt; a Gaussian of about 0.4 pt), so the bands run into each
+   other: the lens' blur filter at radius 0.8. */
+#define WXG_DOCK26_SPLIT_SOFT .8
+#define WXG_DOCK26_LENS_RIM_CURVE .8     /* the lens' highlight rim: curvature 0.8 (buttons 0.7) */
 #endif

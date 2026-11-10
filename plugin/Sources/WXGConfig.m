@@ -378,6 +378,10 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensRingDispersion",'n',.8,0,4,NULL,NULL},          // red / blue each moved this far at the outline (pt)
     {"lensRingDispersionWidth",'n',14,2,40,NULL,NULL},    // down to nothing this far inside (pt)
     {"lensRingDispersionAngle",'n',15,-45,45,NULL,NULL},  // the direction turned from the normal (degrees; the system's AberrationAngle)
+    // FIX129 (user: "it looks largely wrong: the system's split is soft and restrained, this is the sketch's hard lines"): each
+    // colour's copy of an edge is itself spread on the system's lens (about 0.4 pt: its filter adds many samples along the
+    // spectrum; here there are three), so the bands run into each other. The same blur on the lens' three colour layers.
+    {"lensRingDispersionSoft",'n',.8,0,3,NULL,NULL},      // that blur's radius (the blur filter's units, as 透镜模糊)
     // FIX88: 平稳背景时加强材质 again (FIX85, removed in FIX86).
     // FIX113 O: the chat list's segment bar's own lens and pill (user: not the
     // dock's parameters; its pill's inset, colour and border its own), first
@@ -2065,8 +2069,10 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
    overlapping by 10 pt, the lens lifted 16 pt wider and taller (70 pt: 70 / 62
    of the bar) and 8.4 pt past the bar's ends, the bar 3.55% larger while
    held, the lens' content 1.16x; the lens' glass Kyant's curve with the
-   system's band and depth (0.10 and 0.25 of its height), no blur and no
-   tint; the system's deformation, position spring and hang. */
+   system's band (0.10 of its height) and the depth that puts the mirrored
+   bar where the recording has it (0.30; the filter's own number is 0.25),
+   no blur and no tint; the system's deformation, position spring and hang;
+   its colour split (all round, soft) and its own highlight border. */
 - (NSDictionary<NSString *,NSNumber *> *)dockSystem26ValuesForScreenWidth:(CGFloat)width {
     CGFloat fraction=width>100?WXGClamp((width-2*WXG_DOCK26_SIDE_MARGIN)/width,.65,.98):.9045;
     return @{@"widthFraction":@(fraction),@"height":@(WXG_DOCK26_HEIGHT),@"selectionInset":@(WXG_DOCK26_INSET),
@@ -2079,6 +2085,11 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
              // FIX128: the system's colour split, and how far in the bar's edge shows through the lens (3.5 pt of its 31).
              @"lensRingDispersionOn":@YES,@"lensRingDispersion":@(WXG_DOCK26_SPLIT),@"lensRingDispersionWidth":@(WXG_DOCK26_SPLIT_WIDTH),
              @"lensRingDispersionAngle":@(WXG_DOCK26_SPLIT_ANGLE),@"bodyPinch":@(WXG_DOCK26_PINCH),
+             // FIX129: the split's softness; the lens' own border as the system's (its highlight rim, curvature 0.8),
+             // the lens range of 边框与渐隐 using its own values.
+             @"lensRingDispersionSoft":@(WXG_DOCK26_SPLIT_SOFT),
+             @"lensGlassShareBorder":@0,@"lensGlassRimStyle":@(WXGRimStyle26),@"lensGlassEdge26Curve":@(WXG_DOCK26_LENS_RIM_CURVE),
+             @"lensGlassEdge26Height":@1,@"lensGlassEdge26Opacity":@1,@"lensGlassDarkEdge26Opacity":@1,
              @"lensElasticOn":@YES,@"lensFlexSystem":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO};
 }
 static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
@@ -2153,7 +2164,7 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
         l.kyantOn=[self extraNumber:@"segmentLensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"segmentLensKyantHeight"];   // FIX122
         l.kyantAmount=[self extraNumber:@"segmentLensKyantAmount"];l.kyantDispersion=[self extraNumber:@"segmentLensKyantDispersion"];
         l.kyantRimMax=[self extraNumber:@"segmentLensKyantRimFine"]>.5?0:WXGClamp([self extraNumber:@"segmentLensKyantRimMax"],1,20);   // FIX122 E
-        l.ringOn=NO;l.ringAmount=0;l.ringWidth=0;l.ringAngle=0;   // FIX128: the dock's lens only
+        l.ringOn=NO;l.ringAmount=0;l.ringWidth=0;l.ringAngle=0;l.ringSoft=0;   // FIX128: the dock's lens only
     }else {
         l.refraction=_lensRefraction;l.dispersion=_lensDispersion;l.edgeWidth=_lensEdgeWidth;l.topRatio=_lensTopEdgeRatio;l.sharpness=_lensEdgeSharpness;
         l.dispersionWidth=[self extraNumber:@"lensDispersionWidth"];l.dispersionTopRatio=[self extraNumber:@"lensDispersionTopRatio"];
@@ -2173,6 +2184,7 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
         // FIX128: iOS 26's colour split all round the outline (with Kyant's lens; in place of his split).
         l.ringOn=[self extraNumber:@"lensRingDispersionOn"]>.5;l.ringAmount=WXGClamp([self extraNumber:@"lensRingDispersion"],0,4);
         l.ringWidth=WXGClamp([self extraNumber:@"lensRingDispersionWidth"],2,40);l.ringAngle=WXGClamp([self extraNumber:@"lensRingDispersionAngle"],-45,45)*M_PI/180;
+        l.ringSoft=WXGClamp([self extraNumber:@"lensRingDispersionSoft"],0,3);   // FIX129
     }
     return l;
 }
