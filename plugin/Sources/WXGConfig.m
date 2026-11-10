@@ -1153,15 +1153,15 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"finderGlassEdge26ShadowOn",'b',0,0,1,"edge26ShadowOn",NULL},
     {"finderGlassEdge26ShadowOpacity",'n',0.06,0,0.5,"edge26ShadowOpacity",NULL},
     {"finderGlassEdge26ShadowLength",'n',2.5,0.2,12,"edge26ShadowLength",NULL},
-    {"finderGlassEdge26Opacity",'n',1,0,1,"edge26Opacity",NULL},
+    {"finderGlassEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},   // 视频号: over video, both appearances start as the other glass's dark one (as its other border keys)
     {"finderGlassDarkEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},
-    {"finderGlassEdge26Gain",'n',0.174,0,4,"edge26Gain",NULL},
+    {"finderGlassEdge26Gain",'n',1.35,0,4,"darkEdge26Gain",NULL},
     {"finderGlassDarkEdge26Gain",'n',1.35,0,4,"darkEdge26Gain",NULL},
-    {"finderGlassEdge26Chroma",'n',1.51,0,8,"edge26Chroma",NULL},
+    {"finderGlassEdge26Chroma",'n',3,0,8,"darkEdge26Chroma",NULL},
     {"finderGlassDarkEdge26Chroma",'n',3,0,8,"darkEdge26Chroma",NULL},
-    {"finderGlassEdge26Lift",'n',0.847,0,1,"edge26Lift",NULL},
+    {"finderGlassEdge26Lift",'n',0.15,0,1,"darkEdge26Lift",NULL},
     {"finderGlassDarkEdge26Lift",'n',0.15,0,1,"darkEdge26Lift",NULL},
-    {"finderGlassEdge26Ring",'n',0.13,0,1,"edge26Ring",NULL},
+    {"finderGlassEdge26Ring",'n',0.04,0,1,"darkEdge26Ring",NULL},
     {"finderGlassDarkEdge26Ring",'n',0.04,0,1,"darkEdge26Ring",NULL},
 };
 static const size_t WXGExtraCount=sizeof WXGExtraSpecs/sizeof *WXGExtraSpecs;
