@@ -1,0 +1,63 @@
+name: build-glass-probe
+
+# 玻璃探针（probe/）：一个独立的 dylib，注入到高系统上能显示原生玻璃的 App 里，
+# 采集原生玻璃的像素和图层结构。和插件本体无关，只在 probe/ 改动时构建。
+
+on:
+  push:
+    paths:
+      - "probe/**"
+      - ".github/workflows/probe.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install clang-18, lld
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-18 lld-18 llvm-18 curl
+      - name: Cache iOS 16.5 SDK
+        id: sdk-cache
+        uses: actions/cache@v4
+        with:
+          path: plugin/toolchain/sdks/iPhoneOS16.5.sdk
+          key: ios-sdk-16-5-v1
+      - name: Fetch iOS 16.5 SDK (sparse)
+        if: steps.sdk-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p plugin/toolchain && cd plugin/toolchain
+          GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 --filter=blob:none --no-checkout https://github.com/theos/sdks sdks
+          cd sdks
+          git sparse-checkout init --no-cone
+          git sparse-checkout set \
+            '/iPhoneOS16.5.sdk/usr/include/' \
+            '/iPhoneOS16.5.sdk/usr/lib/' \
+            '/iPhoneOS16.5.sdk/System/Library/Frameworks/' \
+            '/iPhoneOS16.5.sdk/SDKSettings.*'
+          git checkout
+          test -d iPhoneOS16.5.sdk/System/Library/Frameworks
+      - name: Fetch ldid
+        run: |
+          curl -fsSL --retry 4 --retry-delay 3 -o "$RUNNER_TEMP/ldid" \
+            https://github.com/ProcursusTeam/ldid/releases/download/v2.1.5-procursus7/ldid_linux_x86_64
+          chmod +x "$RUNNER_TEMP/ldid"
+          file "$RUNNER_TEMP/ldid" | grep -q ELF
+      - name: Build GlassProbe.dylib
+        env:
+          SDK: ${{ github.workspace }}/plugin/toolchain/sdks/iPhoneOS16.5.sdk
+        run: |
+          LDID="$RUNNER_TEMP/ldid" sh probe/build.sh "$GITHUB_WORKSPACE/probe/dist"
+          /usr/lib/llvm-18/bin/llvm-objdump --macho --dylibs-used probe/dist/GlassProbe.dylib
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: GlassProbe-dylib
+          path: probe/dist/GlassProbe.dylib
+          retention-days: 30
