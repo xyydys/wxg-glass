@@ -118,6 +118,7 @@ __attribute__((unused)) static WXGDockGeometry WXGSegElastic(float width,float h
     double _lensX,_velocityX,_targetX,_press,_pressVelocity,_targetPress;
     WXGElasticMotion _elastic;WXGStretchState _endStretch;int _endStretchSide;
     WXGKyantElastic _kyElastic;   // FIX122 C: Kyant's drag-speed deformation (its velocity)
+    WXGLensFlex _flex;            // FIX126: the system's (two followers of the lens)
     CFTimeInterval _lastTime,_stillSince;
     BOOL _fingerDown,_dragging;CGPoint _touchStart;
     NSInteger _initialSelected,_touchDownIndex,_resumeIndex;
@@ -292,7 +293,9 @@ __attribute__((unused)) static WXGDockGeometry WXGSegElastic(float width,float h
     WXGDockGeometry g=WXGSegLayout(w,h,gap,anchor,(float)press,(float)c.growth,0,(float)c.barGrowth,(float)c.endWrap,n);
     _glass.lensRestHeight=g.lensHeight;   // FIX113 Y: undeformed
     if(!reduce) {
-        double sx=1,sy=1;WXGKyantElasticScale(_kyElastic,WXGConfig.shared.kyantElasticParams,&sx,&sy);
+        double sx=1,sy=1;WXGLensFlexParams flex=WXGConfig.shared.lensFlexParams;
+        if(flex.on)WXGLensFlexScale(_flex,flex,&sx,&sy);   // FIX126: the system's
+        else WXGKyantElasticScale(_kyElastic,WXGConfig.shared.kyantElasticParams,&sx,&sy);
         float lw=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*(float)c.endWrap),lh=(float)(g.lensHeight*sy);
         g.lensX+=(g.lensWidth-lw)*.5f;g.lensY+=(g.lensHeight-lh)*.5f;g.lensWidth=lw;g.lensHeight=lh;
     }
@@ -476,9 +479,11 @@ __attribute__((unused)) static WXGDockGeometry WXGSegElastic(float width,float h
     if(!reduce)WXGElasticStep(&_elastic,_velocityX,dt);else _elastic=(WXGElasticMotion){0};
     if(!reduce)WXGKyantElasticStep(&_kyElastic,_velocityX,[self centerForIndex:self.count-1]-[self centerForIndex:0],WXGConfig.shared.kyantElasticParams,dt);   // FIX122 C
     else _kyElastic=(WXGKyantElastic){0};
+    if(!reduce && self.count>1)WXGLensFlexStep(&_flex,_velocityX,([self centerForIndex:self.count-1]-[self centerForIndex:0])/(double)(self.count-1),WXGConfig.shared.lensFlexParams,dt);   // FIX126
+    else _flex=(WXGLensFlex){0};
     if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];
     BOOL still=!_fingerDown && !scripted && fabs(_press)<.002 && fabs(_pressVelocity)<.01 && fabs(_lensX-_targetX)<.05 && fabs(_velocityX)<1 &&
-               fabs(_elastic.stretch)<.0005 && fabs(_elastic.velocity)<.01 && WXGKyantElasticStill(_kyElastic) && !_endStretch.tracking && fabs(_endStretch.x)<.01 && _selectionCarry==0;
+               fabs(_elastic.stretch)<.0005 && fabs(_elastic.velocity)<.01 && WXGKyantElasticStill(_kyElastic) && WXGLensFlexStill(_flex) && !_endStretch.tracking && fabs(_endStretch.x)<.01 && _selectionCarry==0;
     if(still){_press=0;_pressVelocity=0;_lensX=_targetX;_velocityX=0;}
     [self updateGeometry];[_glass tick:link.timestamp];++_draws;
     // At rest the overlay keeps its last frame: no ticks until something moves

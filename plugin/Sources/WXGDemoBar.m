@@ -382,6 +382,7 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     CGPoint _tabIconCentre[WXGDiscreteTabs];
     WXGDiscreteMetrics _discreteMetrics;
     WXGKyantElastic _kyElastic;   // FIX122 C: Kyant's drag-speed deformation (its velocity)
+    WXGLensFlex _flex;            // FIX126: the system's (two followers of the lens)
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if ((self=[super initWithFrame:frame])) {
@@ -1671,6 +1672,9 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     // FIX122 C: Kyant's deformation follows the lens' speed per tab range.
     if(!reduceMotion)WXGKyantElasticStep(&_kyElastic,_velocityX,[self centerForIndex:3]-[self centerForIndex:0],WXGConfig.shared.kyantElasticParams,dt);
     else _kyElastic=(WXGKyantElastic){0};
+    // FIX126: the system's deformation follows the lens too (per tab pitch).
+    if(!reduceMotion)WXGLensFlexStep(&_flex,_velocityX,([self centerForIndex:3]-[self centerForIndex:0])/3.,WXGConfig.shared.lensFlexParams,dt);
+    else _flex=(WXGLensFlex){0};
     if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];   // FIX68
     [self updateGeometry]; [self layoutBadges]; [_glass tick:link.timestamp];
 }
@@ -1691,7 +1695,9 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         _lensX-_materialRect.origin.x,press,c.lensGrowth,0,c.barGrowth,c.endWrap);
     _glass.lensRestHeight=g.lensHeight;   // FIX113 Y: undeformed
     if(elastic) {
-        double sx=1,sy=1;WXGKyantElasticScale(_kyElastic,c.kyantElasticParams,&sx,&sy);
+        double sx=1,sy=1;WXGLensFlexParams flex=c.lensFlexParams;
+        if(flex.on)WXGLensFlexScale(_flex,flex,&sx,&sy);   // FIX126: the system's
+        else WXGKyantElasticScale(_kyElastic,c.kyantElasticParams,&sx,&sy);
         float w=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*(float)c.endWrap),h=(float)(g.lensHeight*sy);
         g.lensX+=(g.lensWidth-w)*.5f;g.lensY+=(g.lensHeight-h)*.5f;g.lensWidth=w;g.lensHeight=h;
     }

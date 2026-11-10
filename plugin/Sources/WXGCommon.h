@@ -5,6 +5,7 @@
 #import "WXGOptics.h"
 #import "WXGLensOptics.h"
 #import "WXGKyantElastic.h"
+#import "WXGLensFlex.h"
 #import "WXGRenderPolicy.h"
 
 FOUNDATION_EXPORT NSString * const WXGSettingsChanged;
@@ -292,6 +293,7 @@ typedef struct { CGFloat saturation,contrast,gain,lift,blur; } WXGRimSampleTunin
 - (CGFloat)materialEdgeFadeForScope:(WXGGlassScope)scope;
 - (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (WXGKyantElasticParams)kyantElasticParams;
+- (WXGLensFlexParams)lensFlexParams;   // FIX126: the system's deformation (iOS 26 recorded), `on` when it replaces Kyant's
 - (WXGKyantBody)kyantBodyForScope:(WXGGlassScope)scope;   // FIX122 D: Kyant's refraction on 其余玻璃 (and ranges sharing it)   // FIX122 C: Kyant's drag-speed deformation (dock and segment bar)
 - (NSString *)lensRimHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 // FIX113 X: the 透镜 range's border as one line (the tap animation's lens,

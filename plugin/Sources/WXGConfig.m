@@ -658,6 +658,13 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensElasticKyDamping",'n',.5,.05,1.5,NULL,NULL},
     {"lensElasticKyStiffness",'n',300,20,1500,NULL,NULL},
     {"lensElasticKySymmetric",'b',0,0,1,NULL,NULL},
+    // FIX126: the system's own deformation (WXGLensFlex.h, fitted on the tab bar lens recorded on
+    // iOS 26.6) in place of Kyant's, for the dock's and the segment bar's lens; off by default.
+    {"lensFlexSystem",'b',0,0,1,NULL,NULL},
+    {"lensFlexStrength",'n',1,0,3,NULL,NULL},      // both gains x this
+    {"lensFlexSlow",'n',8,3,20,NULL,NULL},         // the slow follower's frequency (rad/s): lower, a longer and softer swing back
+    {"lensFlexDamping",'n',.5,.15,1.2,NULL,NULL},  // its damping ratio: lower, more of the opposite shape on stopping
+    {"lensFlexSymmetric",'b',0,0,1,NULL,NULL},
     // FIX122 D (user: Kyant's refraction for 其余玻璃 next): the other glass'
     // body refracted by his lens() (WXGKyantLens.h) instead of its band:
     // the band and the shift at the outline as shares of the glass' short
@@ -2030,6 +2037,15 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
     k.maxHeight=WXGClamp([self extraNumber:@"kyantOtherMaxHeight"],4,80);
     k.rimMax=[self extraNumber:@"kyantOtherRimFine"]>.5?0:WXGClamp([self extraNumber:@"kyantOtherRimMax"],1,20);   // FIX122 E
     return k;
+}
+// FIX126: the system's deformation, as set (WXGLensFlex.h); `on`: used in place of Kyant's.
+- (WXGLensFlexParams)lensFlexParams {
+    WXGLensFlexParams p=WXGLensFlexDefaults();
+    p.on=[self extraNumber:@"lensFlexSystem"]>.5;
+    double k=WXGClamp([self extraNumber:@"lensFlexStrength"],0,3);p.gainX*=k;p.gainY*=k;
+    p.slow=WXGClamp([self extraNumber:@"lensFlexSlow"],3,20);p.slowDamping=WXGClamp([self extraNumber:@"lensFlexDamping"],.15,1.2);
+    p.symmetric=[self extraNumber:@"lensFlexSymmetric"]>.5;
+    return p;
 }
 // FIX122 C: Kyant's drag-speed deformation, as set (WXGKyantElastic.h).
 - (WXGKyantElasticParams)kyantElasticParams {
