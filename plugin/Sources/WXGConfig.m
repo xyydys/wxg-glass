@@ -707,6 +707,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"edge26Key",'n',1.05,0,1.5,NULL,NULL},
     {"edge26Fill",'n',1,0,1.5,NULL,NULL},
     {"edge26Spread",'n',1,0.3,6,NULL,NULL},
+    {"edge26Floor",'n',.30,0,1,NULL,NULL},   // FIX132: the lights stay on all round at this share (0: the system's)
     {"edge26Opacity",'n',1,0,1,NULL,NULL},
     {"darkEdge26Opacity",'n',1,0,1,NULL,NULL},
     {"edge26Gain",'n',0.174,0,4,NULL,NULL},
@@ -723,6 +724,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockEdge26Key",'n',1.05,0,1.5,"edge26Key",NULL},
     {"dockEdge26Fill",'n',1,0,1.5,"edge26Fill",NULL},
     {"dockEdge26Spread",'n',1,0.3,6,"edge26Spread",NULL},
+    {"dockEdge26Floor",'n',.30,0,1,"edge26Floor",NULL},
     {"dockEdge26Opacity",'n',1,0,1,"edge26Opacity",NULL},
     {"dockDarkEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},
     {"dockEdge26Gain",'n',0.174,0,4,"edge26Gain",NULL},
@@ -739,6 +741,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"bubbleEdge26Key",'n',1.05,0,1.5,"edge26Key",NULL},
     {"bubbleEdge26Fill",'n',1,0,1.5,"edge26Fill",NULL},
     {"bubbleEdge26Spread",'n',1,0.3,6,"edge26Spread",NULL},
+    {"bubbleEdge26Floor",'n',.30,0,1,"edge26Floor",NULL},
     {"bubbleEdge26Opacity",'n',1,0,1,"edge26Opacity",NULL},
     {"bubbleDarkEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},
     {"bubbleEdge26Gain",'n',0.174,0,4,"edge26Gain",NULL},
@@ -755,6 +758,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentEdge26Key",'n',1.05,0,1.5,"dockEdge26Key",NULL},
     {"segmentEdge26Fill",'n',1,0,1.5,"dockEdge26Fill",NULL},
     {"segmentEdge26Spread",'n',1,0.3,6,"dockEdge26Spread",NULL},
+    {"segmentEdge26Floor",'n',.30,0,1,"dockEdge26Floor",NULL},
     {"segmentEdge26Opacity",'n',1,0,1,"dockEdge26Opacity",NULL},
     {"segmentDarkEdge26Opacity",'n',1,0,1,"dockDarkEdge26Opacity",NULL},
     {"segmentEdge26Gain",'n',0.174,0,4,"dockEdge26Gain",NULL},
@@ -771,6 +775,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"cardEdge26Key",'n',1.05,0,1.5,"edge26Key",NULL},
     {"cardEdge26Fill",'n',1,0,1.5,"edge26Fill",NULL},
     {"cardEdge26Spread",'n',1,0.3,6,"edge26Spread",NULL},
+    {"cardEdge26Floor",'n',.30,0,1,"edge26Floor",NULL},
     {"cardEdge26Opacity",'n',1,0,1,"edge26Opacity",NULL},
     {"cardDarkEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},
     {"cardEdge26Gain",'n',0.174,0,4,"edge26Gain",NULL},
@@ -787,6 +792,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensGlassEdge26Key",'n',1.05,0,1.5,"dockEdge26Key",NULL},
     {"lensGlassEdge26Fill",'n',1,0,1.5,"dockEdge26Fill",NULL},
     {"lensGlassEdge26Spread",'n',1,0.3,6,"dockEdge26Spread",NULL},
+    {"lensGlassEdge26Floor",'n',.30,0,1,"dockEdge26Floor",NULL},
     {"lensGlassEdge26Opacity",'n',1,0,1,"dockEdge26Opacity",NULL},
     {"lensGlassDarkEdge26Opacity",'n',1,0,1,"dockDarkEdge26Opacity",NULL},
     {"lensGlassEdge26Gain",'n',0.174,0,4,"dockEdge26Gain",NULL},
@@ -803,6 +809,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentLensGlassEdge26Key",'n',1.05,0,1.5,"lensGlassEdge26Key",NULL},
     {"segmentLensGlassEdge26Fill",'n',1,0,1.5,"lensGlassEdge26Fill",NULL},
     {"segmentLensGlassEdge26Spread",'n',1,0.3,6,"lensGlassEdge26Spread",NULL},
+    {"segmentLensGlassEdge26Floor",'n',.30,0,1,"lensGlassEdge26Floor",NULL},
     {"segmentLensGlassEdge26Opacity",'n',1,0,1,"lensGlassEdge26Opacity",NULL},
     {"segmentLensGlassDarkEdge26Opacity",'n',1,0,1,"lensGlassDarkEdge26Opacity",NULL},
     {"segmentLensGlassEdge26Gain",'n',0.174,0,4,"lensGlassEdge26Gain",NULL},
@@ -819,6 +826,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"finderGlassEdge26Key",'n',1.05,0,1.5,"edge26Key",NULL},
     {"finderGlassEdge26Fill",'n',1,0,1.5,"edge26Fill",NULL},
     {"finderGlassEdge26Spread",'n',1,0.3,6,"edge26Spread",NULL},
+    {"finderGlassEdge26Floor",'n',.30,0,1,"edge26Floor",NULL},
     {"finderGlassEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},   // 视频号: over video, both appearances start as the other glass's dark one (as its other border keys)
     {"finderGlassDarkEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},
     {"finderGlassEdge26Gain",'n',1.35,0,4,"darkEdge26Gain",NULL},
@@ -1262,7 +1270,7 @@ NSUInteger WXGConfigRevision(void) {return WXGConfigRevisionCounter;}
     #define KD(stem) [self extraNumber:WXGScopedKey(scope,dark,stem)]
     WXGRim26Settings r;memset(&r,0,sizeof r);
     r.height=WXGClamp(K(@"Edge26Height"),.3,4);r.curve=WXGClamp(K(@"Edge26Curve"),0,1);
-    r.angle=WXGClamp(K(@"Edge26Angle"),0,180);r.key=WXGClamp(K(@"Edge26Key"),0,1.5);r.fill=WXGClamp(K(@"Edge26Fill"),0,1.5);r.spread=WXGClamp(K(@"Edge26Spread"),.3,6);
+    r.angle=WXGClamp(K(@"Edge26Angle"),0,180);r.key=WXGClamp(K(@"Edge26Key"),0,1.5);r.fill=WXGClamp(K(@"Edge26Fill"),0,1.5);r.spread=WXGClamp(K(@"Edge26Spread"),.3,6);r.floor=WXGClamp(K(@"Edge26Floor"),0,1);
     r.opacity=WXGClamp(KD(@"Edge26Opacity"),0,1);r.gain=WXGClamp(KD(@"Edge26Gain"),0,4);r.chroma=WXGClamp(KD(@"Edge26Chroma"),0,8);
     r.lift=WXGClamp(KD(@"Edge26Lift"),0,1);r.ring=WXGClamp(KD(@"Edge26Ring"),0,1);
     r.captureScale=WXGClamp([self extraNumber:@"edge26CaptureScale"],.1,1);

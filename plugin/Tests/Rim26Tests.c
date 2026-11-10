@@ -9,7 +9,7 @@ static int failures;
 #define CHECK(cond,...) do{if(!(cond)){++failures;printf("FAIL %s:%d: ",__FILE__,__LINE__);printf(__VA_ARGS__);printf("\n");}}while(0)
 
 static WXGRim26Shape systems(double ring) {
-    WXGRim26Shape s={1,.7,45,1.05,1,1,ring,2.5};return s;
+    WXGRim26Shape s={1,.7,45,1.05,1,1,ring,2.5,0};return s;
 }
 static double luma(const double c[3]) {return .2126*c[0]+.7152*c[1]+.0722*c[2];}
 int main(void) {
@@ -201,6 +201,35 @@ int main(void) {
     int st=ps[3*b.columns+66],sr=ps[66*b.columns+(b.columns-1-3)];   /* the same depth from the top and from the right */
     CHECK(abs(st-sr)<=2 && st>120 && st<200,"shadow even all round (%d %d)",st,sr);
     free(ps);
+
+    /* FIX132: the floor. 0: the system's rim (out at the lower left and the upper right). Above 0 the lights stay
+       on all round: at the dark point that share of the two lights' mean, the brightest points unchanged, rising
+       all the way from the one to the other with no jump and no kink at the dark point, never below the floor. */
+    {
+        WXGRim26Shape z=systems(.04),f=z;f.floor=.3;
+        const double q=sqrt(.5);
+        CHECK(WXGRim26Along(-q,q,z)<1e-9 && WXGRim26Along(q,-q,z)<1e-9,"floor 0: out at the lower left and the upper right");
+        CHECK(fabs(WXGRim26Along(-q,q,f)-.3*1.025)<1e-6 && fabs(WXGRim26Along(q,-q,f)-.3*1.025)<1e-6,"floor 0.3: on at the dark points (%.4f)",WXGRim26Along(-q,q,f));
+        CHECK(fabs(WXGRim26Along(q,q,f)-1)<1e-9 && fabs(WXGRim26Along(-q,-q,f)-1)<1e-9,"the brightest points as they were (%.4f %.4f)",WXGRim26Along(q,q,f),WXGRim26Along(-q,-q,f));
+        int rising=1,smooth=1;double worst=0,least=9,previous=WXGRim26Along(-q,q,f);
+        for(double d=.25;d<=90;d+=.25) {   /* from the dark point (lower left) round the bottom to the key light (lower right) */
+            double t=(225.+d)*M_PI/180.,v=WXGRim26Along(cos(t),-sin(t),f);
+            if(v<previous-1e-9)rising=0;
+            if(fabs(v-previous)>worst)worst=fabs(v-previous);
+            if(v<least)least=v;
+            previous=v;
+        }
+        if(worst>.012)smooth=0;
+        CHECK(rising && smooth && least>=.3-1e-9,"rising from the dark point to the light, no jump (largest step %.4f, least %.3f)",worst,least);
+        double h=1e-3,t0=225.*M_PI/180.,a=WXGRim26Along(cos(t0-h),-sin(t0-h),f),b=WXGRim26Along(cos(t0),-sin(t0),f),c=WXGRim26Along(cos(t0+h),-sin(t0+h),f);
+        CHECK(fabs((b-a)-(c-b))/h<.2,"round the dark point in a curve: no kink (%.5f %.5f)",(b-a)/h,(c-b)/h);
+        double zs=WXGRim26Along(0,1,z),fs=WXGRim26Along(0,1,f);
+        CHECK(fs>zs && fs<zs+.1,"a straight edge a little brighter (%.3f against %.3f)",fs,zs);
+        WXGRim26Shape n=z;n.spread=2;n.floor=.3;
+        CHECK(fabs(WXGRim26Along(q,q,n)-1)<1e-9 && fabs(WXGRim26Along(-q,q,n)-.3*1.025)<1e-6 && WXGRim26Along(0,1,n)<fs,"with the lights closed in (2): the same floor, darker sides");
+        WXGRim26Shape low=z;low.spread=.6;WXGRim26Shape lowF=low;lowF.floor=.2;
+        CHECK(WXGRim26Along(-q,q,lowF)==WXGRim26Along(-q,q,low),"below the floor that a low exponent already keeps (0.34): nothing changes");
+    }
 
     if(failures){printf("Rim26Tests: %d failure(s)\n",failures);return 1;}
     printf("PASS: iOS 26 rim (FIX123, the system's recipe): 1 -> .30 over 1 pt then cut; |cos| about lower right / upper left; ring where the lights are out; dark matrix = the dumped one; dark button over slate and the light grey button all round match the captures; canvases; pixels within the 1 pt band, 3 px at 3x; bleed past the outline for the clipped layer; stretched columns alike; the real capsule's ends on the canvas (FIX124); the rim as borders one pixel wider each = the formula per pixel ring (FIX125); shadow.\n");

@@ -796,7 +796,7 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
     return out;
 }
 - (void)applyShape:(WXGRim26Shape)shape bounds:(CGRect)bounds radius:(CGFloat)r scale:(CGFloat)scale {
-    double key[12]={shape.height,shape.curve,shape.angle,shape.key,shape.fill,shape.spread,shape.ring,bounds.size.width,bounds.size.height,r,scale,0};
+    double key[12]={shape.height,shape.curve,shape.angle,shape.key,shape.fill,shape.spread,shape.ring,bounds.size.width,bounds.size.height,r,scale,shape.floor};
     self.frame=bounds;
     if(_applied && !memcmp(key,_key,sizeof key))return;
     memcpy(_key,key,sizeof key);_applied=YES;
@@ -808,7 +808,7 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
     used=WXGRimPlaceBands(_plain,_plainBands,0,&plain,inner.size,r,1,1,1,scale);
     WXGRimHideBands(_plainBands,used);_bandsShown+=used;
     [_level applyTop:(CGFloat)WXGRim26Along(0,-1,shape) bottom:(CGFloat)WXGRim26Along(0,1,shape) left:(CGFloat)WXGRim26Along(-1,0,shape) right:(CGFloat)WXGRim26Along(1,0,shape)
-            fieldKey:[NSString stringWithFormat:@"rim26|%.2f|%.3f|%.3f|%.3f",shape.angle,shape.key,shape.fill,shape.spread]
+            fieldKey:[NSString stringWithFormat:@"rim26|%.2f|%.3f|%.3f|%.3f|%.3f",shape.angle,shape.key,shape.fill,shape.spread,shape.floor]
                level:^float(float nx,float ny){return (float)WXGRim26Along(nx,ny,shape);}];
     [_level layoutForBounds:inner radius:r];
 }
@@ -914,7 +914,7 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
     if(_maximumCornerRadius>0)r=MIN(r,_maximumCornerRadius);
     CGFloat scale=self.window.screen.scale?:UIScreen.mainScreen.scale;
     WXGRim26Settings s=_settings;
-    WXGRim26Shape shape={s.height,s.curve,s.angle,s.key,s.fill,s.spread,s.ring,0};
+    WXGRim26Shape shape={s.height,s.curve,s.angle,s.key,s.fill,s.spread,s.ring,0,s.floor};
     _paint.frame=b;
     // FIX125: the rim on the glass' own corner, drawn by Core Animation (no
     // image, no clip of this view).
@@ -923,7 +923,7 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
 }
 - (NSDictionary *)rim26Evidence {
     return @{@"on":@(_on),@"height":@(_settings.height),@"curve":@(_settings.curve),@"angle":@(_settings.angle),@"key":@(_settings.key),@"fill":@(_settings.fill),
-             @"spread":@(_settings.spread),@"gain":@(_settings.gain),@"chroma":@(_settings.chroma),@"lift":@(_settings.lift),@"ring":@(_settings.ring),
+             @"spread":@(_settings.spread),@"floor":@(_settings.floor),@"gain":@(_settings.gain),@"chroma":@(_settings.chroma),@"lift":@(_settings.lift),@"ring":@(_settings.ring),
              @"captureScale":@(_settings.captureScale),@"bands":@(_paint.ring.bandsShown),
              @"strength":@(_strength*_settings.opacity),
              @"size":@[@(round(self.bounds.size.width*10)/10),@(round(self.bounds.size.height*10)/10)]};

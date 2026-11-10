@@ -45,6 +45,7 @@ typedef struct {
     double angle,key,fill,spread; /* along the outline: the key light's direction (deg; 45 = lower right, 0 = bottom, 90 = right), the two lights' levels, the lobes' exponent */
     double ring;                /* the faint line all round */
     double shadowLength;        /* the optional inner shadow (not the system's) */
+    double floor;               /* FIX132: the lights never below this share of their level, all round (0: the system's, out at two points) */
 } WXGRim26Shape;
 static inline double WXGRim26Clamp(double v,double lo,double hi) {return !(v==v)?lo:v<lo?lo:v>hi?hi:v;}
 /* The two lights along the outline; (nx, ny) the outward direction, y down.
@@ -56,18 +57,29 @@ static inline double WXGRim26Clamp(double v,double lo,double hi) {return !(v==v)
    across that point instead (the lower the exponent, the brighter: 0.85 x
    (1 - p) of a light's level) and turn round it in a curve, the two
    lights' levels running into each other. At 1 and above nothing changes
-   (1 is the system's |cos|, which fades out over a wide arc). */
+   (1 is the system's |cos|, which fades out over a wide arc).
+   FIX132 (user, on the phone, a round button over a blue wallpaper in dark
+   mode: "the corner at the lower left and the upper right is still there,
+   as if the inside came out through it; not round any more"): that is the
+   system's own rim (its 44 pt button, 8 x: 91 at its brightest, 43 where
+   the lights are out, on a face of 41), but where the lights are out the
+   dark face then reaches the outline, a point further out than where the
+   rim covers it, and against a brighter page that reads as a bulge. `floor`
+   keeps the lights on all round at that share of their level (the rim's
+   whole depth, so the face ends at one radius everywhere), turning round
+   the dark point in a curve as below 1; 0 is the system's. */
 static inline double WXGRim26Along(double nx,double ny,WXGRim26Shape s) {
     double r=WXGRim26Clamp(s.angle,-360,360)*M_PI/180.,c=nx*sin(r)+ny*cos(r);
     c=WXGRim26Clamp(c,-1,1);
-    double p=s.spread>.05?s.spread:.05;
-    if(p>=1.-1e-9) {
+    double p=s.spread>.05?s.spread:.05,keep=WXGRim26Clamp(s.floor,0,1);
+    if(p>=1.-1e-9 && !(keep>0.)) {
         double v=c>0.?s.key*pow(c,p):s.fill*pow(-c,p);
         return WXGRim26Clamp(v,0,1);
     }
-    double w=1.-p,k=.5*w,a=fabs(c);
+    double w=p<1.?1.-p:0.,k=.5*(w>keep?w:keep),a=fabs(c);
     double rounded=(sqrt(a*a+k*k)-k)/(sqrt(1.+k*k)-k);
-    double low=.85*w,f=low+(1.-low)*rounded;
+    if(p>1.)rounded=pow(rounded,p);
+    double low=.85*w>keep?.85*w:keep,f=low+(1.-low)*rounded;
     double t=WXGRim26Clamp(c/(2.*k)+.5,0,1);t=t*t*(3.-2.*t);
     return WXGRim26Clamp((s.fill+(s.key-s.fill)*t)*f,0,1);
 }

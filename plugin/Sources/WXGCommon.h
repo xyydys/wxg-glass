@@ -119,6 +119,7 @@ typedef NS_ENUM(NSInteger,WXGRimStyle) {WXGRimStyleGlow=2,WXGRimStyle26=3};
 typedef struct {
     CGFloat height,curve;                  // across the edge: how far in, how much it has fallen at its inner cut
     CGFloat angle,key,fill,spread;         // along the outline: the key light's direction, the two lights' levels, the lobes' exponent
+    CGFloat floor;                         // FIX132: the lights never below this share of their level (0: the system's)
     CGFloat opacity,gain,chroma,lift,ring; // this appearance's: strength; the colour matrix (luma gain, colour gain, lift); the faint line all round
     CGFloat captureScale;                  // the copy of what lies under the rim: its resolution
 } WXGRim26Settings;
