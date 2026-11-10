@@ -1159,77 +1159,15 @@ static NSHashTable *WXGRimTintViews;
 }
 @end
 // FIX123 iOS 26 边框 (WXGRim26.h): the system's own recipe, read from the
-// structure dump and the 8x captures of probe/ on iOS 26.6. A part is one
-// image computed per pixel (alpha only for a mask, or white / black with
-// that alpha), cached by its shape and size, stretched along straight edges
-// (contentsCenter), so a glass keeps its images while it sits still or
-// grows along its edges; nothing is rebuilt per frame.
-// FIX124: one corner of the glass' own layer as Core Animation draws it
-// (its size, corner radius and continuous corner curve), as coverage at
-// twice the screen's pixels, for WXGRim26Correction: the rim's depth is then
-// measured from that outline (the analytic field is a few tenths of a point
-// off it on rounded rectangles). Cached; nil bytes when it cannot be made
-// or read (then the field alone, as before).
-static NSUInteger WXGRim26NativeMade,WXGRim26NativeFailed;
-static WXGRim26Native WXGRim26NativeFor(double w,double h,double r,WXGRim26Canvas c,CGFloat scale,NSData * __strong *owner) {
-    WXGRim26Native n;memset(&n,0,sizeof n);
-    if(!(w>=8.) || !(h>=8.) || !(scale>0.))return n;
-    static NSCache<NSString *,NSArray *> *cache;static dispatch_once_t once;
-    dispatch_once(&once,^{cache=[NSCache new];cache.countLimit=48;});
-    NSString *key=[NSString stringWithFormat:@"%.1f|%.1f|%.2f|%.2f|%.1f|%.1f",w,h,r,scale,c.width,c.height];
-    NSArray *hit=[cache objectForKey:key];
-    if(!hit) {
-        const double margin=2.,pp=scale*2.;
-        double tw=c.width*.5+2.*margin,th=c.height*.5+2.*margin;
-        size_t W=(size_t)ceil(tw*pp),H=(size_t)ceil(th*pp);
-        NSMutableData *cover=nil;int flipX=0,flipY=0;BOOL ok=NO;
-        if(W>=8 && H>=8 && W<=2400 && H<=2400) {
-            @try {
-                CGColorSpaceRef space=CGColorSpaceCreateDeviceRGB();
-                CGContextRef ctx=CGBitmapContextCreate(NULL,W,H,8,W*4,space,(CGBitmapInfo)kCGImageAlphaPremultipliedLast);CGColorSpaceRelease(space);
-                if(ctx) {
-                    CGContextClearRect(ctx,CGRectMake(0,0,W,H));
-                    CALayer *shape=[CALayer layer];shape.bounds=CGRectMake(0,0,w,h);shape.anchorPoint=CGPointZero;shape.position=CGPointZero;
-                    shape.cornerRadius=r;shape.cornerCurve=kCACornerCurveContinuous;shape.masksToBounds=YES;
-                    shape.contentsScale=pp;shape.backgroundColor=UIColor.whiteColor.CGColor;
-                    CGContextScaleCTM(ctx,pp,pp);CGContextTranslateCTM(ctx,margin,margin);
-                    [shape renderInContext:ctx];
-                    const uint8_t *src=CGBitmapContextGetData(ctx);size_t stride=CGBitmapContextGetBytesPerRow(ctx);
-                    if(src) {
-                        cover=[NSMutableData dataWithLength:W*H];uint8_t *dst=cover.mutableBytes;
-                        for(size_t j=0;j<H;j++)for(size_t i=0;i<W;i++)dst[j*W+i]=src[j*stride+i*4+3];
-                        // Which image corner is the shape's: the one opposite the only
-                        // corner that lies inside the shape (1 pt in from each).
-                        size_t q=(size_t)(pp*1.);
-                        BOOL tl=dst[q*W+q]>=250,tr=dst[q*W+(W-1-q)]>=250,bl=dst[(H-1-q)*W+q]>=250,br=dst[(H-1-q)*W+(W-1-q)]>=250;
-                        BOOL tlOut=dst[q*W+q]<=5,trOut=dst[q*W+(W-1-q)]<=5,blOut=dst[(H-1-q)*W+q]<=5,brOut=dst[(H-1-q)*W+(W-1-q)]<=5;
-                        if(br && tlOut && trOut && blOut){flipX=0;flipY=0;ok=YES;}
-                        else if(tr && tlOut && blOut && brOut){flipX=0;flipY=1;ok=YES;}
-                        else if(bl && tlOut && trOut && brOut){flipX=1;flipY=0;ok=YES;}
-                        else if(tl && trOut && blOut && brOut){flipX=1;flipY=1;ok=YES;}
-                    }
-                    CGContextRelease(ctx);
-                }
-            } @catch(__unused NSException *error) {ok=NO;}
-        }
-        if(ok)++WXGRim26NativeMade;else ++WXGRim26NativeFailed;
-        hit=ok?@[cover,@(W),@(H),@(flipX),@(flipY),@(pp),@(margin)]:@[];
-        [cache setObject:hit forKey:key];
-    }
-    if(hit.count<7)return n;
-    NSData *data=hit[0];
-    if(owner)*owner=data;
-    n.bytes=data.bytes;n.columns=[hit[1] intValue];n.rows=[hit[2] intValue];n.stride=n.columns;
-    n.flipX=[hit[3] intValue];n.flipY=[hit[4] intValue];n.pxPerPt=[hit[5] doubleValue];n.margin=[hit[6] doubleValue];
-    return n;
-}
+// structure dump and the 8x captures of probe/ on iOS 26.6.
+// FIX125: the optional inner shadow is the only image left (black with its
+// alpha, computed per pixel, cached by its shape and size, stretched along
+// straight edges by contentsCenter); the rim itself is WXGRim26RingLayer below.
 static UIImage *WXGRim26Image(WXGRim26Part part,WXGRim26Shape s,CGSize size,CGFloat r,CGFloat scale,int colour,int bleed,WXGRim26Canvas *canvasOut) {
     // colour: -1 an alpha mask, 0 black, 1 white (premultiplied). bleed: pixels
     // past the outline (for a layer clipped by the glass' own corner).
     // Whole points: a lens growing through a press reuses the same few images
-    // (the layer stretches the last fraction). The corner radius to a quarter
-    // point (the rim is 1 pt wide: it must sit on the outline), a capsule
-    // exactly the canvas' half.
+    // (the layer stretches the last fraction).
     double w=MAX(1,round(size.width)),h=MAX(1,round(size.height)),half=MIN(w,h)*.5;
     BOOL capsule=r>=MIN(size.width,size.height)*.5-.3;
     double rq=capsule?half:MIN(half,MAX(.5,round(r*4.)/4.));
@@ -1239,17 +1177,12 @@ static UIImage *WXGRim26Image(WXGRim26Part part,WXGRim26Shape s,CGSize size,CGFl
     static NSCache<NSString *,UIImage *> *cache;static dispatch_once_t once;
     dispatch_once(&once,^{cache=[NSCache new];cache.countLimit=96;});
     NSString *key=part==WXGRim26PartShadow
-        ?[NSString stringWithFormat:@"s|%d|%d|%.1f|%.1f|%.2f|%.2f|%.3f",colour,bleed,c.width,c.height,rq,scale,s.shadowLength]
-        :[NSString stringWithFormat:@"l|%d|%d|%.1f|%.1f|%.2f|%.2f|%.3f|%.3f|%.2f|%.3f|%.3f|%.3f|%.3f",colour,bleed,c.width,c.height,rq,scale,s.height,s.curve,s.angle,s.key,s.fill,s.spread,s.ring];
+        ?[NSString stringWithFormat:@"s|%d|%d|%.1f|%.1f|%.1f|%.1f|%.2f|%.2f|%.3f",colour,bleed,c.width,c.height,w,h,rq,scale,s.shadowLength]
+        :[NSString stringWithFormat:@"l|%d|%d|%.1f|%.1f|%.1f|%.1f|%.2f|%.2f|%.3f|%.3f|%.2f|%.3f|%.3f|%.3f|%.3f",colour,bleed,c.width,c.height,w,h,rq,scale,s.height,s.curve,s.angle,s.key,s.fill,s.spread,s.ring];
     UIImage *hit=[cache objectForKey:key];if(hit)return hit;
     size_t W=(size_t)c.columns,H=(size_t)c.rows;
     NSMutableData *alpha=[NSMutableData dataWithLength:W*H];
-    // FIX124: the depth from the outline Core Animation draws (the line only;
-    // the soft shadow reaches too far in to need it).
-    NSData * __attribute__((objc_precise_lifetime)) tile=nil;
-    WXGRim26Native native;memset(&native,0,sizeof native);
-    if(part==WXGRim26PartLine)native=WXGRim26NativeFor(w,h,rq,c,scale,&tile);
-    WXGRim26Fill(alpha.mutableBytes,(int)W,c,rq,scale,part,s,bleed,native);
+    WXGRim26Fill(alpha.mutableBytes,(int)W,c,rq,scale,part,s,bleed);
     CGImageRef image=NULL;
     if(colour<0) {
         CGContextRef ctx=CGBitmapContextCreate(NULL,W,H,8,W,NULL,(CGBitmapInfo)kCGImageAlphaOnly);
@@ -1281,16 +1214,67 @@ static void WXGRim26Show(CALayer *layer,UIImage *image,WXGRim26Canvas c,CGRect b
     layer.frame=bounds;
 }
 static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBytes:&m objCType:"{CAColorMatrix=ffffffffffffffffffff}"];}
-// FIX123: the system draws the rim as a white image under the filter
+// FIX125: the rim's alpha as Core Animation's own shapes on the glass' own
+// continuous corner (WXGRim26.h, WXGRim26BandsFor): white borders one pixel
+// wider each from the outline (WXGRimPlaceBands, as the earlier styles'
+// lines), the lights' set under the level along the outline (a
+// WXGRimFieldLayer, as the iOS 27-like rim's), the faint line's set plain;
+// one over the other they show WXGRim26Alpha. The render server draws every
+// edge of it on the same curve as the glass' clip: no outline of our own,
+// nothing to clip, no tips. Its opacity is the rim's strength.
+@interface WXGRim26RingLayer : CALayer
+- (void)applyShape:(WXGRim26Shape)shape bounds:(CGRect)bounds radius:(CGFloat)r scale:(CGFloat)scale;
+@property(nonatomic,readonly) NSUInteger bandsShown;
+@end
+@implementation WXGRim26RingLayer {
+    CALayer *_lights,*_plain;WXGRimFieldLayer *_level;
+    NSMutableArray<CALayer *> *_lightBands,*_plainBands;
+    double _key[12];BOOL _applied;
+}
+- (instancetype)init {
+    if((self=[super init])) {
+        _plain=[CALayer layer];[self addSublayer:_plain];
+        _lights=[CALayer layer];_level=[WXGRimFieldLayer layer];_lights.mask=_level;[self addSublayer:_lights];
+        _lightBands=[NSMutableArray array];_plainBands=[NSMutableArray array];
+    }
+    return self;
+}
+static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
+    WXGRimBands out;memset(&out,0,sizeof out);
+    int room=(int)(sizeof out.inset/sizeof *out.inset);
+    out.count=b.count<room?b.count:room;
+    for(int k=0;k<out.count;k++){out.inset[k]=0;out.width[k]=b.width[k];out.alpha[k]=b.alpha[k];}
+    return out;
+}
+- (void)applyShape:(WXGRim26Shape)shape bounds:(CGRect)bounds radius:(CGFloat)r scale:(CGFloat)scale {
+    double key[12]={shape.height,shape.curve,shape.angle,shape.key,shape.fill,shape.spread,shape.ring,bounds.size.width,bounds.size.height,r,scale,0};
+    self.frame=bounds;
+    if(_applied && !memcmp(key,_key,sizeof key))return;
+    memcpy(_key,key,sizeof key);_applied=YES;
+    CGRect inner=(CGRect){CGPointZero,bounds.size};
+    _lights.frame=inner;_plain.frame=inner;
+    WXGRimBands lights=WXGRim26RimBands(WXGRim26BandsFor(0,shape,scale)),plain=WXGRim26RimBands(WXGRim26BandsFor(1,shape,scale));
+    NSUInteger used=WXGRimPlaceBands(_lights,_lightBands,0,&lights,inner.size,r,1,1,1,scale);
+    WXGRimHideBands(_lightBands,used);_bandsShown=used;
+    used=WXGRimPlaceBands(_plain,_plainBands,0,&plain,inner.size,r,1,1,1,scale);
+    WXGRimHideBands(_plainBands,used);_bandsShown+=used;
+    [_level applyTop:(CGFloat)WXGRim26Along(0,-1,shape) bottom:(CGFloat)WXGRim26Along(0,1,shape) left:(CGFloat)WXGRim26Along(-1,0,shape) right:(CGFloat)WXGRim26Along(1,0,shape)
+            fieldKey:[NSString stringWithFormat:@"rim26|%.2f|%.3f|%.3f|%.3f",shape.angle,shape.key,shape.fill,shape.spread]
+               level:^float(float nx,float ny){return (float)WXGRim26Along(nx,ny,shape);}];
+    [_level layoutForBounds:inner radius:r];
+}
+@end
+// FIX123: the system draws the rim as a white layer under the filter
 // vibrantColorMatrix: every pixel the glass already drawn under it turned by
-// the matrix, mixed by the image's alpha. Here, the same result from parts
+// the matrix, mixed by the layer's alpha. Here, the same result from parts
 // known to work on any system: a copy of what lies under the rim (its own
 // backdrop group: the glass and the page around it; no blur, a low
 // resolution) through the same matrix (a plain colorMatrix), shown through
-// the rim's image as its mask. Glass with no backdrop of its own: the veil
-// through the matrix, as a solid layer under the same mask.
+// the rim's alpha as its mask (FIX125: WXGRim26RingLayer; the mask's root is a
+// plain container, as the 取自背景 line's). Glass with no backdrop of its
+// own: the veil through the matrix, as a solid layer under the same mask.
 @interface WXGRim26Paint : UIView
-@property(nonatomic,readonly) CALayer *maskImage;   // its opacity is the rim's strength
+@property(nonatomic,readonly) WXGRim26RingLayer *ring;   // its opacity is the rim's strength
 - (void)configureGroup:(NSString *)group matrix:(WXGRimMatrix)m captureScale:(CGFloat)captureScale solid:(UIColor *)solid;
 @end
 @implementation WXGRim26Paint {CALayer *_solid,*_maskRoot;NSString *_appliedGroup;CGFloat _appliedScale;WXGRimMatrix _appliedMatrix;BOOL _matrixApplied,_enabled;}
@@ -1299,7 +1283,7 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
     if((self=[super initWithFrame:frame])) {
         self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;self.hidden=YES;
         _solid=[CALayer layer];_solid.hidden=YES;[self.layer addSublayer:_solid];
-        _maskRoot=[CALayer layer];_maskImage=[CALayer layer];[_maskRoot addSublayer:_maskImage];self.layer.mask=_maskRoot;
+        _maskRoot=[CALayer layer];_ring=[WXGRim26RingLayer layer];[_maskRoot addSublayer:_ring];self.layer.mask=_maskRoot;
         _enabled=YES;
     }
     return self;
@@ -1334,31 +1318,33 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
 }
 @end
 // FIX123: the iOS 26 rim over one glass (its body, or its lens): the rim's
-// image (WXGRim26.h) over the colour-matrix copy of what lies under it, and
-// under it the optional inner shadow (the system has none). With 系统混合滤镜
-// on (experimental): the system's own way instead, the white image on a
-// plain layer with vibrantColorMatrix (reads the pixels under it; no copy).
-// Nothing of the three earlier styles is used.
+// alpha (WXGRim26RingLayer) over the colour-matrix copy of what lies under it,
+// and under it the optional inner shadow (the system has none; an image,
+// clipped by the glass' own corner). With 系统混合滤镜 on (experimental): the
+// system's own way instead, the white ring on a plain layer with
+// vibrantColorMatrix (reads the pixels under it; no copy). Nothing of the
+// three earlier styles is used but their two layer kinds.
 @interface WXGRim26View : UIView
 @property(nonatomic) CGFloat maximumCornerRadius;
 - (void)configureOn:(BOOL)on settings:(WXGRim26Settings)settings solid:(UIColor *)solid strength:(CGFloat)strength;
 - (NSDictionary *)rim26Evidence;
 @end
 @implementation WXGRim26View {
-    WXGRim26Paint *_paint;CALayer *_vibrant,*_shadow;NSString *_group;
+    WXGRim26Paint *_paint;CALayer *_vibrant,*_shadowClip,*_shadow;WXGRim26RingLayer *_vibrantRing;NSString *_group;
     WXGRim26Settings _settings;CGFloat _strength;BOOL _on,_system,_vibrantMade;WXGRimMatrix _vibrantMatrix;
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if((self=[super initWithFrame:frame])) {
         self.userInteractionEnabled=NO;self.opaque=NO;self.backgroundColor=UIColor.clearColor;self.hidden=YES;
         _group=[NSString stringWithFormat:@"wxg.rim26.%p",self];
-        _shadow=[CALayer layer];_shadow.hidden=YES;[self.layer addSublayer:_shadow];
+        _shadowClip=[CALayer layer];_shadowClip.masksToBounds=YES;_shadowClip.cornerCurve=kCACornerCurveContinuous;_shadowClip.hidden=YES;
+        _shadow=[CALayer layer];[_shadowClip addSublayer:_shadow];[self.layer addSublayer:_shadowClip];
         _paint=[[WXGRim26Paint alloc]initWithFrame:CGRectZero];[self addSubview:_paint];
-        _vibrant=[CALayer layer];_vibrant.hidden=YES;[self.layer addSublayer:_vibrant];
+        _vibrant=[CALayer layer];_vibrant.hidden=YES;_vibrantRing=[WXGRim26RingLayer layer];[_vibrant addSublayer:_vibrantRing];[self.layer addSublayer:_vibrant];
     }
     return self;
 }
-// The system's filter with this matrix on the white image's layer; NO when
+// The system's filter with this matrix on the white ring's layer; NO when
 // this system has no such filter (then the copy is used).
 - (BOOL)applyVibrant:(WXGRimMatrix)m {
     if(_vibrantMade && !memcmp(&m,&_vibrantMatrix,sizeof m))return _vibrant.filters.count>0;
@@ -1386,10 +1372,10 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
     [CATransaction begin];[CATransaction setDisableActions:YES];
     BOOL system=settings.systemFilter && !solid && [self applyVibrant:m];
     if(system!=_system){_system=system;changed=YES;}
-    _paint.hidden=system;
+    _paint.hidden=system;_vibrant.hidden=!system;
     if(!system)[_paint configureGroup:_group matrix:m captureScale:settings.captureScale solid:solid];
     float k=(float)(strength*settings.opacity);
-    _paint.maskImage.opacity=k;_vibrant.opacity=k;
+    _paint.ring.opacity=k;_vibrantRing.opacity=k;
     _shadow.opacity=(float)(strength*settings.shadowOpacity);
     [CATransaction commit];
     if(changed)[self setNeedsLayout];
@@ -1403,28 +1389,23 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
     CGFloat scale=self.window.screen.scale?:UIScreen.mainScreen.scale;
     WXGRim26Settings s=_settings;
     WXGRim26Shape shape={s.height,s.curve,s.angle,s.key,s.fill,s.spread,s.ring,s.shadowLength};
-    _paint.frame=b;
-    // The rim's outer edge: this view clipped by the same continuous corner
-    // as the glass' body (Core Animation's own), the images running a pixel
-    // past the outline. Not with the system's filter: a clipped view is a
-    // group of its own, and the filter would read that (empty) group.
-    int bleed=_system?0:1;
-    self.layer.cornerCurve=kCACornerCurveContinuous;self.layer.cornerRadius=_system?0:r;self.layer.masksToBounds=!_system;
-    WXGRim26Canvas c;UIImage *image;
-    if(_system) {
-        image=WXGRim26Image(WXGRim26PartLine,shape,b.size,r,scale,1,bleed,&c);WXGRim26Show(_vibrant,image,c,b,scale);
-    }else {
-        _vibrant.hidden=YES;
-        image=WXGRim26Image(WXGRim26PartLine,shape,b.size,r,scale,-1,bleed,&c);WXGRim26Show(_paint.maskImage,image,c,b,scale);
-    }
-    if(s.shadowOn && s.shadowOpacity>.002){image=WXGRim26Image(WXGRim26PartShadow,shape,b.size,r,scale,0,bleed,&c);WXGRim26Show(_shadow,image,c,b,scale);}else _shadow.hidden=YES;
+    _paint.frame=b;_vibrant.frame=b;
+    // FIX125: the rim on the glass' own corner, drawn by Core Animation (no
+    // image, no clip of this view).
+    [(_system?_vibrantRing:_paint.ring) applyShape:shape bounds:b radius:r scale:scale];
+    // The optional shadow: an image a pixel past the outline, clipped by the glass' own corner.
+    if(s.shadowOn && s.shadowOpacity>.002) {
+        WXGRim26Canvas c;UIImage *image=WXGRim26Image(WXGRim26PartShadow,shape,b.size,r,scale,0,1,&c);
+        _shadowClip.frame=b;_shadowClip.cornerRadius=r;_shadowClip.hidden=image==nil;
+        WXGRim26Show(_shadow,image,c,b,scale);
+    }else _shadowClip.hidden=YES;
     [CATransaction commit];
 }
 - (NSDictionary *)rim26Evidence {
     return @{@"on":@(_on),@"height":@(_settings.height),@"curve":@(_settings.curve),@"angle":@(_settings.angle),@"key":@(_settings.key),@"fill":@(_settings.fill),
              @"gain":@(_settings.gain),@"chroma":@(_settings.chroma),@"lift":@(_settings.lift),@"ring":@(_settings.ring),
              @"captureScale":@(_settings.captureScale),@"systemFilterAsked":@(_settings.systemFilter),@"systemFilterUsed":@(_system),
-             @"nativeOutlinesMade":@(WXGRim26NativeMade),@"nativeOutlinesFailed":@(WXGRim26NativeFailed),   // FIX124 (all rims)
+             @"bands":@((_system?_vibrantRing:_paint.ring).bandsShown),   // FIX125: Core Animation borders
              @"strength":@(_strength*_settings.opacity),@"shadow":@(_settings.shadowOn),
              @"size":@[@(round(self.bounds.size.width*10)/10),@(round(self.bounds.size.height*10)/10)]};
 }

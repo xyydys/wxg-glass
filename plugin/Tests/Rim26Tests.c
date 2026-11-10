@@ -1,4 +1,4 @@
-/* FIX123 / FIX124: iOS 26 边框, the system's own recipe (Sources/WXGRim26.h), against
+/* FIX123 - FIX125: iOS 26 边框, the system's own recipe (Sources/WXGRim26.h), against
    what GlassProbe captured on iOS 26.6 (8x captures, 24 px per point). */
 #include "../Sources/WXGRim26.h"
 #include <stdio.h>
@@ -83,8 +83,7 @@ int main(void) {
 
     /* The button's pixels at 3x: three pixels of rim, brightest outermost, nothing inside or outside. */
     unsigned char *px=calloc((size_t)b.columns*b.rows,1);
-    WXGRim26Native none;memset(&none,0,sizeof none);
-    WXGRim26Fill(px,b.columns,b,22,3,WXGRim26PartLine,s,0,none);
+    WXGRim26Fill(px,b.columns,b,22,3,WXGRim26PartLine,s,0);
     {
         int n=0,beyond=0;
         for(int j=0;j<b.rows;j++)for(int i=0;i<b.columns;i++) {
@@ -105,7 +104,7 @@ int main(void) {
        inside, the outline's own level carried one pixel past it. */
     {
         unsigned char *pe=calloc((size_t)b.columns*b.rows,1);
-        WXGRim26Fill(pe,b.columns,b,22,3,WXGRim26PartLine,s,1,none);
+        WXGRim26Fill(pe,b.columns,b,22,3,WXGRim26PartLine,s,1);
         int same=1,more=0,far=0;
         for(int j=0;j<b.rows;j++)for(int i=0;i<b.columns;i++) {
             double x=(i+.5)/3-22,y=(j+.5)/3-22,d=22-sqrt(x*x+y*y);
@@ -120,7 +119,7 @@ int main(void) {
     free(px);
     /* The bar's stretched columns are all alike (a straight edge). */
     unsigned char *pb=calloc((size_t)bar.columns*bar.rows,1);
-    WXGRim26Fill(pb,bar.columns,bar,32,3,WXGRim26PartLine,s,0,none);
+    WXGRim26Fill(pb,bar.columns,bar,32,3,WXGRim26PartLine,s,0);
     int a0=(int)(bar.edgeX*3)+1,diff=0,lit=0;
     for(int j=0;j<bar.rows;j++)for(int i=a0;i<a0+4;i++){diff+=abs(pb[j*bar.columns+i]-pb[j*bar.columns+a0]);lit+=pb[j*bar.columns+i]>0;}
     CHECK(diff==0 && lit==4*6,"stretch columns alike (%d), 3 px of rim top and bottom (%d)",diff,lit);
@@ -139,52 +138,47 @@ int main(void) {
         WXGShapeSample small=WXGCapsuleOpticalField((float)(-34+jx),(float)jy,68,64),real=WXGRim26Field(-bar.width*.5+jx,jy,bar,32);
         CHECK(worst<1e-4 && fabs(real.distance-small.distance)>.25,"the canvas' field is the real capsule's (worst %.5f); a 68 pt canvas' own was %.2f pt off at the join",worst,fabs(real.distance-small.distance));
     }
-    /* FIX124: the outline as drawn. A synthetic "native" corner: the 44 pt circle drawn 0.25 pt
-       larger (as coverage, 6 px per point, 2 pt of margin), plain and mirrored; the correction
-       reads 0.25 pt all round, and the rim moves out with it. */
+    /* FIX125: the rim as Core Animation borders from the outline, one pixel wider each: what
+       each one-pixel ring shows under them is the profile's mean over that pixel. */
     {
-        const double pp=6,margin=2,grow=.25;
-        int W=(int)ceil((22+2*margin)*pp),H=W;
-        unsigned char *cov=calloc((size_t)W*H,1),*mir=calloc((size_t)W*H,1);
-        for(int j=0;j<H;j++)for(int i=0;i<W;i++) {
-            int in=0;
-            for(int sy=0;sy<8;sy++)for(int sx=0;sx<8;sx++) {
-                double u=(i+(sx+.5)/8)/pp-margin,v=(j+(sy+.5)/8)/pp-margin;
-                if(hypot(u-22,v-22)<=22+grow)++in;
-            }
-            cov[j*W+i]=(unsigned char)lround(in*255./64.);
-            mir[(H-1-j)*W+i]=cov[j*W+i];
+        WXGRim26Bands l=WXGRim26BandsFor(0,s,3),g=WXGRim26BandsFor(1,s,3);
+        CHECK(l.count==3 && fabs(l.width[0]-1./3)<1e-9 && fabs(l.width[2]-1)<1e-9,"1 pt at 3x: three bands, 1 / 2 / 3 pixels wide");
+        CHECK(fabs(WXGRim26BandsShown(l,0)-.8833)<2e-3 && fabs(WXGRim26BandsShown(l,1)-.65)<2e-3 && fabs(WXGRim26BandsShown(l,2)-.4167)<2e-3,
+              "rings show .883 .650 .417 (%.3f %.3f %.3f)",WXGRim26BandsShown(l,0),WXGRim26BandsShown(l,1),WXGRim26BandsShown(l,2));
+        CHECK(fabs(l.alpha[2]-.4167)<2e-3 && fabs(l.alpha[1]-.4)<3e-3 && fabs(l.alpha[0]-.6667)<4e-3,"band opacities %.3f %.3f %.3f",l.alpha[0],l.alpha[1],l.alpha[2]);
+        CHECK(fabs(WXGRim26BandsShown(g,0)-.04)<1e-3 && fabs(WXGRim26BandsShown(g,1)-.02)<1e-3 && WXGRim26BandsShown(g,2)<1e-6,"the faint line: full, half, none");
+        /* the two sets, the lights' under the level along the outline, one over the other: WXGRim26Alpha */
+        double worst=0;
+        for(int a=0;a<360;a+=15)for(int m=0;m<3;m++) {
+            double nx=cos(a*M_PI/180),ny=sin(a*M_PI/180),level=WXGRim26Along(nx,ny,s);
+            double shown=1-(1-level*WXGRim26BandsShown(l,m))*(1-WXGRim26BandsShown(g,m)),want=0;
+            for(int i=0;i<64;i++)want+=WXGRim26Alpha((m+(i+.5)/64)/3.,nx,ny,s)/64;
+            if(fabs(shown-want)>worst)worst=fabs(shown-want);
         }
-        WXGRim26Native nat={cov,W,H,W,pp,margin,0,0},flipped={mir,W,H,W,pp,margin,0,1};
-        double worst=0,worstFlipped=0;
-        for(int a=0;a<360;a+=15)for(double depth=-.5;depth<=1.5;depth+=.5) {
-            double x=(22-depth)*cos(a*M_PI/180),y=(22-depth)*sin(a*M_PI/180);
-            WXGShapeSample f=WXGRim26Field(x,y,b,22);
-            double e=fabs(WXGRim26Correction(nat,b,x,y,f)-grow),e2=fabs(WXGRim26Correction(flipped,b,x,y,f)-grow);
-            if(e>worst)worst=e;
-            if(e2>worstFlipped)worstFlipped=e2;
-        }
-        CHECK(worst<.03 && worstFlipped<.03,"native outline 0.25 pt out: read within %.3f pt (mirrored image %.3f)",worst,worstFlipped);
-        WXGShapeSample f0=WXGRim26Field(10,10,b,22);
-        CHECK(WXGRim26Correction(none,b,10,10,f0)==0,"no native image: no correction");
-        unsigned char *pn=calloc((size_t)b.columns*b.rows,1);
-        WXGRim26Fill(pn,b.columns,b,22,3,WXGRim26PartLine,s,1,nat);
-        /* the right side's middle row: the rim's inner cut lies 0.25 pt further out (the 3rd pixel in holds a quarter less) */
-        unsigned char *p0=calloc((size_t)b.columns*b.rows,1);
-        WXGRim26Fill(p0,b.columns,b,22,3,WXGRim26PartLine,s,1,none);
-        int third0=p0[66*b.columns+(b.columns-3)],third=pn[66*b.columns+(b.columns-3)],first0=p0[66*b.columns+(b.columns-1)],first=pn[66*b.columns+(b.columns-1)];
-        CHECK(third<third0*.45 && third>third0*.1 && first<first0*.9 && first>first0*.7,"the rim follows the native outline: 3rd pixel %d -> %d, 1st %d -> %d",third0,third,first0,first);
-        free(cov);free(mir);free(pn);free(p0);
+        CHECK(worst<.004,"bands under the level + the faint line = the formula, per pixel ring (worst %.4f)",worst);
+        /* other heights and scales: the pixel rings, the last one its share; never rising inward; capped */
+        WXGRim26Shape t=s;t.height=1.5;
+        WXGRim26Bands h=WXGRim26BandsFor(0,t,2);   /* 3 px at 2x */
+        CHECK(h.count==3 && fabs(h.width[2]-1.5)<1e-9,"1.5 pt at 2x: three bands");
+        t.height=1.2;h=WXGRim26BandsFor(0,t,3);    /* 3.6 px: four rings, the last 60 % of a pixel */
+        CHECK(h.count==4 && fabs(WXGRim26BandsShown(h,3)-.6*(1-.7*(1.1/1.2)))<.01,"1.2 pt at 3x: the 4th ring its share (%.3f)",WXGRim26BandsShown(h,3));
+        t.height=4;h=WXGRim26BandsFor(0,t,3);
+        int falling=1;for(int m=0;m+1<h.count;m++)if(WXGRim26BandsShown(h,m)<WXGRim26BandsShown(h,m+1)-1e-9)falling=0;
+        CHECK(h.count==12 && falling,"4 pt at 3x: twelve bands, never rising inward");
+        t.height=4;h=WXGRim26BandsFor(0,t,8);
+        CHECK(h.count==WXG_RIM26_MAX_BANDS && fabs(h.width[h.count-1]-4)<1e-9,"more than the bands hold: wider rings to the same depth");
+        t=s;t.curve=0;h=WXGRim26BandsFor(0,t,3);
+        CHECK(fabs(h.alpha[2]-1)<1e-9 && h.alpha[0]==0 && h.alpha[1]==0,"no fall across: one full band 1 pt wide");
     }
     /* The optional shadow: exponential, the same all round. */
     CHECK(fabs(WXGRim26Shadow(0,s)-1)<1e-12 && fabs(WXGRim26Shadow(2.5,s)-exp(-1))<1e-12 && WXGRim26Shadow(-.1,s)==0,"shadow: exponential from the outline");
     unsigned char *ps=calloc((size_t)b.columns*b.rows,1);
-    WXGRim26Fill(ps,b.columns,b,22,3,WXGRim26PartShadow,s,0,none);
+    WXGRim26Fill(ps,b.columns,b,22,3,WXGRim26PartShadow,s,0);
     int st=ps[3*b.columns+66],sr=ps[66*b.columns+(b.columns-1-3)];   /* the same depth from the top and from the right */
     CHECK(abs(st-sr)<=2 && st>120 && st<200,"shadow even all round (%d %d)",st,sr);
     free(ps);
 
     if(failures){printf("Rim26Tests: %d failure(s)\n",failures);return 1;}
-    printf("PASS: iOS 26 rim (FIX123, the system's recipe): 1 -> .30 over 1 pt then cut; |cos| about lower right / upper left; ring where the lights are out; dark matrix = the dumped one; dark button over slate and the light grey button all round match the captures; canvases; pixels within the 1 pt band, 3 px at 3x; bleed past the outline for the clipped layer; stretched columns alike; the real capsule's ends on the canvas and the native outline's correction (FIX124); shadow.\n");
+    printf("PASS: iOS 26 rim (FIX123, the system's recipe): 1 -> .30 over 1 pt then cut; |cos| about lower right / upper left; ring where the lights are out; dark matrix = the dumped one; dark button over slate and the light grey button all round match the captures; canvases; pixels within the 1 pt band, 3 px at 3x; bleed past the outline for the clipped layer; stretched columns alike; the real capsule's ends on the canvas (FIX124); the rim as borders one pixel wider each = the formula per pixel ring (FIX125); shadow.\n");
     return 0;
 }
