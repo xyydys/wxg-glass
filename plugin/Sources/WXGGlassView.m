@@ -1093,24 +1093,22 @@ void WXGDropDeferredGlassTicks(void) {
     for(WXGGlassView *glass in pending)[glass clearPendingTick];
 }
 
-// FIX133: where a glass' backdrops, veil and overlay are cut. A rounded
-// rectangle or a circle: the rect itself on Core Animation's continuous
-// corner, as before. A capsule: iOS 26's outline (WXGCapsule26.h) lies
-// inside the plain stadium, by up to 1.7 % of the radius near the round
-// ends; the backdrops can only be cut to a corner radius (a mask over them
-// would cut them off from what lies behind), so they are cut to the stadium
-// drawn in by the dip at the round end's start (1.36 %: 0.3 pt on a 44 pt
-// capsule): inside iOS 26's outline all round but for a tenth of a point,
-// and the border, drawn on that outline itself, covers the rest. The clip's
-// own coordinates keep their origin at the rect's corner (the bounds'
-// origin moves with the inset), so everything laid out in it stays put.
+// Where a glass' backdrops, veil and overlay are cut: the rect on Core
+// Animation's continuous corner. FIX133 cut a capsule's to the plain stadium
+// drawn in by 1.36 % of its radius (inside iOS 26's outline nearly all
+// round, the border covering the rest); FIX134 (user: "better, but toward
+// the middle it still wants a few faint pixels") takes that back: along the
+// whole straight middle and round the tips the face then ended a third of a
+// point short of the outline, under the border. The backdrops can only be
+// cut to a corner radius (a mask over them would cut them off from what lies
+// behind), and of the shapes that offers Core Animation's own capsule is
+// the nearest to iOS 26's: exact along the middle and at the tips, at most
+// 0.9 % of the radius (0.2 pt on a 44 pt capsule) outside it near the round
+// ends, where the border (drawn on iOS 26's outline itself) lies just inside.
 static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
-    BOOL capsule=WXGCapsule26Applies(rect.size.width,rect.size.height,radius);
-    CGFloat inset=capsule?(CGFloat)WXG_CAPSULE26_JUNCTION*MIN(rect.size.width,rect.size.height)*.5:0;
-    CGRect frame=CGRectInset(rect,inset,inset);
-    clip.frame=frame;clip.bounds=(CGRect){CGPointMake(inset,inset),frame.size};
-    clip.layer.cornerCurve=capsule?kCACornerCurveCircular:kCACornerCurveContinuous;
-    clip.layer.cornerRadius=MAX(0,radius-inset);
+    clip.frame=rect;clip.bounds=(CGRect){CGPointZero,rect.size};
+    clip.layer.cornerCurve=kCACornerCurveContinuous;
+    clip.layer.cornerRadius=MAX(0,radius);
 }
 @implementation WXGGlassView {
     CALayer *_dropShadow;NSString *_dropShadowKey;   // FIX114 K

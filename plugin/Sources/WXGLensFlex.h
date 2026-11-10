@@ -72,6 +72,20 @@ static inline void WXGLensFlexScale(WXGLensFlex f,WXGLensFlexParams p,double *sc
     *scaleX=WXGLensFlexClamp(1.+p.gainX*e,p.minX,p.maxX);
     *scaleY=WXGLensFlexClamp(1.-p.gainY*e,p.minY,p.maxY);
 }
+/* FIX134 (user, a recording of a tap three tabs to the right: "resting, its
+   top and bottom are cut, as if two pieces were missing"): the deformation's
+   narrow-and-tall half makes the pill up to 1.2 x as high after it has come
+   down; down, the pill is drawn inside the bar, whose outline then cut its
+   top and bottom off flat (the system's lens lies over its bar and is not
+   cut by it). So the pill at rest is never higher than the bar less
+   `margin` a side; lifted (press 0.5 and more: drawn over the bar) it is
+   free, and in between it eases from the one to the other. */
+static inline double WXGLensFlexRestingHeight(double height,double barHeight,double press,double margin) {
+    double room=barHeight-2.*margin;
+    if(!(height>room) || !(room>0.))return height;
+    double lifted=press<=0.?0.:press>=.5?1.:press/.5;
+    return room+(height-room)*lifted;
+}
 /* Still: nothing left to show (the bar may stop its frames). */
 static inline int WXGLensFlexStill(WXGLensFlex f) {
     return fabs(f.lagFast)<1e-3 && fabs(f.lagSlow)<1e-3 && fabs(f.velFast)<1e-2 && fabs(f.velSlow)<1e-2;

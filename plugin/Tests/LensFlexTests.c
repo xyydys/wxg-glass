@@ -78,6 +78,11 @@ int main(void) {
         WXGLensFlexParams sym=half;sym.symmetric=1;WXGLensFlexScale(narrow,sym,&bx,&by);WXGLensFlexScale(wide,p,&ax,&ay);
         CHECK(bx==ax && by==ay,"symmetric: always the wide half, whatever the squeeze");
     }
+    /* FIX134: down, the pill never higher than the bar less a point a side; lifted, free; easing between; a pill
+       that fits is left alone. */
+    CHECK(WXGLensFlexRestingHeight(64.8,62,0,1)==60 && WXGLensFlexRestingHeight(64.8,62,.5,1)==64.8 && WXGLensFlexRestingHeight(64.8,62,1,1)==64.8,"down 60, lifted free");
+    CHECK(fabs(WXGLensFlexRestingHeight(64.8,62,.25,1)-62.4)<1e-9,"half way lifted: half way (%.3f)",WXGLensFlexRestingHeight(64.8,62,.25,1));
+    CHECK(WXGLensFlexRestingHeight(57.8,62,0,1)==57.8 && WXGLensFlexRestingHeight(44,62,0,1)==44 && WXGLensFlexRestingHeight(70,0,0,1)==70,"what fits is left alone");
     if(failures){printf("LensFlexTests: %d failure(s)\n",failures);return 1;}
     printf("PASS: iOS 26 lens deformation (FIX126): the recorded drag reproduced, closer than the velocity spring; builds and fades at a steady speed; the opposite shape on stopping, no ringing; signed, symmetric on request; frame-rate independent.\n");
     return 0;
