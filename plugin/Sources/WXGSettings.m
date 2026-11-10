@@ -879,27 +879,22 @@ void WXGConfirmResetAll(UIViewController *page,void (^done)(void)) {
     while(presenter.presentedViewController && !presenter.presentedViewController.isBeingDismissed)presenter=presenter.presentedViewController;
     [presenter presentViewController:alert animated:YES completion:nil];
 }
-// module, title, subtitle, symbols (first available). Four glass modules are
-// set separately for the dock and for the other glass (inside the module).
+// module, title, subtitle, symbols (first available).
+// FIX130 (user: one module for every effect, the range chosen at its top;
+// the features by page; then only the settings page itself and the licence).
 + (NSArray<NSDictionary *> *)sections {
     return @[
-        @{@"title":@"通用",@"cards":@[@[@"basic",@"基本设置",@"适配开关 · 比例 · 诊断",@[@"gearshape",@"gear"]],
-                                      @[@"dock",@"底栏",@"尺寸 · 搜索 · 透镜 · 胶囊",@[@"dock.rectangle",@"rectangle.bottomthird.inset.filled",@"rectangle.bottomthird.inset.fill",@"rectangle"]],
-                                      // FIX113 O: the chat list's segment bar (its own module).
-                                      @[@"segments",@"分组",@"小底栏 · 胶囊 · 透镜 · 悬浮",@[@"rectangle.split.3x1",@"square.split.2x1",@"rectangle.split.2x1",@"rectangle"]],
-                                      @[@"tools",@"帧率与参数",@"帧率日志 · 参数导入导出",@[@"speedometer",@"gauge",@"chart.bar"]],
-                                      @[@"bubble",@"液态气泡",@"文字气泡 · 单行圆角 · 颜色",@[@"bubble.left.and.bubble.right.fill",@"bubble.left.and.bubble.right",@"message"]],
-                                      // FIX115 H: not a page: asks, then every parameter back to this build's standard set.
-                                      @[@"resetAll",@"恢复默认参数",@"全部回到本版标准参数",@[@"arrow.counterclockwise.circle",@"arrow.counterclockwise",@"arrow.uturn.backward"]]]},
-        @{@"title":@"玻璃 · 底栏、其余玻璃、气泡、分组、设置页分别设置",@"cards":@[@[@"refraction",@"折射强度和色散",@"强度 · 色散 · 折射宽度",@[@"drop",@"drop.fill"]],
-                                      @[@"blur",@"模糊强度与范围",@"半径 · 覆盖范围 · 清晰度",@[@"aqi.medium",@"sun.haze",@"circle.dashed"]],
-                                      @[@"material",@"材质强度与范围",@"底色 · 遮盖 · 边缘减弱",@[@"circle.lefthalf.filled",@"circle.lefthalf.fill"]],
-                                      @[@"border",@"边框与渐隐",@"颜色 · 宽度 · 亮度 · 渐隐",@[@"square.dashed",@"app",@"square"]]]},
-        // FIX106: 授权行从“通用”挪到最下面这组、降低存在感；原本这组第一张是“液态气泡”，两者对调。
-        // FIX104: 授权行不是页面，点它会重新联网检测（副标题显示有效期）。
-        @{@"title":@"个性化",@"cards":@[@[@"license",@"授权",@"重新联网检测授权",@[@"checkmark.seal",@"checkmark.shield",@"checkmark.circle"]],
-                                       @[@"fade",@"渐隐与模糊",@"聊天页 · 其余页面 · 上下距离",@[@"rectangle.topthird.inset.filled",@"rectangle.topthird.inset.fill",@"square.tophalf.fill",@"square"]],
-                                       @[@"wallpaper",@"壁纸",@"深浅色壁纸 · 卡片圆角",@[@"photo.on.rectangle",@"photo"]]]}
+        @{@"title":@"效果 · 底栏、其余玻璃、分组栏、气泡、设置页分别设置",
+          @"cards":@[@[@"effect",@"效果调整",@"折射 · 模糊 · 材质 · 边框 · 阴影 · 透镜",@[@"drop",@"drop.fill"]]]},
+        @{@"title":@"功能",@"cards":@[@[@"chat",@"聊天页",@"输入栏 · 标题与头像 · 气泡 · 菜单",@[@"bubble.left.and.bubble.right.fill",@"bubble.left.and.bubble.right",@"message"]],
+                                      @[@"home",@"首页",@"分组栏 · 加号菜单 · 搜索框",@[@"rectangle.split.3x1",@"square.split.2x1",@"rectangle.split.2x1",@"rectangle"]],
+                                      @[@"me",@"个人页",@"头像头部 · 下拉横幅",@[@"person.crop.circle",@"person.circle",@"person"]],
+                                      @[@"dock",@"底栏",@"尺寸 · 搜索 · 图标 · 切换动作",@[@"dock.rectangle",@"rectangle.bottomthird.inset.filled",@"rectangle.bottomthird.inset.fill",@"rectangle"]],
+                                      @[@"fade",@"渐进式模糊",@"聊天页 · 其余页面 · 上下距离",@[@"rectangle.topthird.inset.filled",@"rectangle.topthird.inset.fill",@"square.tophalf.fill",@"square"]],
+                                      @[@"general",@"通用",@"顶部按钮 · 交互 · 性能",@[@"gearshape",@"gear"]]]},
+        // 授权行不是页面，点它会重新联网检测（FIX104）；未授权时不显示（FIX106）。
+        @{@"title":@"设置与授权",@"cards":@[@[@"settingsPage",@"设置页调整",@"壁纸 · 强调色 · 参数导入导出 · 诊断 · 恢复默认",@[@"slider.horizontal.3",@"photo.on.rectangle",@"photo"]],
+                                           @[@"license",@"授权",@"重新联网检测授权",@[@"checkmark.seal",@"checkmark.shield",@"checkmark.circle"]]]}
     ];
 }
 - (void)buildContent {

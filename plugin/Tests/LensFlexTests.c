@@ -1,8 +1,6 @@
 /* FIX126: the system's lens deformation (Sources/WXGLensFlex.h) against the
-   lens recorded on iOS 26.6 (fixtures/lens_flex_ios26.h), and against
-   Kyant's velocity spring on the same record. */
+   lens recorded on iOS 26.6 (fixtures/lens_flex_ios26.h). */
 #include "../Sources/WXGLensFlex.h"
-#include "../Sources/WXGKyantElastic.h"
 #include "fixtures/lens_flex_ios26.h"
 #include <stdio.h>
 #include <string.h>
@@ -16,24 +14,21 @@ int main(void) {
     /* The recorded drag: the model's width and height against the system's, frame by frame. */
     {
         WXGLensFlex f;memset(&f,0,sizeof f);
-        WXGKyantElastic k;memset(&k,0,sizeof k);WXGKyantElasticParams kp=WXGKyantElasticDefaults();
-        double ex=0,ey=0,sx2=0,sy2=0,kx=0,ky=0,lowest=9,highest=0;int n=0;
+        double ex=0,ey=0,sx2=0,sy2=0,lowest=9,highest=0;int n=0;
         for(int i=1;i<WXGFlexFixtureCount;i++) {
             double v=(WXGFlexFixtureX[i]-WXGFlexFixtureX[i-1])/dt;
             WXGLensFlexStep(&f,v,WXG_FLEX_FIXTURE_PITCH,p,dt);
-            WXGKyantElasticStep(&k,v,3*WXG_FLEX_FIXTURE_PITCH,kp,dt);
-            double sx,sy,qx,qy;WXGLensFlexScale(f,p,&sx,&sy);WXGKyantElasticScale(k,kp,&qx,&qy);
+            double sx,sy;WXGLensFlexScale(f,p,&sx,&sy);
             double mx=WXGFlexFixtureScaleX[i],my=WXGFlexFixtureScaleY[i];
-            ex+=(sx-mx)*(sx-mx);ey+=(sy-my)*(sy-my);kx+=(qx-mx)*(qx-mx);ky+=(qy-my)*(qy-my);
+            ex+=(sx-mx)*(sx-mx);ey+=(sy-my)*(sy-my);
             sx2+=(mx-1)*(mx-1);sy2+=(my-1)*(my-1);++n;
             if(sx<lowest)lowest=sx;
             if(sx>highest)highest=sx;
         }
-        ex=sqrt(ex/n);ey=sqrt(ey/n);kx=sqrt(kx/n);ky=sqrt(ky/n);sx2=sqrt(sx2/n);sy2=sqrt(sy2/n);
+        ex=sqrt(ex/n);ey=sqrt(ey/n);sx2=sqrt(sx2/n);sy2=sqrt(sy2/n);
         CHECK(ex<.023 && ey<.034,"the recorded drag: width rms %.4f of %.4f, height rms %.4f of %.4f",ex,sx2,ey,sy2);
-        CHECK(ex<.5*kx && ey<.6*ky,"closer than the velocity spring (%.4f / %.4f against %.4f / %.4f)",ex,ey,kx,ky);
         CHECK(lowest>=p.minX-1e-9 && highest<=p.maxX+1e-9 && lowest<.84 && highest>1.1,"both shapes reached, within the clamps (%.3f .. %.3f)",lowest,highest);
-        printf("recorded drag: width rms %.4f of %.4f, height %.4f of %.4f (velocity spring: %.4f, %.4f)\n",ex,sx2,ey,sy2,kx,ky);
+        printf("recorded drag: width rms %.4f of %.4f, height %.4f of %.4f\n",ex,sx2,ey,sy2);
     }
     /* A steady speed: the shape builds, then all but vanishes; a stop: the opposite shape, then rest, no ringing. */
     {

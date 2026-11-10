@@ -381,7 +381,6 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     CGFloat _tabTextW[WXGDiscreteTabs];
     CGPoint _tabIconCentre[WXGDiscreteTabs];
     WXGDiscreteMetrics _discreteMetrics;
-    WXGKyantElastic _kyElastic;   // FIX122 C: Kyant's drag-speed deformation (its velocity)
     WXGLensFlex _flex;            // FIX126: the system's (two followers of the lens)
     CGFloat _previousCellExtra;   // FIX127: 每格加宽 as last laid out
     CFTimeInterval _hangUntil;    // FIX127: released, the lens stays lifted until then (0: no hang)
@@ -1121,10 +1120,11 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     return layers;
 }
 - (NSString *)travelBackdropKeyForSize:(CGSize)size {
-    WXGConfig *c=WXGConfig.shared;WXGScopeOptics dock=[c opticsForDock:YES];   // FIX58: the dock's own resting optics
-    return [NSString stringWithFormat:@"%.1fx%.1f/%d/%.3f/%.3f/%.2f/%.3f/%.2f/%.2f/%.2f/%.3f/%.3f/%.2f/%.2f/%.3f/%.0f/%d",size.width,size.height,c.syncDispersion,
-        c.lensRefraction,c.lensDispersion,c.lensEdgeWidth,c.lensZoom,c.lensBlur,dock.blur,c.syncBlurScale,dock.refraction,dock.dispersion,dock.edgeWidth,
-        c.lensDispersionWidth,c.lensDispersionTopRatio,0.,_glass.lensSeesBar?(int)lround(1+c.bodyPinch*1000):0];   // FIX113 U: rebuilt when the lens starts / stops seeing the bar or its inset changes
+    WXGConfig *c=WXGConfig.shared;WXGScopeOptics dock=[c opticsForDock:YES];   // the dock's own resting blur
+    WXGLensSettings L=[c lensSettingsForScope:WXGGlassScopeDock dark:NO];
+    return [NSString stringWithFormat:@"%.1fx%.1f/%d/%.3f/%.3f/%.2f/%.2f/%.3f/%.2f/%.2f/%.2f/%d",size.width,size.height,c.syncDispersion,
+        L.band,L.depth,L.split,L.squeeze,L.zoom,c.lensBlur,dock.blur,c.syncBlurScale,
+        _glass.lensSeesBar?(int)lround(1+c.bodyPinch*1000):0];   // FIX113 U: rebuilt when the lens starts / stops seeing the bar or its inset changes
 }
 // FIX88: the capture group of the travel backdrops: the dock glass's (the
 // lens then sees the page without the dock's veil, as the real lens does) or
@@ -1154,11 +1154,9 @@ static CGSize WXGDiscreteIconSize(UIImage *icon,CGFloat size) {
     _travelVeilOn=group.length && veil;
     _travelVeil.hidden=!_travelVeilOn;
     if(!_travelVeilOn){_travelVeilCount=0;return;}
-    WXGConfig *c=WXGConfig.shared;
-    BOOL fade=c.dockMaterialEdgeFadeEnabled && c.dockMaterialEdgeFade>.01;
     CGFloat r=0,g=0,b=0,a=0;[veil getRed:&r green:&g blue:&b alpha:&a];
     float depths[8],alphas[8];
-    int k=WXGTravelVeilBands((float)a,fade?(float)c.dockMaterialEdgeFade:0.f,8,depths,alphas);
+    int k=WXGTravelVeilBands((float)a,0.f,8,depths,alphas);   // the face is even to the outline
     if(!_travelVeilDepths)_travelVeilDepths=calloc(8,sizeof(float));
     memcpy(_travelVeilDepths,depths,sizeof(float)*(size_t)k);_travelVeilCount=k;
     UIColor *solid=[UIColor colorWithRed:r green:g blue:b alpha:1];   // held: its CGColor lives as long as it does
@@ -1715,10 +1713,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     // stops it shaping the lens, in updateGeometry); Reduce Motion disables it.
     if(!reduceMotion)WXGElasticStep(&_elasticMotion,_velocityX,dt);
     else _elasticMotion=(WXGElasticMotion){0};
-    // FIX122 C: Kyant's deformation follows the lens' speed per tab range.
-    if(!reduceMotion)WXGKyantElasticStep(&_kyElastic,_velocityX,[self centerForIndex:3]-[self centerForIndex:0],WXGConfig.shared.kyantElasticParams,dt);
-    else _kyElastic=(WXGKyantElastic){0};
-    // FIX126: the system's deformation follows the lens too (per tab pitch).
+    // FIX126: the lens' deformation follows it (WXGLensFlex.h, per tab pitch).
     if(!reduceMotion)WXGLensFlexStep(&_flex,_velocityX,([self centerForIndex:3]-[self centerForIndex:0])/3.,WXGConfig.shared.lensFlexParams,dt);
     else _flex=(WXGLensFlex){0};
     if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];   // FIX68
@@ -1732,17 +1727,14 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     CGFloat press=WXGClamp(_press,0,1);
     // FIX113 Y: the drag-speed deformation can be off, and its height change limited.
     BOOL elastic=!UIAccessibilityIsReduceMotionEnabled() && [c extraNumber:@"lensElasticOn"]>.5;
-    // FIX122 C: the dock's own lens (size, growth, position, press), then
-    // Kyant's drag-speed deformation (WXGKyantElastic.h) instead of the
-    // dock's own (its speed stretch and WXGElasticLayoutLimited): width and
-    // height scaled about the lens' centre, the width no wider than the bar
-    // and its end wraps.
+    // The dock's own lens (size, growth, position, press), then the
+    // deformation as it moves (WXGLensFlex.h, as the system's lens): width
+    // and height scaled about the lens' centre, the width no wider than the
+    // bar and its end wraps.
     WXGDockGeometry g=[self layoutAtAnchor:_lensX-_materialRect.origin.x press:press];   // FIX127: iOS 26's cells too
     _glass.lensRestHeight=g.lensHeight;   // FIX113 Y: undeformed
     if(elastic) {
-        double sx=1,sy=1;WXGLensFlexParams flex=c.lensFlexParams;
-        if(flex.on)WXGLensFlexScale(_flex,flex,&sx,&sy);   // FIX126: the system's
-        else WXGKyantElasticScale(_kyElastic,c.kyantElasticParams,&sx,&sy);
+        double sx=1,sy=1;WXGLensFlexScale(_flex,c.lensFlexParams,&sx,&sy);
         float w=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*(float)c.endWrap),h=(float)(g.lensHeight*sy);
         g.lensX+=(g.lensWidth-w)*.5f;g.lensY+=(g.lensHeight-h)*.5f;g.lensWidth=w;g.lensHeight=h;
     }
@@ -1764,13 +1756,14 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     _fallback.frame=bar; _fallback.layer.cornerRadius=MIN(bar.size.width,bar.size.height)*.5;
     _fallbackIcons.transform=CGAffineTransformMakeScale(g.scale,g.scale);
     _fallbackLens.frame=lens; _fallbackLens.layer.cornerRadius=MIN(g.lensWidth,g.lensHeight)*.5;
-    UIColor *tint=WXGColor(_darkInk?c.materialHex:c.darkMaterialHex);
-    _fallback.contentView.backgroundColor=[tint colorWithAlphaComponent:CGColorGetAlpha(tint.CGColor)*(_darkInk?c.materialOpacity:c.darkMaterialOpacity)];
-    UIColor *border=WXGColor(c.borderHex);
-    _fallback.layer.borderWidth=c.dockBorderWidth;
-    _fallback.layer.borderColor=[border colorWithAlphaComponent:CGColorGetAlpha(border.CGColor)*c.borderOpacity*(_darkInk?1:c.darkRimGain)].CGColor;
-    _fallbackLens.layer.borderWidth=c.lensBorderWidth;
-    _fallbackLens.layer.borderColor=[border colorWithAlphaComponent:CGColorGetAlpha(border.CGColor)*c.borderOpacity*(_darkInk?1:c.darkRimGain)*WXGPressedBorderAlpha(press)].CGColor;
+    // The stand-in before the glass has drawn: the dock's own face, a thin white outline.
+    UIColor *tint=WXGColor([c materialHexForScope:WXGGlassScopeDock dark:!_darkInk]);
+    _fallback.contentView.backgroundColor=[tint colorWithAlphaComponent:CGColorGetAlpha(tint.CGColor)*[c materialOpacityForScope:WXGGlassScopeDock dark:!_darkInk]];
+    CGFloat outline=_darkInk?.5:.15;
+    _fallback.layer.borderWidth=.65;
+    _fallback.layer.borderColor=[UIColor colorWithWhite:1 alpha:outline].CGColor;
+    _fallbackLens.layer.borderWidth=.65;
+    _fallbackLens.layer.borderColor=[UIColor colorWithWhite:1 alpha:outline*WXGPressedBorderAlpha(press)].CGColor;
     UIColor *selectionColor=WXGColor(_darkInk?c.selectionHex:c.darkSelectionHex);
     _fallbackLens.backgroundColor=[selectionColor colorWithAlphaComponent:CGColorGetAlpha(selectionColor.CGColor)*(c.selectionOpacity+(c.pressedOpacity-c.selectionOpacity)*press)*selection];
     [CATransaction commit];
@@ -2584,9 +2577,10 @@ static const CGFloat WXGDiscreteReturnProgress=.15;
 - (NSString *)diagnostics {
     WXGConfig *c=WXGConfig.shared;
     WXGScopeOptics dock=[c opticsForDock:YES];
-    return [NSString stringWithFormat:@"TEST9 呼出/收回；运动形变 %@；按压 %.3f；速度 %.1f pt/s；形变 %.3f\n底栏：折射 %.2f / 色散 %.2f / 宽度 %.1f pt\n透镜：折射 %.2f / 色散 %.2f / 宽度 %.1f pt\n底栏模糊 %.2f pt / 覆盖 %.0f%%\n%@",
-        @"elastic",WXGClamp(_press,0,1),_velocityX,_elasticMotion.stretch,
-        dock.refraction,dock.dispersion,dock.edgeWidth,c.lensRefraction,c.lensDispersion,c.lensEdgeWidth,dock.blur,dock.blurCoverage,
+    WXGGlassCurve body=[c glassCurveForScope:WXGGlassScopeDock];WXGLensSettings L=[c lensSettingsForScope:WXGGlassScopeDock dark:NO];
+    return [NSString stringWithFormat:@"按压 %.3f；速度 %.1f pt/s；形变 %.3f\n底栏：折射带 %.2f / 深度 %.2f / 色散 %.2f\n透镜：折射带 %.2f / 深度 %.2f / 色散 %.2f\n底栏模糊 %.2f pt\n%@",
+        WXGClamp(_press,0,1),_velocityX,_elasticMotion.stretch,
+        body.height,body.amount,body.dispersion,L.band,L.depth,L.split,dock.blur,
         _discreteShown?[[self discreteSummary] stringByAppendingFormat:@"\n%@",_pieces.firstObject.diagnostics?:@""]:_glass.diagnostics];
 }
 @end

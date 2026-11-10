@@ -42,7 +42,6 @@
     return WXGColor(dark?(_outgoing?c.darkBubbleOutgoingHex:c.darkBubbleIncomingHex):(_outgoing?c.bubbleOutgoingHex:c.bubbleIncomingHex));
 }
 // FIX83: the tint weakens toward the outline over the bubble page's range.
-- (CGFloat)tintFade {WXGConfig *c=WXGConfig.shared;return c.bubbleEdgeFadeEnabled?c.bubbleEdgeFade:0;}
 - (void)setOutgoing:(BOOL)outgoing {if(_outgoing==outgoing)return;_outgoing=outgoing;_dirty=YES;_glass.veilOverride=[self tint];}
 - (void)setRadius:(CGFloat)radius {if(fabs(_radius-radius)<.01)return;_radius=radius;_dirty=YES;[self setNeedsLayout];}
 - (void)didMoveToWindow {[super didMoveToWindow];_glass.active=self.window!=nil;_dirty=YES;}
@@ -58,7 +57,6 @@
         // 0 would mean a capsule to the glass; a square corner is 0.5 pt.
         self.glass.maximumCornerRadius=MAX(.5,MIN(self.radius,MIN(b.size.width,b.size.height)*.5));
         if(!self.glass.veilOverride)self.glass.veilOverride=[self tint];
-        self.glass.veilOverrideFade=[self tintFade];
         [self.glass layoutIfNeeded];
         [CATransaction commit];
     }];
@@ -69,7 +67,7 @@
     if(!self.window || self.hidden)return;
     UIUserInterfaceStyle style=self.traitCollection.userInterfaceStyle;
     if(!_dirty && _appliedRevision==WXGConfigRevision() && _appliedStyle==style && _appliedOutgoing==_outgoing)return;
-    _glass.veilOverride=[self tint];_glass.veilOverrideFade=[self tintFade];
+    _glass.veilOverride=[self tint];
     BOOL lean=!WXGConfig.shared.bubbleFullGlass;
     if(_glass.lightweight!=lean){_glass.lightweight=lean;[_glass invalidateBackdrop];[_glass setNeedsLayout];}
     [self layoutIfNeeded];[_glass layoutIfNeeded];

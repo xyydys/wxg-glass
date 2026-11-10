@@ -47,13 +47,29 @@ typedef struct {
     double shadowLength;        /* the optional inner shadow (not the system's) */
 } WXGRim26Shape;
 static inline double WXGRim26Clamp(double v,double lo,double hi) {return !(v==v)?lo:v<lo?lo:v>hi?hi:v;}
-/* The two lights along the outline; (nx, ny) the outward direction, y down. */
+/* The two lights along the outline; (nx, ny) the outward direction, y down.
+   FIX130 (user: "an obvious sharp point where the lights close in, lower
+   left and upper right; I only saw it after turning 收拢 down"): with the
+   exponent below 1 the lobes were |c|^p, which leaves the dark point
+   between the two lights exactly as dark but ever narrower: the glass shows
+   through the rim in a sharp nick there. Below 1 the lights now stay on
+   across that point instead (the lower the exponent, the brighter: 0.85 x
+   (1 - p) of a light's level) and turn round it in a curve, the two
+   lights' levels running into each other. At 1 and above nothing changes
+   (1 is the system's |cos|, which fades out over a wide arc). */
 static inline double WXGRim26Along(double nx,double ny,WXGRim26Shape s) {
     double r=WXGRim26Clamp(s.angle,-360,360)*M_PI/180.,c=nx*sin(r)+ny*cos(r);
     c=WXGRim26Clamp(c,-1,1);
     double p=s.spread>.05?s.spread:.05;
-    double v=c>0.?s.key*pow(c,p):s.fill*pow(-c,p);
-    return WXGRim26Clamp(v,0,1);
+    if(p>=1.-1e-9) {
+        double v=c>0.?s.key*pow(c,p):s.fill*pow(-c,p);
+        return WXGRim26Clamp(v,0,1);
+    }
+    double w=1.-p,k=.5*w,a=fabs(c);
+    double rounded=(sqrt(a*a+k*k)-k)/(sqrt(1.+k*k)-k);
+    double low=.85*w,f=low+(1.-low)*rounded;
+    double t=WXGRim26Clamp(c/(2.*k)+.5,0,1);t=t*t*(3.-2.*t);
+    return WXGRim26Clamp((s.fill+(s.key-s.fill)*t)*f,0,1);
 }
 /* Across the edge at depth d (pt): a straight line from 1 at the outline to
    1 - curve at `height`, nothing outside [0, height]. */

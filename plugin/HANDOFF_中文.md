@@ -1,6 +1,44 @@
 # 交接说明（给新对话）· WeChat Liquid Glass TEST4 · 当前 FIX114 G（用户 01:48 导出的参数作为这版默认；手机上没改过的设置换成新默认、改过的保留；基于 FIX114 F）
 
 
+## FIX130（用户 11-10 上机 FIX129：“色散效果不佳，太难读了，还是用之前的那种吧”；“不需要代码里以及设置里再有 kyant 的部分了”；“收拢调小后左下右上有明显的尖角”；“整理整个代码的无用部分，所有地方都用从 iOS 26 上扒下来的参数，透镜、边框、折射、材质的旧的都可以删掉，旧的边框只留 iOS 27”；设置重排成三部分；还缺的数据怎么抓）
+
+**这是一次大清理：净删约 2500 行，配置键 1162 → 656。没上机。**
+
+**一、色散**：FIX128 / FIX129 的整圈色散（`lensRingDispersion…`、`WXGMeshOptics` 的 `ring…`、柔化、`LensRingSplitTests`）全部删掉，退回按角分配的那种（强度 = (x / 半宽) × (y / 半高)，红 +3/7、绿 +2/21、蓝 −2/3）。
+
+**二、边框收拢处的尖角**（`WXGRim26.h` `WXGRim26Along`）：两盏灯在左下 / 右上正好抵消，边框透明度到 0，玻璃面从缺口里露出来；`收拢 < 1` 时原来的 `|cos|^p` 在 0 附近是个尖。现在 `收拢 < 1` 时：零点附近用圆角过渡（`sqrt(c² + k²) − k`，k = (1 − p) / 2），最暗处留 0.85 × (1 − p) 的底，两盏灯之间平滑换手；`收拢 ≥ 1` 逐位不变（`Rim26Tests` 加了对应检查）。
+
+**三、所有范围统一成 iOS 26 的玻璃**
+- 每个范围（其余玻璃、底栏、气泡、分组、设置页）各自一套、同名的键（前缀 `""` / `dock` / `bubble` / `segment` / `card`）：`…GlassBand` 0.25（折射带 = 短边的份额）、`…GlassDepth` 0.8、`…GlassBandMax` 20 pt、`…GlassSqueeze` 3、`…GlassDispersion` 0、`…GlassBlurSmall` 1.8 / `…GlassBlurLarge` 5.5、`…GlassVeil` 0.65 / 深色 0.605、`…GlassSaturation` 1.34 / 1.67、`…GlassBrightness` −0.03 / 0.18、`…GlassShadow` 0.25 / 0.05（气泡、设置页 0）、`…GlassShadowBlur` 18、`…GlassShadowOffset` 8。别的范围第一次从“其余玻璃”的值开始。
+- 透镜（底栏的、分组的）：`lensCurveBand` 0.10、`lensCurveDepth` 0.30、`lensCurveDispersion` 1、`lensCurveSqueeze` 0（`segmentLensCurve…` 同）。镜里的图标 / 文字仍是叠加着色器自己的那条带（`lensIcon…`、`lensDispersion`）。
+- 边框只有两种：iOS 26（`WXGRim26View`）和 iOS 27（`WXGRimView`，现在只剩高光）。`…RimStyle` 存的数没变（2 = iOS 27，3 = iOS 26），以前的 0 / 1（普通、取自背景）读成 3。
+- 配置层的取值入口：`glassCurveForScope:`、`glassBlurForScope:side:`、`backdropToneForScope:dark:`、`materialOpacityForScope:dark:`（面色固定白 / 黑）、`dropShadowForScope:dark:`、`lensSettingsForScope:dark:`、`rimStyleForScope:`、`rim26ForScope:dark:`、`rimGlowForScope:index:dark:`。
+- 旧设置的迁移（`WXGRenamedSettings`，读存下来的 `optics.test4` 和导入的参数文件时各做一次）：只有“本来就是系统的”那些带过来——其余玻璃的 iOS 26 折射 / 模糊 / 材质 / 阴影（各自开关开着时）、透镜的曲线参数（透镜曲线开着时）。旧折射带、旧材质颜色、两种旧边框的数值不再读。
+
+**四、删掉的**
+- 代码：`WXGKyantElastic.h`（速度弹簧形变）、`WXGShareChain.h`（共用）、`WXGRimTintView`（取自背景的线）、`WXGRimView` 里的普通线 / 细节 / 柔光 / 内阴影 / 渐隐遮罩、`WXGRimFadeLayer`、iOS 26 边框的可选内阴影和实验性系统滤镜、玻璃面边缘渐弱遮罩、气泡边缘渐弱、`segmentLikeDock` / `segmentFromDock`、`config.v4–v9` 的老迁移、`WXGRimDetail.h` 只剩两个类型、`WXGRimGlow.h` 的柔光带。
+- 键：旧折射 / 色散 / 折射宽度 / 模糊覆盖、旧材质颜色与不透明度、边缘渐弱、边界过渡、背景色调、旧阴影、普通 / 取自背景边框的全部（颜色、不透明度、宽度、亮度、渐隐、细节、柔光、内收）、`kyant…`、`ios26…`（改名成上面的 `…Glass…`）、共用、`lensRefractsBar`（恒开）、`lensBarOutlineOn`（恒关）、`lensBarVeilOn`（恒开）、镜内底栏色散、`clearMaterial`（恒“通透”）。
+- 测试：`KyantElasticTests`、`LensRingSplitTests`、`RimDetailTests`；`KyantLensTests` → `LensCurveTests`（不再逐行对照别人的着色器，直边部分对公式本身）。
+- **还留着、但已经不会被触发的旧代码**（和别的纠缠深，这次没动）：`WXGMeshRefraction.h` 里旧的“折射带”公式和边界过渡（现在传进去的旧折射量恒为 0）；`WXGGlassView.m` 的“清晰边缘环”（模糊覆盖恒 100 时不建）；叠加着色器（来自授权服务器，改不了）里的旧边框 / 旧材质渐弱输入现在都喂 0；`WXGRim26.h` 里画图用的函数（只有测试在用，当作边框的参考模型）；`WXGOptics.h` 里旧边框渐隐的函数（着色器的镜像）。
+
+**五、“Kyant”**
+- 设置里、标识符里、文件名里都没有了。源码里只剩两处：读旧设置时用到的旧键名（迁移，以后可删），和 `WXGLensCurve.h` 头部的一句出处。
+- **出处为什么留着**：折射曲线本身已经在 iOS 26 上逐点量过，是系统的；但“按角分配的色散”（上面那个公式和三个系数）系统没有，是照 Kyant 的 Backdrop `lens()` 重写的。它是 Apache 2.0：可以商用，条件是保留署名——所以仓库根目录加了 `THIRD_PARTY_NOTICES.md`。想完全没有关系，只能把这种色散删掉（各范围默认本来就是 0，只有透镜默认 1）或换成自己设计的；用户刚说要用回这种，所以保留并署名。
+
+**六、设置页三部分**（`WXGSettings.m` `+sections`，`WXGOpticalSettings.m` `WXGModuleSpec`）
+1. **效果调整**（一个模块 `effect`）：顶部切范围（其余玻璃 / 底栏 / 底栏透镜 / 分组 / 分组透镜 / 气泡 / 设置页 / 视频号），下面是这个范围的：折射、模糊、材质（浅 / 深）、阴影、边框样式（iOS 26 / iOS 27）及其参数；底栏多出透镜、镜内图标文字、透镜形变、透镜滤镜色；另有“复制到”“恢复默认”。“共用到”没有了（改成一次性的复制）。
+2. **功能**：聊天页、首页（分组、加号菜单）、个人页、底栏功能、渐进式模糊（原“渐隐”）、通用。
+3. **设置与授权**：设置页外观、授权。
+
+**七、还缺的数据怎么抓**
+- **当前探针（探针 2）就能抓的**：
+  1. 底栏那块玻璃自己的材质 / 折射 / 模糊（现在底栏本体用的是按钮那条通用规律，没单独核对过）：打开 ④ 底栏录制的页面，**不用点开始录制、不要碰底栏**，六种背景 × 深 / 浅各截一张屏（电源键 + 音量键），共 12 张，发原图。
+  2. 轻点标签时透镜的那一下（起、落的时间和大小）：④ 录制，每个标签各点一次，**两次之间隔 1 秒以上**，别的动作不用做；网格 + 深色、网格 + 浅色各一遍。
+- **要新探针的**：玻璃大小和模糊的关系（现在只有 44 pt 和 140×90 两个点，中间是插值）；玻璃随背后明暗自动变深 / 变浅的过程（要一个背景由黑渐变到白的录制场景）。
+
+- 验证：27 个源文件 `-Werror` 编译 + 链接；58 项测试通过（`LensInsetAlongTests` 仍是 main 上原有的问题）；脚本核对过设置页每一行的键、所有按名字读的键、`套用 iOS 26 实测数值` 里的键都在配置表里。**没上机。**
+
 ## FIX129（用户 11-10 上机 FIX128：“感觉哪里很大程度上不对；你处理过原版色散这种看起来发虚的模拟吗？还是就是跟草图里一样的效果？它的特效很克制。透镜本身应该带一圈边框，当前的也没有。大部分胶囊状结构好像上下边的部分缺了一点点宽度，貌似不是苹果连续圆角”）
 
 **一、色散发虚——FIX128 没做，这次补上**

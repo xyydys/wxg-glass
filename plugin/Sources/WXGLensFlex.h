@@ -8,12 +8,12 @@
    height while it is dragged, fitted on the takes' frame records (the lens
    layer's transform every display frame, 60 to 120 a second).
 
-   What the records show: the scale is signed, as Kyant's is (moving right
+   What the records show: the scale is signed (moving right
    wider and flatter, moving left narrower and taller), but it is not a
    function of the speed: at a steady speed it all but vanishes, it builds
    while the lens gets going, and when the lens stops it swings to the
-   opposite shape and dies away without ringing. A velocity spring
-   (WXGKyantElastic.h) cannot do that (best fit: rms .041 of a signal of
+   opposite shape and dies away without ringing. A spring on the speed
+   cannot do that (best fit: rms .041 of a signal of
    .060). What does, to 95 % of the variance on the fast drags (rms .018 of
    .080 in width, .028 of .118 in height):
 

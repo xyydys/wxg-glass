@@ -1,5 +1,4 @@
 #import "WXGCommon.h"
-#include "WXGShareChain.h"
 #include <stdarg.h>
 
 NSString * const WXGSettingsChanged = @"com.runyu.WGLiquidDockDemo.settings";
@@ -55,60 +54,21 @@ void WXGConfigureDisplayLink(CADisplayLink *link,UIScreen *screen) {
     }else if(link.preferredFramesPerSecond!=maximum)link.preferredFramesPerSecond=maximum;
 }
 
-/* FIX85: keys kept in a table instead of properties: the liquid bubbles'
-   own optics and rim, the rim style, the colour-from-background style's own
-   opacity / width / brightness / fade and the iOS 27-like rim (FIX86: the
-   calm background material is gone again). Each is a number ('n', clamped to lo..hi), a switch
-   ('b') or a colour ('h'). A key with `inherit` starts, when it has never
-   been stored, from that key's current value (so nothing looks different
-   until it is changed). They are ordinary keys to everything else (KVC,
-   the settings rows, export / import, the build defaults). */
+/* Keys kept in a table instead of properties (FIX85): every range's glass
+   (FIX130: refraction, blur, material, shadow), the two borders (iOS 26's,
+   iOS 27's), the dock, the segment bar, the pages' features. Each is a number
+   ('n', clamped to lo..hi), a switch ('b') or a colour ('h'). A key with
+   `inherit` starts, when it has never been stored, from that key's current
+   value (so nothing looks different until it is changed). They are ordinary
+   keys to everything else (KVC, the settings rows, export / import, the
+   build defaults). */
 typedef struct {const char *key; char kind; double def,lo,hi; const char *inherit,*hex;} WXGExtraSpec;
 static const WXGExtraSpec WXGExtraSpecs[]={
-    {"bubbleRefraction",'n',1.15,0,20,"refraction",NULL},
-    {"bubbleDispersion",'n',0.95,0,8,"dispersion",NULL},
-    {"bubbleEdgeWidth",'n',10,1,60,"edgeWidth",NULL},
-    {"bubbleBlur",'n',1.5,0,12,"blur",NULL},
-    {"bubbleBlurCoverage",'n',0,0,100,"blurCoverage",NULL},
     {"bubbleFullGlass",'b',0,0,1,NULL,NULL},
     {"bubbleSharedBackdrop",'b',1,0,1,NULL,NULL},   // FIX119 B
-    {"bubbleRimHex",'h',0,0,0,"rimHex","#FFFFFFFF"},
-    {"bubbleDarkRimHex",'h',0,0,0,"darkRimHex","#FFFFFFFF"},
-    {"bubbleRimOpacity",'n',0.5,0,1,"rimOpacity",NULL},
-    {"bubbleDarkRimOpacity",'n',0.14,0,1,"darkRimOpacity",NULL},
-    {"bubbleBorderWidth",'n',1,0,2,"barBorderWidth",NULL},
-    {"bubbleDarkBorderWidth",'n',1,0,2,"darkBarBorderWidth",NULL},
-    {"bubbleRimBrightness",'n',1,0,2,"rimBrightness",NULL},
-    {"bubbleDarkRimBrightness",'n',1,0,2,"darkRimBrightness",NULL},
-    {"bubbleRimFade",'n',0.7,0,1,"rimFade",NULL},
-    {"bubbleDarkRimFade",'n',1,0,1,"darkRimFade",NULL},
-    {"rimStyle",'n',1,0,4,NULL,NULL},
-    {"dockRimStyle",'n',1,0,3,"rimStyle",NULL},
-    {"bubbleRimStyle",'n',1,0,3,"rimStyle",NULL},
-    {"rimSampleOpacity",'n',0.5,0,1,"rimOpacity",NULL},
-    {"darkRimSampleOpacity",'n',0.5,0,1,"darkRimOpacity",NULL},
-    {"dockRimSampleOpacity",'n',0.5,0,1,"dockRimOpacity",NULL},
-    {"dockDarkRimSampleOpacity",'n',0.5,0,1,"dockDarkRimOpacity",NULL},
-    {"bubbleRimSampleOpacity",'n',0.5,0,1,"bubbleRimOpacity",NULL},
-    {"bubbleDarkRimSampleOpacity",'n',0.5,0,1,"bubbleDarkRimOpacity",NULL},
-    {"rimSampleWidth",'n',1,0,2,"barBorderWidth",NULL},
-    {"darkRimSampleWidth",'n',1,0,2,"darkBarBorderWidth",NULL},
-    {"dockRimSampleWidth",'n',1,0,2,"dockBorderWidth",NULL},
-    {"dockDarkRimSampleWidth",'n',1,0,2,"dockDarkBorderWidth",NULL},
-    {"bubbleRimSampleWidth",'n',1,0,2,"bubbleBorderWidth",NULL},
-    {"bubbleDarkRimSampleWidth",'n',1,0,2,"bubbleDarkBorderWidth",NULL},
-    {"rimSampleBrightness",'n',1,0,2,"rimBrightness",NULL},
-    {"darkRimSampleBrightness",'n',1,0,2,"darkRimBrightness",NULL},
-    {"dockRimSampleBrightness",'n',1,0,2,"dockRimBrightness",NULL},
-    {"dockDarkRimSampleBrightness",'n',1,0,2,"dockDarkRimBrightness",NULL},
-    {"bubbleRimSampleBrightness",'n',1,0,2,"bubbleRimBrightness",NULL},
-    {"bubbleDarkRimSampleBrightness",'n',1,0,2,"bubbleDarkRimBrightness",NULL},
-    {"rimSampleFade",'n',0.7,0,1,"rimFade",NULL},
-    {"darkRimSampleFade",'n',0.7,0,1,"darkRimFade",NULL},
-    {"dockRimSampleFade",'n',0.7,0,1,"dockRimFade",NULL},
-    {"dockDarkRimSampleFade",'n',0.7,0,1,"dockDarkRimFade",NULL},
-    {"bubbleRimSampleFade",'n',0.7,0,1,"bubbleRimFade",NULL},
-    {"bubbleDarkRimSampleFade",'n',0.7,0,1,"bubbleDarkRimFade",NULL},
+    {"rimStyle",'n',3,2,3,NULL,NULL},
+    {"dockRimStyle",'n',3,2,3,"rimStyle",NULL},
+    {"bubbleRimStyle",'n',3,2,3,"rimStyle",NULL},
     {"rim27Hex",'h',0,0,0,NULL,"#FFFFFFFF"},
     {"rim27Opacity",'n',0.6,0,1,NULL,NULL},
     {"rim27Width",'n',2.0,0.3,8,NULL,NULL},
@@ -242,12 +202,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensTintOpacity",'n',.12,0,1,NULL,NULL},
     {"darkLensTintHex",'h',0,0,0,NULL,"#FFFFFFFF"},
     {"darkLensTintOpacity",'n',.08,0,1,NULL,NULL},
-    // FIX97: the bar seen through the lens splits its colours too: everywhere
-    // (pt at the rim, from 0 at the centre) and near the ends (a share of the
-    // lens' own split, where it refracts the bar most).
-    {"lensBarDispersionOn",'b',1,0,1,NULL,NULL},
-    {"lensBarDispersion",'n',.6,0,2,NULL,NULL},
-    {"lensBarDispersionNearRim",'n',.35,0,1,NULL,NULL},
     // FIX95: the tap animation is the real lens; this brings back the
     // render-server one (smooth through WeChat's switch, but only a shape).
     {"dockTapSimpleTravel",'b',0,0,1,NULL,NULL},
@@ -322,66 +276,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // FIX109 B (user: the default gap between the pinned module and the
     // avatar mode's capsule looks wide): pt added to it (negative: closer).
     {"pinnedGapAdjust",'n',0,-16,16,NULL,NULL},
-    // FIX109 (user: the 普通 rim softer, a short glow at its edge, not a
-    // gradient across it): on per range (the switch kept from A); FIX109 B:
-    // the glow inside the line, its width (pt) and the level it starts at
-    // (of the line's), per range and appearance.
-    {"rimInward",'b',1,0,1,NULL,NULL},
-    {"dockRimInward",'b',1,0,1,"rimInward",NULL},
-    {"bubbleRimInward",'b',1,0,1,"rimInward",NULL},
-    {"rimSoftWidth",'n',.8,0,4,NULL,NULL},
-    {"darkRimSoftWidth",'n',.8,0,4,"rimSoftWidth",NULL},
-    {"dockRimSoftWidth",'n',.8,0,4,"rimSoftWidth",NULL},
-    {"dockDarkRimSoftWidth",'n',.8,0,4,"darkRimSoftWidth",NULL},
-    {"bubbleRimSoftWidth",'n',.8,0,4,"rimSoftWidth",NULL},
-    {"bubbleDarkRimSoftWidth",'n',.8,0,4,"darkRimSoftWidth",NULL},
-    {"rimSoftLevel",'n',.5,0,1,NULL,NULL},
-    {"darkRimSoftLevel",'n',.5,0,1,"rimSoftLevel",NULL},
-    {"dockRimSoftLevel",'n',.5,0,1,"rimSoftLevel",NULL},
-    {"dockDarkRimSoftLevel",'n',.5,0,1,"darkRimSoftLevel",NULL},
-    {"bubbleRimSoftLevel",'n',.5,0,1,"rimSoftLevel",NULL},
-    {"bubbleDarkRimSoftLevel",'n',.5,0,1,"darkRimSoftLevel",NULL},
-    // FIX109 C (user: 取自背景 the same way, its colour from the background):
-    // the sampled line's own switch, glow width and level.
-    {"rimSampleSoft",'b',1,0,1,"rimInward",NULL},
-    {"dockRimSampleSoft",'b',1,0,1,"dockRimInward",NULL},
-    {"bubbleRimSampleSoft",'b',1,0,1,"bubbleRimInward",NULL},
-    {"rimSampleSoftWidth",'n',.8,0,4,"rimSoftWidth",NULL},
-    {"darkRimSampleSoftWidth",'n',.8,0,4,"darkRimSoftWidth",NULL},
-    {"dockRimSampleSoftWidth",'n',.8,0,4,"dockRimSoftWidth",NULL},
-    {"dockDarkRimSampleSoftWidth",'n',.8,0,4,"dockDarkRimSoftWidth",NULL},
-    {"bubbleRimSampleSoftWidth",'n',.8,0,4,"bubbleRimSoftWidth",NULL},
-    {"bubbleDarkRimSampleSoftWidth",'n',.8,0,4,"bubbleDarkRimSoftWidth",NULL},
-    {"rimSampleSoftLevel",'n',.5,0,1,"rimSoftLevel",NULL},
-    {"darkRimSampleSoftLevel",'n',.5,0,1,"darkRimSoftLevel",NULL},
-    {"dockRimSampleSoftLevel",'n',.5,0,1,"dockRimSoftLevel",NULL},
-    {"dockDarkRimSampleSoftLevel",'n',.5,0,1,"dockDarkRimSoftLevel",NULL},
-    {"bubbleRimSampleSoftLevel",'n',.5,0,1,"bubbleRimSoftLevel",NULL},
-    {"bubbleDarkRimSampleSoftLevel",'n',.5,0,1,"bubbleDarkRimSoftLevel",NULL},
-    {"lensDispersionWidth",'n',10,1,60,"lensEdgeWidth",NULL},
-    {"lensDispersionTopRatio",'n',1,0.1,1,"lensTopEdgeRatio",NULL},
-    // FIX122 Kyant 透镜模式 (WXGKyantLens.h): the dock's lens refracted and
-    // split as Kyant's Backdrop lens(): on, the band and the shift at the
-    // outline as shares of the lens' short side (the catalog's 10 / 56 and
-    // 14 / 56), the colour split's strength (1 = his). Off = as before.
-    {"lensKyantOn",'b',0,0,1,NULL,NULL},
-    {"lensKyantHeight",'n',10./56.,.02,.5,NULL,NULL},
-    {"lensKyantAmount",'n',14./56.,0,.8,NULL,NULL},
-    {"lensKyantDispersion",'n',1,0,3,NULL,NULL},
-    // FIX122 E: the outermost thin ring (his curve's infinitely steep
-    // start): kept (his) or capped at this squeeze (WXGKyantOffsetCapped).
-    {"lensKyantRimFine",'b',1,0,1,NULL,NULL},
-    {"lensKyantRimMax",'n',3,1,20,NULL,NULL},
-    // FIX128 (user: "the colour split is not like the system's; which setting?"): Kyant's split is only toward the
-    // corners; iOS 26's runs all round the outline (measured on the recorded lens over the grid). Off by default.
-    {"lensRingDispersionOn",'b',0,0,1,NULL,NULL},
-    {"lensRingDispersion",'n',.8,0,4,NULL,NULL},          // red / blue each moved this far at the outline (pt)
-    {"lensRingDispersionWidth",'n',14,2,40,NULL,NULL},    // down to nothing this far inside (pt)
-    {"lensRingDispersionAngle",'n',15,-45,45,NULL,NULL},  // the direction turned from the normal (degrees; the system's AberrationAngle)
-    // FIX129 (user: "it looks largely wrong: the system's split is soft and restrained, this is the sketch's hard lines"): each
-    // colour's copy of an edge is itself spread on the system's lens (about 0.4 pt: its filter adds many samples along the
-    // spectrum; here there are three), so the bands run into each other. The same blur on the lens' three colour layers.
-    {"lensRingDispersionSoft",'n',.8,0,3,NULL,NULL},      // that blur's radius (the blur filter's units, as 透镜模糊)
     // FIX88: 平稳背景时加强材质 again (FIX85, removed in FIX86).
     // FIX113 O: the chat list's segment bar's own lens and pill (user: not the
     // dock's parameters; its pill's inset, colour and border its own), first
@@ -392,37 +286,18 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentLensEdgeWidth",'n',10,1,60,"lensEdgeWidth",NULL},
     {"segmentLensTopEdgeRatio",'n',1,.1,1,"lensTopEdgeRatio",NULL},
     {"segmentLensEdgeSharpness",'n',3,1,6,"lensEdgeSharpness",NULL},
-    {"segmentLensDispersionWidth",'n',10,1,60,"lensDispersionWidth",NULL},
-    {"segmentLensDispersionTopRatio",'n',1,.1,1,"lensDispersionTopRatio",NULL},
     {"segmentLensZoom",'n',1.2,1,1.5,"lensZoom",NULL},
     {"segmentLensGrowth",'n',1.28,1.08,1.5,"lensGrowth",NULL},
     {"segmentBarGrowth",'n',1,1,1.08,"barGrowth",NULL},
     {"segmentEndWrap",'n',6,2,10,"endWrap",NULL},
     {"segmentBodyPinch",'n',.18,0,.3,"bodyPinch",NULL},
     {"segmentLensBlur",'n',0,0,12,"lensBlur",NULL},
-    {"segmentLensBlurCoverage",'n',0,0,100,"lensBlurCoverage",NULL},
-    {"segmentLensOffsetCancel",'n',0,0,1,"lensOffsetCancel",NULL},
-    {"segmentLensKyantOn",'b',0,0,1,"lensKyantOn",NULL},   // FIX122
-    {"segmentLensKyantHeight",'n',10./56.,.02,.5,"lensKyantHeight",NULL},
-    {"segmentLensKyantAmount",'n',14./56.,0,.8,"lensKyantAmount",NULL},
-    {"segmentLensKyantDispersion",'n',1,0,3,"lensKyantDispersion",NULL},
-    {"segmentLensKyantRimFine",'b',1,0,1,"lensKyantRimFine",NULL},   // FIX122 E
-    {"segmentLensKyantRimMax",'n',3,1,20,"lensKyantRimMax",NULL},
-    {"segmentLensRimHex",'h',0,0,0,"lensRimHex","#FFFFFFFF"},
-    {"segmentDarkLensRimHex",'h',0,0,0,"darkLensRimHex","#FFFFFFFF"},
-    {"segmentLensRimOpacity",'n',.5,0,1,"lensRimOpacity",NULL},
-    {"segmentDarkLensRimOpacity",'n',.3,0,1,"darkLensRimOpacity",NULL},
-    {"segmentLensBorderWidth",'n',1,0,2,"lensBorderWidth",NULL},
-    {"segmentDarkLensBorderWidth",'n',1,0,2,"darkLensBorderWidth",NULL},
     {"segmentPillRimAtRest",'n',0,0,1,NULL,NULL},
     {"segmentLensTintOn",'b',0,0,1,"lensTintOn",NULL},
     {"segmentLensTintHex",'h',0,0,0,"lensTintHex","#FFFFFFFF"},
     {"segmentDarkLensTintHex",'h',0,0,0,"darkLensTintHex","#FFFFFFFF"},
     {"segmentLensTintOpacity",'n',.12,0,1,"lensTintOpacity",NULL},
     {"segmentDarkLensTintOpacity",'n',.08,0,1,"darkLensTintOpacity",NULL},
-    {"segmentLensBarDispersionOn",'b',1,0,1,"lensBarDispersionOn",NULL},
-    {"segmentLensBarDispersion",'n',.6,0,2,"lensBarDispersion",NULL},
-    {"segmentLensBarDispersionNearRim",'n',.35,0,1,"lensBarDispersionNearRim",NULL},
     {"segmentSelectionInset",'n',4,2,14,"selectionInset",NULL},
     {"segmentPillAuto",'b',0,0,1,NULL,NULL},
     {"segmentPillHex",'h',0,0,0,"selectionHex","#71879EFF"},
@@ -439,54 +314,8 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // FIX113 O: two more glass ranges with every glass setting of their own
     // (as the bubbles'): 分组 (the segment bar) and 设置页 (this plugin's
     // settings pages: their cards and title-bar buttons).
-    {"segmentRefraction",'n',1.15,0,20,"dockRefraction",NULL},
-    {"cardRefraction",'n',1.15,0,20,"refraction",NULL},
-    {"segmentDispersion",'n',0.95,0,8,"dockDispersion",NULL},
-    {"cardDispersion",'n',0.95,0,8,"dispersion",NULL},
-    {"segmentEdgeWidth",'n',10,1,60,"dockEdgeWidth",NULL},
-    {"cardEdgeWidth",'n',10,1,60,"edgeWidth",NULL},
-    {"segmentBlur",'n',1.5,0,12,"dockBlur",NULL},
-    {"cardBlur",'n',1.5,0,12,"blur",NULL},
-    {"segmentBlurCoverage",'n',0,0,100,"dockBlurCoverage",NULL},
-    {"cardBlurCoverage",'n',0,0,100,"blurCoverage",NULL},
-    {"segmentRimHex",'h',0,0,0,"dockRimHex","#FFFFFFFF"},
-    {"cardRimHex",'h',0,0,0,"rimHex","#FFFFFFFF"},
-    {"segmentDarkRimHex",'h',0,0,0,"dockDarkRimHex","#FFFFFFFF"},
-    {"cardDarkRimHex",'h',0,0,0,"darkRimHex","#FFFFFFFF"},
-    {"segmentRimOpacity",'n',0.5,0,1,"dockRimOpacity",NULL},
-    {"cardRimOpacity",'n',0.5,0,1,"rimOpacity",NULL},
-    {"segmentDarkRimOpacity",'n',0.23,0,1,"dockDarkRimOpacity",NULL},
-    {"cardDarkRimOpacity",'n',0.14,0,1,"darkRimOpacity",NULL},
-    {"segmentBorderWidth",'n',1,0,2,"dockBorderWidth",NULL},
-    {"cardBorderWidth",'n',1,0,2,"barBorderWidth",NULL},
-    {"segmentDarkBorderWidth",'n',1,0,2,"dockDarkBorderWidth",NULL},
-    {"cardDarkBorderWidth",'n',1,0,2,"darkBarBorderWidth",NULL},
-    {"segmentRimBrightness",'n',1,0,2,"dockRimBrightness",NULL},
-    {"cardRimBrightness",'n',1,0,2,"rimBrightness",NULL},
-    {"segmentDarkRimBrightness",'n',1,0,2,"dockDarkRimBrightness",NULL},
-    {"cardDarkRimBrightness",'n',1,0,2,"darkRimBrightness",NULL},
-    {"segmentRimFade",'n',0.7,0,1,"dockRimFade",NULL},
-    {"cardRimFade",'n',0.7,0,1,"rimFade",NULL},
-    {"segmentDarkRimFade",'n',1,0,1,"dockDarkRimFade",NULL},
-    {"cardDarkRimFade",'n',1,0,1,"darkRimFade",NULL},
-    {"segmentRimStyle",'n',1,0,3,"dockRimStyle",NULL},
-    {"cardRimStyle",'n',1,0,3,"rimStyle",NULL},
-    {"segmentRimSampleOpacity",'n',0.5,0,1,"dockRimSampleOpacity",NULL},
-    {"cardRimSampleOpacity",'n',0.5,0,1,"rimSampleOpacity",NULL},
-    {"segmentDarkRimSampleOpacity",'n',0.5,0,1,"dockDarkRimSampleOpacity",NULL},
-    {"cardDarkRimSampleOpacity",'n',0.5,0,1,"darkRimSampleOpacity",NULL},
-    {"segmentRimSampleWidth",'n',1,0,2,"dockRimSampleWidth",NULL},
-    {"cardRimSampleWidth",'n',1,0,2,"rimSampleWidth",NULL},
-    {"segmentDarkRimSampleWidth",'n',1,0,2,"dockDarkRimSampleWidth",NULL},
-    {"cardDarkRimSampleWidth",'n',1,0,2,"darkRimSampleWidth",NULL},
-    {"segmentRimSampleBrightness",'n',1,0,2,"dockRimSampleBrightness",NULL},
-    {"cardRimSampleBrightness",'n',1,0,2,"rimSampleBrightness",NULL},
-    {"segmentDarkRimSampleBrightness",'n',1,0,2,"dockDarkRimSampleBrightness",NULL},
-    {"cardDarkRimSampleBrightness",'n',1,0,2,"darkRimSampleBrightness",NULL},
-    {"segmentRimSampleFade",'n',0.7,0,1,"dockRimSampleFade",NULL},
-    {"cardRimSampleFade",'n',0.7,0,1,"rimSampleFade",NULL},
-    {"segmentDarkRimSampleFade",'n',0.7,0,1,"dockDarkRimSampleFade",NULL},
-    {"cardDarkRimSampleFade",'n',0.7,0,1,"darkRimSampleFade",NULL},
+    {"segmentRimStyle",'n',3,2,3,"dockRimStyle",NULL},
+    {"cardRimStyle",'n',3,2,3,"rimStyle",NULL},
     {"segmentRim27Hex",'h',0,0,0,"dockRim27Hex","#FFFFFFFF"},
     {"cardRim27Hex",'h',0,0,0,"rim27Hex","#FFFFFFFF"},
     {"segmentRim27Opacity",'n',0.6,0,1,"dockRim27Opacity",NULL},
@@ -515,38 +344,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"cardRim27Sharpness",'n',2,0.5,6,"rim27Sharpness",NULL},
     {"segmentDarkRim27Sharpness",'n',2,0.5,6,"dockDarkRim27Sharpness",NULL},
     {"cardDarkRim27Sharpness",'n',2,0.5,6,"darkRim27Sharpness",NULL},
-    {"segmentRimInward",'b',1,0,1,"dockRimInward",NULL},
-    {"cardRimInward",'b',1,0,1,"rimInward",NULL},
-    {"segmentRimSoftWidth",'n',.8,0,4,"dockRimSoftWidth",NULL},
-    {"cardRimSoftWidth",'n',.8,0,4,"rimSoftWidth",NULL},
-    {"segmentDarkRimSoftWidth",'n',.8,0,4,"dockDarkRimSoftWidth",NULL},
-    {"cardDarkRimSoftWidth",'n',.8,0,4,"darkRimSoftWidth",NULL},
-    {"segmentRimSoftLevel",'n',.5,0,1,"dockRimSoftLevel",NULL},
-    {"cardRimSoftLevel",'n',.5,0,1,"rimSoftLevel",NULL},
-    {"segmentDarkRimSoftLevel",'n',.5,0,1,"dockDarkRimSoftLevel",NULL},
-    {"cardDarkRimSoftLevel",'n',.5,0,1,"darkRimSoftLevel",NULL},
-    {"segmentRimSampleSoft",'b',1,0,1,"dockRimSampleSoft",NULL},
-    {"cardRimSampleSoft",'b',1,0,1,"rimSampleSoft",NULL},
-    {"segmentRimSampleSoftWidth",'n',.8,0,4,"dockRimSampleSoftWidth",NULL},
-    {"cardRimSampleSoftWidth",'n',.8,0,4,"rimSampleSoftWidth",NULL},
-    {"segmentDarkRimSampleSoftWidth",'n',.8,0,4,"dockDarkRimSampleSoftWidth",NULL},
-    {"cardDarkRimSampleSoftWidth",'n',.8,0,4,"darkRimSampleSoftWidth",NULL},
-    {"segmentRimSampleSoftLevel",'n',.5,0,1,"dockRimSampleSoftLevel",NULL},
-    {"cardRimSampleSoftLevel",'n',.5,0,1,"rimSampleSoftLevel",NULL},
-    {"segmentDarkRimSampleSoftLevel",'n',.5,0,1,"dockDarkRimSampleSoftLevel",NULL},
-    {"cardDarkRimSampleSoftLevel",'n',.5,0,1,"darkRimSampleSoftLevel",NULL},
-    {"segmentMaterialHex",'h',0,0,0,"dockMaterialHex","#FFFFFFFF"},
-    {"segmentDarkMaterialHex",'h',0,0,0,"dockDarkMaterialHex","#29292BFF"},
-    {"segmentMaterialOpacity",'n',.48,0,1,"dockMaterialOpacity",NULL},
-    {"segmentDarkMaterialOpacity",'n',.58,0,1,"dockDarkMaterialOpacity",NULL},
-    {"segmentMaterialEdgeFadeEnabled",'b',1,0,1,"dockMaterialEdgeFadeEnabled",NULL},
-    {"segmentMaterialEdgeFade",'n',10,0,60,"dockMaterialEdgeFade",NULL},
-    {"cardMaterialHex",'h',0,0,0,NULL,"#FFFFFFFF"},
-    {"cardDarkMaterialHex",'h',0,0,0,NULL,"#2C2C2EFF"},
-    {"cardMaterialOpacity",'n',.82,0,1,NULL,NULL},
-    {"cardDarkMaterialOpacity",'n',.86,0,1,NULL,NULL},
-    {"cardMaterialEdgeFadeEnabled",'b',0,0,1,NULL,NULL},
-    {"cardMaterialEdgeFade",'n',0,0,60,NULL,NULL},
     // FIX113 P (user: the segment bar as the dock, tuned from there, not the
     // system's segmented control): its glass, pill and titles start from the
     // dock's (the keys above now inherit the dock's); the pill fades while
@@ -554,41 +351,12 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentPillPressedOpacity",'n',.05,0,1,"pressedOpacity",NULL},
     {"segmentAccentOn",'b',1,0,1,NULL,NULL},
     {"segmentAccentHex",'h',0,0,0,"dockAccentHex","#08B861FF"},
-    {"segmentDockLook",'b',1,0,1,NULL,NULL},   // marker: the look keys were moved to the dock's once (FIX113 O stored the flat ones)
-    // FIX113 T: what the dock's (and the segment bar's) lens draws of the bar
-    // seen through it: its outline (off since FIX113 L/N) and its background.
-    {"lensBarOutlineOn",'b',0,0,1,NULL,NULL},
-    {"lensBarVeilOn",'b',1,0,1,NULL,NULL},
-    // FIX113 U (user: the lens should simply refract what lies under it; the
-    // bar has one border, refracted it cannot fork): the lens' backdrop
-    // captures the bar itself (veil, rim, icons) and refracts it with the
-    // page; the shader draws none of the bar again (T's two switches, the
-    // inner inset and the bar's split then do nothing). Off: as FIX113 T.
-    {"lensRefractsBar",'b',1,0,1,NULL,NULL},
     // FIX113 X (user: the lens' border set like every other glass's, on its
     // own): the 透镜 range of 边框与渐隐 (the dock's lens and the segment bar's):
     // all three rim styles with their values. Starts as the lens' plain line
     // was (colour, opacity, width per appearance; no side fade, no glow); the
     // other styles start from the dock's values.
-    {"lensGlassRimHex",'h',0,0,0,"lensRimHex","#FFFFFFFF"},
-    {"lensGlassDarkRimHex",'h',0,0,0,"darkLensRimHex","#FFFFFFFF"},
-    {"lensGlassRimOpacity",'n',0.5,0,1,"lensRimOpacity",NULL},
-    {"lensGlassDarkRimOpacity",'n',0.14,0,1,"darkLensRimOpacity",NULL},
-    {"lensGlassBorderWidth",'n',1,0,2,"lensBorderWidth",NULL},
-    {"lensGlassDarkBorderWidth",'n',1,0,2,"darkLensBorderWidth",NULL},
-    {"lensGlassRimBrightness",'n',1,0,2,"dockRimBrightness",NULL},
-    {"lensGlassDarkRimBrightness",'n',1,0,2,"dockDarkRimBrightness",NULL},
-    {"lensGlassRimFade",'n',0,0,1,NULL,NULL},
-    {"lensGlassDarkRimFade",'n',0,0,1,NULL,NULL},
-    {"lensGlassRimStyle",'n',0,0,3,NULL,NULL},
-    {"lensGlassRimSampleOpacity",'n',0.5,0,1,"dockRimSampleOpacity",NULL},
-    {"lensGlassDarkRimSampleOpacity",'n',0.5,0,1,"dockDarkRimSampleOpacity",NULL},
-    {"lensGlassRimSampleWidth",'n',1,0,2,"dockRimSampleWidth",NULL},
-    {"lensGlassDarkRimSampleWidth",'n',1,0,2,"dockDarkRimSampleWidth",NULL},
-    {"lensGlassRimSampleBrightness",'n',1,0,2,"dockRimSampleBrightness",NULL},
-    {"lensGlassDarkRimSampleBrightness",'n',1,0,2,"dockDarkRimSampleBrightness",NULL},
-    {"lensGlassRimSampleFade",'n',0.7,0,1,"dockRimSampleFade",NULL},
-    {"lensGlassDarkRimSampleFade",'n',0.7,0,1,"dockDarkRimSampleFade",NULL},
+    {"lensGlassRimStyle",'n',3,2,3,NULL,NULL},
     {"lensGlassRim27Hex",'h',0,0,0,"dockRim27Hex","#FFFFFFFF"},
     {"lensGlassRim27Opacity",'n',0.6,0,1,"dockRim27Opacity",NULL},
     {"lensGlassRim27Width",'n',2.0,0.3,8,"dockRim27Width",NULL},
@@ -603,16 +371,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensGlassDarkRim27Angle",'n',0,0,180,"dockDarkRim27Angle",NULL},
     {"lensGlassRim27Sharpness",'n',2,0.5,6,"dockRim27Sharpness",NULL},
     {"lensGlassDarkRim27Sharpness",'n',2,0.5,6,"dockDarkRim27Sharpness",NULL},
-    {"lensGlassRimInward",'b',0,0,1,NULL,NULL},
-    {"lensGlassRimSoftWidth",'n',.8,0,4,"dockRimSoftWidth",NULL},
-    {"lensGlassDarkRimSoftWidth",'n',.8,0,4,"dockDarkRimSoftWidth",NULL},
-    {"lensGlassRimSoftLevel",'n',.5,0,1,"dockRimSoftLevel",NULL},
-    {"lensGlassDarkRimSoftLevel",'n',.5,0,1,"dockDarkRimSoftLevel",NULL},
-    {"lensGlassRimSampleSoft",'b',1,0,1,"dockRimSampleSoft",NULL},
-    {"lensGlassRimSampleSoftWidth",'n',.8,0,4,"dockRimSampleSoftWidth",NULL},
-    {"lensGlassDarkRimSampleSoftWidth",'n',.8,0,4,"dockDarkRimSampleSoftWidth",NULL},
-    {"lensGlassRimSampleSoftLevel",'n',.5,0,1,"dockRimSampleSoftLevel",NULL},
-    {"lensGlassDarkRimSampleSoftLevel",'n',.5,0,1,"dockDarkRimSampleSoftLevel",NULL},
     // FIX113 X (user: the icons and titles in the lens refracted by a width
     // and strength of their own, the rest by the lens' current ones): start
     // as the lens'.
@@ -628,9 +386,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentLensIconTopEdgeRatio",'n',1,.1,1,"segmentLensTopEdgeRatio",NULL},
     {"segmentLensIconEdgeSharpness",'n',3,1,6,"segmentLensEdgeSharpness",NULL},
     {"lensElasticOn",'b',1,0,1,NULL,NULL},
-    {"lensElasticHeight",'n',1,0,1,NULL,NULL},
     {"segmentLensElasticOn",'b',1,0,1,"lensElasticOn",NULL},
-    {"segmentLensElasticHeight",'n',1,0,1,"lensElasticHeight",NULL},
     // FIX113 Y: as the lens squashes / swells, the smaller bar in it insets by
     // that much more / less, so the strip between it and the lens' rim keeps
     // its width (1 fully, 0 as before).
@@ -658,19 +414,8 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"navOffsetY",'n',0,0,16,NULL,NULL},
     {"lensElasticKeepStrip",'n',1,0,1,NULL,NULL},
     {"segmentLensElasticKeepStrip",'n',1,0,1,"lensElasticKeepStrip",NULL},
-    // FIX122 C (user: only Kyant's 跟随滑动速度形变, in place of the dock's
-    // own, adjustable): WXGKyantElastic.h, his values by default, shared by
-    // the dock and the segment bar (each keeps its own on / off switch).
-    {"lensElasticKyWidth",'n',.75,0,2,NULL,NULL},
-    {"lensElasticKyHeight",'n',.25,0,2,NULL,NULL},
-    {"lensElasticKyLimit",'n',.2,0,.5,NULL,NULL},
-    {"lensElasticKySensitivity",'n',1,0,3,NULL,NULL},
-    {"lensElasticKyDamping",'n',.5,.05,1.5,NULL,NULL},
-    {"lensElasticKyStiffness",'n',300,20,1500,NULL,NULL},
-    {"lensElasticKySymmetric",'b',0,0,1,NULL,NULL},
     // FIX126: the system's own deformation (WXGLensFlex.h, fitted on the tab bar lens recorded on
-    // iOS 26.6) in place of Kyant's, for the dock's and the segment bar's lens; off by default.
-    {"lensFlexSystem",'b',0,0,1,NULL,NULL},
+    // iOS 26.6), for the dock's and the segment bar's lens.
     {"lensFlexStrength",'n',1,0,3,NULL,NULL},      // both gains x this
     {"lensFlexSlow",'n',8,3,20,NULL,NULL},         // the slow follower's frequency (rad/s): lower, a longer and softer swing back
     {"lensFlexDamping",'n',.5,.15,1.2,NULL,NULL},  // its damping ratio: lower, more of the opposite shape on stopping
@@ -683,38 +428,110 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockMoveSpring",'b',0,0,1,NULL,NULL},        // the lens goes to a tab on the system's position spring
     {"dockMoveResponse",'n',.40,.2,.8,NULL,NULL},
     {"dockMoveDamping",'n',.86,.5,1.2,NULL,NULL},
-    // FIX122 D (user: Kyant's refraction for 其余玻璃 next): the other glass'
-    // body refracted by his lens() (WXGKyantLens.h) instead of its band:
-    // the band and the shift at the outline as shares of the glass' short
-    // side (his LiquidButton: lens(12, 24) on 48 dp), depthEffect (his large
-    // panels), his colour split's strength (his buttons have none). Ranges
-    // sharing 其余玻璃's refraction page (共用) follow it.
-    {"kyantOtherOn",'b',0,0,1,NULL,NULL},
-    {"kyantOtherHeight",'n',.25,.02,.5,NULL,NULL},
-    {"kyantOtherAmount",'n',.8,0,1,NULL,NULL},   // FIX124: iOS 26's own (InnerRefractionAmount = -0.8 x the short side; was .5)
-    {"kyantOtherDepth",'b',0,0,1,NULL,NULL},
-    {"kyantOtherDispersion",'n',0,0,3,NULL,NULL},
-    {"kyantOtherMaxHeight",'n',20,4,80,NULL,NULL},   // FIX124: iOS 26's band on a 90 pt glass is 20 pt (a quarter of the side up to there; was 24)
-    {"kyantOtherRimFine",'b',0,0,1,NULL,NULL},   // FIX122 E: the thin outermost ring off (capped) by default here
-    {"kyantOtherRimMax",'n',3,1,20,NULL,NULL},   // the band at most this (pt), the shift with it in proportion (his panels: 16-24 dp)
-    // FIX124 本体照 iOS 26 (其余玻璃, and ranges sharing that page with it): the system's
-    // blur, face and shadow as measured on the GlassProbe captures (iOS 26.6), each on its
-    // own switch (off: the range's own settings, untouched).
-    {"ios26BlurOn",'b',0,0,1,NULL,NULL},
-    {"ios26BlurSmall",'n',1.8,0,10,NULL,NULL},      // a glass up to 48 pt on its short side: BlurRadius 1.33 on a quarter-resolution backdrop, together a line 2.1 pt wide
-    {"ios26BlurLarge",'n',5.5,0,20,NULL,NULL},      // a 90 pt one (6.5 pt wide); in between and beyond in a straight line, to 1.5 x this
-    {"ios26MaterialOn",'b',0,0,1,NULL,NULL},
-    {"ios26VeilOpacity",'n',.65,0,1,NULL,NULL},     // light: white over 65 % (face = .65 + .35 Y; colour kept x .47)
-    {"darkIos26VeilOpacity",'n',.605,0,1,NULL,NULL},// dark: black over 60.5 % (FaceColorMatrix: (1 - .342) x (.108 + .6 Y), colour kept x .658)
-    {"ios26Saturation",'n',1.34,0,3,NULL,NULL},
-    {"darkIos26Saturation",'n',1.67,0,3,NULL,NULL},
-    {"ios26Brightness",'n',-.03,-.3,.3,NULL,NULL},
-    {"darkIos26Brightness",'n',.18,-.3,.3,NULL,NULL},
-    {"ios26ShadowOn",'b',0,0,1,NULL,NULL},
-    {"ios26ShadowOpacity",'n',.25,0,.6,NULL,NULL},  // light, over mid tones (over white the system's is .10)
-    {"darkIos26ShadowOpacity",'n',.05,0,.6,NULL,NULL},
-    {"ios26ShadowBlur",'n',18,.5,40,NULL,NULL},     // sigma (ShadowRadius 24)
-    {"ios26ShadowOffset",'n',8,-10,30,NULL,NULL},   // ShadowOffset (0, 8)
+    // FIX130 (user: "everything now uses what we took from iOS 26; the old refraction, material, borders and lens can
+    // go"): one glass for every range, the system's as measured on iOS 26.6 (FIX124): each range its own values, the
+    // other ranges starting from 其余玻璃's.
+    //   refraction: within `band` of the outline (a share of the short side, at most bandMax pt) a point shows what
+    //     lies depth x (1 - sqrt(1 - x^2)) further in, x = 1 - its depth / band (depth a share of the short side too);
+    //     the outermost ring squeezes the picture at most `squeeze` times (0: unlimited, the curve as it is);
+    //   blur: by the glass' short side (small: up to 48 pt; large: 90 pt; a straight line between and beyond);
+    //   material: the backdrop's saturation and brightness, then white (light) / black (dark) over it at `veil`;
+    //   shadow: opacity per appearance, softness (a Gaussian's sigma, pt) and how far down.
+    {"glassBand",'n',.25,.02,.5,NULL,NULL},
+    {"glassDepth",'n',.8,0,1,NULL,NULL},
+    {"glassBandMax",'n',20,4,80,NULL,NULL},
+    {"glassSqueeze",'n',3,0,20,NULL,NULL},
+    {"glassDispersion",'n',0,0,3,NULL,NULL},
+    {"glassBlurSmall",'n',1.8,0,10,NULL,NULL},
+    {"glassBlurLarge",'n',5.5,0,20,NULL,NULL},
+    {"glassVeil",'n',.65,0,1,NULL,NULL},
+    {"darkGlassVeil",'n',.605,0,1,NULL,NULL},
+    {"glassSaturation",'n',1.34,0,3,NULL,NULL},
+    {"darkGlassSaturation",'n',1.67,0,3,NULL,NULL},
+    {"glassBrightness",'n',-.03,-.3,.3,NULL,NULL},
+    {"darkGlassBrightness",'n',.18,-.3,.3,NULL,NULL},
+    {"glassShadow",'n',.25,0,.6,NULL,NULL},
+    {"darkGlassShadow",'n',.05,0,.6,NULL,NULL},
+    {"glassShadowBlur",'n',18,.5,40,NULL,NULL},
+    {"glassShadowOffset",'n',8,-10,30,NULL,NULL},
+    {"dockGlassBand",'n',.25,.02,.5,"glassBand",NULL},
+    {"dockGlassDepth",'n',.8,0,1,"glassDepth",NULL},
+    {"dockGlassBandMax",'n',20,4,80,"glassBandMax",NULL},
+    {"dockGlassSqueeze",'n',3,0,20,"glassSqueeze",NULL},
+    {"dockGlassDispersion",'n',0,0,3,"glassDispersion",NULL},
+    {"dockGlassBlurSmall",'n',1.8,0,10,"glassBlurSmall",NULL},
+    {"dockGlassBlurLarge",'n',5.5,0,20,"glassBlurLarge",NULL},
+    {"dockGlassVeil",'n',.65,0,1,"glassVeil",NULL},
+    {"dockDarkGlassVeil",'n',.605,0,1,"darkGlassVeil",NULL},
+    {"dockGlassSaturation",'n',1.34,0,3,"glassSaturation",NULL},
+    {"dockDarkGlassSaturation",'n',1.67,0,3,"darkGlassSaturation",NULL},
+    {"dockGlassBrightness",'n',-.03,-.3,.3,"glassBrightness",NULL},
+    {"dockDarkGlassBrightness",'n',.18,-.3,.3,"darkGlassBrightness",NULL},
+    {"dockGlassShadow",'n',.25,0,.6,"glassShadow",NULL},
+    {"dockDarkGlassShadow",'n',.05,0,.6,"darkGlassShadow",NULL},
+    {"dockGlassShadowBlur",'n',18,.5,40,"glassShadowBlur",NULL},
+    {"dockGlassShadowOffset",'n',8,-10,30,"glassShadowOffset",NULL},
+    {"bubbleGlassBand",'n',.25,.02,.5,"glassBand",NULL},
+    {"bubbleGlassDepth",'n',.8,0,1,"glassDepth",NULL},
+    {"bubbleGlassBandMax",'n',20,4,80,"glassBandMax",NULL},
+    {"bubbleGlassSqueeze",'n',3,0,20,"glassSqueeze",NULL},
+    {"bubbleGlassDispersion",'n',0,0,3,"glassDispersion",NULL},
+    {"bubbleGlassBlurSmall",'n',1.8,0,10,"glassBlurSmall",NULL},
+    {"bubbleGlassBlurLarge",'n',5.5,0,20,"glassBlurLarge",NULL},
+    {"bubbleGlassVeil",'n',.65,0,1,"glassVeil",NULL},
+    {"bubbleDarkGlassVeil",'n',.605,0,1,"darkGlassVeil",NULL},
+    {"bubbleGlassSaturation",'n',1.34,0,3,"glassSaturation",NULL},
+    {"bubbleDarkGlassSaturation",'n',1.67,0,3,"darkGlassSaturation",NULL},
+    {"bubbleGlassBrightness",'n',-.03,-.3,.3,"glassBrightness",NULL},
+    {"bubbleDarkGlassBrightness",'n',.18,-.3,.3,"darkGlassBrightness",NULL},
+    {"bubbleGlassShadow",'n',0,0,.6,NULL,NULL},
+    {"bubbleDarkGlassShadow",'n',0,0,.6,NULL,NULL},
+    {"bubbleGlassShadowBlur",'n',18,.5,40,"glassShadowBlur",NULL},
+    {"bubbleGlassShadowOffset",'n',8,-10,30,"glassShadowOffset",NULL},
+    {"segmentGlassBand",'n',.25,.02,.5,"glassBand",NULL},
+    {"segmentGlassDepth",'n',.8,0,1,"glassDepth",NULL},
+    {"segmentGlassBandMax",'n',20,4,80,"glassBandMax",NULL},
+    {"segmentGlassSqueeze",'n',3,0,20,"glassSqueeze",NULL},
+    {"segmentGlassDispersion",'n',0,0,3,"glassDispersion",NULL},
+    {"segmentGlassBlurSmall",'n',1.8,0,10,"glassBlurSmall",NULL},
+    {"segmentGlassBlurLarge",'n',5.5,0,20,"glassBlurLarge",NULL},
+    {"segmentGlassVeil",'n',.65,0,1,"glassVeil",NULL},
+    {"segmentDarkGlassVeil",'n',.605,0,1,"darkGlassVeil",NULL},
+    {"segmentGlassSaturation",'n',1.34,0,3,"glassSaturation",NULL},
+    {"segmentDarkGlassSaturation",'n',1.67,0,3,"darkGlassSaturation",NULL},
+    {"segmentGlassBrightness",'n',-.03,-.3,.3,"glassBrightness",NULL},
+    {"segmentDarkGlassBrightness",'n',.18,-.3,.3,"darkGlassBrightness",NULL},
+    {"segmentGlassShadow",'n',.25,0,.6,"glassShadow",NULL},
+    {"segmentDarkGlassShadow",'n',.05,0,.6,"darkGlassShadow",NULL},
+    {"segmentGlassShadowBlur",'n',18,.5,40,"glassShadowBlur",NULL},
+    {"segmentGlassShadowOffset",'n',8,-10,30,"glassShadowOffset",NULL},
+    {"cardGlassBand",'n',.25,.02,.5,"glassBand",NULL},
+    {"cardGlassDepth",'n',.8,0,1,"glassDepth",NULL},
+    {"cardGlassBandMax",'n',20,4,80,"glassBandMax",NULL},
+    {"cardGlassSqueeze",'n',3,0,20,"glassSqueeze",NULL},
+    {"cardGlassDispersion",'n',0,0,3,"glassDispersion",NULL},
+    {"cardGlassBlurSmall",'n',1.8,0,10,"glassBlurSmall",NULL},
+    {"cardGlassBlurLarge",'n',5.5,0,20,"glassBlurLarge",NULL},
+    {"cardGlassVeil",'n',.65,0,1,"glassVeil",NULL},
+    {"cardDarkGlassVeil",'n',.605,0,1,"darkGlassVeil",NULL},
+    {"cardGlassSaturation",'n',1.34,0,3,"glassSaturation",NULL},
+    {"cardDarkGlassSaturation",'n',1.67,0,3,"darkGlassSaturation",NULL},
+    {"cardGlassBrightness",'n',-.03,-.3,.3,"glassBrightness",NULL},
+    {"cardDarkGlassBrightness",'n',.18,-.3,.3,"darkGlassBrightness",NULL},
+    {"cardGlassShadow",'n',0,0,.6,NULL,NULL},
+    {"cardDarkGlassShadow",'n',0,0,.6,NULL,NULL},
+    {"cardGlassShadowBlur",'n',18,.5,40,"glassShadowBlur",NULL},
+    {"cardGlassShadowOffset",'n',8,-10,30,"glassShadowOffset",NULL},
+    // The lens of the dock and of the segment bar (while held): the same curve, its band and depth shares of the
+    // lens' height (the system tab bar's lens: 0.10 and, by the recording, 0.30), the colour split toward its corners.
+    {"lensCurveBand",'n',.10,.02,.5,NULL,NULL},
+    {"lensCurveDepth",'n',.30,0,.8,NULL,NULL},
+    {"lensCurveDispersion",'n',1,0,3,NULL,NULL},
+    {"lensCurveSqueeze",'n',0,0,20,NULL,NULL},
+    {"segmentLensCurveBand",'n',.10,.02,.5,"lensCurveBand",NULL},
+    {"segmentLensCurveDepth",'n',.30,0,.8,"lensCurveDepth",NULL},
+    {"segmentLensCurveDispersion",'n',1,0,3,"lensCurveDispersion",NULL},
+    {"segmentLensCurveSqueeze",'n',0,0,20,"lensCurveSqueeze",NULL},
     // FIX113 Z: iOS 27 rims per appearance: dark mode's own two highlights
     // (…Rim27DarkMode…), first taken from the light mode's (the ones above).
     {"rim27DarkModeHex",'h',0,0,0,"rim27Hex","#FFFFFFFF"},
@@ -803,25 +620,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensGlassDarkRim27DarkModeSharpness",'n',2,0.5,6,"lensGlassDarkRim27Sharpness",NULL},
     // FIX114 C (user: the segment bar's lens border set apart from the dock's):
     // 分组透镜, every key of the 透镜 range again, starting as it is set now.
-    {"segmentLensGlassRimHex",'h',0,0,0,"lensGlassRimHex","#FFFFFFFF"},
-    {"segmentLensGlassDarkRimHex",'h',0,0,0,"lensGlassDarkRimHex","#FFFFFFFF"},
-    {"segmentLensGlassRimOpacity",'n',0.5,0,1,"lensGlassRimOpacity",NULL},
-    {"segmentLensGlassDarkRimOpacity",'n',0.14,0,1,"lensGlassDarkRimOpacity",NULL},
-    {"segmentLensGlassBorderWidth",'n',1,0,2,"lensGlassBorderWidth",NULL},
-    {"segmentLensGlassDarkBorderWidth",'n',1,0,2,"lensGlassDarkBorderWidth",NULL},
-    {"segmentLensGlassRimBrightness",'n',1,0,2,"lensGlassRimBrightness",NULL},
-    {"segmentLensGlassDarkRimBrightness",'n',1,0,2,"lensGlassDarkRimBrightness",NULL},
-    {"segmentLensGlassRimFade",'n',0,0,1,"lensGlassRimFade",NULL},
-    {"segmentLensGlassDarkRimFade",'n',0,0,1,"lensGlassDarkRimFade",NULL},
-    {"segmentLensGlassRimStyle",'n',0,0,3,"lensGlassRimStyle",NULL},
-    {"segmentLensGlassRimSampleOpacity",'n',0.5,0,1,"lensGlassRimSampleOpacity",NULL},
-    {"segmentLensGlassDarkRimSampleOpacity",'n',0.5,0,1,"lensGlassDarkRimSampleOpacity",NULL},
-    {"segmentLensGlassRimSampleWidth",'n',1,0,2,"lensGlassRimSampleWidth",NULL},
-    {"segmentLensGlassDarkRimSampleWidth",'n',1,0,2,"lensGlassDarkRimSampleWidth",NULL},
-    {"segmentLensGlassRimSampleBrightness",'n',1,0,2,"lensGlassRimSampleBrightness",NULL},
-    {"segmentLensGlassDarkRimSampleBrightness",'n',1,0,2,"lensGlassDarkRimSampleBrightness",NULL},
-    {"segmentLensGlassRimSampleFade",'n',0.7,0,1,"lensGlassRimSampleFade",NULL},
-    {"segmentLensGlassDarkRimSampleFade",'n',0.7,0,1,"lensGlassDarkRimSampleFade",NULL},
+    {"segmentLensGlassRimStyle",'n',3,2,3,"lensGlassRimStyle",NULL},
     {"segmentLensGlassRim27Hex",'h',0,0,0,"lensGlassRim27Hex","#FFFFFFFF"},
     {"segmentLensGlassRim27Opacity",'n',0.6,0,1,"lensGlassRim27Opacity",NULL},
     {"segmentLensGlassRim27Width",'n',2.0,0.3,8,"lensGlassRim27Width",NULL},
@@ -836,16 +635,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentLensGlassDarkRim27Angle",'n',0,0,180,"lensGlassDarkRim27Angle",NULL},
     {"segmentLensGlassRim27Sharpness",'n',2,0.5,6,"lensGlassRim27Sharpness",NULL},
     {"segmentLensGlassDarkRim27Sharpness",'n',2,0.5,6,"lensGlassDarkRim27Sharpness",NULL},
-    {"segmentLensGlassRimInward",'b',0,0,1,"lensGlassRimInward",NULL},
-    {"segmentLensGlassRimSoftWidth",'n',.8,0,4,"lensGlassRimSoftWidth",NULL},
-    {"segmentLensGlassDarkRimSoftWidth",'n',.8,0,4,"lensGlassDarkRimSoftWidth",NULL},
-    {"segmentLensGlassRimSoftLevel",'n',.5,0,1,"lensGlassRimSoftLevel",NULL},
-    {"segmentLensGlassDarkRimSoftLevel",'n',.5,0,1,"lensGlassDarkRimSoftLevel",NULL},
-    {"segmentLensGlassRimSampleSoft",'b',1,0,1,"lensGlassRimSampleSoft",NULL},
-    {"segmentLensGlassRimSampleSoftWidth",'n',.8,0,4,"lensGlassRimSampleSoftWidth",NULL},
-    {"segmentLensGlassDarkRimSampleSoftWidth",'n',.8,0,4,"lensGlassDarkRimSampleSoftWidth",NULL},
-    {"segmentLensGlassRimSampleSoftLevel",'n',.5,0,1,"lensGlassRimSampleSoftLevel",NULL},
-    {"segmentLensGlassDarkRimSampleSoftLevel",'n',.5,0,1,"lensGlassDarkRimSampleSoftLevel",NULL},
     {"segmentLensGlassRim27DarkModeHex",'h',0,0,0,"lensGlassRim27DarkModeHex","#FFFFFFFF"},
     {"segmentLensGlassRim27DarkModeOpacity",'n',0.6,0,1,"lensGlassRim27DarkModeOpacity",NULL},
     {"segmentLensGlassRim27DarkModeWidth",'n',2.0,0.3,8,"lensGlassRim27DarkModeWidth",NULL},
@@ -860,150 +649,17 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentLensGlassDarkRim27DarkModeAngle",'n',0,0,180,"lensGlassDarkRim27DarkModeAngle",NULL},
     {"segmentLensGlassRim27DarkModeSharpness",'n',2,0.5,6,"lensGlassRim27DarkModeSharpness",NULL},
     {"segmentLensGlassDarkRim27DarkModeSharpness",'n',2,0.5,6,"lensGlassDarkRim27DarkModeSharpness",NULL},
-    // FIX114 I (user: the original refraction is fine, only where it stops is
-    // too obvious; on iOS 26 it fades in): each range's 边界过渡, TEST9's
-    // shift mixed toward a soft one that eases out to nothing and never turns
-    // back (WXGSoftEdge.h). 0 = exactly as before (the default everywhere).
-    // The dock, bubbles and settings pages start as the other glass, the
-    // segment bar as the dock (and 套用底栏 copies it).
-    {"refractionTransition",'n',0,0,1,NULL,NULL},
-    {"dockRefractionTransition",'n',0,0,1,"refractionTransition",NULL},
-    {"bubbleRefractionTransition",'n',0,0,1,"refractionTransition",NULL},
-    {"cardRefractionTransition",'n',0,0,1,"refractionTransition",NULL},
-    {"segmentRefractionTransition",'n',0,0,1,"dockRefractionTransition",NULL},
-    // FIX114 J (user: more to adjust in 边界过渡): its soft shift's shape:
-    // the band (pt, 0 = automatic), the most the outline is magnified (2.5x),
-    // the curve's power (2). The defaults are FIX114 I's.
-    {"refractionTransitionWidth",'n',0,0,60,NULL,NULL},
-    {"refractionTransitionStretch",'n',2.5,1.2,6,NULL,NULL},
-    {"refractionTransitionCurve",'n',2,1.5,4,NULL,NULL},
-    {"dockRefractionTransitionWidth",'n',0,0,60,"refractionTransitionWidth",NULL},
-    {"dockRefractionTransitionStretch",'n',2.5,1.2,6,"refractionTransitionStretch",NULL},
-    {"dockRefractionTransitionCurve",'n',2,1.5,4,"refractionTransitionCurve",NULL},
-    {"bubbleRefractionTransitionWidth",'n',0,0,60,"refractionTransitionWidth",NULL},
-    {"bubbleRefractionTransitionStretch",'n',2.5,1.2,6,"refractionTransitionStretch",NULL},
-    {"bubbleRefractionTransitionCurve",'n',2,1.5,4,"refractionTransitionCurve",NULL},
-    {"cardRefractionTransitionWidth",'n',0,0,60,"refractionTransitionWidth",NULL},
-    {"cardRefractionTransitionStretch",'n',2.5,1.2,6,"refractionTransitionStretch",NULL},
-    {"cardRefractionTransitionCurve",'n',2,1.5,4,"refractionTransitionCurve",NULL},
-    {"segmentRefractionTransitionWidth",'n',0,0,60,"dockRefractionTransitionWidth",NULL},
-    {"segmentRefractionTransitionStretch",'n',2.5,1.2,6,"dockRefractionTransitionStretch",NULL},
-    {"segmentRefractionTransitionCurve",'n',2,1.5,4,"dockRefractionTransitionCurve",NULL},
     // FIX114 J (user: Telegram's glass takes its colour from what is behind
     // it, blur and saturation, no solid layer over it): each range's backdrop
     // saturation (TEST9's 1.05 by default, as before) and brightness (added
     // to every colour, 0 by default), before refraction.
     {"backdropSaturation",'n',1.05,0,3,NULL,NULL},
     {"backdropBrightness",'n',0,-.3,.3,NULL,NULL},
-    {"dockBackdropSaturation",'n',1.05,0,3,"backdropSaturation",NULL},
-    {"dockBackdropBrightness",'n',0,-.3,.3,"backdropBrightness",NULL},
-    {"bubbleBackdropSaturation",'n',1.05,0,3,"backdropSaturation",NULL},
-    {"bubbleBackdropBrightness",'n',0,-.3,.3,"backdropBrightness",NULL},
-    {"cardBackdropSaturation",'n',1.05,0,3,"backdropSaturation",NULL},
-    {"cardBackdropBrightness",'n',0,-.3,.3,"backdropBrightness",NULL},
-    {"segmentBackdropSaturation",'n',1.05,0,3,"dockBackdropSaturation",NULL},
-    {"segmentBackdropBrightness",'n',0,-.3,.3,"dockBackdropBrightness",NULL},
-    // FIX114 J (user: the 取自背景 border wants a colour laid over it as the
-    // bubbles have, light and dark): a colour mixed into the colour taken
-    // from the background by its alpha, before the 取自背景 processing
-    // (alpha 0, the default: as before). Every range of 边框与渐隐.
-    {"rimSampleOverlayHex",'h',0,0,0,NULL,"#FFFFFF00"},
-    {"darkRimSampleOverlayHex",'h',0,0,0,NULL,"#FFFFFF00"},
-    {"dockRimSampleOverlayHex",'h',0,0,0,"rimSampleOverlayHex","#FFFFFF00"},
-    {"dockDarkRimSampleOverlayHex",'h',0,0,0,"darkRimSampleOverlayHex","#FFFFFF00"},
-    {"bubbleRimSampleOverlayHex",'h',0,0,0,"rimSampleOverlayHex","#FFFFFF00"},
-    {"bubbleDarkRimSampleOverlayHex",'h',0,0,0,"darkRimSampleOverlayHex","#FFFFFF00"},
-    {"cardRimSampleOverlayHex",'h',0,0,0,"rimSampleOverlayHex","#FFFFFF00"},
-    {"cardDarkRimSampleOverlayHex",'h',0,0,0,"darkRimSampleOverlayHex","#FFFFFF00"},
-    {"segmentRimSampleOverlayHex",'h',0,0,0,"dockRimSampleOverlayHex","#FFFFFF00"},
-    {"segmentDarkRimSampleOverlayHex",'h',0,0,0,"dockDarkRimSampleOverlayHex","#FFFFFF00"},
-    {"lensGlassRimSampleOverlayHex",'h',0,0,0,"dockRimSampleOverlayHex","#FFFFFF00"},
-    {"lensGlassDarkRimSampleOverlayHex",'h',0,0,0,"dockDarkRimSampleOverlayHex","#FFFFFF00"},
-    {"segmentLensGlassRimSampleOverlayHex",'h',0,0,0,"lensGlassRimSampleOverlayHex","#FFFFFF00"},
-    {"segmentLensGlassDarkRimSampleOverlayHex",'h',0,0,0,"lensGlassDarkRimSampleOverlayHex","#FFFFFF00"},
-    // FIX114 K (user: the shadow iOS 26 puts around its glass): each range's
-    // drop shadow (WXGDropShadow.h). Defaults measured on the user's iOS 26
-    // screenshot: 0.20 of the shape blurred with sigma 17 pt, 8 pt down. On
-    // for the dock, the other glass and the segment bar; off (0) for the
-    // bubbles and the settings cards. Light and dark strengths apart.
-    {"dropShadowOpacity",'n',.2,0,.6,NULL,NULL},
-    {"darkDropShadowOpacity",'n',.2,0,.6,NULL,NULL},
-    {"dropShadowBlur",'n',17,.5,40,NULL,NULL},
-    {"dropShadowOffset",'n',8,-10,30,NULL,NULL},
-    {"dropShadowSpread",'n',0,-10,20,NULL,NULL},
-    {"dockDropShadowOpacity",'n',.2,0,.6,"dropShadowOpacity",NULL},
-    {"dockDarkDropShadowOpacity",'n',.2,0,.6,"darkDropShadowOpacity",NULL},
-    {"dockDropShadowBlur",'n',17,.5,40,"dropShadowBlur",NULL},
-    {"dockDropShadowOffset",'n',8,-10,30,"dropShadowOffset",NULL},
-    {"dockDropShadowSpread",'n',0,-10,20,"dropShadowSpread",NULL},
-    {"bubbleDropShadowOpacity",'n',0,0,.6,NULL,NULL},
-    {"bubbleDarkDropShadowOpacity",'n',0,0,.6,NULL,NULL},
-    {"bubbleDropShadowBlur",'n',17,.5,40,"dropShadowBlur",NULL},
-    {"bubbleDropShadowOffset",'n',8,-10,30,"dropShadowOffset",NULL},
-    {"bubbleDropShadowSpread",'n',0,-10,20,"dropShadowSpread",NULL},
-    {"cardDropShadowOpacity",'n',0,0,.6,NULL,NULL},
-    {"cardDarkDropShadowOpacity",'n',0,0,.6,NULL,NULL},
-    {"cardDropShadowBlur",'n',17,.5,40,"dropShadowBlur",NULL},
-    {"cardDropShadowOffset",'n',8,-10,30,"dropShadowOffset",NULL},
-    {"cardDropShadowSpread",'n',0,-10,20,"dropShadowSpread",NULL},
-    {"segmentDropShadowOpacity",'n',.2,0,.6,"dockDropShadowOpacity",NULL},
-    {"segmentDarkDropShadowOpacity",'n',.2,0,.6,"dockDarkDropShadowOpacity",NULL},
-    {"segmentDropShadowBlur",'n',17,.5,40,"dockDropShadowBlur",NULL},
-    {"segmentDropShadowOffset",'n',8,-10,30,"dockDropShadowOffset",NULL},
-    {"segmentDropShadowSpread",'n',0,-10,20,"dockDropShadowSpread",NULL},
-    // FIX114 L (user: too many settings; a switch at the bottom of a page to
-    // use another range's): per page with a range picker and range, which
-    // range's settings of that page it uses: 0 its own (the default), else
-    // that range + 1 (1 the other glass's, 2 the dock's, as L; FIX114 N: any
-    // range of the page: 3 bubble, 4 segment, 5 card, 6 lens, 7 segment lens,
-    // and the other glass itself can use another's). Its own values stay (back with 0).
-    // FIX114 N (user, 08:35: from a range's page, its settings shared out to
-    // the ranges chosen there, like choosing where they apply): the page sets
-    // these keys of the ranges chosen (共用到).
-    {"otherShareRefraction",'n',0,0,7,NULL,NULL},
-    {"dockShareRefraction",'n',0,0,7,NULL,NULL},
-    {"bubbleShareRefraction",'n',0,0,7,NULL,NULL},
-    {"segmentShareRefraction",'n',0,0,7,NULL,NULL},
-    {"cardShareRefraction",'n',0,0,7,NULL,NULL},
-    {"otherShareBlur",'n',0,0,7,NULL,NULL},
-    {"dockShareBlur",'n',0,0,7,NULL,NULL},
-    {"bubbleShareBlur",'n',0,0,7,NULL,NULL},
-    {"segmentShareBlur",'n',0,0,7,NULL,NULL},
-    {"cardShareBlur",'n',0,0,7,NULL,NULL},
-    {"otherShareMaterial",'n',0,0,7,NULL,NULL},
-    {"dockShareMaterial",'n',0,0,7,NULL,NULL},
-    {"segmentShareMaterial",'n',0,0,7,NULL,NULL},
-    {"cardShareMaterial",'n',0,0,7,NULL,NULL},
-    {"otherShareBorder",'n',0,0,8,NULL,NULL},
-    {"dockShareBorder",'n',0,0,8,NULL,NULL},
-    {"bubbleShareBorder",'n',0,0,8,NULL,NULL},
-    {"segmentShareBorder",'n',0,0,8,NULL,NULL},
-    {"cardShareBorder",'n',0,0,8,NULL,NULL},
-    {"lensGlassShareBorder",'n',0,0,8,NULL,NULL},
-    {"segmentLensGlassShareBorder",'n',0,0,8,NULL,NULL},
     // FIX115 S (user, 10-27 02:05: "边框自定义"): 视频号's range of 边框与渐隐 (the
     // video feed's capsules), as 分组透镜's keys; light and dark both start
     // from the other glass's dark-appearance values (the look those capsules
     // had: their rim always the dark one's), the style from the other glass's.
-    {"finderGlassRimHex",'h',0,0,0,"darkRimHex","#FFFFFFFF"},
-    {"finderGlassDarkRimHex",'h',0,0,0,"darkRimHex","#FFFFFFFF"},
-    {"finderGlassRimOpacity",'n',0.5,0,1,"darkRimOpacity",NULL},
-    {"finderGlassDarkRimOpacity",'n',0.14,0,1,"darkRimOpacity",NULL},
-    {"finderGlassBorderWidth",'n',1,0,2,"darkBarBorderWidth",NULL},
-    {"finderGlassDarkBorderWidth",'n',1,0,2,"darkBarBorderWidth",NULL},
-    {"finderGlassRimBrightness",'n',1,0,2,"darkRimBrightness",NULL},
-    {"finderGlassDarkRimBrightness",'n',1,0,2,"darkRimBrightness",NULL},
-    {"finderGlassRimFade",'n',0,0,1,"darkRimFade",NULL},
-    {"finderGlassDarkRimFade",'n',0,0,1,"darkRimFade",NULL},
-    {"finderGlassRimStyle",'n',0,0,3,"rimStyle",NULL},
-    {"finderGlassRimSampleOpacity",'n',0.5,0,1,"darkRimSampleOpacity",NULL},
-    {"finderGlassDarkRimSampleOpacity",'n',0.5,0,1,"darkRimSampleOpacity",NULL},
-    {"finderGlassRimSampleWidth",'n',1,0,2,"darkRimSampleWidth",NULL},
-    {"finderGlassDarkRimSampleWidth",'n',1,0,2,"darkRimSampleWidth",NULL},
-    {"finderGlassRimSampleBrightness",'n',1,0,2,"darkRimSampleBrightness",NULL},
-    {"finderGlassDarkRimSampleBrightness",'n',1,0,2,"darkRimSampleBrightness",NULL},
-    {"finderGlassRimSampleFade",'n',0.7,0,1,"darkRimSampleFade",NULL},
-    {"finderGlassDarkRimSampleFade",'n',0.7,0,1,"darkRimSampleFade",NULL},
+    {"finderGlassRimStyle",'n',3,2,3,"rimStyle",NULL},
     {"finderGlassRim27Hex",'h',0,0,0,"rim27DarkModeHex","#FFFFFFFF"},
     {"finderGlassRim27Opacity",'n',0.6,0,1,"rim27DarkModeOpacity",NULL},
     {"finderGlassRim27Width",'n',2.0,0.3,8,"rim27DarkModeWidth",NULL},
@@ -1018,16 +674,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"finderGlassDarkRim27Angle",'n',0,0,180,"darkRim27DarkModeAngle",NULL},
     {"finderGlassRim27Sharpness",'n',2,0.5,6,"rim27DarkModeSharpness",NULL},
     {"finderGlassDarkRim27Sharpness",'n',2,0.5,6,"darkRim27DarkModeSharpness",NULL},
-    {"finderGlassRimInward",'b',0,0,1,"rimInward",NULL},
-    {"finderGlassRimSoftWidth",'n',.8,0,4,"darkRimSoftWidth",NULL},
-    {"finderGlassDarkRimSoftWidth",'n',.8,0,4,"darkRimSoftWidth",NULL},
-    {"finderGlassRimSoftLevel",'n',.5,0,1,"darkRimSoftLevel",NULL},
-    {"finderGlassDarkRimSoftLevel",'n',.5,0,1,"darkRimSoftLevel",NULL},
-    {"finderGlassRimSampleSoft",'b',1,0,1,"rimSampleSoft",NULL},
-    {"finderGlassRimSampleSoftWidth",'n',.8,0,4,"darkRimSampleSoftWidth",NULL},
-    {"finderGlassDarkRimSampleSoftWidth",'n',.8,0,4,"darkRimSampleSoftWidth",NULL},
-    {"finderGlassRimSampleSoftLevel",'n',.5,0,1,"darkRimSampleSoftLevel",NULL},
-    {"finderGlassDarkRimSampleSoftLevel",'n',.5,0,1,"darkRimSampleSoftLevel",NULL},
     {"finderGlassRim27DarkModeHex",'h',0,0,0,"rim27DarkModeHex","#FFFFFFFF"},
     {"finderGlassRim27DarkModeOpacity",'n',0.6,0,1,"rim27DarkModeOpacity",NULL},
     {"finderGlassRim27DarkModeWidth",'n',2.0,0.3,8,"rim27DarkModeWidth",NULL},
@@ -1042,9 +688,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"finderGlassDarkRim27DarkModeAngle",'n',0,0,180,"darkRim27DarkModeAngle",NULL},
     {"finderGlassRim27DarkModeSharpness",'n',2,0.5,6,"rim27DarkModeSharpness",NULL},
     {"finderGlassDarkRim27DarkModeSharpness",'n',2,0.5,6,"darkRim27DarkModeSharpness",NULL},
-    {"finderGlassRimSampleOverlayHex",'h',0,0,0,"darkRimSampleOverlayHex","#FFFFFF00"},
-    {"finderGlassDarkRimSampleOverlayHex",'h',0,0,0,"darkRimSampleOverlayHex","#FFFFFF00"},
-    {"finderGlassShareBorder",'n',0,0,8,NULL,NULL},
     // FIX123 iOS 26 边框, the system's own recipe (WXGRim26.h, generated): per range (other /
     // dock / bubble / segment / card / lens / segment lens / 视频号) the rim's shape (as the
     // system's CASDFKeyFillHighlightEffect: height 1 pt, curvature 0.7, key and fill lights)
@@ -1053,16 +696,12 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // border keys (dark keys their parent range's dark ones). New key names: FIX122 F / G's
     // rim26... keys meant other things and are no longer read.
     {"edge26CaptureScale",'n',.5,.1,1,NULL,NULL},   // the copy of what lies under the rim: its resolution (of the screen's points)
-    {"edge26SystemFilter",'b',0,0,1,NULL,NULL},     // experimental: the system's own vibrantColorMatrix blending instead of a copy
     {"edge26Height",'n',1,0.3,4,NULL,NULL},
     {"edge26Curve",'n',0.7,0,1,NULL,NULL},
     {"edge26Angle",'n',45,0,180,NULL,NULL},
     {"edge26Key",'n',1.05,0,1.5,NULL,NULL},
     {"edge26Fill",'n',1,0,1.5,NULL,NULL},
     {"edge26Spread",'n',1,0.3,6,NULL,NULL},
-    {"edge26ShadowOn",'b',0,0,1,NULL,NULL},
-    {"edge26ShadowOpacity",'n',0.06,0,0.5,NULL,NULL},
-    {"edge26ShadowLength",'n',2.5,0.2,12,NULL,NULL},
     {"edge26Opacity",'n',1,0,1,NULL,NULL},
     {"darkEdge26Opacity",'n',1,0,1,NULL,NULL},
     {"edge26Gain",'n',0.174,0,4,NULL,NULL},
@@ -1079,9 +718,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockEdge26Key",'n',1.05,0,1.5,"edge26Key",NULL},
     {"dockEdge26Fill",'n',1,0,1.5,"edge26Fill",NULL},
     {"dockEdge26Spread",'n',1,0.3,6,"edge26Spread",NULL},
-    {"dockEdge26ShadowOn",'b',0,0,1,"edge26ShadowOn",NULL},
-    {"dockEdge26ShadowOpacity",'n',0.06,0,0.5,"edge26ShadowOpacity",NULL},
-    {"dockEdge26ShadowLength",'n',2.5,0.2,12,"edge26ShadowLength",NULL},
     {"dockEdge26Opacity",'n',1,0,1,"edge26Opacity",NULL},
     {"dockDarkEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},
     {"dockEdge26Gain",'n',0.174,0,4,"edge26Gain",NULL},
@@ -1098,9 +734,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"bubbleEdge26Key",'n',1.05,0,1.5,"edge26Key",NULL},
     {"bubbleEdge26Fill",'n',1,0,1.5,"edge26Fill",NULL},
     {"bubbleEdge26Spread",'n',1,0.3,6,"edge26Spread",NULL},
-    {"bubbleEdge26ShadowOn",'b',0,0,1,"edge26ShadowOn",NULL},
-    {"bubbleEdge26ShadowOpacity",'n',0.06,0,0.5,"edge26ShadowOpacity",NULL},
-    {"bubbleEdge26ShadowLength",'n',2.5,0.2,12,"edge26ShadowLength",NULL},
     {"bubbleEdge26Opacity",'n',1,0,1,"edge26Opacity",NULL},
     {"bubbleDarkEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},
     {"bubbleEdge26Gain",'n',0.174,0,4,"edge26Gain",NULL},
@@ -1117,9 +750,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentEdge26Key",'n',1.05,0,1.5,"dockEdge26Key",NULL},
     {"segmentEdge26Fill",'n',1,0,1.5,"dockEdge26Fill",NULL},
     {"segmentEdge26Spread",'n',1,0.3,6,"dockEdge26Spread",NULL},
-    {"segmentEdge26ShadowOn",'b',0,0,1,"dockEdge26ShadowOn",NULL},
-    {"segmentEdge26ShadowOpacity",'n',0.06,0,0.5,"dockEdge26ShadowOpacity",NULL},
-    {"segmentEdge26ShadowLength",'n',2.5,0.2,12,"dockEdge26ShadowLength",NULL},
     {"segmentEdge26Opacity",'n',1,0,1,"dockEdge26Opacity",NULL},
     {"segmentDarkEdge26Opacity",'n',1,0,1,"dockDarkEdge26Opacity",NULL},
     {"segmentEdge26Gain",'n',0.174,0,4,"dockEdge26Gain",NULL},
@@ -1136,9 +766,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"cardEdge26Key",'n',1.05,0,1.5,"edge26Key",NULL},
     {"cardEdge26Fill",'n',1,0,1.5,"edge26Fill",NULL},
     {"cardEdge26Spread",'n',1,0.3,6,"edge26Spread",NULL},
-    {"cardEdge26ShadowOn",'b',0,0,1,"edge26ShadowOn",NULL},
-    {"cardEdge26ShadowOpacity",'n',0.06,0,0.5,"edge26ShadowOpacity",NULL},
-    {"cardEdge26ShadowLength",'n',2.5,0.2,12,"edge26ShadowLength",NULL},
     {"cardEdge26Opacity",'n',1,0,1,"edge26Opacity",NULL},
     {"cardDarkEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},
     {"cardEdge26Gain",'n',0.174,0,4,"edge26Gain",NULL},
@@ -1155,9 +782,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"lensGlassEdge26Key",'n',1.05,0,1.5,"dockEdge26Key",NULL},
     {"lensGlassEdge26Fill",'n',1,0,1.5,"dockEdge26Fill",NULL},
     {"lensGlassEdge26Spread",'n',1,0.3,6,"dockEdge26Spread",NULL},
-    {"lensGlassEdge26ShadowOn",'b',0,0,1,"dockEdge26ShadowOn",NULL},
-    {"lensGlassEdge26ShadowOpacity",'n',0.06,0,0.5,"dockEdge26ShadowOpacity",NULL},
-    {"lensGlassEdge26ShadowLength",'n',2.5,0.2,12,"dockEdge26ShadowLength",NULL},
     {"lensGlassEdge26Opacity",'n',1,0,1,"dockEdge26Opacity",NULL},
     {"lensGlassDarkEdge26Opacity",'n',1,0,1,"dockDarkEdge26Opacity",NULL},
     {"lensGlassEdge26Gain",'n',0.174,0,4,"dockEdge26Gain",NULL},
@@ -1174,9 +798,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"segmentLensGlassEdge26Key",'n',1.05,0,1.5,"lensGlassEdge26Key",NULL},
     {"segmentLensGlassEdge26Fill",'n',1,0,1.5,"lensGlassEdge26Fill",NULL},
     {"segmentLensGlassEdge26Spread",'n',1,0.3,6,"lensGlassEdge26Spread",NULL},
-    {"segmentLensGlassEdge26ShadowOn",'b',0,0,1,"lensGlassEdge26ShadowOn",NULL},
-    {"segmentLensGlassEdge26ShadowOpacity",'n',0.06,0,0.5,"lensGlassEdge26ShadowOpacity",NULL},
-    {"segmentLensGlassEdge26ShadowLength",'n',2.5,0.2,12,"lensGlassEdge26ShadowLength",NULL},
     {"segmentLensGlassEdge26Opacity",'n',1,0,1,"lensGlassEdge26Opacity",NULL},
     {"segmentLensGlassDarkEdge26Opacity",'n',1,0,1,"lensGlassDarkEdge26Opacity",NULL},
     {"segmentLensGlassEdge26Gain",'n',0.174,0,4,"lensGlassEdge26Gain",NULL},
@@ -1193,9 +814,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"finderGlassEdge26Key",'n',1.05,0,1.5,"edge26Key",NULL},
     {"finderGlassEdge26Fill",'n',1,0,1.5,"edge26Fill",NULL},
     {"finderGlassEdge26Spread",'n',1,0.3,6,"edge26Spread",NULL},
-    {"finderGlassEdge26ShadowOn",'b',0,0,1,"edge26ShadowOn",NULL},
-    {"finderGlassEdge26ShadowOpacity",'n',0.06,0,0.5,"edge26ShadowOpacity",NULL},
-    {"finderGlassEdge26ShadowLength",'n',2.5,0.2,12,"edge26ShadowLength",NULL},
     {"finderGlassEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},   // 视频号: over video, both appearances start as the other glass's dark one (as its other border keys)
     {"finderGlassDarkEdge26Opacity",'n',1,0,1,"darkEdge26Opacity",NULL},
     {"finderGlassEdge26Gain",'n',1.35,0,4,"darkEdge26Gain",NULL},
@@ -1246,6 +864,38 @@ static NSString *WXGScopedKey(WXGGlassScope scope,BOOL dark,NSString *stem) {
 }
 @end
 
+/* FIX130: the settings of the builds before, read once more under their new names. Only what was the system's
+   already carries over: 其余玻璃's refraction, blur, material and shadow where their iOS 26 switches were on, and the
+   lens' band, depth and colour split where its curve was on (FIX122 - FIX129). Everything else of the old glass (its
+   band refraction, veil colours, the two old border styles ...) is not read any more: those ranges start from the
+   system's values. */
+NSDictionary *WXGRenamedSettings(NSDictionary *stored) {
+    if(!stored.count || stored[@"glassBand"])return stored;   // nothing stored, or already this build's
+    NSMutableDictionary *d=[stored mutableCopy];
+    BOOL (^on)(NSString *)=^BOOL(NSString *key){id v=stored[key];return [v isKindOfClass:NSNumber.class] && [v doubleValue]>.5;};
+    void (^move)(NSString *,NSString *)=^(NSString *to,NSString *from){id v=stored[from];if([v isKindOfClass:NSNumber.class] && !d[to])d[to]=v;};
+    if(on(@"kyantOtherOn")) {
+        move(@"glassBand",@"kyantOtherHeight");move(@"glassDepth",@"kyantOtherAmount");move(@"glassBandMax",@"kyantOtherMaxHeight");move(@"glassDispersion",@"kyantOtherDispersion");
+        if(on(@"kyantOtherRimFine"))d[@"glassSqueeze"]=@0;else move(@"glassSqueeze",@"kyantOtherRimMax");
+    }
+    if(on(@"ios26BlurOn")){move(@"glassBlurSmall",@"ios26BlurSmall");move(@"glassBlurLarge",@"ios26BlurLarge");}
+    if(on(@"ios26MaterialOn")) {
+        move(@"glassVeil",@"ios26VeilOpacity");move(@"darkGlassVeil",@"darkIos26VeilOpacity");move(@"glassSaturation",@"ios26Saturation");
+        move(@"darkGlassSaturation",@"darkIos26Saturation");move(@"glassBrightness",@"ios26Brightness");move(@"darkGlassBrightness",@"darkIos26Brightness");
+    }
+    if(on(@"ios26ShadowOn")) {
+        move(@"glassShadow",@"ios26ShadowOpacity");move(@"darkGlassShadow",@"darkIos26ShadowOpacity");move(@"glassShadowBlur",@"ios26ShadowBlur");move(@"glassShadowOffset",@"ios26ShadowOffset");
+    }
+    if(on(@"lensKyantOn")) {
+        move(@"lensCurveBand",@"lensKyantHeight");move(@"lensCurveDepth",@"lensKyantAmount");move(@"lensCurveDispersion",@"lensKyantDispersion");
+        if(stored[@"lensKyantRimFine"] && !on(@"lensKyantRimFine"))move(@"lensCurveSqueeze",@"lensKyantRimMax");
+    }
+    if(on(@"segmentLensKyantOn")) {
+        move(@"segmentLensCurveBand",@"segmentLensKyantHeight");move(@"segmentLensCurveDepth",@"segmentLensKyantAmount");move(@"segmentLensCurveDispersion",@"segmentLensKyantDispersion");
+        if(stored[@"segmentLensKyantRimFine"] && !on(@"segmentLensKyantRimFine"))move(@"segmentLensCurveSqueeze",@"segmentLensKyantRimMax");
+    }
+    return d;
+}
 @implementation WXGConfig
 + (instancetype)shared { static WXGConfig *value; static dispatch_once_t once; dispatch_once(&once, ^{ value = [self new]; [value adoptBuildDefaults]; }); return value; }
 // FIX114 G: a fresh install's values had `defaults` been the build's (not
@@ -1315,65 +965,26 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     }
     WXGNoteDefaultsAdoption(@"config",@{@"stored":@(stored.count>0),@"moved":@(moved),@"kept":@(kept),@"error":failure?:@""});
 }
-- (NSUserDefaults *)defaults { return [[NSUserDefaults alloc] initWithSuiteName:@"com.runyu.WGLiquidDockDemo"]; }
 - (void)loadDefaults {
-    _enabled=YES; _calibration=NO; _clearMaterial=YES; _haptics=YES;
-    _widthFraction=0.92; _height=68; _lift=12; _refraction=1.15;
-    _dispersion=.95; _blur=1.5; _captureFPS=120; _captureBudget=35; _motionPrediction=YES; _renderMode=0; _syncBlurScale=1; _samplerSource=0; _syncPresent=YES; _syncMeshRefraction=YES; _syncDispersion=YES; _syncCaptureScale=0; _lensTopEdgeRatio=1; _lensEdgeSharpness=3;
-    _lensBlur=0;_lensBlurCoverage=0;
-    _lensRefraction=1.15;_lensDispersion=.95;_lensEdgeWidth=10;
-    _alwaysShow=NO; _lensZoom=1.20; _lensGrowth=1.28; _bodyPinch=.18; _edgeWidth=10;
-    _selectionInset=6; _selectionOpacity=.30; _pressedOpacity=.05;
-    _barBorderWidth=.65; _lensBorderWidth=.65; _borderOpacity=.65;
-    _selectionHex=@"#71879EFF"; _borderHex=@"#FFFFFFFF";
-    _blurCoverage=0; _useWeChatIcons=YES; _darkSelectionHex=@"#71879EFF";
-    _barGrowth=1.025; _endWrap=4; _fadeMaterialAtEdge=YES;
-    _materialOpacity=.48; _darkMaterialOpacity=.58; _rimFade=1; _darkRimGain=.22;
-    _materialHex=@"#FFFFFFFF"; _darkMaterialHex=@"#29292BFF";
-    _renderMode=2;
-    _rimHex=@"#FFFFFFFF"; _darkRimHex=@"#FFFFFFFF"; _lensRimHex=@"#FFFFFFFF"; _darkLensRimHex=@"#FFFFFFFF";
-    _rimOpacity=.65; _darkRimOpacity=.143; _lensRimOpacity=.65; _darkLensRimOpacity=.143;
-    _rimBrightness=1; _darkRimBrightness=1;
-    _rimFadeTopLeft=0; _rimFadeBottomRight=0; _darkRimFadeTopLeft=0; _darkRimFadeBottomRight=0; _darkRimFade=1;
-    _darkBarBorderWidth=.65; _darkLensBorderWidth=.65;
-    _dockMaterialHex=@"#FFFFFFFF"; _dockDarkMaterialHex=@"#29292BFF"; _dockMaterialOpacity=.48; _dockDarkMaterialOpacity=.58;
-    _materialFadeWidth=0; _dockMaterialFadeWidth=0; _messageMenuCornerRadius=18; _materialEdgeFade=10;
-    _materialEdgeFadeEnabled=YES; _dockMaterialEdgeFadeEnabled=YES; _dockMaterialEdgeFade=10;
-    _dockSwitchTiming=0; _dockTapTravel=YES; _performanceMode=NO;
+    _enabled=YES; _haptics=YES;
+    _widthFraction=0.92; _height=68; _lift=12;
+    _captureFPS=120; _captureBudget=35; _motionPrediction=YES; _renderMode=2; _syncBlurScale=1; _samplerSource=0; _syncPresent=YES;
+    _syncMeshRefraction=YES; _syncDispersion=YES; _syncCaptureScale=0; _performanceMode=NO;
+    // The dock's lens: its own blur, zoom and growth, the bar under it; the icons and titles drawn in it (the
+    // overlay's own band: lensRefraction, lensEdgeWidth, lensTopEdgeRatio and lensEdgeSharpness are what the
+    // table's lensIcon… keys start from, lensDispersion their colour split).
+    _lensBlur=0; _lensZoom=1.20; _lensGrowth=1.28; _bodyPinch=.18; _barGrowth=1.025; _endWrap=4;
+    _lensRefraction=1.15; _lensDispersion=.95; _lensEdgeWidth=10; _lensTopEdgeRatio=1; _lensEdgeSharpness=3;
+    _selectionInset=6; _selectionOpacity=.30; _pressedOpacity=.05; _selectionHex=@"#71879EFF"; _darkSelectionHex=@"#71879EFF";
+    _useWeChatIcons=YES; _messageMenuCornerRadius=18; _dockSwitchTiming=0;
     _dockSearchGap=12; _dockSearchHeightRatio=.82; _dockSearchWidthFraction=.94;
     _pressStretch=YES; _pressStretchDistance=16; _pressStretchAmount=.6; _dockEndStretch=YES; _dockEndStretchDistance=18;   // FIX68
-    _pressStretchCapsule=.5; _pressStretchMax=8; _pressStretchFollow=.3;   // FIX80
+    _pressStretchCapsule=.5; _pressStretchMax=8; _pressStretchFollow=.3; _pressStretchNative=YES;   // FIX80
     // FIX82: liquid bubbles, WeChat's (and MixBubble's) bubble colours.
     _bubbleOutgoingHex=@"#95EC69CC"; _bubbleIncomingHex=@"#FFFFFFCC"; _darkBubbleOutgoingHex=@"#95EC69CC"; _darkBubbleIncomingHex=@"#2C2C2CCC";
-    _bubbleEdgeFadeEnabled=YES; _bubbleEdgeFade=8;   // FIX83
-    // FIX75 / FIX79: rim details (WXGRimDetail.h), per appearance.
-    _rimDetails=YES; _rimOuterFade=.2; _darkRimOuterFade=.2; _rimInnerFade=.3; _darkRimInnerFade=.3; _rimSideLevel=.3; _darkRimSideLevel=.3;
-    _rimSideDarken=NO; _darkRimSideDarken=NO;
-    _rimInnerShadowOpacity=.10; _darkRimInnerShadowOpacity=.22; _rimInnerShadowRadius=2; _darkRimInnerShadowRadius=2;
-    _rimInnerShadowHex=@"#000000FF"; _darkRimInnerShadowHex=@"#000000FF"; _pressStretchNative=YES;
-    // FIX76: rim colour from the background.
-    _rimSampleColor=YES; _rimSamplePlusLighter=NO; _rimSampleSaturation=1.8; _rimSampleContrast=1; _rimSampleGain=1.35; _rimSampleLift=.08; _rimSampleBlur=3;
-    _darkRimSampleSaturation=1.8; _darkRimSampleContrast=1; _darkRimSampleGain=1.35; _darkRimSampleLift=.08; _darkRimSampleBlur=3;
     // FIX64: WeChatFade's own defaults (96 / 112 pt), the blur over the same bands.
     _edgeChatFadeTop=96; _edgeChatFadeBottom=112; _edgeChatBlurTop=96; _edgeChatBlurBottom=112; _edgeChatBlurTopRadius=3; _edgeChatBlurBottomRadius=3;
     _edgeOtherFadeTop=96; _edgeOtherFadeBottom=112; _edgeOtherBlurTop=96; _edgeOtherBlurBottom=112; _edgeOtherBlurTopRadius=3; _edgeOtherBlurBottomRadius=3;
-    // FIX58: the dock starts from the same values as the other glass.
-    _dockRefraction=_refraction; _dockDispersion=_dispersion; _dockEdgeWidth=_edgeWidth; _dockBlur=_blur; _dockBlurCoverage=_blurCoverage;
-    _dockRimHex=_rimHex; _dockDarkRimHex=_darkRimHex; _dockRimOpacity=_rimOpacity; _dockDarkRimOpacity=_darkRimOpacity;
-    _dockBorderWidth=_barBorderWidth; _dockDarkBorderWidth=_darkBarBorderWidth;
-    _dockRimBrightness=_rimBrightness; _dockDarkRimBrightness=_darkRimBrightness; _dockRimFade=_rimFade; _dockDarkRimFade=_darkRimFade;
-    // FIX81: the 边框与渐隐 page (dock and other glass, light and dark, rim
-    // details, colour sampling) as the user tuned it on FIX80.
-    _rimDetails=YES; _rimOuterFade=.1; _rimInnerFade=.8; _rimSideLevel=.1298; _rimSideDarken=NO; _rimInnerShadowHex=@"#000000FF";
-    _rimInnerShadowOpacity=.0145; _rimInnerShadowRadius=1.461; _darkRimOuterFade=.3; _darkRimInnerFade=1.5; _darkRimSideLevel=.5595;
-    _darkRimSideDarken=NO; _darkRimInnerShadowHex=@"#000000FF"; _darkRimInnerShadowOpacity=.22; _darkRimInnerShadowRadius=.8711; _rimSampleColor=YES;
-    _rimSamplePlusLighter=YES; _rimSampleSaturation=3; _rimSampleGain=.8799; _rimSampleLift=.4852; _rimSampleContrast=1.2569; _rimSampleBlur=10;
-    _darkRimSampleSaturation=1.5931; _darkRimSampleGain=2.5; _darkRimSampleLift=.6; _darkRimSampleContrast=.5; _darkRimSampleBlur=10;
-    _rimHex=@"#FFFFFFFF"; _dockRimHex=@"#FFFFFFFF"; _rimOpacity=.5057; _dockRimOpacity=.4318; _barBorderWidth=1.2352; _dockBorderWidth=.9871;
-    _rimBrightness=1.0008; _dockRimBrightness=1; _rimFade=.7095; _dockRimFade=0; _lensRimHex=@"#FFFFFFFF"; _lensRimOpacity=.5859;
-    _lensBorderWidth=1.1029; _darkRimHex=@"#C2C2C2FF"; _dockDarkRimHex=@"#FFFFFFFF"; _darkRimOpacity=.1361; _dockDarkRimOpacity=.228;
-    _darkBarBorderWidth=.9691; _dockDarkBorderWidth=1.0093; _darkRimBrightness=.8572; _dockDarkRimBrightness=.5456; _darkRimFade=1;
-    _dockDarkRimFade=0; _darkLensRimHex=@"#D6D6D6FF"; _darkLensRimOpacity=.2696; _darkLensBorderWidth=.6892;
     [self loadExtraDefaults];
     [self applyBuildDefaults];
 }
@@ -1388,15 +999,6 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     id value=nil;
     if(spec->inherit) {
         @try {value=[self valueForKey:@(spec->inherit)];} @catch(__unused NSException *error) {value=nil;}
-    }
-    if(!strcmp(spec->key,"rimStyle"))value=@(_rimSampleColor?WXGRimStyleSampled:WXGRimStyleClassic);
-    // FIX113 X: the lens' line was drawn at the dock rim's brightness of the
-    // dock's style (iOS 27: 1; 取自背景: that style's own).
-    if(!strcmp(spec->key,"lensGlassRimBrightness") || !strcmp(spec->key,"lensGlassDarkRimBrightness")) {
-        BOOL dark=!strcmp(spec->key,"lensGlassDarkRimBrightness");
-        long style=lround([_extra[@"dockRimStyle"] doubleValue]);
-        if(style==WXGRimStyleGlow)value=@1;
-        else if(style==WXGRimStyleSampled)value=_extra[dark?@"dockDarkRimSampleBrightness":@"dockRimSampleBrightness"]?:@1;
     }
     if(spec->kind=='h'){if(![value isKindOfClass:NSString.class])value=@(spec->hex?:"#FFFFFFFF");}
     else if(![value isKindOfClass:NSNumber.class])value=@(spec->def);
@@ -1413,8 +1015,7 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     for(size_t i=0;i<WXGExtraCount;i++) {
         const WXGExtraSpec *spec=&WXGExtraSpecs[i];NSString *key=@(spec->key);
         if(values[key])continue;
-        BOOL rederive=!strcmp(spec->key,"rimStyle")?[changed containsObject:@"rimSampleColor"]:
-                      spec->inherit && [changed containsObject:@(spec->inherit)];
+        BOOL rederive=spec->inherit && [changed containsObject:@(spec->inherit)];
         if(rederive){[self inheritExtra:i];[changed addObject:key];}
     }
 }
@@ -1434,10 +1035,6 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
 // values), over the built-in ones. Empty: none.
 - (void)applyBuildDefaults {
     NSDictionary *defaults=_defaultsOverride?:WXGBuildDefaultOptics();
-    // FIX85: an export from before the rim styles: its colour switch is the style.
-    if(!defaults[@"rimStyle"] && [defaults[@"rimSampleColor"] isKindOfClass:NSNumber.class]) {
-        NSMutableDictionary *d=[defaults mutableCopy];d[@"rimStyle"]=@([defaults[@"rimSampleColor"] boolValue]?WXGRimStyleSampled:WXGRimStyleClassic);defaults=d;
-    }
     for(NSString *key in self.keys) {
         id value=defaults[key];BOOL color=[key hasSuffix:@"Hex"];
         if([key isEqual:@"enabled"])continue;
@@ -1453,18 +1050,12 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     if(lround([_extra[@"dockTitleWeight"] doubleValue])==2)_extra[@"dockTitleWeight"]=@1;
     _extra[@"dockTitleWeightNative"]=@1;
 }
-- (NSArray *)baseKeys { return @[@"lensBlur",@"lensBlurCoverage",@"lensRefraction",@"lensDispersion",@"lensEdgeWidth",@"enabled",@"calibration",@"clearMaterial",@"haptics",@"widthFraction",@"height",@"lift",@"refraction",@"dispersion",@"blur",@"captureFPS",@"captureBudget",@"motionPrediction",@"renderMode",@"syncBlurScale",@"samplerSource",@"syncPresent",@"syncMeshRefraction",@"syncDispersion",@"syncCaptureScale",@"lensTopEdgeRatio",@"lensEdgeSharpness",@"alwaysShow",@"lensZoom",@"lensGrowth",@"bodyPinch",@"edgeWidth",@"selectionInset",@"selectionOpacity",@"pressedOpacity",@"barBorderWidth",@"lensBorderWidth",@"borderOpacity",@"selectionHex",@"darkSelectionHex",@"blurCoverage",@"useWeChatIcons",@"borderHex",@"barGrowth",@"endWrap",@"fadeMaterialAtEdge",@"materialOpacity",@"darkMaterialOpacity",@"rimFade",@"darkRimGain",@"materialHex",@"darkMaterialHex",@"rimHex",@"darkRimHex",@"lensRimHex",@"darkLensRimHex",@"rimOpacity",@"darkRimOpacity",@"lensRimOpacity",@"darkLensRimOpacity",@"rimBrightness",@"darkRimBrightness",@"rimFadeTopLeft",@"rimFadeBottomRight",@"darkRimFadeTopLeft",@"darkRimFadeBottomRight",@"darkRimFade",@"darkBarBorderWidth",@"darkLensBorderWidth",@"dockMaterialHex",@"dockDarkMaterialHex",@"dockMaterialOpacity",@"dockDarkMaterialOpacity",@"materialFadeWidth",@"dockMaterialFadeWidth",@"messageMenuCornerRadius",@"materialEdgeFade",@"materialEdgeFadeEnabled",@"dockMaterialEdgeFadeEnabled",@"dockMaterialEdgeFade",@"dockSwitchTiming",@"dockTapTravel",
-    @"dockRefraction",@"dockDispersion",@"dockEdgeWidth",@"dockBlur",@"dockBlurCoverage",@"dockRimHex",@"dockDarkRimHex",@"dockRimOpacity",@"dockDarkRimOpacity",
-    @"dockBorderWidth",@"dockDarkBorderWidth",@"dockRimBrightness",@"dockDarkRimBrightness",@"dockRimFade",@"dockDarkRimFade",@"performanceMode",
+- (NSArray *)baseKeys { return @[@"lensBlur",@"lensRefraction",@"lensDispersion",@"lensEdgeWidth",@"enabled",@"haptics",@"widthFraction",@"height",@"lift",@"captureFPS",@"captureBudget",@"motionPrediction",@"renderMode",@"syncBlurScale",@"samplerSource",@"syncPresent",@"syncMeshRefraction",@"syncDispersion",@"syncCaptureScale",@"lensTopEdgeRatio",@"lensEdgeSharpness",@"lensZoom",@"lensGrowth",@"bodyPinch",@"selectionInset",@"selectionOpacity",@"pressedOpacity",@"selectionHex",@"darkSelectionHex",@"useWeChatIcons",@"barGrowth",@"endWrap",@"messageMenuCornerRadius",@"dockSwitchTiming",@"performanceMode",
     @"dockSearchGap",@"dockSearchHeightRatio",@"dockSearchWidthFraction",
     @"edgeChatFadeTop",@"edgeChatFadeBottom",@"edgeChatBlurTop",@"edgeChatBlurBottom",@"edgeChatBlurTopRadius",@"edgeChatBlurBottomRadius",
     @"edgeOtherFadeTop",@"edgeOtherFadeBottom",@"edgeOtherBlurTop",@"edgeOtherBlurBottom",@"edgeOtherBlurTopRadius",@"edgeOtherBlurBottomRadius",
-    @"pressStretch",@"pressStretchDistance",@"pressStretchAmount",@"pressStretchCapsule",@"pressStretchMax",@"pressStretchFollow",@"bubbleOutgoingHex",@"bubbleIncomingHex",@"darkBubbleOutgoingHex",@"darkBubbleIncomingHex",@"bubbleEdgeFadeEnabled",@"bubbleEdgeFade",@"dockEndStretch",@"dockEndStretchDistance",
-    @"rimDetails",@"rimSideLevel",@"darkRimSideLevel",@"rimOuterFade",@"darkRimOuterFade",@"rimInnerFade",@"darkRimInnerFade",
-    @"rimSideDarken",@"darkRimSideDarken",@"rimInnerShadowOpacity",@"darkRimInnerShadowOpacity",@"rimInnerShadowRadius",@"darkRimInnerShadowRadius",
-    @"rimInnerShadowHex",@"darkRimInnerShadowHex",@"pressStretchNative",
-    @"rimSampleColor",@"rimSamplePlusLighter",@"rimSampleSaturation",@"rimSampleContrast",@"rimSampleGain",@"rimSampleLift",@"rimSampleBlur",
-    @"darkRimSampleSaturation",@"darkRimSampleContrast",@"darkRimSampleGain",@"darkRimSampleLift",@"darkRimSampleBlur"]; }
+    @"pressStretch",@"pressStretchDistance",@"pressStretchAmount",@"pressStretchCapsule",@"pressStretchMax",@"pressStretchFollow",@"bubbleOutgoingHex",@"bubbleIncomingHex",@"darkBubbleOutgoingHex",@"darkBubbleIncomingHex",@"dockEndStretch",@"dockEndStretchDistance",
+    @"pressStretchNative"]; }
 - (NSArray *)keys {
     static NSArray *all;static dispatch_once_t once;
     dispatch_once(&once,^{all=[self.baseKeys arrayByAddingObjectsFromArray:WXGExtraKeys()];});
@@ -1473,111 +1064,18 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
 - (instancetype)init {
     if((self=[super init])) {
         [self loadDefaults];
-        NSDictionary *d=[[self defaults] dictionaryForKey:@"config.v9"];
-        BOOL migrating=!d;
-        if(!d) d=[[self defaults] dictionaryForKey:@"config.v8"];
-        BOOL hasModern=d!=nil;
-        if(!d) d=[[self defaults] dictionaryForKey:@"config.v6"];
-        if(!d) d=[[self defaults] dictionaryForKey:@"config.v5"];
-        if(!d) d=[[self defaults] dictionaryForKey:@"config.v4"];
-        for(NSString *key in [self keys]) {
-            id value=d[key]; BOOL color=[key hasSuffix:@"Hex"];
-            if(color?[value isKindOfClass:NSString.class]:[value isKindOfClass:NSNumber.class]) [self setValue:value forKey:key];
-        }
-        // Restore TEST6 visual tuning, retaining only current visibility toggles.
-        // TEST7 optical/material experiments must not leak into this rollback.
-        if(migrating && !hasModern) {
-            NSDictionary *visible=[[self defaults] dictionaryForKey:@"config.v7"];
-            for(NSString *key in @[@"enabled",@"alwaysShow"]) {
-                id value=visible[key];
-                if([value isKindOfClass:NSNumber.class]) [self setValue:value forKey:key];
-            }
-        }
-        if(migrating && !d[@"darkSelectionHex"]) _darkSelectionHex=_selectionHex;
-        // Adopt the new white rim only when the previous default is untouched.
-        // Preserve a custom white (or any other user-chosen) border and all sizes.
-        if(migrating && !hasModern && [WXGNormalizeHex(_borderHex) isEqual:@"#72869AFF"]) _borderHex=@"#FFFFFFFF";
-        // Roll back to the user's TEST9 optical values. Do not import TEST3R's
-        // experimental gradients, lens material or scale/reveal settings.
-        _lensRefraction=_refraction;_lensDispersion=_dispersion;_lensEdgeWidth=_edgeWidth;
-        if(_captureFPS==60)_captureFPS=120;
-        NSDictionary *local=[[[NSUserDefaults alloc] initWithSuiteName:@"com.runyu.WeChatLiquidGlass"] dictionaryForKey:@"optics.test4"];
+        // What the settings pages stored (a build before FIX130: under this build's names, WXGRenamedSettings).
+        NSDictionary *local=WXGRenamedSettings([[[NSUserDefaults alloc] initWithSuiteName:@"com.runyu.WeChatLiquidGlass"] dictionaryForKey:@"optics.test4"]);
         for(NSString *key in self.keys) {
             id value=local[key];BOOL color=[key hasSuffix:@"Hex"];
             if(color?[value isKindOfClass:NSString.class]:[value isKindOfClass:NSNumber.class])[self setValue:value forKey:key];
         }
-        // FIX27: first run after the split takes every new per-appearance and
-        // dock value from what the user had tuned in the shared settings.
-        if(!local[@"rimHex"])_rimHex=_borderHex;
-        if(!local[@"darkRimHex"])_darkRimHex=_borderHex;
-        if(!local[@"lensRimHex"])_lensRimHex=_rimHex;
-        if(!local[@"darkLensRimHex"])_darkLensRimHex=_darkRimHex;
-        if(!local[@"rimOpacity"])_rimOpacity=_borderOpacity;
-        if(!local[@"darkRimOpacity"])_darkRimOpacity=_borderOpacity*_darkRimGain;
-        if(!local[@"lensRimOpacity"])_lensRimOpacity=_rimOpacity;
-        if(!local[@"darkLensRimOpacity"])_darkLensRimOpacity=_darkRimOpacity;
-        if(!local[@"darkRimFade"])_darkRimFade=_rimFade;
-        if(!local[@"darkBarBorderWidth"])_darkBarBorderWidth=_barBorderWidth;
-        if(!local[@"darkLensBorderWidth"])_darkLensBorderWidth=_lensBorderWidth;
-        if(!local[@"dockMaterialHex"])_dockMaterialHex=_materialHex;
-        if(!local[@"dockDarkMaterialHex"])_dockDarkMaterialHex=_darkMaterialHex;
-        if(!local[@"dockMaterialOpacity"])_dockMaterialOpacity=_materialOpacity;
-        if(!local[@"dockDarkMaterialOpacity"])_dockDarkMaterialOpacity=_darkMaterialOpacity;
-        // FIX28: the edge weakening becomes one range (0 = none). Keep the
-        // current look: off stays 0; on uses the FIX27 range or, if that was 0,
-        // the refraction width it stood for.
-        if(!local[@"materialEdgeFade"])
-            _materialEdgeFade=!_fadeMaterialAtEdge?0:(_materialFadeWidth>0?_materialFadeWidth:_edgeWidth);
-        // FIX29: split into dock / other glass, each with a switch and a range.
-        // Same look as before for both; a range of 0 meant "off".
-        if(!local[@"materialEdgeFadeEnabled"]) {
-            _materialEdgeFadeEnabled=_materialEdgeFade>.01;
-            if(_materialEdgeFade<=.01)_materialEdgeFade=_edgeWidth;
-        }
-        if(!local[@"dockMaterialEdgeFadeEnabled"])_dockMaterialEdgeFadeEnabled=_materialEdgeFadeEnabled;
-        if(!local[@"dockMaterialEdgeFade"])_dockMaterialEdgeFade=_materialEdgeFade;
-        // FIX58: the dock gets its own body optics and rim; the first run takes
-        // the values the user had tuned for all glass, so the dock looks the same.
-        if(!local[@"dockRefraction"])_dockRefraction=_refraction;
-        if(!local[@"dockDispersion"])_dockDispersion=_dispersion;
-        if(!local[@"dockEdgeWidth"])_dockEdgeWidth=_edgeWidth;
-        if(!local[@"dockBlur"])_dockBlur=_blur;
-        if(!local[@"dockBlurCoverage"])_dockBlurCoverage=_blurCoverage;
-        if(!local[@"dockRimHex"])_dockRimHex=_rimHex;
-        if(!local[@"dockDarkRimHex"])_dockDarkRimHex=_darkRimHex;
-        if(!local[@"dockRimOpacity"])_dockRimOpacity=_rimOpacity;
-        if(!local[@"dockDarkRimOpacity"])_dockDarkRimOpacity=_darkRimOpacity;
-        if(!local[@"dockBorderWidth"])_dockBorderWidth=_barBorderWidth;
-        if(!local[@"dockDarkBorderWidth"])_dockDarkBorderWidth=_darkBarBorderWidth;
-        if(!local[@"dockRimBrightness"])_dockRimBrightness=_rimBrightness;
-        if(!local[@"dockDarkRimBrightness"])_dockDarkRimBrightness=_darkRimBrightness;
-        if(!local[@"dockRimFade"])_dockRimFade=_rimFade;
-        if(!local[@"dockDarkRimFade"])_dockDarkRimFade=_darkRimFade;
-        // FIX79: the rim details and the colour sampling were shared by both
-        // appearances; the first run gives dark mode the values tuned so far.
-        if(!local[@"darkRimSideLevel"])_darkRimSideLevel=_rimSideLevel;
-        if(!local[@"darkRimInnerShadowRadius"])_darkRimInnerShadowRadius=_rimInnerShadowRadius;
-        if(!local[@"darkRimSampleSaturation"])_darkRimSampleSaturation=_rimSampleSaturation;
-        if(!local[@"darkRimSampleContrast"])_darkRimSampleContrast=_rimSampleContrast;
-        if(!local[@"darkRimSampleGain"])_darkRimSampleGain=_rimSampleGain;
-        if(!local[@"darkRimSampleLift"])_darkRimSampleLift=_rimSampleLift;
-        if(!local[@"darkRimSampleBlur"])_darkRimSampleBlur=_rimSampleBlur;
-        // FIX59: a fresh install takes this build's defaults as they are (the
-        // migrations above derive values for old configurations only).
-        // FIX81: a fresh install is exactly 恢复默认 (the migrations above
-        // derive values from older configurations; with none, they would
-        // overwrite the defaults with the old shared ones).
-        // FIX85: a table key never stored starts from its source's value as
-        // loaded above (the user's own), the rim style from the colour switch.
+        // FIX85: a table key never stored starts from its source's value as loaded above (the user's own).
         for(size_t i=0;i<WXGExtraCount;i++) {
             id stored=local[@(WXGExtraSpecs[i].key)];
             BOOL valid=WXGExtraSpecs[i].kind=='h'?[stored isKindOfClass:NSString.class]:[stored isKindOfClass:NSNumber.class];
             if(!valid)[self inheritExtra:i];
         }
-        // FIX113 P: FIX113 O stored the segment bar's flat look (no refraction,
-        // blur or rim, a dark material, the page-coloured pill); once, those
-        // keys start again from the dock's (its lens keys were the dock's already).
-        if(local && ![local[@"segmentDockLook"] isKindOfClass:NSNumber.class])[self segmentLikeDock:NO];
         // FIX114 B (user: the dock's titles do not look like WeChat's): WeChat's
         // own tab titles are regular (diagnostics: .SFUI-Regular 10 pt, weight
         // 0); a configuration still at the old default (medium) moves once.
@@ -1594,17 +1092,7 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
                 _extra[@"pressStretchRatio"]=@3;
             _extra[@"pressStretchRatioBack"]=@1;
         }
-        // FIX99: the tap's move and drop moved to new keys (faster defaults);
-        // a FIX98 value the tester had changed from its default comes along.
-        if(local) {
-            NSNumber *move=local[@"dockTapDurationScale"],*drop=local[@"dockTapDropDuration"];
-            if(!local[@"dockTapMoveScale"] && [move isKindOfClass:NSNumber.class] && fabs(move.doubleValue-1.5)>.001)_extra[@"dockTapMoveScale"]=move;
-            if(!local[@"dockTapDropTime"] && [drop isKindOfClass:NSNumber.class] && fabs(drop.doubleValue-.26)>.001)_extra[@"dockTapDropTime"]=drop;
-            NSNumber *moment=local[@"dockTapSwitchMoment"];   // FIX100
-            if(!local[@"dockTapSwitchWhen"] && [moment isKindOfClass:NSNumber.class] && lround(moment.doubleValue)!=1)
-                _extra[@"dockTapSwitchWhen"]=@(MIN(3,MAX(1,lround(moment.doubleValue)+1)));
-        }
-        if(!local && !d)[self loadDefaults];
+        if(!local)[self loadDefaults];   // FIX81: a fresh install is exactly 恢复默认 (this build's defaults as they are)
         [self normalize];
     } return self;
 }
@@ -1619,11 +1107,8 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     if (!isfinite(_widthFraction)) _widthFraction=.92;
     if (!isfinite(_height)) _height=68;
     if (!isfinite(_lift)) _lift=12;
-    if (!isfinite(_refraction)) _refraction=1.15;
-    if (!isfinite(_dispersion)) _dispersion=.95;
-    if (!isfinite(_blur)) _blur=1.5;
     _widthFraction=WXGClamp(_widthFraction,.65,.98); _height=WXGClamp(_height,54,90);
-    _lift=WXGClamp(_lift,-80,160); _refraction=WXGClamp(_refraction,0,20);
+    _lift=WXGClamp(_lift,-80,160);
     if(!isfinite(_dockSearchGap))_dockSearchGap=12;
     if(!isfinite(_dockSearchHeightRatio))_dockSearchHeightRatio=.82;
     if(!isfinite(_dockSearchWidthFraction))_dockSearchWidthFraction=.94;
@@ -1641,37 +1126,13 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     if(!isfinite(_pressStretchFollow))_pressStretchFollow=.3;
     _bubbleOutgoingHex=WXGNormalizeHex(_bubbleOutgoingHex)?:@"#95EC69CC";_bubbleIncomingHex=WXGNormalizeHex(_bubbleIncomingHex)?:@"#FFFFFFCC";
     _darkBubbleOutgoingHex=WXGNormalizeHex(_darkBubbleOutgoingHex)?:@"#95EC69CC";_darkBubbleIncomingHex=WXGNormalizeHex(_darkBubbleIncomingHex)?:@"#2C2C2CCC";
-    if(!isfinite(_bubbleEdgeFade))_bubbleEdgeFade=8;
-    _bubbleEdgeFade=WXGClamp(_bubbleEdgeFade,0,30);
     _pressStretchCapsule=WXGClamp(_pressStretchCapsule,0,1);_pressStretchMax=WXGClamp(_pressStretchMax,1,20);_pressStretchFollow=WXGClamp(_pressStretchFollow,0,1);
-    // FIX75: rim details.
-    // FIX79: side fades in 0.1 pt steps.
-    CGFloat *fades[]={&_rimOuterFade,&_darkRimOuterFade,&_rimInnerFade,&_darkRimInnerFade};
-    for(size_t i=0;i<sizeof fades/sizeof *fades;i++)*fades[i]=isfinite(*fades[i])?round(WXGClamp(*fades[i],0,1.5)*10)/10:.2;
-    if(!isfinite(_rimSideLevel))_rimSideLevel=.3;
-    if(!isfinite(_darkRimSideLevel))_darkRimSideLevel=_rimSideLevel;
-    if(!isfinite(_rimInnerShadowOpacity))_rimInnerShadowOpacity=.10;
-    if(!isfinite(_darkRimInnerShadowOpacity))_darkRimInnerShadowOpacity=.22;
-    if(!isfinite(_rimInnerShadowRadius))_rimInnerShadowRadius=2;
-    if(!isfinite(_darkRimInnerShadowRadius))_darkRimInnerShadowRadius=_rimInnerShadowRadius;
-    _rimSideLevel=WXGClamp(_rimSideLevel,0,1);_darkRimSideLevel=WXGClamp(_darkRimSideLevel,0,1);
-    _rimInnerShadowOpacity=WXGClamp(_rimInnerShadowOpacity,0,.6);_darkRimInnerShadowOpacity=WXGClamp(_darkRimInnerShadowOpacity,0,.6);
-    _rimInnerShadowRadius=WXGClamp(_rimInnerShadowRadius,.3,6);_darkRimInnerShadowRadius=WXGClamp(_darkRimInnerShadowRadius,.3,6);
-    if(!isfinite(_rimSampleSaturation))_rimSampleSaturation=1.8;
-    if(!isfinite(_rimSampleContrast))_rimSampleContrast=1;
-    if(!isfinite(_rimSampleGain))_rimSampleGain=1.35;
-    if(!isfinite(_rimSampleLift))_rimSampleLift=.08;
-    if(!isfinite(_rimSampleBlur))_rimSampleBlur=3;
-    if(!isfinite(_darkRimSampleSaturation))_darkRimSampleSaturation=_rimSampleSaturation;
-    if(!isfinite(_darkRimSampleContrast))_darkRimSampleContrast=_rimSampleContrast;
-    if(!isfinite(_darkRimSampleGain))_darkRimSampleGain=_rimSampleGain;
-    if(!isfinite(_darkRimSampleLift))_darkRimSampleLift=_rimSampleLift;
-    if(!isfinite(_darkRimSampleBlur))_darkRimSampleBlur=_rimSampleBlur;
-    _rimSampleSaturation=WXGClamp(_rimSampleSaturation,0,3);_rimSampleContrast=WXGClamp(_rimSampleContrast,.5,2);
-    _rimSampleGain=WXGClamp(_rimSampleGain,.5,2.5);_rimSampleLift=WXGClamp(_rimSampleLift,0,.6);_rimSampleBlur=WXGClamp(_rimSampleBlur,0,10);
-    _darkRimSampleSaturation=WXGClamp(_darkRimSampleSaturation,0,3);_darkRimSampleContrast=WXGClamp(_darkRimSampleContrast,.5,2);
-    _darkRimSampleGain=WXGClamp(_darkRimSampleGain,.5,2.5);_darkRimSampleLift=WXGClamp(_darkRimSampleLift,0,.6);_darkRimSampleBlur=WXGClamp(_darkRimSampleBlur,0,10);
-    _rimInnerShadowHex=WXGNormalizeHex(_rimInnerShadowHex)?:@"#000000FF";_darkRimInnerShadowHex=WXGNormalizeHex(_darkRimInnerShadowHex)?:@"#000000FF";
+    
+    
+    
+    
+    
+    
     // FIX64: the edge fade's ranges (WeChatFade: top 0-320, bottom 0-360).
     if(!isfinite(_edgeChatFadeTop))_edgeChatFadeTop=96;
     if(!isfinite(_edgeChatFadeBottom))_edgeChatFadeBottom=112;
@@ -1691,7 +1152,6 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     _edgeOtherFadeTop=WXGClamp(_edgeOtherFadeTop,0,320);_edgeOtherFadeBottom=WXGClamp(_edgeOtherFadeBottom,0,360);
     _edgeOtherBlurTop=WXGClamp(_edgeOtherBlurTop,0,320);_edgeOtherBlurBottom=WXGClamp(_edgeOtherBlurBottom,0,360);
     _edgeOtherBlurTopRadius=WXGClamp(_edgeOtherBlurTopRadius,0,8);_edgeOtherBlurBottomRadius=WXGClamp(_edgeOtherBlurBottomRadius,0,8);
-    _dispersion=WXGClamp(_dispersion,0,8); _blur=WXGClamp(_blur,0,12);
     _captureFPS=(NSInteger)WXGClamp(_captureFPS,15,120);
     if(!isfinite(_captureBudget))_captureBudget=35;
     _captureBudget=round(WXGClamp(_captureBudget,20,80));
@@ -1703,10 +1163,9 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     if(!isfinite(_syncBlurScale))_syncBlurScale=1;
     _syncBlurScale=WXGClamp(_syncBlurScale,.5,3);
     if(!isfinite(_lensBlur))_lensBlur=0;
-    if(!isfinite(_lensBlurCoverage))_lensBlurCoverage=0;
-    _lensBlur=WXGClamp(_lensBlur,0,12);_lensBlurCoverage=WXGClamp(_lensBlurCoverage,0,100);
-    if(!isfinite(_lensRefraction))_lensRefraction=_refraction;
-    if(!isfinite(_lensDispersion))_lensDispersion=_dispersion;
+    _lensBlur=WXGClamp(_lensBlur,0,12);
+    if(!isfinite(_lensRefraction))_lensRefraction=1.15;
+    if(!isfinite(_lensDispersion))_lensDispersion=.95;
     if(!isfinite(_lensEdgeWidth))_lensEdgeWidth=10;
     _lensRefraction=WXGClamp(_lensRefraction,0,20);_lensDispersion=WXGClamp(_lensDispersion,0,8);_lensEdgeWidth=WXGClamp(_lensEdgeWidth,1,60);
     if(!isfinite(_lensTopEdgeRatio))_lensTopEdgeRatio=1;
@@ -1715,82 +1174,25 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     if (!isfinite(_lensZoom)) _lensZoom=1.20;
     if (!isfinite(_lensGrowth)) _lensGrowth=1.28;
     if (!isfinite(_bodyPinch)) _bodyPinch=.18;
-    if (!isfinite(_edgeWidth)) _edgeWidth=10;
     _lensZoom=WXGClamp(_lensZoom,1,1.5); _lensGrowth=WXGClamp(_lensGrowth,1.08,1.5);
-    _bodyPinch=WXGClamp(_bodyPinch,0,.30); _edgeWidth=WXGClamp(_edgeWidth,1,60);
+    _bodyPinch=WXGClamp(_bodyPinch,0,.30);
     if(!isfinite(_selectionInset)) _selectionInset=6;
     if(!isfinite(_selectionOpacity)) _selectionOpacity=.30;
     if(!isfinite(_pressedOpacity)) _pressedOpacity=.05;
-    if(!isfinite(_barBorderWidth)) _barBorderWidth=.65;
-    if(!isfinite(_lensBorderWidth)) _lensBorderWidth=.65;
-    if(!isfinite(_borderOpacity)) _borderOpacity=.65;
     _selectionInset=WXGClamp(_selectionInset,2,14);
     _selectionOpacity=WXGClamp(_selectionOpacity,0,.75); _pressedOpacity=WXGClamp(_pressedOpacity,0,.4);
-    _barBorderWidth=WXGClamp(_barBorderWidth,0,2); _lensBorderWidth=WXGClamp(_lensBorderWidth,0,2);
-    _borderOpacity=WXGClamp(_borderOpacity,0,1);
     _selectionHex=WXGNormalizeHex(_selectionHex)?:@"#71879EFF";
     _darkSelectionHex=WXGNormalizeHex(_darkSelectionHex)?:_selectionHex;
-    if(!isfinite(_blurCoverage)) _blurCoverage=0;
-    _blurCoverage=WXGClamp(_blurCoverage,0,100);
-    _borderHex=WXGNormalizeHex(_borderHex)?:@"#FFFFFFFF";
     if(!isfinite(_barGrowth)) _barGrowth=1.025;
     if(!isfinite(_endWrap)) _endWrap=4;
-    if(!isfinite(_materialOpacity)) _materialOpacity=.48;
-    if(!isfinite(_darkMaterialOpacity)) _darkMaterialOpacity=.58;
-    if(!isfinite(_rimFade)) _rimFade=1;
-    if(!isfinite(_darkRimGain)) _darkRimGain=.22;
+    
     _barGrowth=WXGClamp(_barGrowth,1,1.08); _endWrap=WXGClamp(_endWrap,2,10);
-    _materialOpacity=WXGClamp(_materialOpacity,0,.95); _darkMaterialOpacity=WXGClamp(_darkMaterialOpacity,0,.95);
-    _rimFade=WXGClamp(_rimFade,0,1); _darkRimGain=WXGClamp(_darkRimGain,0,1);
-    _materialHex=WXGNormalizeHex(_materialHex)?:@"#FFFFFFFF";
-    _darkMaterialHex=WXGNormalizeHex(_darkMaterialHex)?:@"#29292BFF";
-    _rimHex=WXGNormalizeHex(_rimHex)?:@"#FFFFFFFF";_darkRimHex=WXGNormalizeHex(_darkRimHex)?:@"#FFFFFFFF";
-    _lensRimHex=WXGNormalizeHex(_lensRimHex)?:_rimHex;_darkLensRimHex=WXGNormalizeHex(_darkLensRimHex)?:_darkRimHex;
-    _dockMaterialHex=WXGNormalizeHex(_dockMaterialHex)?:_materialHex;_dockDarkMaterialHex=WXGNormalizeHex(_dockDarkMaterialHex)?:_darkMaterialHex;
-    CGFloat *unit[]={&_rimOpacity,&_darkRimOpacity,&_lensRimOpacity,&_darkLensRimOpacity,&_rimFadeTopLeft,&_rimFadeBottomRight,
-                     &_darkRimFadeTopLeft,&_darkRimFadeBottomRight,&_darkRimFade};
-    for(size_t i=0;i<sizeof unit/sizeof *unit;i++)*unit[i]=isfinite(*unit[i])?WXGClamp(*unit[i],0,1):0;
-    if(!isfinite(_rimBrightness))_rimBrightness=1;
-    if(!isfinite(_darkRimBrightness))_darkRimBrightness=1;
-    _rimBrightness=WXGClamp(_rimBrightness,0,2);_darkRimBrightness=WXGClamp(_darkRimBrightness,0,2);
-    if(!isfinite(_darkBarBorderWidth))_darkBarBorderWidth=_barBorderWidth;
-    if(!isfinite(_darkLensBorderWidth))_darkLensBorderWidth=_lensBorderWidth;
-    _darkBarBorderWidth=WXGClamp(_darkBarBorderWidth,0,2);_darkLensBorderWidth=WXGClamp(_darkLensBorderWidth,0,2);
-    if(!isfinite(_dockMaterialOpacity))_dockMaterialOpacity=_materialOpacity;
-    if(!isfinite(_dockDarkMaterialOpacity))_dockDarkMaterialOpacity=_darkMaterialOpacity;
-    _dockMaterialOpacity=WXGClamp(_dockMaterialOpacity,0,.95);_dockDarkMaterialOpacity=WXGClamp(_dockDarkMaterialOpacity,0,.95);
-    if(!isfinite(_materialFadeWidth))_materialFadeWidth=0;
-    if(!isfinite(_dockMaterialFadeWidth))_dockMaterialFadeWidth=0;
-    _materialFadeWidth=WXGClamp(_materialFadeWidth,0,40);_dockMaterialFadeWidth=WXGClamp(_dockMaterialFadeWidth,0,40);
+    
     if(!isfinite(_messageMenuCornerRadius))_messageMenuCornerRadius=18;
     _messageMenuCornerRadius=WXGClamp(_messageMenuCornerRadius,0,40);
-    if(!isfinite(_materialEdgeFade))_materialEdgeFade=0;
-    _materialEdgeFade=WXGClamp(_materialEdgeFade,0,60);
-    if(!isfinite(_dockMaterialEdgeFade))_dockMaterialEdgeFade=10;
-    _dockMaterialEdgeFade=WXGClamp(_dockMaterialEdgeFade,0,60);
-    // FIX58: the dock's own body optics and rim, same ranges as the shared ones.
-    if(!isfinite(_dockRefraction))_dockRefraction=_refraction;
-    if(!isfinite(_dockDispersion))_dockDispersion=_dispersion;
-    if(!isfinite(_dockEdgeWidth))_dockEdgeWidth=_edgeWidth;
-    if(!isfinite(_dockBlur))_dockBlur=_blur;
-    if(!isfinite(_dockBlurCoverage))_dockBlurCoverage=_blurCoverage;
-    _dockRefraction=WXGClamp(_dockRefraction,0,20);_dockDispersion=WXGClamp(_dockDispersion,0,8);_dockEdgeWidth=WXGClamp(_dockEdgeWidth,1,60);
-    _dockBlur=WXGClamp(_dockBlur,0,12);_dockBlurCoverage=WXGClamp(_dockBlurCoverage,0,100);
-    _dockRimHex=WXGNormalizeHex(_dockRimHex)?:_rimHex;_dockDarkRimHex=WXGNormalizeHex(_dockDarkRimHex)?:_darkRimHex;
-    CGFloat *dockUnit[]={&_dockRimOpacity,&_dockDarkRimOpacity,&_dockRimFade,&_dockDarkRimFade};
-    for(size_t i=0;i<sizeof dockUnit/sizeof *dockUnit;i++)*dockUnit[i]=isfinite(*dockUnit[i])?WXGClamp(*dockUnit[i],0,1):0;
-    if(!isfinite(_dockBorderWidth))_dockBorderWidth=_barBorderWidth;
-    if(!isfinite(_dockDarkBorderWidth))_dockDarkBorderWidth=_darkBarBorderWidth;
-    _dockBorderWidth=WXGClamp(_dockBorderWidth,0,2);_dockDarkBorderWidth=WXGClamp(_dockDarkBorderWidth,0,2);
-    if(!isfinite(_dockRimBrightness))_dockRimBrightness=1;
-    if(!isfinite(_dockDarkRimBrightness))_dockDarkRimBrightness=1;
-    _dockRimBrightness=WXGClamp(_dockRimBrightness,0,2);_dockDarkRimBrightness=WXGClamp(_dockDarkRimBrightness,0,2);
-    // FIX37: removed settings (user): the switch is always forwarded at once,
-    // and iOS 26 rims only fade on the bottom-left / top-right diagonals.
-    _dockSwitchTiming=0;
-    _rimFadeTopLeft=_rimFadeBottomRight=_darkRimFadeTopLeft=_darkRimFadeBottomRight=0;
+    
+    _dockSwitchTiming=0;   // FIX37: the switch is always forwarded at once
     // FIX85: the table's keys.
-    if(!_extra)[self loadExtraDefaults];
     for(size_t i=0;i<WXGExtraCount;i++) {
         const WXGExtraSpec *spec=&WXGExtraSpecs[i];NSString *key=@(spec->key);id value=_extra[key];
         if(spec->kind=='h'){_extra[key]=WXGNormalizeHex(value)?:@(spec->hex?:"#FFFFFFFF");continue;}
@@ -1798,11 +1200,11 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
         if(!isfinite(v))v=spec->def;
         if(spec->kind=='b'){_extra[key]=@(v>.5);continue;}
         v=WXGClamp(v,spec->lo,spec->hi);
-        if(!strcmp(spec->key,"rimStyle") || !strcmp(spec->key,"dockRimStyle") || !strcmp(spec->key,"bubbleRimStyle"))v=round(v);
+        if(strlen(spec->key)>=8 && !strcmp(spec->key+strlen(spec->key)-8,"RimStyle"))v=lround(v)==WXGRimStyleGlow?WXGRimStyleGlow:WXGRimStyle26;   // FIX130 ("rimStyle" too: compared from its R)
+        if(!strcmp(spec->key,"rimStyle"))v=lround(v)==WXGRimStyleGlow?WXGRimStyleGlow:WXGRimStyle26;
         if(strstr(spec->key,"Share"))v=round(v);   // FIX114 L: a choice
         _extra[key]=@(v);
     }
-    _rimSampleColor=[self rimStyleValue]==WXGRimStyleSampled;
 }
 static NSUInteger WXGConfigRevisionCounter=1;
 NSUInteger WXGConfigRevision(void) {return WXGConfigRevisionCounter;}
@@ -1829,43 +1231,6 @@ NSUInteger WXGConfigRevision(void) {return WXGConfigRevisionCounter;}
     for(NSString *key in held)[self setValue:held[key] forKey:key];
     [self save];
 }
-// FIX113 P: the segment bar's glass, pill and titles (all: its lens too)
-// from the dock's values now.
-- (void)segmentLikeDock:(BOOL)all {
-    static NSSet<NSString *> *look;static dispatch_once_t once;
-    dispatch_once(&once,^{look=[NSSet setWithArray:@[@"segmentRefraction",@"segmentDispersion",@"segmentBlur",@"segmentBlurCoverage",@"segmentEdgeWidth",@"segmentRefractionTransition",
-        @"segmentRefractionTransitionWidth",@"segmentRefractionTransitionStretch",@"segmentRefractionTransitionCurve",@"segmentBackdropSaturation",@"segmentBackdropBrightness",
-        @"segmentRimSampleOverlayHex",@"segmentDarkRimSampleOverlayHex",@"segmentDropShadowOpacity",@"segmentDarkDropShadowOpacity",
-        @"segmentDropShadowBlur",@"segmentDropShadowOffset",@"segmentDropShadowSpread",
-        @"segmentRimOpacity",@"segmentDarkRimOpacity",@"segmentRimStyle",@"segmentRimSampleOpacity",@"segmentDarkRimSampleOpacity",
-        @"segmentRim27Opacity",@"segmentDarkRim27Opacity",@"segmentMaterialHex",@"segmentDarkMaterialHex",@"segmentMaterialOpacity",
-        @"segmentDarkMaterialOpacity",@"segmentMaterialEdgeFadeEnabled",@"segmentMaterialEdgeFade",@"segmentPillAuto",@"segmentPillHex",
-        @"segmentDarkPillHex",@"segmentPillOpacity",@"segmentDarkPillOpacity",@"segmentPillPressedOpacity",@"segmentInkHex",@"segmentDarkInkHex"]];});
-    for(size_t i=0;i<WXGExtraCount;i++) {
-        NSString *key=@(WXGExtraSpecs[i].key);
-        if(![key hasPrefix:@"segment"] || [key isEqual:@"segmentDockLook"])continue;
-        if(!(all?WXGExtraSpecs[i].inherit!=NULL:[look containsObject:key]))continue;
-        [self inheritExtra:i];
-    }
-    // FIX113 Z: the segment bar's iOS 27 dark-mode highlights as the dock's
-    // dark mode (they inherit from the segment bar's own light mode).
-    for(size_t i=0;i<WXGExtraCount;i++) {
-        NSString *key=@(WXGExtraSpecs[i].key);
-        if(![key hasPrefix:@"segment"] || [key rangeOfString:@"Rim27DarkMode"].location==NSNotFound)continue;
-        NSString *light=[key stringByReplacingOccurrencesOfString:@"Rim27DarkMode" withString:@"Rim27"];
-        if(!all && ![look containsObject:light])continue;
-        id value=_extra[[@"dock" stringByAppendingString:[key substringFromIndex:7]]];
-        if(value)_extra[key]=value;
-    }
-    _extra[@"segmentDockLook"]=@1;
-}
-- (void)segmentFromDock {
-    [self segmentLikeDock:YES];
-    // the titles and the pill's "page colour" as the dock has them
-    _extra[@"segmentPillAuto"]=@0;_extra[@"segmentAccentOn"]=@1;
-    _extra[@"segmentInkHex"]=@"#1A1A1AEB";_extra[@"segmentDarkInkHex"]=@"#F7F7F7F7";
-    [self save];
-}
 // FIX81: only these keys back to the defaults (one settings page).
 - (void)resetKeys:(NSArray<NSString *> *)keys {
     NSArray *all=[self keys];
@@ -1880,27 +1245,14 @@ NSUInteger WXGConfigRevision(void) {return WXGConfigRevisionCounter;}
 }
 // FIX58: the dock reads its own body optics and rim; every other glass the shared ones.
 - (WXGScopeOptics)opticsForDock:(BOOL)dock {return [self opticsForScope:dock?WXGGlassScopeDock:WXGGlassScopeOther];}   // FIX114 L: with 共用
-- (WXGScopeOptics)rawOpticsForDock:(BOOL)dock {
-    return dock?(WXGScopeOptics){_dockRefraction,_dockDispersion,_dockEdgeWidth,_dockBlur,_dockBlurCoverage}
-               :(WXGScopeOptics){_refraction,_dispersion,_edgeWidth,_blur,_blurCoverage};
-}
-- (WXGRimSampleTuning)rimSampleTuningDark:(BOOL)dark {
-    if(dark)return (WXGRimSampleTuning){_darkRimSampleSaturation,_darkRimSampleContrast,_darkRimSampleGain,_darkRimSampleLift,_darkRimSampleBlur};
-    return (WXGRimSampleTuning){_rimSampleSaturation,_rimSampleContrast,_rimSampleGain,_rimSampleLift,_rimSampleBlur};
-}
-- (WXGScopeRim)rimForDock:(BOOL)dock dark:(BOOL)dark {return [self rimForScope:dock?WXGGlassScopeDock:WXGGlassScopeOther dark:dark];}
-- (NSString *)rimHexForDock:(BOOL)dock dark:(BOOL)dark {return dock?(dark?_dockDarkRimHex:_dockRimHex):(dark?_darkRimHex:_rimHex);}
 - (NSDictionary *)parameterValues {return [self dictionaryWithValuesForKeys:[self keys]];}
 #pragma mark FIX85 scopes and rim styles
-- (WXGRimStyle)rimStyleValue {return [self rimStyleForScope:WXGGlassScopeOther];}
 // FIX86: the dock, the other glass and the bubbles each choose their style.
 - (WXGRimStyle)rimStyleForScope:(WXGGlassScope)scope {
-    scope=[self sharedScope:scope page:WXGSharePageBorder];   // FIX114 L
-    return (WXGRimStyle)lround(WXGClamp([self extraNumber:WXGScopedKey(scope,NO,@"RimStyle")],0,3));   // FIX123: 3 = iOS 26
+    return lround([self extraNumber:WXGScopedKey(scope,NO,@"RimStyle")])==WXGRimStyleGlow?WXGRimStyleGlow:WXGRimStyle26;   // FIX130: iOS 27 or iOS 26 (the two older styles are gone)
 }
 // FIX123: an iOS 26 rim range's values (the border page's sharing applies).
 - (WXGRim26Settings)rim26ForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    scope=[self sharedScope:scope page:WXGSharePageBorder];
     #define K(stem) [self extraNumber:WXGScopedKey(scope,NO,stem)]
     #define KD(stem) [self extraNumber:WXGScopedKey(scope,dark,stem)]
     WXGRim26Settings r;memset(&r,0,sizeof r);
@@ -1908,152 +1260,62 @@ NSUInteger WXGConfigRevision(void) {return WXGConfigRevisionCounter;}
     r.angle=WXGClamp(K(@"Edge26Angle"),0,180);r.key=WXGClamp(K(@"Edge26Key"),0,1.5);r.fill=WXGClamp(K(@"Edge26Fill"),0,1.5);r.spread=WXGClamp(K(@"Edge26Spread"),.3,6);
     r.opacity=WXGClamp(KD(@"Edge26Opacity"),0,1);r.gain=WXGClamp(KD(@"Edge26Gain"),0,4);r.chroma=WXGClamp(KD(@"Edge26Chroma"),0,8);
     r.lift=WXGClamp(KD(@"Edge26Lift"),0,1);r.ring=WXGClamp(KD(@"Edge26Ring"),0,1);
-    r.captureScale=WXGClamp([self extraNumber:@"edge26CaptureScale"],.1,1);r.systemFilter=[self extraNumber:@"edge26SystemFilter"]>.5;
-    r.shadowOn=K(@"Edge26ShadowOn")>.5;r.shadowOpacity=WXGClamp(K(@"Edge26ShadowOpacity"),0,.5);r.shadowLength=WXGClamp(K(@"Edge26ShadowLength"),.2,12);
+    r.captureScale=WXGClamp([self extraNumber:@"edge26CaptureScale"],.1,1);
     #undef K
     #undef KD
     return r;
 }
 - (BOOL)bubbleFullGlass {return [self extraNumber:@"bubbleFullGlass"]>.5;}
-// FIX113 O: the ranges kept in the table (bubbles, 分组, 设置页).
-static BOOL WXGTableScope(WXGGlassScope scope) {return scope==WXGGlassScopeBubble || scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard || scope==WXGGlassScopeLens || scope==WXGGlassScopeSegmentLens || scope==WXGGlassScopeFinder;}
-- (WXGScopeOptics)ownOpticsForScope:(WXGGlassScope)scope {
-    if(WXGTableScope(scope))
-        return (WXGScopeOptics){[self extraNumber:WXGScopedKey(scope,NO,@"Refraction")],[self extraNumber:WXGScopedKey(scope,NO,@"Dispersion")],
-                                [self extraNumber:WXGScopedKey(scope,NO,@"EdgeWidth")],[self extraNumber:WXGScopedKey(scope,NO,@"Blur")],
-                                [self extraNumber:WXGScopedKey(scope,NO,@"BlurCoverage")]};
-    return [self rawOpticsForDock:scope==WXGGlassScopeDock];
-}
-// FIX114 L: refraction from the range 折射 shares with, blur from 模糊's.
-- (WXGScopeOptics)opticsForScope:(WXGGlassScope)scope {
-    WXGGlassScope r=[self sharedScope:scope page:WXGSharePageRefraction],b=[self sharedScope:scope page:WXGSharePageBlur];
-    WXGScopeOptics o=[self ownOpticsForScope:r];
-    if(b!=r){WXGScopeOptics ob=[self ownOpticsForScope:b];o.blur=ob.blur;o.blurCoverage=ob.blurCoverage;}
-    return o;
-}
-// FIX114 L: the range whose settings of a page this one uses (a chain: the
-// segment bar as the dock, the dock as the other glass). Literal keys.
-static NSString *const WXGShareKeys[WXG_SHARE_RANGES][WXG_SHARE_PAGES]={
-    {@"otherShareRefraction",@"otherShareBlur",@"otherShareMaterial",@"otherShareBorder"},
-    {@"dockShareRefraction",@"dockShareBlur",@"dockShareMaterial",@"dockShareBorder"},
-    {@"bubbleShareRefraction",@"bubbleShareBlur",nil,@"bubbleShareBorder"},
-    {@"segmentShareRefraction",@"segmentShareBlur",@"segmentShareMaterial",@"segmentShareBorder"},
-    {@"cardShareRefraction",@"cardShareBlur",@"cardShareMaterial",@"cardShareBorder"},
-    {nil,nil,nil,@"lensGlassShareBorder"},
-    {nil,nil,nil,@"segmentLensGlassShareBorder"},
-    {nil,nil,nil,@"finderGlassShareBorder"}};   // FIX115 S
-static long WXGShareValue(void *context,int range,int page) {
-    NSString *key=WXGShareKeys[range][page];
-    return key?lround([(__bridge WXGConfig *)context extraNumber:key]):0;
-}
-// FIX114 N: the chain in WXGShareChain.h (Tests/ShareChainTests.c).
-- (WXGGlassScope)sharedScope:(WXGGlassScope)scope page:(WXGSharePage)page {
-    static unsigned char present[WXG_SHARE_RANGES][WXG_SHARE_PAGES];static dispatch_once_t once;
-    dispatch_once(&once,^{for(int r=0;r<WXG_SHARE_RANGES;r++)for(int p=0;p<WXG_SHARE_PAGES;p++)present[r][p]=WXGShareKeys[r][p]!=nil;});
-    return (WXGGlassScope)WXGShareResolve((int)scope,(int)page,present,WXGShareValue,(__bridge void *)self);
-}
-// FIX114 I / J: a range's 边界过渡 and its shape (the lens borders' ranges
-// are their glass's). Literal keys: this runs every frame for every glass.
+#pragma mark FIX130 one glass for every range
+// The row of a range's glass values: 其余玻璃, the dock (and its lens' border range), the bubbles, the segment bar
+// (and its lens'), the settings page; 视频号 (its border only) is 其余玻璃's glass.
 static NSInteger WXGGlassRow(WXGGlassScope scope) {
     return scope==WXGGlassScopeDock || scope==WXGGlassScopeLens?1:scope==WXGGlassScopeBubble?2:
            scope==WXGGlassScopeSegment || scope==WXGGlassScopeSegmentLens?3:scope==WXGGlassScopeCard?4:0;
 }
-- (WXGTransitionSettings)refractionTransitionForScope:(WXGGlassScope)scope {
-    static NSString *const keys[5][4]={
-        {@"refractionTransition",@"refractionTransitionWidth",@"refractionTransitionStretch",@"refractionTransitionCurve"},
-        {@"dockRefractionTransition",@"dockRefractionTransitionWidth",@"dockRefractionTransitionStretch",@"dockRefractionTransitionCurve"},
-        {@"bubbleRefractionTransition",@"bubbleRefractionTransitionWidth",@"bubbleRefractionTransitionStretch",@"bubbleRefractionTransitionCurve"},
-        {@"segmentRefractionTransition",@"segmentRefractionTransitionWidth",@"segmentRefractionTransitionStretch",@"segmentRefractionTransitionCurve"},
-        {@"cardRefractionTransition",@"cardRefractionTransitionWidth",@"cardRefractionTransitionStretch",@"cardRefractionTransitionCurve"}};
-    NSString *const *k=keys[WXGGlassRow([self sharedScope:scope page:WXGSharePageRefraction])];   // FIX114 L
-    return (WXGTransitionSettings){WXGClamp([self extraNumber:k[0]],0,1),WXGClamp([self extraNumber:k[1]],0,60),
-                                   WXGClamp([self extraNumber:k[2]],1.2,6),WXGClamp([self extraNumber:k[3]],1.5,4)};
+enum {WXGGlassBand,WXGGlassDepth,WXGGlassBandMax,WXGGlassSqueeze,WXGGlassDispersion,WXGGlassBlurSmall,WXGGlassBlurLarge,
+      WXGGlassVeil,WXGGlassDarkVeil,WXGGlassSaturation,WXGGlassDarkSaturation,WXGGlassBrightness,WXGGlassDarkBrightness,
+      WXGGlassShadow,WXGGlassDarkShadow,WXGGlassShadowBlur,WXGGlassShadowOffset,WXGGlassValueCount};
+// Literal keys: these run every frame for every glass.
+#define WXG_GLASS_KEYS(p,d) {@p "lassBand",@p "lassDepth",@p "lassBandMax",@p "lassSqueeze",@p "lassDispersion",@p "lassBlurSmall",@p "lassBlurLarge",\
+    @p "lassVeil",@d "lassVeil",@p "lassSaturation",@d "lassSaturation",@p "lassBrightness",@d "lassBrightness",\
+    @p "lassShadow",@d "lassShadow",@p "lassShadowBlur",@p "lassShadowOffset"}
+static NSString *const WXGGlassKeys[5][WXGGlassValueCount]={WXG_GLASS_KEYS("g","darkG"),WXG_GLASS_KEYS("dockG","dockDarkG"),WXG_GLASS_KEYS("bubbleG","bubbleDarkG"),
+                                                            WXG_GLASS_KEYS("segmentG","segmentDarkG"),WXG_GLASS_KEYS("cardG","cardDarkG")};
+- (double)glass:(NSInteger)value scope:(WXGGlassScope)scope {return [self extraNumber:WXGGlassKeys[WXGGlassRow(scope)][value]];}
+// 共用 (a range using another's settings of a page) is gone: every range its own.
+// The body's refraction is the curve's (glassCurveForScope:) and its blur goes by its size (glassBlurForScope:side:).
+// What is left of these feeds the dock's fixed overlay shader, which draws the icons in the lens: no refraction at
+// rest, its old 10 pt band, and no clear ring (the blur covers the whole glass).
+- (WXGScopeOptics)opticsForScope:(WXGGlassScope)scope {
+    return (WXGScopeOptics){0,0,10,[self glassBlurForScope:scope side:scope==WXGGlassScopeDock?_height:44],100};
 }
-// FIX114 J: a range's backdrop saturation and brightness.
-// FIX124: 本体照 iOS 26: a switch of 其余玻璃, for the ranges that use its settings of that page.
-- (BOOL)ios26:(NSString *)key scope:(WXGGlassScope)scope page:(WXGSharePage)page {
-    return [self sharedScope:scope page:page]==WXGGlassScopeOther && [self extraNumber:key]>.5;
-}
-// FIX124: the system's face is (1 - a) x (levels of the backdrop's luma + its colour kept) + a x fill;
-// here: the backdrop's saturation and brightness, then the veil. The tone is the appearance's.
-- (WXGBackdropTone)backdropToneForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    if([self ios26:@"ios26MaterialOn" scope:scope page:WXGSharePageMaterial])
-        return (WXGBackdropTone){WXGClamp([self extraNumber:dark?@"darkIos26Saturation":@"ios26Saturation"],0,3),
-                                 WXGClamp([self extraNumber:dark?@"darkIos26Brightness":@"ios26Brightness"],-.3,.3)};
-    return [self backdropToneForScope:scope];
-}
-// FIX124: the system's blur for a glass whose short side is `side` points; < 0: off (the range's own).
-- (CGFloat)ios26BlurForScope:(WXGGlassScope)scope side:(CGFloat)side {
-    if(![self ios26:@"ios26BlurOn" scope:scope page:WXGSharePageBlur])return -1;
-    CGFloat small=WXGClamp([self extraNumber:@"ios26BlurSmall"],0,10),large=WXGClamp([self extraNumber:@"ios26BlurLarge"],0,20);
+// The system's blur for a glass whose short side is `side` points.
+- (CGFloat)glassBlurForScope:(WXGGlassScope)scope side:(CGFloat)side {
+    CGFloat small=WXGClamp([self glass:WXGGlassBlurSmall scope:scope],0,10),large=WXGClamp([self glass:WXGGlassBlurLarge scope:scope],0,20);
     if(!(side>48))return small;
     return WXGClamp(small+(large-small)*(side-48)/42.,MIN(small,large),MAX(MAX(small,large)*1.5,small));
 }
-- (WXGBackdropTone)backdropToneForScope:(WXGGlassScope)scope {
-    static NSString *const keys[5][2]={{@"backdropSaturation",@"backdropBrightness"},{@"dockBackdropSaturation",@"dockBackdropBrightness"},
-        {@"bubbleBackdropSaturation",@"bubbleBackdropBrightness"},{@"segmentBackdropSaturation",@"segmentBackdropBrightness"},
-        {@"cardBackdropSaturation",@"cardBackdropBrightness"}};
-    NSString *const *k=keys[WXGGlassRow([self sharedScope:scope page:WXGSharePageBlur])];   // FIX114 L
-    return (WXGBackdropTone){WXGClamp([self extraNumber:k[0]],0,3),WXGClamp([self extraNumber:k[1]],-.3,.3)};
+// The system's face is (1 - a) x (levels of the backdrop's luma + its colour kept) + a x fill; here: the backdrop's
+// saturation and brightness, then the veil (white in light mode, black in dark) at `a`.
+- (WXGBackdropTone)backdropToneForScope:(WXGGlassScope)scope dark:(BOOL)dark {
+    return (WXGBackdropTone){WXGClamp([self glass:dark?WXGGlassDarkSaturation:WXGGlassSaturation scope:scope],0,3),
+                             WXGClamp([self glass:dark?WXGGlassDarkBrightness:WXGGlassBrightness scope:scope],-.3,.3)};
 }
-// FIX114 K: a range's drop shadow (the lens borders' ranges are their glass's).
+- (NSString *)materialHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {(void)scope;return dark?@"#000000FF":@"#FFFFFFFF";}
+- (CGFloat)materialOpacityForScope:(WXGGlassScope)scope dark:(BOOL)dark {return WXGClamp([self glass:dark?WXGGlassDarkVeil:WXGGlassVeil scope:scope],0,1);}
+// The system's shadow: a Gaussian of `blur` points, `offset` down (the lens borders' ranges are their glass's).
 - (WXGDropShadowSettings)dropShadowForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    if([self ios26:@"ios26ShadowOn" scope:scope page:WXGSharePageBorder])   // FIX124: the system's (sigma 18 pt, 8 pt down)
-        return (WXGDropShadowSettings){WXGClamp([self extraNumber:dark?@"darkIos26ShadowOpacity":@"ios26ShadowOpacity"],0,.6),
-                                       WXGClamp([self extraNumber:@"ios26ShadowBlur"],.5,40),WXGClamp([self extraNumber:@"ios26ShadowOffset"],-10,30),0};
-    static NSString *const keys[5][5]={
-        {@"dropShadowOpacity",@"darkDropShadowOpacity",@"dropShadowBlur",@"dropShadowOffset",@"dropShadowSpread"},
-        {@"dockDropShadowOpacity",@"dockDarkDropShadowOpacity",@"dockDropShadowBlur",@"dockDropShadowOffset",@"dockDropShadowSpread"},
-        {@"bubbleDropShadowOpacity",@"bubbleDarkDropShadowOpacity",@"bubbleDropShadowBlur",@"bubbleDropShadowOffset",@"bubbleDropShadowSpread"},
-        {@"segmentDropShadowOpacity",@"segmentDarkDropShadowOpacity",@"segmentDropShadowBlur",@"segmentDropShadowOffset",@"segmentDropShadowSpread"},
-        {@"cardDropShadowOpacity",@"cardDarkDropShadowOpacity",@"cardDropShadowBlur",@"cardDropShadowOffset",@"cardDropShadowSpread"}};
-    NSString *const *k=keys[WXGGlassRow([self sharedScope:scope page:WXGSharePageBorder])];   // FIX114 L
-    return (WXGDropShadowSettings){WXGClamp([self extraNumber:k[dark?1:0]],0,.6),WXGClamp([self extraNumber:k[2]],.5,40),
-                                   WXGClamp([self extraNumber:k[3]],-10,30),WXGClamp([self extraNumber:k[4]],-10,20)};
+    return (WXGDropShadowSettings){WXGClamp([self glass:dark?WXGGlassDarkShadow:WXGGlassShadow scope:scope],0,.6),
+                                   WXGClamp([self glass:WXGGlassShadowBlur scope:scope],.5,40),WXGClamp([self glass:WXGGlassShadowOffset scope:scope],-10,30),0};
 }
-// FIX114 J: the 取自背景 colour overlay of a range of 边框与渐隐 (its own, the lenses' too).
-- (NSString *)rimSampleOverlayHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    scope=[self sharedScope:scope page:WXGSharePageBorder];   // FIX114 L
-    return [self extraHex:WXGScopedKey(scope,dark,@"RimSampleOverlayHex")];
-}
-// FIX113 O: a range's material (the bubbles tint themselves: the other glass's).
-- (NSString *)materialHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    if([self ios26:@"ios26MaterialOn" scope:scope page:WXGSharePageMaterial])return dark?@"#000000FF":@"#FFFFFFFF";   // FIX124
-    scope=[self sharedScope:scope page:WXGSharePageMaterial];   // FIX114 L
-    if(scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard)return [self extraHex:WXGScopedKey(scope,dark,@"MaterialHex")];
-    if(scope==WXGGlassScopeDock)return dark?_dockDarkMaterialHex:_dockMaterialHex;
-    return dark?_darkMaterialHex:_materialHex;
-}
-- (CGFloat)materialOpacityForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    // FIX124: the veil is drawn 22 % stronger unless 通透材质 is on (FIX39); the system's value is the drawn one.
-    if([self ios26:@"ios26MaterialOn" scope:scope page:WXGSharePageMaterial])
-        return WXGClamp([self extraNumber:dark?@"darkIos26VeilOpacity":@"ios26VeilOpacity"]/(self.clearMaterial?1.:1.22),0,1);
-    scope=[self sharedScope:scope page:WXGSharePageMaterial];   // FIX114 L
-    if(scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard)return WXGClamp([self extraNumber:WXGScopedKey(scope,dark,@"MaterialOpacity")],0,1);
-    if(scope==WXGGlassScopeDock)return dark?_dockDarkMaterialOpacity:_dockMaterialOpacity;
-    return dark?_darkMaterialOpacity:_materialOpacity;
-}
-- (BOOL)materialEdgeFadeOnForScope:(WXGGlassScope)scope {
-    if([self ios26:@"ios26MaterialOn" scope:scope page:WXGSharePageMaterial])return NO;   // FIX124: the system's face is even to the outline
-    scope=[self sharedScope:scope page:WXGSharePageMaterial];   // FIX114 L
-    if(scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard)return [self extraNumber:WXGScopedKey(scope,NO,@"MaterialEdgeFadeEnabled")]>.5;
-    return scope==WXGGlassScopeDock?_dockMaterialEdgeFadeEnabled:_materialEdgeFadeEnabled;
-}
-- (CGFloat)materialEdgeFadeForScope:(WXGGlassScope)scope {
-    scope=[self sharedScope:scope page:WXGSharePageMaterial];   // FIX114 L
-    if(scope==WXGGlassScopeSegment || scope==WXGGlassScopeCard)return [self extraNumber:WXGScopedKey(scope,NO,@"MaterialEdgeFade")];
-    return scope==WXGGlassScopeDock?_dockMaterialEdgeFade:_materialEdgeFade;
-}
-// FIX113 O: the lens of a range: the segment bar's own, every other the dock's.
-// FIX122 D: Kyant's lens() on a glass' body: 其余玻璃's, and any range
-// sharing its refraction page.
-- (WXGKyantBody)kyantBodyForScope:(WXGGlassScope)scope {
-    WXGKyantBody k={NO,0,0,0,0,0,0};
-    if([self sharedScope:scope page:WXGSharePageRefraction]!=WXGGlassScopeOther || [self extraNumber:@"kyantOtherOn"]<=.5)return k;
-    k.on=YES;k.height=WXGClamp([self extraNumber:@"kyantOtherHeight"],.02,.5);k.amount=WXGClamp([self extraNumber:@"kyantOtherAmount"],0,1);
-    k.depth=[self extraNumber:@"kyantOtherDepth"]>.5?1:0;k.dispersion=WXGClamp([self extraNumber:@"kyantOtherDispersion"],0,3);
-    k.maxHeight=WXGClamp([self extraNumber:@"kyantOtherMaxHeight"],4,80);
-    k.rimMax=[self extraNumber:@"kyantOtherRimFine"]>.5?0:WXGClamp([self extraNumber:@"kyantOtherRimMax"],1,20);   // FIX122 E
+// The refraction of a glass' body (WXGLensCurve.h): the band and the depth at the outline as shares of its short
+// side, the band at most `maxHeight` points (the depth with it in proportion), the colour split toward its corners.
+- (WXGGlassCurve)glassCurveForScope:(WXGGlassScope)scope {
+    WXGGlassCurve k;
+    k.height=WXGClamp([self glass:WXGGlassBand scope:scope],.02,.5);k.amount=WXGClamp([self glass:WXGGlassDepth scope:scope],0,1);
+    k.maxHeight=WXGClamp([self glass:WXGGlassBandMax scope:scope],4,80);k.squeeze=WXGClamp([self glass:WXGGlassSqueeze scope:scope],0,20);
+    k.dispersion=WXGClamp([self glass:WXGGlassDispersion scope:scope],0,3);
     return k;
 }
 // FIX127: iOS 26's tab bar in the dock's own settings.
@@ -2068,11 +1330,11 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
    less 21 pt a side and 62 pt high, the selection 4 pt inside it, the cells
    overlapping by 10 pt, the lens lifted 16 pt wider and taller (70 pt: 70 / 62
    of the bar) and 8.4 pt past the bar's ends, the bar 3.55% larger while
-   held, the lens' content 1.16x; the lens' glass Kyant's curve with the
+   held, the lens' content 1.16x; the lens' glass the curve with the
    system's band (0.10 of its height) and the depth that puts the mirrored
    bar where the recording has it (0.30; the filter's own number is 0.25),
    no blur and no tint; the system's deformation, position spring and hang;
-   its colour split (all round, soft) and its own highlight border. */
+   its own highlight border (iOS 26's). */
 - (NSDictionary<NSString *,NSNumber *> *)dockSystem26ValuesForScreenWidth:(CGFloat)width {
     CGFloat fraction=width>100?WXGClamp((width-2*WXG_DOCK26_SIDE_MARGIN)/width,.65,.98):.9045;
     return @{@"widthFraction":@(fraction),@"height":@(WXG_DOCK26_HEIGHT),@"selectionInset":@(WXG_DOCK26_INSET),
@@ -2080,17 +1342,14 @@ static NSInteger WXGGlassRow(WXGGlassScope scope) {
              @"barGrowth":@(WXG_DOCK26_BAR_GROWTH),@"endWrap":@(WXG_DOCK26_END_WRAP),@"lensZoom":@(WXG_DOCK26_ZOOM),
              @"dockCellExtra":@(WXG_DOCK26_CELL_EXTRA),@"dockLensLiftWidth":@(WXG_DOCK26_LIFT),@"dockLensHang":@(WXG_DOCK26_HANG),
              @"dockMoveSpring":@YES,@"dockMoveResponse":@(WXG_DOCK26_RESPONSE),@"dockMoveDamping":@(WXG_DOCK26_DAMPING),
-             @"lensKyantOn":@YES,@"lensKyantHeight":@(WXG_DOCK26_LENS_BAND),@"lensKyantAmount":@(WXG_DOCK26_LENS_AMOUNT),
+             @"lensCurveBand":@(WXG_DOCK26_LENS_BAND),@"lensCurveDepth":@(WXG_DOCK26_LENS_AMOUNT),
              @"lensBlur":@0,@"lensTintOn":@NO,
-             // FIX128: the system's colour split, and how far in the bar's edge shows through the lens (3.5 pt of its 31).
-             @"lensRingDispersionOn":@YES,@"lensRingDispersion":@(WXG_DOCK26_SPLIT),@"lensRingDispersionWidth":@(WXG_DOCK26_SPLIT_WIDTH),
-             @"lensRingDispersionAngle":@(WXG_DOCK26_SPLIT_ANGLE),@"bodyPinch":@(WXG_DOCK26_PINCH),
-             // FIX129: the split's softness; the lens' own border as the system's (its highlight rim, curvature 0.8),
-             // the lens range of 边框与渐隐 using its own values.
-             @"lensRingDispersionSoft":@(WXG_DOCK26_SPLIT_SOFT),
-             @"lensGlassShareBorder":@0,@"lensGlassRimStyle":@(WXGRimStyle26),@"lensGlassEdge26Curve":@(WXG_DOCK26_LENS_RIM_CURVE),
+             // FIX128 / FIX129: how far in the bar's edge shows through the lens; the lens' own border as the system's
+             // (its highlight rim, curvature 0.8).
+             @"bodyPinch":@(WXG_DOCK26_PINCH),
+             @"lensGlassRimStyle":@(WXGRimStyle26),@"lensGlassEdge26Curve":@(WXG_DOCK26_LENS_RIM_CURVE),
              @"lensGlassEdge26Height":@1,@"lensGlassEdge26Opacity":@1,@"lensGlassDarkEdge26Opacity":@1,
-             @"lensElasticOn":@YES,@"lensFlexSystem":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO};
+             @"lensElasticOn":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO};
 }
 static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
 - (BOOL)hasDockSystem26Backup {
@@ -2125,67 +1384,42 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
     [self save];
     return YES;
 }
-// FIX126: the system's deformation, as set (WXGLensFlex.h); `on`: used in place of Kyant's.
+// The lens' deformation as it moves: the system's (WXGLensFlex.h, fitted on the tab bar lens recorded on iOS 26.6).
 - (WXGLensFlexParams)lensFlexParams {
     WXGLensFlexParams p=WXGLensFlexDefaults();
-    p.on=[self extraNumber:@"lensFlexSystem"]>.5;
+    p.on=1;
     double k=WXGClamp([self extraNumber:@"lensFlexStrength"],0,3);p.gainX*=k;p.gainY*=k;
     p.slow=WXGClamp([self extraNumber:@"lensFlexSlow"],3,20);p.slowDamping=WXGClamp([self extraNumber:@"lensFlexDamping"],.15,1.2);
     p.symmetric=[self extraNumber:@"lensFlexSymmetric"]>.5;
     return p;
 }
-// FIX122 C: Kyant's drag-speed deformation, as set (WXGKyantElastic.h).
-- (WXGKyantElasticParams)kyantElasticParams {
-    WXGKyantElasticParams p;
-    p.width=WXGClamp([self extraNumber:@"lensElasticKyWidth"],0,2);p.height=WXGClamp([self extraNumber:@"lensElasticKyHeight"],0,2);
-    p.limit=WXGClamp([self extraNumber:@"lensElasticKyLimit"],0,.5);p.sensitivity=WXGClamp([self extraNumber:@"lensElasticKySensitivity"],0,3);
-    p.damping=WXGClamp([self extraNumber:@"lensElasticKyDamping"],.05,1.5);p.stiffness=WXGClamp([self extraNumber:@"lensElasticKyStiffness"],20,1500);
-    p.symmetric=[self extraNumber:@"lensElasticKySymmetric"]>.5;
-    return p;
-}
 - (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    WXGLensSettings l;
+    // Literal keys: this runs a few times a frame while the bar draws.
+    WXGLensSettings l;memset(&l,0,sizeof l);
     if(scope==WXGGlassScopeSegment) {
-        // Literal keys: this runs a few times a frame while the bar draws.
-        l.refraction=[self extraNumber:@"segmentLensRefraction"];l.dispersion=[self extraNumber:@"segmentLensDispersion"];l.edgeWidth=[self extraNumber:@"segmentLensEdgeWidth"];
-        l.topRatio=[self extraNumber:@"segmentLensTopEdgeRatio"];l.sharpness=[self extraNumber:@"segmentLensEdgeSharpness"];
-        l.dispersionWidth=[self extraNumber:@"segmentLensDispersionWidth"];l.dispersionTopRatio=[self extraNumber:@"segmentLensDispersionTopRatio"];
+        l.band=[self extraNumber:@"segmentLensCurveBand"];l.depth=[self extraNumber:@"segmentLensCurveDepth"];
+        l.split=[self extraNumber:@"segmentLensCurveDispersion"];l.squeeze=[self extraNumber:@"segmentLensCurveSqueeze"];
         l.zoom=[self extraNumber:@"segmentLensZoom"];l.growth=[self extraNumber:@"segmentLensGrowth"];l.barGrowth=[self extraNumber:@"segmentBarGrowth"];
-        l.endWrap=[self extraNumber:@"segmentEndWrap"];l.pinch=[self extraNumber:@"segmentBodyPinch"];
-        l.blur=[self extraNumber:@"segmentLensBlur"];l.blurCoverage=[self extraNumber:@"segmentLensBlurCoverage"];l.cancelSetting=[self extraNumber:@"segmentLensOffsetCancel"];
-        l.rimOpacity=[self extraNumber:dark?@"segmentDarkLensRimOpacity":@"segmentLensRimOpacity"];l.borderWidth=[self extraNumber:dark?@"segmentDarkLensBorderWidth":@"segmentLensBorderWidth"];l.rimAtRest=WXGClamp([self extraNumber:@"segmentPillRimAtRest"],0,1);
+        l.endWrap=[self extraNumber:@"segmentEndWrap"];l.pinch=[self extraNumber:@"segmentBodyPinch"];l.blur=[self extraNumber:@"segmentLensBlur"];
+        l.rimAtRest=WXGClamp([self extraNumber:@"segmentPillRimAtRest"],0,1);
         l.tintOn=[self extraNumber:@"segmentLensTintOn"]>.5;l.tintOpacity=[self extraNumber:dark?@"segmentDarkLensTintOpacity":@"segmentLensTintOpacity"];
-        l.barDispersionOn=[self extraNumber:@"segmentLensBarDispersionOn"]>.5;l.barDispersion=[self extraNumber:@"segmentLensBarDispersion"];
-        l.barDispersionNearRim=[self extraNumber:@"segmentLensBarDispersionNearRim"];l.selectionInset=[self extraNumber:@"segmentSelectionInset"];
+        l.selectionInset=[self extraNumber:@"segmentSelectionInset"];
         l.iconRefraction=[self extraNumber:@"segmentLensIconRefraction"];l.iconEdgeWidth=[self extraNumber:@"segmentLensIconEdgeWidth"];
         l.iconTopRatio=[self extraNumber:@"segmentLensIconTopEdgeRatio"];l.iconSharpness=[self extraNumber:@"segmentLensIconEdgeSharpness"];
-        l.elasticOn=[self extraNumber:@"segmentLensElasticOn"]>.5;l.elasticHeight=[self extraNumber:@"segmentLensElasticHeight"];
-        l.elasticKeepStrip=[self extraNumber:@"segmentLensElasticKeepStrip"];
-        l.kyantOn=[self extraNumber:@"segmentLensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"segmentLensKyantHeight"];   // FIX122
-        l.kyantAmount=[self extraNumber:@"segmentLensKyantAmount"];l.kyantDispersion=[self extraNumber:@"segmentLensKyantDispersion"];
-        l.kyantRimMax=[self extraNumber:@"segmentLensKyantRimFine"]>.5?0:WXGClamp([self extraNumber:@"segmentLensKyantRimMax"],1,20);   // FIX122 E
-        l.ringOn=NO;l.ringAmount=0;l.ringWidth=0;l.ringAngle=0;l.ringSoft=0;   // FIX128: the dock's lens only
+        l.iconDispersion=[self extraNumber:@"segmentLensDispersion"];
+        l.elasticOn=[self extraNumber:@"segmentLensElasticOn"]>.5;l.elasticKeepStrip=[self extraNumber:@"segmentLensElasticKeepStrip"];
     }else {
-        l.refraction=_lensRefraction;l.dispersion=_lensDispersion;l.edgeWidth=_lensEdgeWidth;l.topRatio=_lensTopEdgeRatio;l.sharpness=_lensEdgeSharpness;
-        l.dispersionWidth=[self extraNumber:@"lensDispersionWidth"];l.dispersionTopRatio=[self extraNumber:@"lensDispersionTopRatio"];
-        l.zoom=_lensZoom;l.growth=_lensGrowth;l.barGrowth=_barGrowth;l.endWrap=_endWrap;l.pinch=_bodyPinch;
-        l.blur=_lensBlur;l.blurCoverage=_lensBlurCoverage;l.cancelSetting=[self extraNumber:@"lensOffsetCancel"];
-        l.rimOpacity=dark?_darkLensRimOpacity:_lensRimOpacity;l.borderWidth=dark?_darkLensBorderWidth:_lensBorderWidth;l.rimAtRest=0;
+        l.band=[self extraNumber:@"lensCurveBand"];l.depth=[self extraNumber:@"lensCurveDepth"];
+        l.split=[self extraNumber:@"lensCurveDispersion"];l.squeeze=[self extraNumber:@"lensCurveSqueeze"];
+        l.zoom=_lensZoom;l.growth=_lensGrowth;l.barGrowth=_barGrowth;l.endWrap=_endWrap;l.pinch=_bodyPinch;l.blur=_lensBlur;
         l.tintOn=[self extraNumber:@"lensTintOn"]>.5;l.tintOpacity=[self extraNumber:dark?@"darkLensTintOpacity":@"lensTintOpacity"];
-        l.barDispersionOn=[self extraNumber:@"lensBarDispersionOn"]>.5;l.barDispersion=[self extraNumber:@"lensBarDispersion"];
-        l.barDispersionNearRim=[self extraNumber:@"lensBarDispersionNearRim"];l.selectionInset=_selectionInset;
+        l.selectionInset=_selectionInset;
         l.iconRefraction=[self extraNumber:@"lensIconRefraction"];l.iconEdgeWidth=[self extraNumber:@"lensIconEdgeWidth"];
         l.iconTopRatio=[self extraNumber:@"lensIconTopEdgeRatio"];l.iconSharpness=[self extraNumber:@"lensIconEdgeSharpness"];
-        l.elasticOn=[self extraNumber:@"lensElasticOn"]>.5;l.elasticHeight=[self extraNumber:@"lensElasticHeight"];
-        l.elasticKeepStrip=[self extraNumber:@"lensElasticKeepStrip"];
-        l.kyantOn=[self extraNumber:@"lensKyantOn"]>.5;l.kyantHeight=[self extraNumber:@"lensKyantHeight"];   // FIX122
-        l.kyantAmount=[self extraNumber:@"lensKyantAmount"];l.kyantDispersion=[self extraNumber:@"lensKyantDispersion"];
-        l.kyantRimMax=[self extraNumber:@"lensKyantRimFine"]>.5?0:WXGClamp([self extraNumber:@"lensKyantRimMax"],1,20);   // FIX122 E
-        // FIX128: iOS 26's colour split all round the outline (with Kyant's lens; in place of his split).
-        l.ringOn=[self extraNumber:@"lensRingDispersionOn"]>.5;l.ringAmount=WXGClamp([self extraNumber:@"lensRingDispersion"],0,4);
-        l.ringWidth=WXGClamp([self extraNumber:@"lensRingDispersionWidth"],2,40);l.ringAngle=WXGClamp([self extraNumber:@"lensRingDispersionAngle"],-45,45)*M_PI/180;
-        l.ringSoft=WXGClamp([self extraNumber:@"lensRingDispersionSoft"],0,3);   // FIX129
+        l.iconDispersion=_lensDispersion;
+        l.elasticOn=[self extraNumber:@"lensElasticOn"]>.5;l.elasticKeepStrip=[self extraNumber:@"lensElasticKeepStrip"];
     }
+    l.band=WXGClamp(l.band,.02,.5);l.depth=WXGClamp(l.depth,0,.8);l.split=WXGClamp(l.split,0,3);l.squeeze=WXGClamp(l.squeeze,0,20);
     return l;
 }
 - (UIColor *)lensRimLineColorDark:(BOOL)dark width:(CGFloat *)width {
@@ -2194,14 +1428,8 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
         if(width)*width=WXGClamp(g.width*.5,.3,1.5);
         return [UIColor colorWithRed:g.red green:g.green blue:g.blue alpha:WXGClamp(g.alpha,0,1)];
     }
-    WXGScopeRim rim=[self rimForScope:WXGGlassScopeLens dark:dark];
-    if(width)*width=rim.width;
-    UIColor *color=WXGColor([self rimHexForScope:WXGGlassScopeLens dark:dark])?:UIColor.whiteColor;
-    return [color colorWithAlphaComponent:WXGClamp(CGColorGetAlpha(color.CGColor)*rim.opacity,0,1)];
-}
-- (NSString *)lensRimHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    if(scope==WXGGlassScopeSegment)return [self extraHex:dark?@"segmentDarkLensRimHex":@"segmentLensRimHex"];
-    return dark?_darkLensRimHex:_lensRimHex;
+    if(width)*width=0;   // the iOS 26 border is its own layers: no plain line
+    return UIColor.clearColor;
 }
 - (NSString *)lensTintHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {
     if(scope==WXGGlassScopeSegment)return [self extraHex:dark?@"segmentDarkLensTintHex":@"segmentLensTintHex"];
@@ -2209,62 +1437,11 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
 }
 // FIX113 O: a key this configuration holds (a property of the list or a table key).
 - (BOOL)knowsKey:(NSString *)key {return key && (WXGExtraIndex()[key]!=nil || [self.keys containsObject:key]);}
-- (WXGScopeRim)classicRimForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    scope=[self sharedScope:scope page:WXGSharePageBorder];   // FIX114 L
-    if(WXGTableScope(scope))
-        return (WXGScopeRim){[self extraNumber:WXGScopedKey(scope,dark,@"RimOpacity")],[self extraNumber:WXGScopedKey(scope,dark,@"BorderWidth")],
-                             [self extraNumber:WXGScopedKey(scope,dark,@"RimBrightness")],[self extraNumber:WXGScopedKey(scope,dark,@"RimFade")]};
-    BOOL dock=scope==WXGGlassScopeDock;
-    if(dock)return dark?(WXGScopeRim){_dockDarkRimOpacity,_dockDarkBorderWidth,_dockDarkRimBrightness,_dockDarkRimFade}
-                       :(WXGScopeRim){_dockRimOpacity,_dockBorderWidth,_dockRimBrightness,_dockRimFade};
-    return dark?(WXGScopeRim){_darkRimOpacity,_darkBarBorderWidth,_darkRimBrightness,_darkRimFade}
-               :(WXGScopeRim){_rimOpacity,_barBorderWidth,_rimBrightness,_rimFade};
-}
-- (WXGScopeRim)rimForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    scope=[self sharedScope:scope page:WXGSharePageBorder];   // FIX114 L
-    switch([self rimStyleForScope:scope]) {
-        case WXGRimStyleSampled:
-            return (WXGScopeRim){[self extraNumber:WXGScopedKey(scope,dark,@"RimSampleOpacity")],[self extraNumber:WXGScopedKey(scope,dark,@"RimSampleWidth")],
-                                 [self extraNumber:WXGScopedKey(scope,dark,@"RimSampleBrightness")],[self extraNumber:WXGScopedKey(scope,dark,@"RimSampleFade")]};
-        case WXGRimStyleGlow: {
-            // FIX89: the two highlights carry their own colours and opacities
-            // (rimGlowForScope:index:); no fade along the outline (nor on the
-            // lens's rim, which shares it).
-            WXGRimGlowShape shape=[self rimGlowForScope:scope index:0 dark:dark];
-            return (WXGScopeRim){1,MIN(1.,shape.width*.5),1,0};
-        }
-        default:return [self classicRimForScope:scope dark:dark];
-    }
-}
-// FIX109 B: the line's soft glow: its width (0 = off: the plain line) and
-// level, of the range's style (FIX109 C: 普通 and 取自背景 each their own;
-// iOS 27 none).
-- (CGFloat)rimSoftWidthForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    scope=[self sharedScope:scope page:WXGSharePageBorder];   // FIX114 L
-    WXGRimStyle style=[self rimStyleForScope:scope];if(style==WXGRimStyleGlow)return 0;
-    BOOL sampled=style==WXGRimStyleSampled;
-    if([self extraNumber:WXGScopedKey(scope,NO,sampled?@"RimSampleSoft":@"RimInward")]<=.5)return 0;
-    return WXGClamp([self extraNumber:WXGScopedKey(scope,dark,sampled?@"RimSampleSoftWidth":@"RimSoftWidth")],0,4);
-}
-- (CGFloat)rimSoftLevelForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    scope=[self sharedScope:scope page:WXGSharePageBorder];   // FIX114 L
-    BOOL sampled=[self rimStyleForScope:scope]==WXGRimStyleSampled;
-    return WXGClamp([self extraNumber:WXGScopedKey(scope,dark,sampled?@"RimSampleSoftLevel":@"RimSoftLevel")],0,1);
-}
-- (NSString *)rimHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {
-    scope=[self sharedScope:scope page:WXGSharePageBorder];   // FIX114 L
-    if([self rimStyleForScope:scope]==WXGRimStyleGlow)return [self extraHex:WXGScopedKey(scope,NO,dark?@"Rim27DarkModeHex":@"Rim27Hex")];   // FIX89: the first highlight's (FIX113 Z: this appearance's)
-    if(WXGTableScope(scope))return [self extraHex:WXGScopedKey(scope,dark,@"RimHex")];
-    return [self rimHexForDock:scope==WXGGlassScopeDock dark:dark];
-}
 - (CGFloat)dockIconTitleGap {return [self extraNumber:@"dockIconTitleGap"];}
 - (CGFloat)dockIconOffset {return [self extraNumber:@"dockIconOffset"];}
 - (CGFloat)dockTitleSize {return [self extraNumber:@"dockTitleSize"];}
 - (NSInteger)dockTitleWeight {return (NSInteger)lround([self extraNumber:@"dockTitleWeight"]);}
 - (BOOL)dockTitleBolderSelected {return [self extraNumber:@"dockTitleBolderSelected"]>.5;}
-- (BOOL)lensBarDispersionOn {return [self extraNumber:@"lensBarDispersionOn"]>.5;}
-- (CGFloat)lensBarDispersion {return [self extraNumber:@"lensBarDispersion"];}
-- (CGFloat)lensBarDispersionNearRim {return [self extraNumber:@"lensBarDispersionNearRim"];}
 - (BOOL)dockTapSimpleTravel {return [self extraNumber:@"dockTapSimpleTravel"]>.5;}
 - (CGFloat)dockTapDurationScale {return [self extraNumber:@"dockTapMoveScale"];}   // FIX99 key
 - (CGFloat)dockTapDropDuration {return [self extraNumber:@"dockTapDropTime"];}       // FIX99 key
@@ -2294,14 +1471,11 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
 - (CGFloat)avatarOffsetY {return [self extraNumber:@"avatarOffsetY"];}
 - (CGFloat)avatarBorderWidth {return [self extraNumber:@"avatarBorderWidth"];}
 - (NSString *)avatarBorderHexDark:(BOOL)dark {return [self extraHex:dark?@"avatarDarkBorderHex":@"avatarBorderHex"];}
-- (CGFloat)lensDispersionWidth {return [self extraNumber:@"lensDispersionWidth"];}
-- (CGFloat)lensDispersionTopRatio {return [self extraNumber:@"lensDispersionTopRatio"];}
 // FIX89: the iOS 27-like rim's two highlights, drawn together whatever the
 // appearance: 0 from the keys that were light mode's, 1 from dark mode's (so
 // an upgrade keeps both as they were set, now on screen at once).
 // FIX113 Z: and per appearance: dark mode's two from the …Rim27DarkMode… keys.
 - (WXGRimGlowShape)rimGlowForScope:(WXGGlassScope)scope index:(NSInteger)index dark:(BOOL)dark {
-    scope=[self sharedScope:scope page:WXGSharePageBorder];   // FIX114 L
     BOOL second=index==1;NSString *stem=dark?@"Rim27DarkMode":@"Rim27";
     NSString *(^key)(NSString *)=^NSString *(NSString *attr){return WXGScopedKey(scope,second,[stem stringByAppendingString:attr]);};
     CGFloat r=1,g=1,b=1,a=1;

@@ -25,6 +25,30 @@ int main(void) {
     {WXGRim26Shape t=s;t.angle=0;CHECK(fabs(WXGRim26Along(0,1,t)-1)<1e-9 && WXGRim26Along(1,0,t)<1e-9,"angle 0: bottom / top");
      t.angle=90;CHECK(fabs(WXGRim26Along(1,0,t)-1)<1e-9 && WXGRim26Along(0,1,t)<1e-9,"angle 90: the ends");
      t.angle=45;t.spread=3;CHECK(fabs(WXGRim26Along(-1,0,t)-q*q*q)<1e-9,"spread: the lobes' exponent");}
+    /* FIX130: an exponent below 1 no longer leaves a sharp dark nick where
+       the two lights meet (lower left / upper right): the lights stay on
+       across it, the more the lower the exponent, and turn round it smoothly;
+       1 is the system's |cos| exactly, as before. */
+    {WXGRim26Shape t=s;t.angle=45;const double q=sqrt(.5);
+     for(int k=0;k<=40;k++){double a=k*M_PI/20,nx=cos(a),ny=sin(a),c=nx*q+ny*q;t.spread=1;
+        CHECK(fabs(WXGRim26Along(nx,ny,t)-(c>0?WXGRim26Clamp(t.key*c,0,1):t.fill*-c))<1e-9,"spread 1: |cos| (at %d)",k);}
+     const double spreads[3]={.3,.6,.9};
+     for(int i=0;i<3;i++) {
+        t.spread=spreads[i];
+        double null=WXGRim26Along(q,-q,t),low=1,last=-1,steepest=0;   /* (q, -q): the upper right, square to both lights */
+        CHECK(null>.05 && fabs(null-.85*(1-spreads[i])*(t.key+t.fill)*.5)<.02,"spread %.1f: lit at the null (%.3f)",spreads[i],null);
+        CHECK(fabs(WXGRim26Along(-q,q,t)-null)<1e-9,"and the same at the lower left");
+        for(int k=-200;k<=200;k++) {   /* across the null, a degree at a time and finer */
+            double a=-M_PI/4+k*M_PI/1800.,v=WXGRim26Along(cos(a),sin(a),t);
+            if(v<low)low=v;
+            if(last>=0 && fabs(v-last)>steepest)steepest=fabs(v-last);
+            last=v;
+        }
+        CHECK(low>.75*null,"spread %.1f: never darker than about its null (%.3f against %.3f)",spreads[i],low,null);
+        CHECK(steepest<.012,"spread %.1f: no jump across the null (%.4f per 0.1 degree)",spreads[i],steepest);
+        CHECK(fabs(WXGRim26Along(q,q,t)-WXGRim26Clamp(t.key,0,1))<1e-9 && fabs(WXGRim26Along(-q,-q,t)-t.fill)<1e-9,"spread %.1f: full at the two lights",spreads[i]);
+     }
+     t.spread=.999;CHECK(fabs(WXGRim26Along(1,0,t)-t.key*q)<.01,"just under 1: as 1");}
     /* The faint line all round: full to a third, gone by two thirds; laid over the lights, never past 1. */
     CHECK(fabs(WXGRim26Ring(.2,s)-.04)<1e-12 && fabs(WXGRim26Ring(.5,s)-.02)<1e-12 && WXGRim26Ring(.7,s)==0,"ring: full to 1/3, gone by 2/3");
     CHECK(fabs(WXGRim26Alpha(.2,q,-q,s)-.04)<1e-9,"where the lights are out: the ring alone");

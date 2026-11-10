@@ -614,9 +614,9 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     WXGConfig *c=WXGConfig.shared;
     [_glass applyStyle];[_glass invalidateBackdrop];
     BOOL dark=self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark;
-    UIColor *t=WXGColor(dark?c.darkMaterialHex:c.materialHex);
-    CGFloat opacity=CGColorGetAlpha(t.CGColor)*(dark?c.darkMaterialOpacity:c.materialOpacity);
-    _fallback.contentView.backgroundColor=[t colorWithAlphaComponent:WXGMaterialOpacity(opacity,c.clearMaterial,0,c.fadeMaterialAtEdge)];
+    UIColor *t=WXGColor([c materialHexForScope:WXGGlassScopeOther dark:dark]);
+    CGFloat opacity=CGColorGetAlpha(t.CGColor)*[c materialOpacityForScope:WXGGlassScopeOther dark:dark];
+    _fallback.contentView.backgroundColor=[t colorWithAlphaComponent:WXGClamp(opacity,0,1)];
     _fallback.layer.borderWidth=0; // The shared TEST9 directional rim owns the border.
     _fallback.hidden=_plain || (_glass.ready && _glass.hasPresentedFrame) || !WXGFallbackAllowed();
     _glass.hidden=_plain || (!_glass.ready && WXGFallbackAllowed());[self setNeedsLayout];

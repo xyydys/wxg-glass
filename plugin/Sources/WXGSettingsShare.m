@@ -93,11 +93,7 @@ static NSDictionary *WXGShareParse(NSString *text,NSString **reason) {
         }
     }
     NSArray *configKeys=WXGConfig.shared.keys;
-    NSDictionary *c=WXGShareFilter(config,configKeys,@[@"enabled"]);
-    // FIX85: parameters from before the rim styles: the colour switch is the style.
-    if(!c[@"rimStyle"] && c[@"rimSampleColor"]) {
-        NSMutableDictionary *m=[c mutableCopy];m[@"rimStyle"]=@([c[@"rimSampleColor"] boolValue]?WXGRimStyleSampled:WXGRimStyleClassic);c=m;
-    }
+    NSDictionary *c=WXGShareFilter([config isKindOfClass:NSDictionary.class]?WXGRenamedSettings(config):config,configKeys,@[@"enabled"]);   // FIX130: an older file's names
     NSDictionary *i=WXGShareFilter(integration,WXGPreferences.shared.keys,WXGShareSkippedIntegration());
     NSMutableDictionary *u=[NSMutableDictionary dictionary];
     if([look isKindOfClass:NSDictionary.class]) {
