@@ -15,6 +15,16 @@
 //             inputs, effect objects), layer contents as PNGs, a keyed
 //             archive and CAML of the tree, the runtime's glass-related
 //             classes with their properties and methods, the CAFilter types.
+//   底栏录制  (probe 2) a real UITabBarController over a chosen backdrop. While
+//             recording, every display frame: each layer of the bar (position,
+//             bounds, transform, opacity, corner radius, its class' own numbers,
+//             every filter's inputs, an SDF layer's effect) as it is presented,
+//             written when it changes; every animation as it is added (class,
+//             key path, values, spring constants: its whole archive); every
+//             touch; pictures of the bar while a finger is down; a full
+//             structure dump and a sharp picture whenever the finger holds
+//             still. First the bar switches tabs by itself, then the person
+//             taps, holds and drags.
 // Everything goes to a folder under tmp, zipped and offered through the
 // share sheet. Nothing runs until the button is tapped.
 
@@ -30,7 +40,7 @@
 #pragma clang diagnostic ignored "-Wundeclared-selector"
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
 
-#define GP_VERSION @"1"
+#define GP_VERSION @"2"
 
 #pragma mark Session, log
 
@@ -646,11 +656,215 @@ static NSDictionary *GPImageStats(UIImage *image) {
     return out;
 }
 
+#pragma mark Tab bar recorder (probe 2)
+
+// A backdrop for the bar, over the whole view: grid lines every 4 pt from the
+// view's middle column and its bottom edge (every 5th coloured: columns green,
+// rows red), 4 pt stripes at 45 degrees through the bottom middle, a hue sweep
+// across the width, or a plain colour.
+static NSArray<NSString *> *GPBarBackdrops(void) {return @[@"grid",@"stripes",@"slate",@"white",@"hue",@"black"];}
+static UIView *GPMakeBarBackdrop(NSString *name,CGSize size) {
+    UIView *v=[[UIView alloc] initWithFrame:(CGRect){CGPointZero,size}];v.userInteractionEnabled=NO;v.clipsToBounds=YES;
+    UIColor *solid=GPSolid(name);
+    if(solid){v.backgroundColor=solid;return v;}
+    CGFloat W=size.width,H=size.height,cx=W*.5;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    if([name isEqual:@"hue"]) {
+        CAGradientLayer *g=[CAGradientLayer layer];g.frame=v.bounds;NSMutableArray *colors=[NSMutableArray array];
+        for(int i=0;i<=12;i++)[colors addObject:(id)[UIColor colorWithHue:i/12. saturation:1 brightness:1 alpha:1].CGColor];
+        g.colors=colors;g.startPoint=CGPointMake(0,.5);g.endPoint=CGPointMake(1,.5);[v.layer addSublayer:g];
+    }else if([name isEqual:@"grid"]) {
+        v.backgroundColor=[UIColor colorWithWhite:.15 alpha:1];
+        UIBezierPath *fine=[UIBezierPath bezierPath],*columns=[UIBezierPath bezierPath],*rows=[UIBezierPath bezierPath];
+        int nx=(int)ceil(cx/4),ny=(int)ceil(H/4);
+        for(int i=-nx;i<=nx;i++){UIBezierPath *p=i%5==0?columns:fine;[p moveToPoint:CGPointMake(cx+i*4,0)];[p addLineToPoint:CGPointMake(cx+i*4,H)];}
+        for(int j=0;j<=ny;j++){UIBezierPath *p=j%5==0?rows:fine;[p moveToPoint:CGPointMake(0,H-j*4)];[p addLineToPoint:CGPointMake(W,H-j*4)];}
+        NSArray *paths=@[fine,columns,rows],*colors=@[UIColor.whiteColor,[UIColor colorWithRed:.2 green:.9 blue:.3 alpha:1],[UIColor colorWithRed:1 green:.25 blue:.2 alpha:1]];
+        for(NSUInteger i=0;i<3;i++) {
+            CAShapeLayer *l=[CAShapeLayer layer];l.frame=v.bounds;l.path=((UIBezierPath *)paths[i]).CGPath;
+            l.strokeColor=((UIColor *)colors[i]).CGColor;l.fillColor=nil;l.lineWidth=.25;[v.layer addSublayer:l];
+        }
+    }else {   // stripes
+        v.backgroundColor=[UIColor colorWithWhite:.5 alpha:1];
+        CGFloat side=ceil(hypot(W,H)/24)*24+48;int n=(int)(side/4);
+        CALayer *box=[CALayer layer];box.bounds=CGRectMake(0,0,side,side);box.position=CGPointMake(cx,H);
+        NSArray *colors=@[[UIColor colorWithRed:1 green:.23 blue:.19 alpha:1],UIColor.whiteColor,[UIColor colorWithRed:0 green:.48 blue:1 alpha:1],
+                          UIColor.blackColor,[UIColor colorWithRed:.2 green:.78 blue:.35 alpha:1],[UIColor colorWithRed:1 green:.8 blue:0 alpha:1]];
+        for(int i=0;i<n;i++) {
+            CALayer *l=[CALayer layer];l.frame=CGRectMake(i*4,0,4,side);l.backgroundColor=((UIColor *)colors[(NSUInteger)i%colors.count]).CGColor;[box addSublayer:l];
+        }
+        box.transform=CATransform3DMakeRotation(M_PI_4,0,0,1);[v.layer addSublayer:box];
+    }
+    [CATransaction commit];
+    return v;
+}
+@interface GPBarContent : UIViewController
+@property(nonatomic,copy) NSString *backdrop;
+@end
+@implementation GPBarContent
+- (void)viewDidLayoutSubviews {
+    [super viewDidLayoutSubviews];
+    UIView *old=[self.view viewWithTag:7001];
+    if(old && CGSizeEqualToSize(old.bounds.size,self.view.bounds.size))return;
+    [old removeFromSuperview];
+    UIView *b=GPMakeBarBackdrop(self.backdrop?:@"grid",self.view.bounds.size);b.tag=7001;[self.view insertSubview:b atIndex:0];
+}
+@end
+
+// The names of an object's numeric and struct properties from its class up
+// to (not including) `stop`, once per class.
+static NSArray<NSString *> *GPNumericKeys(Class cls,Class stop) {
+    static NSMutableDictionary<NSString *,NSArray *> *cache;
+    if(!cache)cache=[NSMutableDictionary dictionary];
+    NSString *name=NSStringFromClass(cls);NSArray *hit=cache[name];
+    if(hit)return hit;
+    NSMutableArray *keys=[NSMutableArray array];NSMutableSet *done=[NSMutableSet set];
+    for(Class c=cls;c && c!=stop && c!=NSObject.class;c=class_getSuperclass(c)) {
+        unsigned int n=0;objc_property_t *list=class_copyPropertyList(c,&n);
+        for(unsigned int i=0;i<n;i++) {
+            const char *attr=property_getAttributes(list[i]);NSString *key=@(property_getName(list[i]));
+            if(!attr || attr[0]!='T' || [done containsObject:key] || [GPSkippedKeys() containsObject:key])continue;
+            if(!strchr("cislqCISLQfdB{",attr[1]))continue;
+            [done addObject:key];[keys addObject:key];
+        }
+        free(list);
+    }
+    cache[name]=keys;
+    return keys;
+}
+static NSString *GPScalarText(id v) {
+    if(!v || v==NSNull.null)return nil;
+    if([v isKindOfClass:NSNumber.class])return [NSString stringWithFormat:@"%.5g",[v doubleValue]];
+    if([v isKindOfClass:NSValue.class]) {
+        NSString *d=[[v description] stringByReplacingOccurrencesOfString:@" " withString:@""];
+        return d.length>260?[d substringToIndex:260]:d;
+    }
+    CFTypeRef ref=(__bridge CFTypeRef)v;
+    if(CFGetTypeID(ref)==CGColorGetTypeID()) {
+        CGColorRef c=(CGColorRef)ref;size_t n=CGColorGetNumberOfComponents(c);const CGFloat *q=CGColorGetComponents(c);
+        NSMutableString *s=[NSMutableString stringWithString:@"("];
+        for(size_t i=0;i<n;i++)[s appendFormat:@"%s%.4g",i?",":"",q[i]];
+        [s appendString:@")"];return s;
+    }
+    if([v isKindOfClass:NSString.class])return [(NSString *)v length]<=40?v:nil;
+    return nil;
+}
+// A filter's input names, once per filter type: the "input…" strings of its archive.
+static NSArray<NSString *> *GPFilterInputKeys(id filter) {
+    static NSMutableDictionary<NSString *,NSArray *> *cache;
+    if(!cache)cache=[NSMutableDictionary dictionary];
+    NSString *type=nil;@try {type=[filter valueForKey:@"type"];} @catch(__unused NSException *e) {}
+    if(![type isKindOfClass:NSString.class])type=NSStringFromClass([filter class]);
+    NSArray *hit=cache[type];
+    if(hit)return hit;
+    NSMutableArray *keys=[NSMutableArray array];
+    @try {
+        NSData *data=[NSKeyedArchiver archivedDataWithRootObject:filter requiringSecureCoding:NO error:nil];
+        NSDictionary *plist=data?[NSPropertyListSerialization propertyListWithData:data options:0 format:NULL error:nil]:nil;
+        for(id o in [plist[@"$objects"] isKindOfClass:NSArray.class]?plist[@"$objects"]:@[])
+            if([o isKindOfClass:NSString.class] && [(NSString *)o hasPrefix:@"input"] && [(NSString *)o length]<64 && ![keys containsObject:o])[keys addObject:o];
+    } @catch(__unused NSException *e) {}
+    [keys sortUsingSelector:@selector(compare:)];
+    cache[type]=keys;
+    return keys;
+}
+static void GPAppendTransform(NSMutableString *s,NSString *tag,CATransform3D t) {
+    if(CATransform3DIsIdentity(t))return;
+    if(CATransform3DIsAffine(t)) {
+        CGAffineTransform a=CATransform3DGetAffineTransform(t);
+        [s appendFormat:@" %@=%.5f,%.5f,%.5f,%.5f,%.2f,%.2f",tag,a.a,a.b,a.c,a.d,a.tx,a.ty];
+    }else [s appendFormat:@" %@3=%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.5f,%.2f,%.2f,%.2f,%.5f",tag,t.m11,t.m12,t.m13,t.m14,t.m21,t.m22,t.m23,t.m24,
+              t.m31,t.m32,t.m33,t.m34,t.m41,t.m42,t.m43,t.m44];
+}
+static void GPAppendNumbers(NSMutableString *s,id object,NSArray<NSString *> *keys,NSString *strip) {
+    for(NSString *key in keys) {
+        NSString *text=nil;
+        @try {text=GPScalarText([object valueForKey:key]);} @catch(__unused NSException *e) {text=nil;}
+        if(!text)continue;
+        [s appendFormat:@" %@=%@",strip && [key hasPrefix:strip] && key.length>strip.length?[key substringFromIndex:strip.length]:key,text];
+    }
+}
+// One layer as it is presented this frame, as one line of text.
+static void GPLayerState(NSMutableString *s,CALayer *model) {
+    CALayer *p=model.presentationLayer?:model;
+    CGPoint pos=p.position;CGRect b=p.bounds;CGPoint a=p.anchorPoint;
+    [s appendFormat:@"pos=%.2f,%.2f b=%.2f,%.2f",pos.x,pos.y,b.size.width,b.size.height];
+    if(b.origin.x!=0 || b.origin.y!=0)[s appendFormat:@" bo=%.2f,%.2f",b.origin.x,b.origin.y];
+    if(a.x!=.5 || a.y!=.5)[s appendFormat:@" a=%.3f,%.3f",a.x,a.y];
+    GPAppendTransform(s,@"t",p.transform);GPAppendTransform(s,@"st",p.sublayerTransform);
+    [s appendFormat:@" o=%.4f cr=%.2f",p.opacity,p.cornerRadius];
+    if(p.hidden)[s appendString:@" hid"];
+    if(p.masksToBounds)[s appendString:@" clip"];
+    if(p.borderWidth>0)[s appendFormat:@" bw=%.2f",p.borderWidth];
+    if(p.shadowOpacity>0)[s appendFormat:@" sh=%.3f,%.2f,%.2f,%.2f",p.shadowOpacity,p.shadowRadius,p.shadowOffset.width,p.shadowOffset.height];
+    if([model class]!=CALayer.class)GPAppendNumbers(s,p,GPNumericKeys([model class],CALayer.class),nil);
+    for(NSString *fk in @[@"filters",@"backgroundFilters"]) {
+        NSArray *filters=nil;@try {filters=[p valueForKey:fk];} @catch(__unused NSException *e) {}
+        if(![filters isKindOfClass:NSArray.class])continue;
+        for(id f in filters) {
+            NSString *name=nil;@try {name=[f valueForKey:@"name"];} @catch(__unused NSException *e) {}
+            [s appendFormat:@" |%@:%@",[fk isEqual:@"filters"]?@"F":@"BF",[name isKindOfClass:NSString.class]?name:NSStringFromClass([f class])];
+            GPAppendNumbers(s,f,GPFilterInputKeys(f),@"input");
+        }
+    }
+    id cf=nil;@try {cf=[p valueForKey:@"compositingFilter"];} @catch(__unused NSException *e) {}
+    if(cf) {
+        NSString *name=[cf isKindOfClass:NSString.class]?cf:nil;
+        if(!name)@try {name=[cf valueForKey:@"name"];} @catch(__unused NSException *e) {}
+        [s appendFormat:@" |CF:%@",[name isKindOfClass:NSString.class]?name:@"?"];
+    }
+    if([p respondsToSelector:NSSelectorFromString(@"effect")]) {
+        id e=nil;@try {e=[p valueForKey:@"effect"];} @catch(__unused NSException *x) {}
+        if(e && ![e isKindOfClass:CALayer.class]) {
+            [s appendFormat:@" |E:%@",NSStringFromClass([e class])];
+            GPAppendNumbers(s,e,GPNumericKeys([e class],NSObject.class),nil);
+        }
+    }
+}
+// The system's classes whose names hold one of `words`, with their
+// properties and methods, to dump/<file>.
+static void GPDumpClassesNamed(NSArray<NSString *> *words,NSString *file) {
+    unsigned int count=0;Class *classes=objc_copyClassList(&count);
+    NSMutableArray<NSString *> *names=[NSMutableArray array];
+    for(unsigned int i=0;i<count;i++) {
+        const char *image=class_getImageName(classes[i]);if(!image)continue;
+        NSString *path=@(image);
+        if(![path hasPrefix:@"/System/"] && ![path hasPrefix:@"/usr/lib/"])continue;
+        NSString *name=@(class_getName(classes[i]));
+        for(NSString *k in words)if([name containsString:k]){[names addObject:name];break;}
+    }
+    free(classes);
+    [names sortUsingSelector:@selector(compare:)];
+    NSMutableString *out=[NSMutableString stringWithFormat:@"%lu classes\n",(unsigned long)names.count];
+    for(NSString *name in names) {
+        if(out.length>5*1024*1024){[out appendString:@"\n… cut\n"];break;}
+        Class c=NSClassFromString(name);if(!c)continue;
+        const char *image=class_getImageName(c);
+        [out appendFormat:@"\n@interface %@ : %@   // %@",name,NSStringFromClass(class_getSuperclass(c)),image?[@(image) lastPathComponent]:@"?"];
+        unsigned int n=0;objc_property_t *props=class_copyPropertyList(c,&n);
+        for(unsigned int i=0;i<n;i++)[out appendFormat:@"\n  @property %s  (%s)",property_getName(props[i]),property_getAttributes(props[i])?:""];
+        free(props);
+        Ivar *ivars=class_copyIvarList(c,&n);
+        for(unsigned int i=0;i<n && i<200;i++)[out appendFormat:@"\n  ivar %s  %s",ivar_getName(ivars[i])?:"?",ivar_getTypeEncoding(ivars[i])?:""];
+        free(ivars);
+        Method *methods=class_copyMethodList(object_getClass(c),&n);
+        for(unsigned int i=0;i<n && i<200;i++)[out appendFormat:@"\n  + %s",sel_getName(method_getName(methods[i]))];
+        free(methods);
+        methods=class_copyMethodList(c,&n);
+        for(unsigned int i=0;i<n && i<400;i++)[out appendFormat:@"\n  - %s",sel_getName(method_getName(methods[i]))];
+        free(methods);
+        [out appendString:@"\n@end\n"];
+    }
+    GPWriteText([@"dump/" stringByAppendingString:file],out);
+}
+
 #pragma mark The bench
 
 @interface GPProbe : NSObject
 + (instancetype)shared;
 - (void)install;
+- (void)barNoteTouches:(UIEvent *)event;
+- (void)barStop:(BOOL)share;
 @end
 @interface GPWindow : UIWindow
 @end
@@ -667,6 +881,15 @@ static NSDictionary *GPImageStats(UIImage *image) {
     NSArray<NSDictionary *> *_scenes;NSUInteger _index;NSInteger _mode;   // 1 auto, 2 manual, 3 dump
     NSMutableArray *_records;NSMutableDictionary *_sampleNote;CGRect _captureRect;CGPoint _focus;
     BOOL _cancelled,_lastDark,_styleKnown;NSUInteger _token;
+    // probe 2: the tab bar recorder
+    UITabBarController *_tabs;CADisplayLink *_link;UILabel *_barLabel;UIButton *_recButton;
+    NSString *_barBg;BOOL _barDark,_recording,_touchDown,_touchTracked,_holdDone;
+    FILE *_framesFile,*_animFile,*_touchFile,*_layersFile;
+    CFTimeInterval _t0,_lastPicture,_touchStillSince,_lastTouchEnd;
+    NSUInteger _frame,_pictureCount,_pictureBytes,_holdCount,_animCount,_scriptStep;
+    NSMapTable<CALayer *,NSString *> *_lastState;NSMutableSet<NSString *> *_seenAnimations;
+    CGPoint _touchPoint,_touchAnchor;NSInteger _touchPhase;
+    CGRect _barRegion;dispatch_queue_t _encodeQueue;UIGraphicsImageRenderer *_barRenderer;
     @public BOOL benchVisible;
 }
 + (instancetype)shared {static GPProbe *p;static dispatch_once_t once;dispatch_once(&once,^{p=[GPProbe new];});return p;}
@@ -703,6 +926,7 @@ static NSDictionary *GPImageStats(UIImage *image) {
     [menu addAction:[UIAlertAction actionWithTitle:@"① 自动采集（约 3 分钟）" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){[weak start:1];}]];
     [menu addAction:[UIAlertAction actionWithTitle:@"② 导出结构（约 15 秒）" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){[weak start:3];}]];
     [menu addAction:[UIAlertAction actionWithTitle:@"③ 手动截图（自动的图里没有玻璃时用）" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){[weak start:2];}]];
+    [menu addAction:[UIAlertAction actionWithTitle:@"④ 底栏录制（你来按，每遍约 30 秒）" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){[weak startTabBar];}]];
     [menu addAction:[UIAlertAction actionWithTitle:@"分享已有结果" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *a){[weak shareAll];}]];
     [menu addAction:[UIAlertAction actionWithTitle:@"隐藏探针（重启 App 恢复）" style:UIAlertActionStyleDestructive handler:^(__unused UIAlertAction *a){[weak hide];}]];
     [menu addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
@@ -729,6 +953,7 @@ static NSDictionary *GPImageStats(UIImage *image) {
     UIApplication.sharedApplication.idleTimerDisabled=YES;
 }
 - (void)closeBench {
+    [self barTeardown];
     [_bench removeFromSuperview];_bench=nil;_stage=nil;_world=nil;_sample=nil;
     _button.hidden=NO;benchVisible=NO;_window.overrideUserInterfaceStyle=UIUserInterfaceStyleUnspecified;_styleKnown=NO;
     UIApplication.sharedApplication.idleTimerDisabled=NO;
@@ -893,10 +1118,297 @@ static NSDictionary *GPImageStats(UIImage *image) {
     if(!zips.count){[self message:@"还没有结果" text:@"先做一次自动采集或导出结构。"];return;}
     [self present:zips];
 }
+
+#pragma mark Tab bar recorder (probe 2)
+
+- (void)startTabBar {
+    if(benchVisible)return;
+    _mode=4;++_token;
+    _barBg=@"grid";_barDark=_window.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark;
+    [_bench removeFromSuperview];
+    CGRect b=_window.bounds;UIEdgeInsets safe=_window.safeAreaInsets;
+    _bench=[[UIView alloc] initWithFrame:b];_bench.backgroundColor=UIColor.blackColor;
+    [_window.rootViewController.view addSubview:_bench];
+    [self barBuildTabs];
+    UIView *panel=[[UIView alloc] initWithFrame:CGRectMake(0,0,b.size.width,safe.top+196)];panel.backgroundColor=[UIColor colorWithWhite:0 alpha:.84];[_bench addSubview:panel];
+    _barLabel=[[UILabel alloc] initWithFrame:CGRectMake(12,safe.top+2,b.size.width-24,136)];
+    _barLabel.textColor=UIColor.whiteColor;_barLabel.font=[UIFont systemFontOfSize:13];_barLabel.numberOfLines=0;[panel addSubview:_barLabel];
+    NSArray *titles=@[@"换背景",@"深 / 浅",@"开始录制",@"关闭"];
+    SEL actions[4]={@selector(barNextBackdrop),@selector(barToggleStyle),@selector(barToggleRecord),@selector(barClose)};
+    CGFloat w=(b.size.width-5*8)/4;
+    for(NSUInteger i=0;i<4;i++) {
+        UIButton *button=[UIButton buttonWithType:UIButtonTypeSystem];button.frame=CGRectMake(8+i*(w+8),safe.top+144,w,42);
+        [button setTitle:titles[i] forState:UIControlStateNormal];[button setTitleColor:UIColor.whiteColor forState:UIControlStateNormal];
+        button.titleLabel.font=[UIFont boldSystemFontOfSize:14];
+        button.backgroundColor=i==2?[UIColor colorWithRed:.85 green:.2 blue:.2 alpha:1]:[UIColor colorWithWhite:.28 alpha:1];button.layer.cornerRadius=10;
+        [button addTarget:self action:actions[i] forControlEvents:UIControlEventTouchUpInside];[panel addSubview:button];
+        if(i==2)_recButton=button;
+    }
+    _button.hidden=YES;benchVisible=YES;
+    UIApplication.sharedApplication.idleTimerDisabled=YES;
+    [self barIdleText];
+}
+- (void)barIdleText {
+    _barLabel.text=[NSString stringWithFormat:@"底栏录制 · 背景 %@ · %@\n点“开始录制”后先别碰：它自己切换一轮（约 3 秒）。然后用手：\n① 每个标签各轻点一次\n② 按住一个标签 1 秒不动，再松手\n③ 按住慢慢拖到另一头，停 1 秒，松手\n④ 按住快速来回拖两趟，松手\n做完点“结束”。换背景 / 深浅可以再录（每遍一个 zip）。",
+        _barBg,_barDark?@"深色":@"浅色"];
+}
+- (void)barTeardown {
+    if(_recording)[self barStop:NO];
+    if(!_tabs)return;
+    [_tabs willMoveToParentViewController:nil];[_tabs.view removeFromSuperview];[_tabs removeFromParentViewController];_tabs=nil;
+}
+- (void)barBuildTabs {
+    if(_tabs){[_tabs willMoveToParentViewController:nil];[_tabs.view removeFromSuperview];[_tabs removeFromParentViewController];_tabs=nil;}
+    _window.overrideUserInterfaceStyle=_barDark?UIUserInterfaceStyleDark:UIUserInterfaceStyleLight;
+    UITabBarController *tabs=[UITabBarController new];NSMutableArray *controllers=[NSMutableArray array];
+    NSArray *titles=@[@"微信",@"通讯录",@"发现",@"我"],*symbols=@[@"message.fill",@"person.2.fill",@"safari.fill",@"person.fill"];
+    for(NSUInteger i=0;i<4;i++) {
+        GPBarContent *vc=[GPBarContent new];vc.backdrop=_barBg;vc.view.backgroundColor=UIColor.blackColor;
+        vc.tabBarItem=[[UITabBarItem alloc] initWithTitle:titles[i] image:[UIImage systemImageNamed:symbols[i]] tag:(NSInteger)i];
+        [controllers addObject:vc];
+    }
+    tabs.viewControllers=controllers;
+    UIViewController *root=_window.rootViewController;
+    [root addChildViewController:tabs];
+    tabs.view.frame=_bench.bounds;tabs.view.autoresizingMask=UIViewAutoresizingFlexibleWidth|UIViewAutoresizingFlexibleHeight;
+    [_bench insertSubview:tabs.view atIndex:0];[tabs didMoveToParentViewController:root];
+    _tabs=tabs;
+}
+- (void)barNextBackdrop {
+    if(_recording)return;
+    NSArray *all=GPBarBackdrops();NSUInteger i=[all indexOfObject:_barBg];
+    _barBg=all[(i==NSNotFound?0:i+1)%all.count];
+    [self barBuildTabs];[self barIdleText];
+}
+- (void)barToggleStyle {if(_recording)return;_barDark=!_barDark;[self barBuildTabs];[self barIdleText];}
+- (void)barClose {[self closeBench];}
+- (void)barToggleRecord {if(_recording)[self barStop:YES];else [self barStart];}
+// Every top view of the tab controller but the one that holds the pages.
+- (NSArray<UIView *> *)barViews {
+    UIView *top=_tabs.selectedViewController.view;
+    while(top.superview && top.superview!=_tabs.view)top=top.superview;
+    NSMutableArray *out=[NSMutableArray array];
+    for(UIView *v in _tabs.view.subviews)if(v!=top)[out addObject:v];
+    if(!out.count && _tabs.tabBar)[out addObject:_tabs.tabBar];
+    return out;
+}
+// The whole structure of the bar now (views, layers with every property,
+// private descriptions, archive, CAML) and a sharp picture of it.
+- (void)barDump:(NSString *)tag {
+    NSUInteger i=0;
+    for(UIView *v in [self barViews]) {
+        NSString *name=[NSString stringWithFormat:@"%@_%lu_%@",tag,(unsigned long)i++,NSStringFromClass([v class])];
+        @try {GPDumpSample(v,name);} @catch(NSException *e) {GPLog(@"dump %@ raised %@",name,e.reason);}
+    }
+    // Every view of the probe's window too (should the lens live outside the bar's own views).
+    @try {
+        NSMutableString *views=[NSMutableString stringWithFormat:@"== %@: the window's views ==",tag];
+        GPDumpView(views,_window,@"");
+        GPWriteText([NSString stringWithFormat:@"dump/%@_window_views.txt",tag],views);
+    } @catch(NSException *e) {GPLog(@"window views raised %@",e.reason);}
+    @autoreleasepool {
+        BOOL drew=NO;UIImage *image=GPCapture(_window,_barRegion,&drew);
+        NSData *png=image?UIImagePNGRepresentation(image):nil;
+        [png writeToFile:[gSession stringByAppendingPathComponent:[NSString stringWithFormat:@"dump/%@.png",tag]] atomically:YES];
+        GPLog(@"bar dump %@ drew=%d %lu bytes",tag,drew,(unsigned long)png.length);
+    }
+}
+- (void)barStart {
+    if(_recording || !_tabs)return;
+    GPBeginSession([NSString stringWithFormat:@"tabbar_%@_%@",_barBg,_barDark?@"dark":@"light"]);
+    GPWriteJSON(@"device.json",GPDeviceInfo(_window));
+    NSFileManager *fm=NSFileManager.defaultManager;
+    for(NSString *d in @[@"frames",@"dump"])[fm createDirectoryAtPath:[gSession stringByAppendingPathComponent:d] withIntermediateDirectories:YES attributes:nil error:nil];
+    _framesFile=fopen([gSession stringByAppendingPathComponent:@"frames.txt"].fileSystemRepresentation,"w");
+    _animFile=fopen([gSession stringByAppendingPathComponent:@"animations.txt"].fileSystemRepresentation,"w");
+    _touchFile=fopen([gSession stringByAppendingPathComponent:@"touches.txt"].fileSystemRepresentation,"w");
+    _layersFile=fopen([gSession stringByAppendingPathComponent:@"layers.txt"].fileSystemRepresentation,"w");
+    if(!_framesFile || !_animFile || !_touchFile || !_layersFile){GPLog(@"could not open the record files");[self barCloseFiles];return;}
+    _lastState=[NSMapTable mapTableWithKeyOptions:NSPointerFunctionsStrongMemory|NSPointerFunctionsObjectPointerPersonality valueOptions:NSPointerFunctionsStrongMemory];
+    _seenAnimations=[NSMutableSet set];
+    _frame=_pictureCount=_pictureBytes=_holdCount=_animCount=_scriptStep=0;
+    _touchDown=_touchTracked=_holdDone=NO;_lastTouchEnd=-10;_lastPicture=0;
+    if(!_encodeQueue)_encodeQueue=dispatch_queue_create("glassprobe.encode",DISPATCH_QUEUE_SERIAL);
+    [_tabs.view layoutIfNeeded];
+    CGRect wb=_window.bounds,r=CGRectNull;
+    for(UIView *v in [self barViews])r=CGRectUnion(r,[v convertRect:v.bounds toView:_window]);
+    if(CGRectIsNull(r) || CGRectIsEmpty(r))r=CGRectMake(0,wb.size.height-130,wb.size.width,130);
+    CGFloat top=floor(MAX(CGRectGetMinY(r)-40,wb.size.height-240));   // the lens lifts above the bar
+    _barRegion=CGRectMake(0,top,wb.size.width,wb.size.height-top);
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat preferredFormat];
+    format.scale=2;format.opaque=YES;format.preferredRange=UIGraphicsImageRendererFormatRangeStandard;
+    _barRenderer=[[UIGraphicsImageRenderer alloc] initWithSize:_barRegion.size format:format];
+    _barLabel.text=@"正在导出静止状态的结构…";
+    [self barDump:@"rest"];
+    fprintf(_framesFile,"# F <frame> t=<s> ts=<target s> dur=<frame s> touch=<phase or -1> <x> <y> sel=<selected tab>\n"
+                        "# L <layer> <state as presented; written when it changes>   N in layers.txt: what a layer is   X <layer> gone\n"
+                        "# S the bar switching by itself   J <picture>   H <structure dump while holding>\n"
+                        "# region %.1f %.1f %.1f %.1f (window points), pictures at 2x\n",_barRegion.origin.x,_barRegion.origin.y,_barRegion.size.width,_barRegion.size.height);
+    _t0=CACurrentMediaTime();_recording=YES;
+    _link=[CADisplayLink displayLinkWithTarget:self selector:@selector(barTick:)];
+    float most=(float)UIScreen.mainScreen.maximumFramesPerSecond;
+    if(most>=60)_link.preferredFrameRateRange=CAFrameRateRangeMake(60,most,most);
+    [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+    [_recButton setTitle:@"结束" forState:UIControlStateNormal];
+    _barLabel.text=@"● 录制中：先别碰，它自己切换一轮…";
+}
+- (void)barCloseFiles {
+    if(_framesFile)fclose(_framesFile);
+    if(_animFile)fclose(_animFile);
+    if(_touchFile)fclose(_touchFile);
+    if(_layersFile)fclose(_layersFile);
+    _framesFile=_animFile=_touchFile=_layersFile=NULL;
+}
+- (void)barCollect:(CALayer *)layer into:(NSMutableArray<CALayer *> *)out {
+    [out addObject:layer];
+    if(layer.mask)[self barCollect:layer.mask into:out];
+    for(CALayer *sub in layer.sublayers)[self barCollect:sub into:out];
+}
+- (void)barTick:(CADisplayLink *)link {
+    if(!_recording || !_framesFile)return;
+    @autoreleasepool {
+        CFTimeInterval now=CACurrentMediaTime(),t=now-_t0;
+        // First the bar switches tabs by itself.
+        static const double when[4]={.6,1.2,1.8,2.4};static const NSUInteger to[4]={1,2,3,0};
+        while(_scriptStep<4 && t>=when[_scriptStep]) {
+            _tabs.selectedIndex=to[_scriptStep];
+            fprintf(_framesFile,"S t=%.4f selectedIndex=%lu\n",t,(unsigned long)to[_scriptStep]);++_scriptStep;
+        }
+        if(_scriptStep==4 && t>=3.2) {
+            _scriptStep=5;
+            _barLabel.text=@"● 录制中：现在用手操作\n① 每个标签各轻点一次\n② 按住一个标签 1 秒不动，再松手\n③ 按住慢慢拖到另一头，停 1 秒，松手\n④ 按住快速来回拖两趟，松手\n做完点“结束”";
+        }
+        fprintf(_framesFile,"F %lu t=%.4f ts=%.4f dur=%.4f touch=%d %.1f %.1f sel=%lu\n",(unsigned long)_frame,t,link.targetTimestamp-_t0,link.duration,
+                _touchDown?(int)_touchPhase:-1,_touchPoint.x,_touchPoint.y,(unsigned long)_tabs.selectedIndex);
+        NSMutableArray<CALayer *> *layers=[NSMutableArray array];
+        for(UIView *v in [self barViews])[self barCollect:v.layer into:layers];
+        NSMutableString *line=[NSMutableString string];
+        for(CALayer *layer in layers) {
+            [line setString:@""];
+            @try {GPLayerState(line,layer);} @catch(NSException *e) {[line appendFormat:@" <raised %@>",e.name];}
+            NSString *last=[_lastState objectForKey:layer];
+            if(!last) {
+                id owner=layer.delegate;
+                fprintf(_layersFile,"N t=%.4f frame=%lu %p <%s> super=%p%s%s name=%s\n",t,(unsigned long)_frame,(__bridge void *)layer,class_getName([layer class]),(__bridge void *)layer.superlayer,
+                        owner?" view=":"",owner?class_getName([owner class]):"",layer.name.UTF8String?:"");
+            }
+            if(!last || ![last isEqualToString:line]) {
+                [_lastState setObject:[line copy] forKey:layer];
+                fprintf(_framesFile,"L %p %s\n",(__bridge void *)layer,line.UTF8String?:"");
+            }
+            // Animations as they are added: the whole of each, once.
+            for(NSString *key in layer.animationKeys) {
+                CAAnimation *animation=[layer animationForKey:key];if(!animation)continue;
+                NSString *seen=[NSString stringWithFormat:@"%p|%@|%p",(__bridge void *)layer,key,(__bridge void *)animation];
+                if([_seenAnimations containsObject:seen])continue;
+                [_seenAnimations addObject:seen];++_animCount;
+                fprintf(_animFile,"\nA %lu frame=%lu t=%.4f layer=%p <%s> key=%s\n",(unsigned long)_animCount,(unsigned long)_frame,t,(__bridge void *)layer,class_getName([layer class]),key.UTF8String?:"");
+                NSString *text=nil;
+                @try {
+                    if(_animCount<=700)text=GPValueText(animation,@"  ",0,[NSHashTable hashTableWithOptions:NSPointerFunctionsObjectPointerPersonality]);
+                    else text=[NSString stringWithFormat:@"<%@> duration=%.4f (more than 700 animations: the rest in short)",NSStringFromClass([animation class]),animation.duration];
+                } @catch(NSException *e) {text=[NSString stringWithFormat:@"<raised %@>",e.name];}
+                fprintf(_animFile,"  %s\n",text.UTF8String?:"");
+            }
+        }
+        if(_frame%20==0 && _lastState.count>layers.count) {   // layers that are gone
+            NSHashTable *present=[NSHashTable hashTableWithOptions:NSPointerFunctionsObjectPointerPersonality];
+            for(CALayer *layer in layers)[present addObject:layer];
+            NSMutableArray *gone=[NSMutableArray array];
+            for(CALayer *layer in _lastState)if(![present containsObject:layer])[gone addObject:layer];
+            for(CALayer *layer in gone){fprintf(_framesFile,"X %p\n",(__bridge void *)layer);[_lastState removeObjectForKey:layer];}
+        }
+        // Pictures of the bar while it is being used (30 a second at most).
+        BOOL active=_touchDown || now-_lastTouchEnd<1.2 || t<3.4;
+        if(active && _pictureBytes<18u*1024u*1024u && now-_lastPicture>=1./31.) {
+            _lastPicture=now;
+            UIWindow *window=_window;CGRect rect=_barRegion;
+            UIImage *image=[_barRenderer imageWithActions:^(__unused UIGraphicsImageRendererContext *context) {
+                [window drawViewHierarchyInRect:CGRectMake(-rect.origin.x,-rect.origin.y,window.bounds.size.width,window.bounds.size.height) afterScreenUpdates:NO];
+            }];
+            NSString *file=[NSString stringWithFormat:@"f%05lu.jpg",(unsigned long)_frame];
+            NSString *path=[[gSession stringByAppendingPathComponent:@"frames"] stringByAppendingPathComponent:file];
+            ++_pictureCount;
+            __weak GPProbe *weak=self;
+            dispatch_async(_encodeQueue,^{
+                NSData *data=image?UIImageJPEGRepresentation(image,.8):nil;
+                [data writeToFile:path atomically:NO];
+                NSUInteger bytes=data.length;
+                dispatch_async(dispatch_get_main_queue(),^{GPProbe *me=weak;if(me)me->_pictureBytes+=bytes;});
+            });
+            fprintf(_framesFile,"J %s\n",file.UTF8String);
+        }
+        // The finger holding still: the whole structure, and a sharp picture.
+        if(_touchDown && !_holdDone && now-_touchStillSince>.4 && _holdCount<4) {
+            _holdDone=YES;++_holdCount;
+            fprintf(_framesFile,"H hold_%lu t=%.4f\n",(unsigned long)_holdCount,t);fflush(_framesFile);
+            [self barDump:[NSString stringWithFormat:@"hold_%lu",(unsigned long)_holdCount]];
+            fprintf(_framesFile,"H done t=%.4f\n",CACurrentMediaTime()-_t0);
+        }
+        if(_frame%30==0){fflush(_framesFile);fflush(_animFile);fflush(_touchFile);fflush(_layersFile);}
+        ++_frame;
+        if(t>80)[self barStop:YES];
+    }
+}
+// Every touch while recording (GPWindow sendEvent:).
+- (void)barNoteTouches:(UIEvent *)event {
+    if(!_recording || !_touchFile)return;
+    UITouch *touch=event.allTouches.anyObject;if(!touch)return;
+    CGPoint p=[touch locationInView:_window];CFTimeInterval now=CACurrentMediaTime();
+    if(touch.phase==UITouchPhaseBegan)_touchTracked=p.y>=_barRegion.origin.y;
+    if(!_touchTracked)return;
+    for(UITouch *one in [event coalescedTouchesForTouch:touch]?:@[touch]) {
+        CGPoint q=[one locationInView:_window];
+        fprintf(_touchFile,"T t=%.5f phase=%ld x=%.2f y=%.2f force=%.3f radius=%.2f\n",one.timestamp-_t0,(long)one.phase,q.x,q.y,one.force,one.majorRadius);
+    }
+    BOOL ended=touch.phase==UITouchPhaseEnded || touch.phase==UITouchPhaseCancelled;
+    if(touch.phase==UITouchPhaseBegan){_touchDown=YES;_holdDone=NO;_touchAnchor=p;_touchStillSince=now;}
+    else if(!ended && hypot(p.x-_touchAnchor.x,p.y-_touchAnchor.y)>3){_touchAnchor=p;_touchStillSince=now;_holdDone=NO;}
+    if(ended){_touchDown=NO;_touchTracked=NO;_lastTouchEnd=now;}
+    _touchPoint=p;_touchPhase=touch.phase;
+}
+- (void)barAddControls:(UIView *)view to:(NSMutableArray *)out {
+    if([view isKindOfClass:UIControl.class]) {
+        CGRect f=[view convertRect:view.bounds toView:_window];
+        [out addObject:@{@"class":NSStringFromClass([view class]),@"frame":@[@(f.origin.x),@(f.origin.y),@(f.size.width),@(f.size.height)]}];
+    }
+    for(UIView *sub in view.subviews)[self barAddControls:sub to:out];
+}
+- (void)barStop:(BOOL)share {
+    if(!_recording)return;
+    _recording=NO;[_link invalidate];_link=nil;
+    double seconds=CACurrentMediaTime()-_t0;
+    if(_encodeQueue)dispatch_sync(_encodeQueue,^{});   // the pictures are written
+    [self barCloseFiles];
+    _barLabel.text=@"正在写结果…";
+    @try {GPDumpClassesNamed(@[@"TabBar",@"Fluid",@"Liquid",@"Lens",@"Morph",@"Platter",@"Squish",@"Stretch",@"SelectionIndicator",@"Magnif",@"GlassGroup",@"Flex"],@"classes_tabbar.txt");}
+    @catch(NSException *e) {GPLog(@"classes raised %@",e.reason);}
+    NSMutableArray *controls=[NSMutableArray array];
+    for(UIView *v in [self barViews])[self barAddControls:v to:controls];
+    CGRect bar=[_tabs.tabBar convertRect:_tabs.tabBar.bounds toView:_window],wb=_window.bounds;
+    GPWriteJSON(@"manifest.json",@{@"device":GPDeviceInfo(_window),@"backdrop":_barBg?:@"",@"dark":@(_barDark),@"seconds":@(seconds),
+        @"frames":@(_frame),@"pictures":@(_pictureCount),@"pictureScale":@2,@"holds":@(_holdCount),@"animations":@(_animCount),
+        @"window":@[@(wb.size.width),@(wb.size.height)],
+        @"region":@[@(_barRegion.origin.x),@(_barRegion.origin.y),@(_barRegion.size.width),@(_barRegion.size.height)],
+        @"tabBar":@[@(bar.origin.x),@(bar.origin.y),@(bar.size.width),@(bar.size.height)],@"controls":controls,
+        @"grid":@"lines every 4 pt: columns at window width / 2 + 4 k (every 5th green), rows at window height - 4 k (every 5th red), 0.25 pt wide, on 15 % grey",
+        @"stripes":@"4 pt wide, 45 degrees, red white blue black green yellow, the red one starting at the line through (width / 2, height)",
+        @"script":@"selectedIndex 1, 2, 3, 0 at 0.6, 1.2, 1.8, 2.4 s; by hand from 3.2 s"});
+    GPLog(@"tab bar: %.1f s, %lu frames, %lu pictures, %lu animations, %lu holds",seconds,(unsigned long)_frame,(unsigned long)_pictureCount,(unsigned long)_animCount,(unsigned long)_holdCount);
+    [_recButton setTitle:@"开始录制" forState:UIControlStateNormal];
+    [self barIdleText];
+    _lastState=nil;_seenAnimations=nil;_barRenderer=nil;
+    if(share)[self share:gSession message:[NSString stringWithFormat:@"录了 %.0f 秒：%lu 帧数据、%lu 张画面、%lu 个动画、按住时的完整导出 %lu 次。",seconds,(unsigned long)_frame,
+        (unsigned long)_pictureCount,(unsigned long)_animCount,(unsigned long)_holdCount]];
+}
 @end
 
 @implementation GPWindow
 - (BOOL)_canAffectStatusBarAppearance {return NO;}   // the app keeps its own status bar
+- (void)sendEvent:(UIEvent *)event {
+    [super sendEvent:event];
+    if(event.type==UIEventTypeTouches)[GPProbe.shared barNoteTouches:event];   // probe 2: the finger, while the bar is recorded
+}
 // Only the probe's own button takes touches, unless its bench or a sheet is up.
 - (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
     UIView *hit=[super hitTest:point withEvent:event];
