@@ -1489,7 +1489,7 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
         [WXGConfig.shared extraNumber:@"dockKyantOptics"]>.5;
 }
 - (WXGRimStyle)effectiveLensRimStyle {
-    if([self pureDockBodyStyle])return [WXGConfig.shared rimStyleForScope:WXGGlassScopeOther];
+    if([self pureDockBodyStyle])return WXGRimStyle26;
     return [self kyantOpticsActive]?WXGRimStyle26:[WXGConfig.shared rimStyleForScope:[self lensRimScope]];
 }
 - (UIColor *)veilColor {return _veilFallback.backgroundColor?[UIColor colorWithCGColor:_veilFallback.backgroundColor]:nil;}
@@ -2216,32 +2216,29 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         size.width=moving?round(size.width):round(size.width*2)/2;
         size.height=moving?round(size.height):round(size.height*2)/2;
         float radius=(float)(_maximumCornerRadius*_lensRect.size.height/MAX(1,_glassRect.size.height));
-        WXGGlassCurve curve=[c pureDockLensCurve];
         float shortSide=(float)MIN(size.width,size.height);
-        float rawBand=(float)curve.height*shortSide,cap=(float)curve.maxHeight,rawShift=(float)curve.amount*shortSide;
-        if(rawBand>cap && rawBand>0.f){rawShift*=cap/rawBand;rawBand=cap;}
-        float band=roundf(rawBand*press*4.f)/4.f,depth=roundf(rawShift*press*4.f)/4.f;
-        float kd=roundf((float)curve.dispersion*100.f)/100.f;
-        lensOptics=(WXGMeshOptics){(float)size.width,(float)size.height,1.f,radius,WXG_MAX(band,.5f),0.f,1.f,
-            1.f,1.f,kd,0.f,0.f,0.f};
-        lensOptics.curveHeight=band>.01f && depth>.01f?band:0.f;
-        lensOptics.curveAmount=depth;
-        lensOptics.curveSqueeze=(float)curve.squeeze;
-        lensOptics.shrinkFlat=1.f;
+        float r8Band=(float)[c pureDockR8Band],r8Depth=(float)[c pureDockR8Depth],r8Disp=(float)[c pureDockR8Dispersion];
+        lensOptics=(WXGMeshOptics){(float)size.width,(float)size.height,1.f,radius,MAX(.5f,r8Band*press),0.f,1.f,
+            1.f,1.f,r8Disp,0.f,0.f,0.f};
+        lensOptics.kyantMode=1.f;
+        lensOptics.zoomAfter=1.f;
+        lensOptics.kyantHeight=r8Band*press;
+        lensOptics.kyantAmount=r8Depth*press;
+        lensOptics.shrinkFlat=[c pureDockInnerFlat]?1.f:0.f;
         lensBlur=0;
         lensMesh=mesh && size.width>1 && size.height>1;
-        lensSplit=lensMesh && lensOptics.curveHeight>.01f && kd>0.f && WXGFilterFactoryAvailable();
+        lensSplit=NO;
         CGFloat pad=0;
         if(seesBar && _dockSurface && press>0.f && lensMesh) {
             CGRect bar=[self drawnBarRect];
             CGFloat barH=MAX(1.,bar.size.height),innerH=[c pureDockInnerBarHeight];
             CGFloat pinch=WXGClamp((barH-innerH)/barH,0.,.58);
             CGFloat full=barH*.5*pinch;
-            CGFloat refShort=MAX((CGFloat)shortSide,_lensRestHeight);
-            CGFloat refBand=(CGFloat)curve.height*refShort,refShift=(CGFloat)curve.amount*refShort;
-            if(refBand>cap && refBand>0.){refShift*=cap/refBand;}
-            CGFloat dispPad=kd>1.5f?refShift*(kd*(2./3.)-1.):0.;
-            pad=MIN(64.,ceil((full+dispPad+6.)/2.)*2.);
+            CGFloat refShort=MIN((CGFloat)shortSide,_lensRestHeight>1?_lensRestHeight*.82:(CGFloat)shortSide);
+            CGFloat spectralDisp=r8Disp>0.f && WXGFilterFactoryAvailable()?r8Disp:0.;
+            CGFloat ring=spectralDisp>0?4.5*spectralDisp/(1.+.25*spectralDisp):0.;
+            CGFloat farSide=MAX(0.,1.55*(CGFloat)r8Depth-refShort);
+            pad=MIN(64.,ceil((full+MAX(ring,farSide)+4.)/2.)*2.);
             CGFloat reach=barH*.75+pad+2;
             CGFloat left=CGRectGetMinX(bar)-CGRectGetMinX(_lensRect),right=CGRectGetMaxX(bar)-CGRectGetMinX(_lensRect);
             lensOptics.sbLeft=left<-reach?-10000.f:(float)(round(left*2)/2);
@@ -2251,7 +2248,8 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             lensOptics.sbRadius=0;
             lensOptics.shrinkPress=press;
             lensOptics.shrinkPinch=(float)(round(pinch*1000.)/1000.);
-            lensOptics.shrinkExtra=0.f;
+            CGFloat squash=_lensRestHeight>1?MAX(0.,(_lensRestHeight-_lensRect.size.height)*.5):0.;
+            lensOptics.shrinkExtra=(float)(round(squash*4)/4);
             lensOptics.padX=lensOptics.padY=(float)pad;lensOptics.width+=(float)(2*pad);lensOptics.height+=(float)(2*pad);
             lensOptics.sbLeft+=(float)pad;lensOptics.sbRight+=(float)pad;lensOptics.sbTop+=(float)pad;lensOptics.sbBottom+=(float)pad;
         }
@@ -2332,7 +2330,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             if([self kyantOpticsActive]) {
                 CGFloat spectral=c.syncDispersion && WXGFilterFactoryAvailable()?[c extraNumber:@"dockKyantDispersion"]:0;
                 CGFloat depth=[c extraNumber:@"dockKyantLensRefractionAmount"];
-                CGFloat ring=spectral>0?3.5*spectral:0;
+                CGFloat ring=spectral>0?4.5*spectral/(1.+.25*spectral):0;
                 CGFloat farSide=MAX(0.,1.55*depth-(CGFloat)shortSide);
                 pad=MIN(64.,ceil((full+MAX(ring,farSide)+4.)/2.)*2.);
             }
@@ -2357,37 +2355,36 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
     // FIX114 A: a near mesh while the lens moves; the exact one when it rests
     // (looked at again shortly after the last move).
     BOOL kept=NO;
-    if(![self kyantOpticsActive]) {
-        WXGMeshQuality lensQuality=pureDock?(moving?WXGMeshQualityLensMove:WXGMeshQualityLensBar):(WXGMeshShrinks(lensOptics)?WXGMeshQualityLensBar:WXGMeshQualityLens);
+    BOOL useR8=pureDock || [self kyantOpticsActive];
+    if(!useR8) {
         kept=![self applyStack:_lensStack visible:lens && (!seesBar || press>0.f) split:lensSplit radius:lensBlur optics:lensOptics
-             quality:lensQuality mesh:lensMesh group:seesBar?_lensGroup:[self bodyGroup] plain:seesBar loose:moving];
+             quality:WXGMeshShrinks(lensOptics)?WXGMeshQualityLensBar:WXGMeshQualityLens mesh:lensMesh group:seesBar?_lensGroup:[self bodyGroup] plain:seesBar loose:moving];
     }else {
         lensOptics.kyantMode=1.f;
         // Match iOS 26 glassBackground: keep the captured bar & touch glow at
         // 1x so brightness flows seamlessly across the lens silhouette; the
-        // Metal glyph overlay still applies L.zoom (1.16x) to selected icons.
+        // Metal glyph overlay still applies zoom to selected icons.
         lensOptics.zoomAfter=1.f;
-        lensOptics.kyantHeight=(float)[c extraNumber:@"dockKyantLensRefractionHeight"]*press;
-        lensOptics.kyantAmount=(float)[c extraNumber:@"dockKyantLensRefractionAmount"]*press;
-        float hBg=0.f,aBg=0.f;
-        WXGKyantCrownTarget(WXG_MIN(WXGMeshShapeWidth(lensOptics),WXGMeshShapeHeight(lensOptics))*.5f,
-            lensOptics.kyantHeight,lensOptics.kyantAmount,&hBg,&aBg);
-        lensOptics.edgeWidth=MAX(.5f,hBg);
-        lensOptics.dispersion=(float)[c extraNumber:@"dockKyantDispersion"];
-        BOOL spectral=lensMesh && lensOptics.dispersion>0.f && c.syncDispersion && WXGFilterFactoryAvailable();
-        // Match iOS 26 glassForeground: ZERO blur on the 11 unblurred spectral
-        // taps so the inner bar edge and clear gap stay 100% razor-sharp.
+        if(!pureDock) {
+            lensOptics.kyantHeight=(float)[c extraNumber:@"dockKyantLensRefractionHeight"]*press;
+            lensOptics.kyantAmount=(float)[c extraNumber:@"dockKyantLensRefractionAmount"]*press;
+            lensOptics.edgeWidth=MAX(.5f,lensOptics.kyantHeight);
+            lensOptics.dispersion=(float)[c extraNumber:@"dockKyantDispersion"];
+        }
+        BOOL spectral=lensMesh && lensOptics.dispersion>0.f && (pureDock || c.syncDispersion) && WXGFilterFactoryAvailable();
+        WXGMeshQuality lensQuality=pureDock && moving?WXGMeshQualityLensMove:WXGMeshQualityLensBar;
         for(NSUInteger i=0;i<_lensStack.count;i++) {
             WXGSyncBackdropView *view=_lensStack[i];
-            BOOL show=lens && press>0.f && (spectral || i==0);view.hidden=!show;
-            if(!show){[view applyRefraction:lensOptics quality:WXGMeshQualityLensBar enabled:NO];continue;}
+            BOOL show=lens && press>0.f && (spectral || i==0);
+            if(view.hidden==show)view.hidden=!show;
+            if(!show){[view applyRefraction:lensOptics quality:lensQuality enabled:NO];continue;}
             if(spectral)[view configureSpectralGroup:_lensGroup tapIndex:(NSInteger)i radius:lensBlur];
             else [view configureGroup:_lensGroup radius:lensBlur channel:0 plain:YES tone:(WXGBackdropTone){1,0}];
             view.captureLimit=_lightweight || c.performanceMode?2:0;[view applyCaptureScale];
             WXGMeshOptics channelOptics=lensOptics;
             channelOptics.kyantChannel=spectral?WXGKyantSpectralOffset((int)i):0.f;
             if(!spectral)channelOptics.dispersion=0.f;
-            if(![view applyRefraction:channelOptics quality:WXGMeshQualityLensBar enabled:lensMesh loose:moving])kept=YES;
+            if(![view applyRefraction:channelOptics quality:lensQuality enabled:lensMesh loose:moving])kept=YES;
         }
     }
     if(_mainDockOptics && lens && press>.05f && CACurrentMediaTime()-_lastOpticsTrace>.1) {
@@ -2398,7 +2395,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             @"lensSeesBar":@(seesBar),@"shown":@(shown),@"accepted":@(accepted),@"vertices":@(_lensBackdrop.meshVertices),
             @"pinch":@(lensOptics.shrinkPinch),@"extraInset":@(lensOptics.shrinkExtra),@"pad":@(_lensPad),
             @"lensSize":@[@(lensOptics.width-2*_lensPad),@(lensOptics.height-2*_lensPad)],
-            @"band":@(pureDock?lensOptics.curveHeight:lensOptics.kyantHeight),@"depth":@(pureDock?lensOptics.curveAmount:lensOptics.kyantAmount),@"dispersion":@(lensOptics.dispersion)}];
+            @"band":@(lensOptics.kyantHeight),@"depth":@(lensOptics.kyantAmount),@"dispersion":@(lensOptics.dispersion)}];
         if(_pressedOpticsHistory.count>24)[_pressedOpticsHistory removeObjectAtIndex:0];
     }
     if(kept)++_lensMeshKept;
@@ -2670,20 +2667,16 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             u.extra2.x=(float)_dockTabTile.width;u.extra2.y=(float)_dockTabTile.height;
             float press=roundf((float)WXGClamp(_pressAmount,0,1)*32.f)/32.f;
             u.material.x=press;
-            WXGGlassCurve curve=[c pureDockLensCurve];
-            float shortSide=(float)MIN(_lensRect.size.width,_lensRect.size.height);
-            float rawBand=(float)curve.height*shortSide,cap=(float)curve.maxHeight,rawShift=(float)curve.amount*shortSide;
-            if(rawBand>cap && rawBand>0.f){rawShift*=cap/rawBand;rawBand=cap;}
-            float band=roundf(rawBand*press*4.f)/4.f,depth=roundf(rawShift*press*4.f)/4.f;
-            u.lensOptics.x=depth;
-            u.lensOptics.y=roundf((float)curve.dispersion*100.f)/100.f;
-            u.lensOptics.z=band>.01f && depth>.01f?band:0.f;
-            u.lensOptics.w=(float)curve.squeeze;
+            u.lensOptics.x=(float)[c pureDockR8Depth]*press;
+            u.lensOptics.y=(float)[c pureDockR8Dispersion];
+            u.lensOptics.z=(float)[c pureDockR8Band]*press;
+            CGFloat squash=_lensRestHeight>1?MAX(0.,(_lensRestHeight-_lensRect.size.height)*.5):0.;
+            u.lensOptics.w=(float)(round(squash*4)/4);
             u.optics.x=(float)[c pureDockIconZoom];
             CGFloat barH=MAX(1.,[self drawnBarRect].size.height);
             CGFloat pinch=WXGClamp((barH-[c pureDockInnerBarHeight])/barH,0.,.58);
             u.optics.z=(float)(round(pinch*1000.)/1000.);
-            u.extra.w=WXG_LENS_PURE;
+            u.extra.w=[c pureDockInnerFlat]?WXG_LENS_KYANT_FLAT:WXG_LENS_KYANT;
         }else if(dockLens) {
             // Keep the uniform ABI shared with the fallback Metal source while
             // carrying per-tab stationary centers and tile dimensions.
@@ -2877,10 +2870,11 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         @"pressedOpticsHistory":_pressedOpticsHistory?:@[],@"opticsBuild":@WXG_BUILD_DIAGNOSTIC_REVISION,@"pureDockActive":@([self pureDockActive]),@"kyantActive":@([self kyantOpticsActive]),
         @"shaderHasKyant":@(WXGShaderKyantOptics),@"referenceCompileError":WXGOpticsCompileError?:@"",
         @"bodyPipeline":[self pureDockBodyStyle]?@"pureDock_otherGlass":@"original_FIX135",@"samplingBackend":WXGEffectiveRenderMode()>=2?@"original_renderServerLive":@"original_sceneTexture",
-        @"lensMapping":[self pureDockActive]?@"pureDock_WXGLensCurve_3RGB_flatShrink":@"Kyant_rays_original_FIX113_U_Y_shrink",@"lensPinch":@([self lensSettings].pinch),
-        @"lensKyantBandPt":@([WXGConfig.shared extraNumber:@"dockKyantLensRefractionHeight"]),
-        @"lensKyantDepthPt":@([WXGConfig.shared extraNumber:@"dockKyantLensRefractionAmount"]),
-        @"lensKyantDispersion":@([WXGConfig.shared extraNumber:@"dockKyantDispersion"]),
+        @"lensMapping":[self pureDockActive]?([WXGConfig.shared pureDockInnerFlat]?@"pureDock_R8_Kyant_7tap_flatShrink":@"pureDock_R8_Kyant_7tap"):@"Kyant_rays_original_FIX113_U_Y_shrink",@"lensPinch":@([self lensSettings].pinch),
+        @"lensKyantBandPt":@([self pureDockActive]?[WXGConfig.shared pureDockR8Band]:[WXGConfig.shared extraNumber:@"dockKyantLensRefractionHeight"]),
+        @"lensKyantDepthPt":@([self pureDockActive]?[WXGConfig.shared pureDockR8Depth]:[WXGConfig.shared extraNumber:@"dockKyantLensRefractionAmount"]),
+        @"lensKyantDispersion":@([self pureDockActive]?[WXGConfig.shared pureDockR8Dispersion]:[WXGConfig.shared extraNumber:@"dockKyantDispersion"]),
+        @"pureDockInnerFlat":@([WXGConfig.shared pureDockInnerFlat]),
         @"lensMeshVertices":@(_lensBackdrop.meshVertices),@"endReach":@[@(_endReachLeft),@(_endReachRight)],@"meshBuilder":@"contour_zipper_FIX57",@"meshCacheHits":@(WXGMeshCacheHits),@"meshCacheMisses":@(WXGMeshCacheMisses),
         @"backdropDefaultScale":@(_bodyBackdrop.defaultCaptureScale),@"backdropAppliedScale":@(_bodyBackdrop.appliedCaptureScale),
         @"backdropRequestedScale":@(_bodyBackdrop.requestedCaptureScale),

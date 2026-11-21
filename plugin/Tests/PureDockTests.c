@@ -189,9 +189,83 @@ static void testAdaptiveFlexTiming(void) {
            ad82.flatDurSec * 1000.0, ad90.flatDurSec * 1000.0, ad94.flatDurSec * 1000.0);
 }
 
+static void testR8PureDockModelAndMotionTier(void) {
+    float w = 123.5f, h = 70.f, barH = 62.f, innerH = 51.f, pad = 20.f;
+    WXGMeshOptics r8 = {0};
+    r8.width = w + 2.f * pad;
+    r8.height = h + 2.f * pad;
+    r8.fieldScale = 1.f;
+    r8.edgeWidth = 18.f;
+    r8.offsetScale = 1.f;
+    r8.zoomBefore = 1.f;
+    r8.zoomAfter = 1.f;
+    r8.dispersion = 2.4f;
+    r8.padX = pad;
+    r8.padY = pad;
+    r8.sbLeft = -10000.f + pad;
+    r8.sbRight = 10000.f + pad;
+    r8.sbTop = pad + (h - barH) * .5f;
+    r8.sbBottom = pad + (h + barH) * .5f;
+    r8.shrinkPress = 1.f;
+    r8.shrinkPinch = (barH - innerH) / barH;
+    r8.kyantMode = 1.f;
+    r8.kyantHeight = 18.f;
+    r8.kyantAmount = 26.f;
+    r8.shrinkFlat = 0.f;
+
+    /* 1. R8 7-tap shoulder dispersion is strong and center stays neutral. */
+    WXGMeshOptics tapRed = r8, tapViolet = r8;
+    tapRed.kyantChannel = WXGKyantSpectralOffset(0);
+    tapViolet.kyantChannel = WXGKyantSpectralOffset(WXG_KYANT_SPECTRAL_TAPS - 1);
+    float rx = 0.f, ry = 0.f, vx = 0.f, vy = 0.f;
+    WXGMeshSource(tapRed, pad + w - 10.f, pad + 10.f, &rx, &ry);
+    WXGMeshSource(tapViolet, pad + w - 10.f, pad + 10.f, &vx, &vy);
+    float shoulderSpread = hypotf(rx - vx, ry - vy);
+    assert(shoulderSpread > 3.f);
+    WXGMeshSource(tapRed, pad + w * .5f, pad + h * .5f, &rx, &ry);
+    WXGMeshSource(tapViolet, pad + w * .5f, pad + h * .5f, &vx, &vy);
+    assert(hypotf(rx - vx, ry - vy) < 1e-4f);
+
+    /* 2. shrinkFlat=1 under kyantMode gives strictly flat inner bar when refraction=0. */
+    WXGMeshOptics flatZero = r8;
+    flatZero.kyantHeight = 0.f;
+    flatZero.kyantAmount = 0.f;
+    flatZero.dispersion = 0.f;
+    flatZero.shrinkFlat = 1.f;
+    float cy = pad + h * .5f;
+    for (float x = pad + 4.f; x <= pad + w - 4.f; x += 4.f) {
+        float sx = 0.f, sy = 0.f;
+        WXGMeshSource(flatZero, x, cy - innerH * .5f, &sx, &sy);
+        assert(fabsf(sy - (cy - barH * .5f)) < 1e-3f);
+    }
+
+    /* 3. Two-tier motion vs settled mesh quality under R8 kyantMode. */
+    static WXGMeshPoint pts[20000];
+    static unsigned int quads[20000][4];
+    WXGMeshQuality settledQ = {.12f, .08f, 8.f};
+    WXGMeshQuality moveQ = {.20f, .12f, 16.f};
+    int faces = 0;
+    int settledVerts = WXGBuildContourMesh(tapRed, settledQ, pts, 20000, quads, 20000, &faces);
+    assert(settledVerts > 200 && settledVerts < 12000 && faces > 100);
+    for (int i = 0; i < settledVerts; i++) {
+        assert(isfinite(pts[i].fromX) && isfinite(pts[i].fromY));
+        assert(pts[i].fromX >= 0.f && pts[i].fromX <= 1.f);
+        assert(pts[i].fromY >= 0.f && pts[i].fromY <= 1.f);
+    }
+    int moveVerts = WXGBuildContourMesh(tapRed, moveQ, pts, 20000, quads, 20000, &faces);
+    assert(moveVerts > 100 && moveVerts < settledVerts * 0.70f);
+    WXGMeshOptics flatRed = tapRed;
+    flatRed.shrinkFlat = 1.f;
+    int flatVerts = WXGBuildContourMesh(flatRed, settledQ, pts, 20000, quads, 20000, &faces);
+    assert(flatVerts > 200 && flatVerts < 12000);
+    printf("PASS: R12 pureDock R8 7-tap (shoulder=%.2f pt, move=%d < settled=%d verts, flat=%d verts).\n",
+           shoulderSpread, moveVerts, settledVerts, flatVerts);
+}
+
 int main(void) {
     testFlatInnerBarZeroRefraction();
     testPureGlassRGBAndMeshBudget();
     testAdaptiveFlexTiming();
+    testR8PureDockModelAndMotionTier();
     return 0;
 }

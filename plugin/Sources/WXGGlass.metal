@@ -252,62 +252,59 @@ float4 wxgDockGlyph(float2 ray,float zoom,constant WXGUniforms &u,texture2d<floa
 }
 
 // The original render-server backdrop captures the real FIX135 bar, including
-// its material, glow and rim. Only selected glyphs/selection are drawn here.
+// its material, glow and rim. Only selected glyphs/selection are drawn here (R8 7-tap model).
 float4 wxgKyantLensOverlay(float2 p,constant WXGUniforms &u,texture2d<float> icons) {
-    float press=clamp(u.material.x,0.f,1.f),zoom=1.f+press*(u.optics.x-1.f);
     float2 center=u.lens.xy+u.lens.zw*.5f,halfSize=u.lens.zw*.5f;
     float radius=u.rim.w*u.lens.w/max(1.f,u.bar.w);
     float rEff=radius>0.f?radius:min(halfSize.x,halfSize.y);
+    float sd0=WXGKyantSdRoundedRect(p-center,halfSize,rEff);
+    if(sd0>2.f)return float4(0.f);
+    float press=clamp(u.material.x,0.f,1.f),zoom=1.f+press*(u.optics.x-1.f);
     float2 barCenter=u.bar.xy+u.bar.zw*.5f,barSize=u.bar.zw*u.motion.x;
     float2 barOrigin=barCenter-barSize*.5f;
     float endLeft=WXGLensEndReach(barOrigin.x,barOrigin.x+barSize.x,u.lens.x,u.lens.x+u.lens.z,-1);
     float endRight=WXGLensEndReach(barOrigin.x,barOrigin.x+barSize.x,u.lens.x,u.lens.x+u.lens.z,1);
+    float flat=WXGLensKyantFlatCode(u.extra.w)?1.f:0.f;
     float selWeight=u.selectionColor.a*wxgSelectionWeight(press,u);
-    float d0=0.f,sd0=0.f;
-    float2 g0=float2(0.f);
-    float2 glyphCentral=WXGKyantIconRefractPoint(p,center,halfSize,rEff,
-        u.lensOptics.z,u.lensOptics.x,&d0,&g0,&sd0);
-    float glyphShift=WXGKyantGlyphPreShift(sd0,halfSize,u.lensOptics.z,u.lensOptics.x,u.lensOptics.y);
-    float hBg=0.f,aBg=0.f;
-    WXGKyantCrownTarget(min(halfSize.x,halfSize.y),u.lensOptics.z,u.lensOptics.x,&hBg,&aBg);
-    float ringBg=max(0.36f*min(halfSize.x,halfSize.y),hBg*1.35f);
-    bool disperse=glyphShift>1e-4f || (selWeight>1e-5f && u.lensOptics.y>1e-4f && hBg>1e-4f && aBg>1e-4f && -sd0<ringBg);
+    float ringW=max(0.40f*min(halfSize.x,halfSize.y),2.f);
+    bool disperse=u.lensOptics.y>1e-4f && u.lensOptics.z>1e-4f && u.lensOptics.x>1e-4f && (-sd0<max(ringW,u.lensOptics.z));
     float selAA=.8f/u.viewport.z;
     if(selWeight>1e-5f) {
         float2 barC0=WXGKyantRefractPoint(p,center,halfSize,rEff,
             u.lensOptics.z,u.lensOptics.x,0.f,endLeft,endRight,nullptr,nullptr,nullptr,nullptr);
-        float2 src0=WXGKyantSceneSourceDepth(barC0,barC0,center,u.lens.zw,radius,barOrigin,barSize,0.f,
-                                             press,u.optics.z,0.f,max(0.f,u.lensOptics.w),1.f);
+        float2 src0=WXGKyantSceneSourceDepthFlat(barC0,barC0,center,u.lens.zw,radius,barOrigin,barSize,0.f,
+                                                 press,u.optics.z,0.f,max(0.f,u.lensOptics.w),1.f,flat);
         WXGShapeSample f0=wxgShape(src0,float4(barOrigin,barSize),0.f);
         selAA=max(selAA,fwidth(f0.distance)*.75f);
         if(!disperse) {
+            float2 glyphC0=WXGKyantRefractPoint(p,center,halfSize,rEff,
+                u.lensOptics.z,u.lensOptics.x,0.f,0.f,0.f,nullptr,nullptr,nullptr,nullptr);
             float a=selWeight*wxgMask(f0.distance,selAA);
-            return wxgOver(wxgDockGlyph(glyphCentral,zoom,u,icons),float4(u.selectionColor.rgb*a,a));
+            return wxgOver(wxgDockGlyph(glyphC0,zoom,u,icons),float4(u.selectionColor.rgb*a,a));
         }
     }else if(!disperse) {
-        return wxgDockGlyph(glyphCentral,zoom,u,icons);
+        float2 glyphC0=WXGKyantRefractPoint(p,center,halfSize,rEff,
+            u.lensOptics.z,u.lensOptics.x,0.f,0.f,0.f,nullptr,nullptr,nullptr,nullptr);
+        return wxgDockGlyph(glyphC0,zoom,u,icons);
     }
     float3 rgb=float3(0.f),alpha=float3(0.f);
-    for(int k=0;k<WXG_KYANT_GLYPH_TAPS;k++) {
-        float st=WXGKyantGlyphSpectralOffset(k);
-        float2 glyphRay=glyphShift>1e-4f
-            ?WXGKyantIconRefractPoint(p+(st*glyphShift)*g0,center,halfSize,rEff,
-                u.lensOptics.z,u.lensOptics.x,nullptr,nullptr,nullptr)
-            :glyphCentral;
+    for(int k=0;k<WXG_KYANT_SPECTRAL_TAPS;k++) {
+        float st=WXGKyantSpectralOffset(k);
+        float2 glyphRay=WXGKyantSpectralRay(p,center,halfSize,rEff,
+            u.lensOptics.z,u.lensOptics.x,u.lensOptics.y,0.f,0.f,0.f,st,nullptr);
         float4 glyph=wxgDockGlyph(glyphRay,zoom,u,icons);
         float a=0.f;
         if(selWeight>1e-5f) {
             float2 barCentral;
             float2 barRay=WXGKyantSpectralRay(p,center,halfSize,rEff,
                 u.lensOptics.z,u.lensOptics.x,u.lensOptics.y,0.f,endLeft,endRight,st,&barCentral);
-            float2 src=WXGKyantSceneSourceDepth(barRay,barCentral,center,u.lens.zw,radius,barOrigin,barSize,0.f,
-                                                press,u.optics.z,0.f,max(0.f,u.lensOptics.w),1.f);
+            float2 src=WXGKyantSceneSourceDepthFlat(barRay,barCentral,center,u.lens.zw,radius,barOrigin,barSize,0.f,
+                                                    press,u.optics.z,0.f,max(0.f,u.lensOptics.w),1.f,flat);
             WXGShapeSample field=wxgShape(src,float4(barOrigin,barSize),0.f);
             a=selWeight*wxgMask(field.distance,selAA);
         }
         float4 acc=wxgOver(glyph,float4(u.selectionColor.rgb*a,a));
-        float3 w=WXGKyantGlyphSpectralRGBWeight(k);
-        rgb+=w*acc.rgb;alpha+=w*acc.a;
+        float3 w=WXGKyantSpectralRGBWeight(k);rgb+=w*acc.rgb;alpha+=w*acc.a;
     }
     float most=max(alpha.x,max(alpha.y,alpha.z));
     return float4(rgb+saturate(u.extra2.z)*(float3(most)-alpha),most);

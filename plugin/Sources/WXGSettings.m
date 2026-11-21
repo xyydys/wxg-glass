@@ -886,7 +886,7 @@ void WXGConfirmResetAll(UIViewController *page,void (^done)(void)) {
     return @[
         @{@"title":@"效果 · 底栏、其余玻璃、分组栏、气泡、设置页分别设置",
           @"cards":@[@[@"effect",@"效果调整",@"折射 · 模糊 · 材质 · 边框 · 阴影 · 透镜",@[@"drop",@"drop.fill"]],
-                     @[@"pureDock",@"底栏纯玻璃测试",@"独立模式 · 透镜普通玻璃 · 缩窄高度 · RGB 色散 · 自适应形变",@[@"capsule.inset.filled",@"dock.rectangle",@"rectangle"]]]},
+                     @[@"pureDock",@"底栏纯玻璃测试",@"独立模式 · R8 透镜折射与 7 色色散 · 缩窄高度 · 自适应形变",@[@"capsule.inset.filled",@"dock.rectangle",@"rectangle"]]]},
         @{@"title":@"功能",@"cards":@[@[@"chat",@"聊天页",@"输入栏 · 标题与头像 · 气泡 · 菜单",@[@"bubble.left.and.bubble.right.fill",@"bubble.left.and.bubble.right",@"message"]],
                                       @[@"home",@"首页",@"分组栏 · 加号菜单 · 搜索框",@[@"rectangle.split.3x1",@"square.split.2x1",@"rectangle.split.2x1",@"rectangle"]],
                                       @[@"me",@"个人页",@"头像头部 · 下拉横幅",@[@"person.crop.circle",@"person.circle",@"person"]],

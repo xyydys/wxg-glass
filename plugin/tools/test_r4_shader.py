@@ -222,6 +222,31 @@ int main() {
  // Outside lens clip fast-reject returns pure transparent 0.
  assert(draw(5,5,pu,packed).w==0.f);
  printf("R11 pure-glass shader: flat pill rows=%d/%d/%d, bevel moved=%d, 3-RGB colored=%d.\n",leftRows,midRows,rightRows,pMoved,pColored);
+ // R12 standalone pureDock R8 flat-shrink option (WXG_LENS_KYANT_FLAT):
+ // flat selection rows when refraction=0, full R8 7-tap refraction/dispersion when on.
+ WXGUniforms kf=sel;
+ kf.extra.w=WXG_LENS_KYANT_FLAT;kf.optics.x=1.16f;kf.optics.z=.18f;kf.motion.x=1.f;
+ kf.material.x=1.f;kf.selectionColor=float4(.25f,.25f,.25f,.6f);kf.extra2.w=2.f;
+ kf.lens=float4(40,25,100,70);kf.lensOptics=float4(0,0,0,0);
+ auto kfRows=[&](int px) {
+  int rows=0;for(int y=25;y<95;y++)if(draw(px,y,kf,none).w>.25f)++rows;
+  return rows;
+ };
+ int kfL=kfRows(50),kfM=kfRows(90),kfR=kfRows(130);
+ assert(kfL==kfM && kfR==kfM && kfM>40 && kfM<56);
+ kf.selectionColor=float4(0);kf.extra2.w=1.f;
+ int kfMoved=0,kfColored=0;
+ for(int y=26;y<95;y++)for(int x=42;x<139;x++) {
+  kf.lensOptics=float4(0.f,0.f,0.f,0.f);float4 a=draw(x,y,kf,packed);
+  kf.lensOptics=float4(26.f,0.f,18.f,0.f);float4 b=draw(x,y,kf,packed);
+  kf.lensOptics=float4(26.f,2.4f,18.f,0.f);float4 c=draw(x,y,kf,packed);
+  for(int j=0;j<4;j++)assert(std::isfinite(c[j]));
+  float d=fabs(a.x-b.x)+fabs(a.y-b.y)+fabs(a.z-b.z)+fabs(a.w-b.w);
+  float sp=fabs(b.x-c.x)+fabs(b.y-c.y)+fabs(b.z-c.z);
+  if(d>1e-4f)++kfMoved;if(sp>1e-4f)++kfColored;
+ }
+ assert(kfMoved>0 && kfColored>0 && draw(5,5,kf,packed).w==0.f);
+ printf("R12 Kyant flat-shrink shader: flat rows=%d/%d/%d, 7-tap moved=%d, colored=%d.\n",kfL,kfM,kfR,kfMoved,kfColored);
 }
 '''
 s=re.sub(r'\b(float[234])\(',r'mk_\1(',s)

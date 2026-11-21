@@ -231,10 +231,13 @@ enum { WXGRimGlowCount=2 };
 - (BOOL)hasDockSystem26Backup;
 - (BOOL)restoreDockBeforeSystem26;                        // those back; NO: nothing kept
 - (WXGGlassCurve)glassCurveForScope:(WXGGlassScope)scope;   // FIX130: every range's body, iOS 26's curve
-// R11: standalone pure-glass dock test mode (overrides all legacy and Kyant dock switches).
+// R12: standalone pure-glass dock test mode using R8 refraction/dispersion (overrides all legacy dock switches).
 - (BOOL)dockPureGlassMode;
-- (WXGGlassCurve)pureDockLensCurve;
+- (CGFloat)pureDockR8Band;
+- (CGFloat)pureDockR8Depth;
+- (CGFloat)pureDockR8Dispersion;
 - (CGFloat)pureDockInnerBarHeight;
+- (BOOL)pureDockInnerFlat;
 - (CGFloat)pureDockIconZoom;
 - (CGFloat)pureDockBarGrowth;
 - (CGFloat)pureDockLensGrowth;

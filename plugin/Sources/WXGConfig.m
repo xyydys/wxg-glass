@@ -136,14 +136,13 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockKyantLensRefractionHeight",'n',18,0,40,NULL,NULL},
     {"dockKyantLensRefractionAmount",'n',26,0,50,NULL,NULL},
     {"dockKyantDispersion",'n',2.4,0,5,NULL,NULL},
-    // R11: standalone isolated pure-glass dock test mode (forces all legacy & Kyant dock switches off).
+    // R12: standalone isolated dock test mode using R8 refraction/dispersion (forces all legacy dock switches off).
     {"dockPureGlassMode",'b',1,0,1,NULL,NULL},
-    {"dockPureLensBand",'n',.12,0,.5,NULL,NULL},
-    {"dockPureLensDepth",'n',.35,0,1.5,NULL,NULL},
-    {"dockPureLensBandMax",'n',20,4,80,NULL,NULL},
-    {"dockPureLensSqueeze",'n',3,0,20,NULL,NULL},
-    {"dockPureLensDispersion",'n',1.2,0,3,NULL,NULL},
-    {"dockPureInnerBarHeight",'n',52,24,80,NULL,NULL},
+    {"dockPureR8Band",'n',18,0,40,NULL,NULL},
+    {"dockPureR8Depth",'n',26,0,50,NULL,NULL},
+    {"dockPureR8Dispersion",'n',2.4,0,5,NULL,NULL},
+    {"dockPureInnerBarHeight",'n',51,24,80,NULL,NULL},
+    {"dockPureInnerFlat",'b',0,0,1,NULL,NULL},
     {"dockPureIconZoom",'n',1.16,1,1.4,NULL,NULL},
     {"dockPureBarGrowth",'n',1.035,1,1.08,NULL,NULL},
     {"dockPureLensGrowth",'n',1.13,1,1.4,NULL,NULL},
@@ -1472,18 +1471,13 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
     p.symmetric=[self extraNumber:@"lensFlexSymmetric"]>.5;p.squeeze=WXGClamp([self extraNumber:@"lensFlexSqueeze"],0,1.5);p.flatten=WXGClamp([self extraNumber:@"lensFlexFlatten"],0,1.5);p.restFlattest=WXGClamp([self extraNumber:@"lensFlexRestFloor"],.5,1);
     return p;
 }
-// R11: standalone pure-glass dock test mode accessors (isolated from all legacy/Kyant dock keys).
+// R12: standalone pure-glass dock test mode accessors using R8 refraction/dispersion (isolated from legacy keys).
 - (BOOL)dockPureGlassMode {return [self extraNumber:@"dockPureGlassMode"]>.5;}
-- (WXGGlassCurve)pureDockLensCurve {
-    WXGGlassCurve k;
-    k.height=WXGClamp([self extraNumber:@"dockPureLensBand"],0,.5);
-    k.amount=WXGClamp([self extraNumber:@"dockPureLensDepth"],0,1.5);
-    k.maxHeight=WXGClamp([self extraNumber:@"dockPureLensBandMax"],4,80);
-    k.squeeze=WXGClamp([self extraNumber:@"dockPureLensSqueeze"],0,20);
-    k.dispersion=WXGClamp([self extraNumber:@"dockPureLensDispersion"],0,3);
-    return k;
-}
+- (CGFloat)pureDockR8Band {return WXGClamp([self extraNumber:@"dockPureR8Band"],0,40);}
+- (CGFloat)pureDockR8Depth {return WXGClamp([self extraNumber:@"dockPureR8Depth"],0,50);}
+- (CGFloat)pureDockR8Dispersion {return WXGClamp([self extraNumber:@"dockPureR8Dispersion"],0,5);}
 - (CGFloat)pureDockInnerBarHeight {return WXGClamp([self extraNumber:@"dockPureInnerBarHeight"],24,80);}
+- (BOOL)pureDockInnerFlat {return [self extraNumber:@"dockPureInnerFlat"]>.5;}
 - (CGFloat)pureDockIconZoom {return WXGClamp([self extraNumber:@"dockPureIconZoom"],1,1.4);}
 - (CGFloat)pureDockBarGrowth {return WXGClamp([self extraNumber:@"dockPureBarGrowth"],1,1.08);}
 - (CGFloat)pureDockLensGrowth {return WXGClamp([self extraNumber:@"dockPureLensGrowth"],1,1.4);}

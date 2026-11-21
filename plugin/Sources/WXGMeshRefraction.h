@@ -243,9 +243,9 @@ static inline void WXGMeshSource(WXGMeshOptics o,float px,float py,float *sx,flo
         float zoom=o.zoomAfter>0.f?o.zoomAfter:1.f;
         WXG_K_F2 src=WXG_K_MAKE2(center.x+(ray.x-center.x)/zoom,
                                  center.y+(ray.y-center.y)/zoom);
-        src=WXGKyantSceneSourceDepth(src,central,center,WXG_K_MAKE2(shapeW,shapeH),o.radius,
+        src=WXGKyantSceneSourceDepthFlat(src,central,center,WXG_K_MAKE2(shapeW,shapeH),o.radius,
             WXG_K_MAKE2(o.sbLeft,o.sbTop),WXG_K_MAKE2(o.sbRight-o.sbLeft,o.sbBottom-o.sbTop),o.sbRadius,
-            o.shrinkPress,o.shrinkPinch,0.f,WXG_K_MAX(0.f,o.shrinkExtra),zoom);
+            o.shrinkPress,o.shrinkPinch,0.f,WXG_K_MAX(0.f,o.shrinkExtra),zoom,o.shrinkFlat);
         *sx=src.x;*sy=src.y;return;
     }
     if(o.curveHeight>0.f || o.shrinkFlat>.5f){WXGMeshCurveSource(o,px,py,sx,sy);return;}
@@ -308,21 +308,7 @@ typedef struct { float cx,cy,nx,ny,u; int kind; } WXGContourSample; /* kind 0 st
 static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,float t,float channel) {
     /* The curve; a channel at most WXG_LENS_SPLIT_SPAN of the
        shift from green (|I| <= 1), so the rings follow the steepest one. */
-    if(o.kyantMode>.5f) {
-        float shapeMinHalf=WXG_MIN(WXGMeshShapeWidth(o),WXGMeshShapeHeight(o))*.5f;
-        float h=0.f,a=0.f;
-        WXGKyantCrownTarget(shapeMinHalf,o.kyantHeight,o.kyantAmount,&h,&a);
-        float disp=WXG_MAX(o.dispersion,0.f);
-        float pressScale=WXGOClamp(WXG_MIN(o.kyantHeight/4.f,o.kyantAmount/6.f),0.f,1.f);
-        float ringW=WXG_MAX(0.36f*shapeMinHalf,h*1.35f);
-        float ringU=WXGOClamp(1.f-WXG_MAX(t,0.f)/WXG_MAX(ringW,1.f),0.f,1.f);
-        float env=ringU*ringU*WXG_SQRT(ringU);
-        float shift=0.48f*disp*pressScale*env;
-        float tEff=t-channel*shift;
-        float off=(h>1e-4f && a>1e-4f && tEff<h)?WXGKyantSmoothCircleMap(1.f-WXG_MAX(tEff,0.f)/h)*a:0.f;
-        float cauchy=WXG_MIN(off*0.065f*disp*pressScale,0.42f*off);
-        return tEff+off+channel*cauchy;
-    }
+    if(o.kyantMode>.5f)return t+WXGLensCurveOffset(t,o.kyantHeight,o.kyantAmount)*(1.f+channel*WXG_MAX(o.dispersion,0.f));
     if(o.curveHeight>0.f || o.shrinkFlat>.5f)return t+WXGLensCurveOffsetCapped(t,o.curveHeight,o.curveAmount,o.curveSqueeze)*(1.f+channel*(o.dispersion>0.f?o.dispersion*WXG_LENS_SPLIT_SPAN:0.f));
     float d=-t;
     float off=WXGMeshOffset(o,d,width);   /* FIX113 I, FIX114 I */
@@ -330,11 +316,6 @@ static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,
 }
 static inline float WXGMeshCurvature(WXGMeshOptics o,float width,float dwidth,float t) {
     const float h=.04f;float worst=0.f;
-    if(o.kyantMode>.5f) {
-        float c=o.dispersion>0.f?o.kyantChannel:0.f;
-        float a=WXGMeshDepthSource(o,width,dwidth,t-h,c),b=WXGMeshDepthSource(o,width,dwidth,t,c),e=WXGMeshDepthSource(o,width,dwidth,t+h,c);
-        return WXG_ABS(a-2.f*b+e)/(h*h);
-    }
     for(int c=-1;c<=1;c++) {
         if(c!=0 && !(o.dispersion>0.f))continue;
         float a=WXGMeshDepthSource(o,width,dwidth,t-h,(float)c),b=WXGMeshDepthSource(o,width,dwidth,t,(float)c),e=WXGMeshDepthSource(o,width,dwidth,t+h,(float)c);
@@ -348,28 +329,28 @@ static inline int WXGMeshRings(WXGMeshOptics o,float limit,float pad,WXGMeshQual
     float dside=WXG_MAX(WXGMeshDispersionSide(o),.5f),dratio=WXGMeshDispersionRatio(o),dtop=dratio>0.f?dside*WXGOClamp(dratio,.05f,1.f):dside;
     float band=WXG_MIN(WXG_MAX(WXG_MAX(side,dside),WXGMeshSoftBand(o,side))+.75f,limit),err=WXG_MAX(q.ringError,.01f);   // FIX114 I: and the soft band
     float hCrown=0.f,aCrown=0.f;
+    WXGMeshOptics crownOptics=o;
     if(o.kyantMode>.5f) {
         float shapeMinHalf=WXG_MIN(WXGMeshShapeWidth(o),WXGMeshShapeHeight(o))*.5f;
         WXGKyantCrownTarget(shapeMinHalf,o.kyantHeight,o.kyantAmount,&hCrown,&aCrown);
-        float ringW=WXG_MAX(0.36f*shapeMinHalf,hCrown*1.35f);
-        band=WXG_MIN((o.dispersion>0.f?ringW:hCrown)+.75f,limit);
+        crownOptics.kyantHeight=hCrown;crownOptics.kyantAmount=aCrown;
+        if(o.dispersion>0.f)band=WXG_MIN(WXG_MAX(band,.40f*shapeMinHalf+.75f),limit);
     }
     int n=0;rings[n++]=-pad;
     float t=0.f;
+    int moveTier=o.kyantMode>.5f && q.ringError>.12f;
     while(t<band && n<capacity-2) {
         rings[n++]=t;
-        /* Worst curvature ahead, so no bend is stepped over. */
+        /* Worst curvature over the next 1.5 pt, so no bend is stepped over. */
         float k=0.f;
-        if(o.kyantMode>.5f) {
-            for(float probe=0.f;probe<=0.64f;probe+=.08f)
-                k=WXG_MAX(k,WXGMeshCurvature(o,hCrown,hCrown,t+probe));
-        }else {
-            for(float probe=0.f;probe<=1.5f;probe+=.25f)
-                k=WXG_MAX(k,WXG_MAX(WXGMeshCurvature(o,side,dside,t+probe),WXGMeshCurvature(o,top,dtop,t+probe)));
+        for(float probe=0.f;probe<=1.5f;probe+=.25f) {
+            k=WXG_MAX(k,WXG_MAX(WXGMeshCurvature(o,side,dside,t+probe),WXGMeshCurvature(o,top,dtop,t+probe)));
+            if(o.kyantMode>.5f && hCrown>1e-4f && aCrown>1e-4f)
+                k=WXG_MAX(k,WXGMeshCurvature(crownOptics,hCrown,hCrown,t+probe));
         }
         float dt=WXG_SQRT(8.f*err/WXG_MAX(k,1e-4f));
-        float minStep=o.kyantMode>.5f?.06f:.12f;
-        float maxStep=(o.kyantMode>.5f && hCrown>1e-4f && t<hCrown+2.f)?.50f:1.5f;
+        float minStep=o.kyantMode>.5f?(moveTier?.10f:.04f):.12f;
+        float maxStep=(o.kyantMode>.5f && hCrown>1e-4f && t<hCrown+2.f)?(moveTier?.90f:.45f):1.5f;
         t+=WXGOClamp(dt,minStep,maxStep);
     }
     if(t>=band && n<capacity-1) {
@@ -437,20 +418,11 @@ static inline void WXGMeshContourPoint(WXGContourSample s,float hx,float hy,floa
 }
 /* FIX96: a capsule's rings follow its continuous outline (the field's
    depth is the ring's depth again): moved out along the circle's normal by
-   WXGContinuousCorrection (capsule == 1), or inward by WXGKyantCapsule26Offset
-   for iOS 26 continuous Kyant capsules (capsule == 2, on interior rings t >= 0).
-   Rounded rectangles are unchanged. */
+   WXGContinuousCorrection. Rounded rectangles are unchanged. */
 static inline void WXGMeshContourPointC(WXGContourSample s,float hx,float hy,float R,float t,int capsule,float *x,float *y) {
     WXGMeshContourPoint(s,hx,hy,R,t,x,y);
     if(!capsule)return;
     WXGShapeSample c=WXGCapsuleOpticalField(*x,*y,2.f*hx,2.f*hy);
-    if(capsule==2) {
-        if(t>=0.f) {
-            float off=WXGKyantCapsule26Offset(WXG_K_MAKE2(*x,*y),WXG_K_MAKE2(hx,hy),R);
-            *x-=c.nx*off;*y-=c.ny*off;
-        }
-        return;
-    }
     float corr=WXGContinuousCorrection(*x,*y,2.f*hx,2.f*hy);
     *x+=c.nx*corr;*y+=c.ny*corr;
 }
@@ -480,7 +452,10 @@ static inline int WXGMeshZipperChains(const float *xs,const float *ys,int n,int 
 static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPoint *points,int pointCapacity,
                                       unsigned int (*faces)[4],int faceCapacity,int *faceCount) {
     *faceCount=0;
-    if(o.kyantMode>.5f){q.ringError=WXG_MIN(q.ringError,.06f);q.arcStep=WXG_MIN(q.arcStep,o.dispersion>0.f?.06f:.08f);q.straightStep=WXG_MIN(q.straightStep,4.f);}
+    if(o.kyantMode>.5f) {
+        if(q.ringError>.14f){q.ringError=WXG_MIN(q.ringError,.16f);q.arcStep=WXG_MIN(q.arcStep,.10f);q.straightStep=WXG_MIN(q.straightStep,8.f);}
+        else{q.ringError=WXG_MIN(q.ringError,.08f);q.arcStep=WXG_MIN(q.arcStep,o.dispersion>0.f?.06f:.10f);q.straightStep=WXG_MIN(q.straightStep,4.f);}
+    }
     if(!(o.width>1.f) || !(o.height>1.f))return 0;
     enum { WXGMeshMaxContour=512,WXGMeshMaxRings=160 };
     WXGContourSample contour[WXGMeshMaxContour];float rings[WXGMeshMaxRings];
@@ -492,12 +467,7 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
     /* Rings end 1.25 pt past the band (plain mapping there), never at the
        centre; a tiny shape stops 0.5 pt short of collapsing. */
     float band=WXG_MIN(WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),.5f)+.75f,limit);   // FIX88: and the colour split's band
-    if(o.kyantMode>.5f) {
-        float hCrown=0.f,aCrown=0.f;
-        WXGKyantCrownTarget(limit,o.kyantHeight,o.kyantAmount,&hCrown,&aCrown);
-        float ringW=WXG_MAX(0.36f*limit,hCrown*1.35f);
-        band=WXG_MIN((o.dispersion>0.f?ringW:hCrown)+.75f,limit);
-    }
+    if(o.kyantMode>.5f && o.dispersion>0.f)band=WXG_MIN(WXG_MAX(band,.40f*limit+.75f),limit);
     if(o.transition>0.f)band=WXG_MIN(WXG_MAX(band,WXGMeshSoftBand(o,o.edgeWidth)+.75f),limit);   // FIX114 I: and the soft band
     float stop=WXG_MIN(band+1.25f,limit-.5f);
     /* FIX113 U: rings down past the smaller bar's outline (the bar's top /
@@ -512,7 +482,7 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
     int n=WXGMeshContour(hx,hy,R,q,contour,WXGMeshMaxContour);
     int m=WXGMeshRings(o,stop,pad,q,rings,WXGMeshMaxRings);
     if(n<4 || m<2 || n*m>pointCapacity)return 0;
-    int capsule=!(o.radius>0.f)?(o.kyantMode>.5f?2:1):0;
+    int capsule=!(o.radius>0.f) && !(o.kyantMode>.5f);
     for(int i=0;i<n;i++)WXGMeshContourPointC(contour[i],hx,hy,R,rings[m-1],capsule,&innerX[i],&innerY[i]);
     int chain=WXGMeshZipperChains(innerX,innerY,n,top,bottom,WXGMeshMaxContour);
     if(chain<2 || n*(m-1)+chain-1>faceCapacity)return 0;
