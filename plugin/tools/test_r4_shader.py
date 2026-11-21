@@ -23,17 +23,25 @@ int main() {
   if(icon||text){glyph[j]=icon?.8f:.05f;glyph[j+1]=icon?.2f:.05f;glyph[j+2]=icon?.1f:.05f;glyph[j+3]=1;}
  }
  texture2d<float> bg{page.data(),W,H},icons{glyph.data(),W,H},none{empty.data(),W,H};
+ auto firstTile=[&](const std::vector<float>& pixels) {
+  std::vector<float> tiles(4*W*H*4,0);
+  for(int y=0;y<H;y++)std::memcpy(&tiles[y*4*W*4],&pixels[y*W*4],W*4*sizeof(float));
+  return tiles;
+ };
+ std::vector<float> glyphTile=firstTile(glyph);
+ texture2d<float> packed{glyphTile.data(),4*W,H};
  WXGUniforms u={};u.viewport=float4(W,H,2,0);u.bar=float4(10,30,160,60);u.lens=float4(40,25,100,70);
  u.material=float4(1,1,.5,3);u.appearance=float4(0,1,0,1);u.optics=float4(1.16,0,.25,10);
  u.lensOptics=float4(26,2.4,18,0);u.motion=float4(1,0,1,90);u.extra.w=WXG_LENS_KYANT;
  u.extra2.w=1;u.extra2.z=1;u.sync=float4(2,.5,2,1);
+ u.extra2.x=W;u.extra2.y=H;u.style=float4(90,270,450,630);
  // Content is genuinely warped; no clean overlay can pass these comparisons.
  int moved[2]={},colored[2]={},transparent=0;
  for(int y=26;y<95;y++)for(int x=42;x<139;x++) {
   WXGOut in={};in.uv=float2((float)x/W,(float)y/H);
-  u.lensOptics.x=0;u.lensOptics.y=0;float4 a=wxgFragment(in,u,bg,none,icons,bg,bg,bg);
-  u.lensOptics.x=26;float4 b=wxgFragment(in,u,bg,none,icons,bg,bg,bg);
-  u.lensOptics.y=2.4;float4 c=wxgFragment(in,u,bg,none,icons,bg,bg,bg);
+  u.lensOptics.x=0;u.lensOptics.y=0;float4 a=wxgFragment(in,u,bg,none,packed,bg,bg,bg);
+  u.lensOptics.x=26;float4 b=wxgFragment(in,u,bg,none,packed,bg,bg,bg);
+  u.lensOptics.y=2.4;float4 c=wxgFragment(in,u,bg,none,packed,bg,bg,bg);
   float delta=0,split=0;for(int j=0;j<4;j++){assert(std::isfinite(c[j]));delta+=fabs(a[j]-b[j]);split+=fabs(b[j]-c[j]);}
   int part=y<60?0:1;if(delta>1e-4)++moved[part];if(split>1e-4)++colored[part];
   float4 blank=wxgFragment(in,u,bg,none,none,bg,bg,bg);
@@ -54,7 +62,7 @@ int main() {
  };
  int visible[2]={},materialChanged=0;
  for(int y=26;y<95;y++)for(int x=42;x<139;x++) {
-  float4 a=draw(x,y,open,icons),b=draw(x,y,pinched,icons);
+  float4 a=draw(x,y,open,packed),b=draw(x,y,pinched,packed);
   for(int j=0;j<4;j++)assert(fabs(a[j]-b[j])<1e-6f);
   if(b.w>.1f)++visible[y<60?0:1];
  }
@@ -69,7 +77,8 @@ int main() {
  // of the original tab zoom and bar growth, through the actual fragment.
  std::vector<float> square(W*H*4,0);
  for(int y=53;y<67;y++)for(int x=83;x<97;x++)square[4*(y*W+x)+3]=1;
- texture2d<float> probe{square.data(),W,H};
+ std::vector<float> squareTile=firstTile(square);
+ texture2d<float> probe{squareTile.data(),4*W,H};
  pinched.selectionColor=float4(0);pinched.motion.w=90.f;
  pinched.lensOptics.z=8.64f;
  for(float press:{0.f,.5f,1.f}) {
@@ -84,10 +93,67 @@ int main() {
   assert(fabs(width-expected)<=1.f);
   printf("R5 central 14px square at press %.1f: %d x %d (expected %.2f).\n",press,width,height,expected);
  }
+ // Four independent images, including a long badge which extends through
+ // the midpoint into the next tab. Test both tab layouts and both travel
+ // directions. The lens' central optical field is flat at these probes.
+ const int tileWidth=80;
+ std::vector<float> art(4*tileWidth*H*4,0);
+ for(int tab=0;tab<4;tab++)for(int y=0;y<H;y++)for(int x=0;x<tileWidth;x++) {
+  int dx=x-tileWidth/2;
+  bool symbol=(dx>=-4&&dx<4&&y>=57&&y<63);
+  bool title=(dx>=-6&&dx<6&&y>=66&&y<69);
+  bool badge=(tab==1&&dx>=13&&dx<27&&y>=49&&y<53);
+  if(symbol||title||badge)art[4*((4*tileWidth)*y+tileWidth*tab+x)+3]=1;
+ }
+ texture2d<float> fixed{art.data(),4*tileWidth,H};
+ WXGUniforms sweep=open;sweep.selectionColor=float4(0);
+ sweep.extra2.x=tileWidth;sweep.extra2.y=H;sweep.optics.x=1.16f;
+ sweep.lensOptics=float4(14,1,8.64,0);sweep.material.x=1;
+ float worstDrift=0,worstCenter=0;int centroidCount=0;
+ for(float extra:{0.f,12.f}) {
+  // WXGDockCellCenter for a 160pt bar, zero gap and the two configured overlaps.
+  for(int i=0;i<4;i++)sweep.style[i]=30.f+extra*.5f+i*(40.f-extra/3.f);
+  for(int tab=0;tab<4;tab++)for(int part=0;part<3;part++) {
+   if(part==2&&tab!=1)continue;
+   float anchor=sweep.style[tab],cx=90.f+(anchor-90.f)*sweep.motion.x;
+   float worldX=cx+(part==2?20.f:0.f)*sweep.optics.x*sweep.motion.x;
+   int y0=part==0?55:part==1?65:44,y1=part==0?64:part==1?72:54;
+   float first=-1;
+   for(float shift:{-6.f,0.f,6.f,-2.f,4.f,-6.f}) {
+    sweep.motion.w=worldX+shift;sweep.lens.x=worldX+shift-50;
+    double mass=0,moment=0;
+    for(int y=y0;y<y1;y++)for(int x=(int)worldX-12;x<(int)worldX+13;x++) {
+     double alpha=draw(x,y,sweep,fixed).w;mass+=alpha;moment+=alpha*(x+.5);
+    }
+    assert(mass>8);
+    float centroid=(float)(moment/mass);
+    if(first<0)first=centroid;
+    worstDrift=fmax(worstDrift,fabs(centroid-first));
+    worstCenter=fmax(worstCenter,fabs(centroid-worldX));
+    ++centroidCount;
+   }
+  }
+ }
+ assert(worstDrift<.01f && worstCenter<.09f);
+ printf("R6 fixed-center sweep: %d centroids, max drift %.4f px, max rasterization error %.4f px (icons, titles and crossing badge).\n",centroidCount,worstDrift,worstCenter);
+ // Move the actual optical shoulder across a tab at constant zoom; its
+ // sampled edges must still bend and split even with all centers pinned.
+ int warped=0,separated=0;
+ for(int y=55;y<66;y++)for(int x=99;x<119;x++) {
+  sweep.lens.x=106.f;sweep.lensOptics.x=0;
+  float4 plain=draw(x,y,sweep,fixed);
+  sweep.lensOptics.x=14;sweep.lensOptics.y=0;float4 bent=draw(x,y,sweep,fixed);
+  sweep.lensOptics.y=1;float4 split=draw(x,y,sweep,fixed);
+  if(fabs(plain.w-bent.w)>.01f)++warped;
+  if(fabs(split.x-split.y)+fabs(split.y-split.z)>.01f)++separated;
+ }
+ assert(warped && separated);
+ printf("R6 lens shoulder over anchored content: %d warped and %d chromatic pixels.\n",warped,separated);
  // Lens-off and body paths must match the actual original FIX135 shader,
  // not a newly written approximation of it. Test all original backends.
  int parity=0;float worst=0;
  u.tintColor=float4(.8,.8,.8,.585);u.selectionColor=float4(.1,.1,.1,.07);
+ u.extra2.x=0;u.extra2.y=0;u.style=float4(0);
  u.extra=float4(0);u.lensOptics=float4(4,1,9,0);u.material=float4(.6,1,.5,3);
  for(float backend:{0.f,1.f,2.f})for(float surface:{0.f,1.f}) {
   u.sync.x=backend;u.appearance.w=surface;

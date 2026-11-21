@@ -87,6 +87,15 @@ static NSDictionary *WXGCopyGroup(void) {
 }
 // A choice whose stored values are not 0, 1, 2 ...: the value of each choice.
 static NSDictionary *WXGChoiceValues(NSDictionary *row,NSArray<NSNumber *> *values) {NSMutableDictionary *m=[row mutableCopy];m[@"values"]=values;return m;}
+// Both settings pages edit the same press-optics values in points.
+static NSDictionary *WXGDockKyantGroup(NSString *scope) {
+    return WXGGroup(@"按压透镜 · Kyant 折射",scope,@[
+        WXGSwitch(@"透镜使用参考项目折射与色散",@"dockKyantOptics",nil),
+        WXGSlider(@"透镜折射带宽",@"dockKyantLensRefractionHeight",nil,0,40,@"%.1f pt"),
+        WXGSlider(@"透镜折射深度",@"dockKyantLensRefractionAmount",nil,0,50,@"%.1f pt"),
+        WXGSlider(@"透镜色散",@"dockKyantDispersion",nil,0,5,@"%.2f")],
+        @"用于主连续底栏的系统实时透镜。带宽控制折射沿边缘向内延伸的距离，深度控制背景取样的偏移量。开启通用页的 RGB 色散可查看分色。");
+}
 static NSDictionary *WXGModuleSpec(NSString *module) {
     if([module isEqual:@"effect"])return @{@"title":@"效果调整",@"scoped":@YES,@"scopes":@[@"other",@"dock",@"lens",@"segment",@"segmentLens",@"bubble",@"card",@"finder"],@"groups":@[
         WXGNotIn(WXGGroup(@"折射",nil,@[WXGSlider3(@"折射带宽（短边的比例）",@"glassBand",@"dockGlassBand",@"bubbleGlassBand",.02,.5,@"%.3f"),
@@ -165,18 +174,20 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                  WXGSlider3(@"最暗处亮度",@"darkRim27DarkModeEndLevel",@"dockDarkRim27DarkModeEndLevel",@"bubbleDarkRim27DarkModeEndLevel",0,1,nil),
                                  WXGSlider3(@"过渡速度",@"darkRim27DarkModeSharpness",@"dockDarkRim27DarkModeSharpness",@"bubbleDarkRim27DarkModeSharpness",0.5,6,nil)],
                  nil),@[@2]),
-        WXGGroup(@"透镜（按住时）",@"dock",@[WXGSlider(@"折射带宽（透镜高度的比例）",@"lensCurveBand",nil,.02,.5,@"%.3f"),
+        WXGDockKyantGroup(@"dock"),
+        WXGGroup(@"原版透镜 · 折射",@"dock",@[WXGSlider(@"折射带宽（透镜高度的比例）",@"lensCurveBand",nil,.02,.5,@"%.3f"),
                  WXGSlider(@"边缘取样深度（透镜高度的比例）",@"lensCurveDepth",nil,0,.8,@"%.3f"),
                  WXGSlider(@"色散强度",@"lensCurveDispersion",nil,0,3,@"%.2f"),
-                 WXGSlider(@"最外圈最大压缩（0 = 不限制）",@"lensCurveSqueeze",nil,0,20,@"%.1f 倍"),
-                 WXGSlider(@"透镜内容放大倍数",@"lensZoom",nil,1,1.5,nil),
+                 WXGSlider(@"最外圈最大压缩（0 = 不限制）",@"lensCurveSqueeze",nil,0,20,@"%.1f 倍")],
+                 @"关闭 Kyant 折射或使用原版渲染时，这些数值控制按压透镜。带宽和深度按透镜高度的比例设置。"),
+        WXGGroup(@"按压透镜 · 尺寸与模糊",@"dock",@[WXGSlider(@"透镜内容放大倍数",@"lensZoom",nil,1,1.5,nil),
                  WXGSlider(@"按压透镜外扩倍数",@"lensGrowth",nil,1.08,1.5,nil),
                  WXGSlider(@"按压底栏整体放大",@"barGrowth",nil,1,1.08,@"%.3f"),
                  WXGSlider(@"首尾透镜外包距离",@"endWrap",nil,2,10,@"%.1f pt"),
                  WXGSlider(@"镜内底栏统一内收",@"bodyPinch",nil,0,.30,@"%.3f"),
                  WXGSlider(@"透镜模糊半径",@"lensBlur",nil,0,12,@"%.2f pt")],
-                 @"按住底栏时浮起的那块透镜，和玻璃本体同一条折射曲线，带宽和取样深度按透镜高度的比例，随按压从 0 长到设定值。系统底栏透镜的数：带宽 0.10、取样深度 0.30（导出的参数是 0.25，按真机截图对齐是 0.30）。色散强度：往四个角方向分色，0 关掉；“RGB 色散”总开关（通用页）关着时没有。放大、外扩、整体放大、外包距离、内收是透镜的几何：系统的数由“底栏”页的“套用 iOS 26 实测数值”一次设好。"),
-        WXGGroup(@"透镜里的图标和文字",@"dock",@[WXGSlider(@"图标和文字的折射强度",@"lensIconRefraction",nil,0,20,nil),
+                 @"这组数值控制两种透镜的尺寸、镜内底栏内收和模糊。"),
+        WXGGroup(@"原版透镜 · 图标和文字",@"dock",@[WXGSlider(@"图标和文字的折射强度",@"lensIconRefraction",nil,0,20,nil),
                  WXGSlider(@"图标和文字的折射宽度",@"lensIconEdgeWidth",nil,1,60,@"%.1f pt"),
                  WXGSlider(@"图标和文字的上下宽度比例",@"lensIconTopEdgeRatio",nil,.1,1,nil),
                  WXGSlider(@"图标和文字的上下收窄曲线",@"lensIconEdgeSharpness",nil,1,6,nil),
@@ -327,12 +338,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                              WXGSwitch(@"切换时用系统的位置弹簧",@"dockMoveSpring",nil),
                              WXGSlider(@"位置弹簧：响应",@"dockMoveResponse",nil,.2,.8,@"%.2f s"),WXGSlider(@"位置弹簧：阻尼比",@"dockMoveDamping",nil,.5,1.2,@"%.2f")],
                  @"把 iOS 26.6 真机底栏上量出来的数值整套搬进这条底栏。\n\n套用 iOS 26 实测数值：一次把下面这些都改成系统的数（改的就是各页里原有的滑块和开关，套用后都还能自己再调）——\n· 尺寸：宽度 = 屏幕宽 − 左右各 21 pt，高度 62 pt，选中胶囊内边距 4 pt；\n· 格子：每格加宽 10 pt（系统四个格子各 107.5 pt 宽，比四等分宽 10 pt，相邻两格互相重叠，所以图标比四等分略往中间靠，静止的选中胶囊就是一整格 107.5 × 54）；\n· 按下的透镜：宽高各加 16 pt（123.5 × 70，上下各比底栏多出 4 pt），到最左 / 最右时伸出底栏约 8.4 pt，整条底栏放大 3.55%，镜内图标放大 1.16 倍，镜内底栏内收 0.12；\n· 透镜玻璃（“效果调整”的底栏范围）：折射带宽 0.10、取样深度 0.30，透镜模糊 0，滤镜色关，透镜的边框用 iOS 26（高光曲率 0.8）；\n· 形变：打开，强度 1、回弹快慢 8、回弹阻尼 0.5、不对称（这几项分组栏也在用）；\n· 动作：松手后透镜先停 0.18 秒再落下；切换标签时透镜走系统的位置弹簧（响应 0.4 秒、阻尼比 0.86）；轻点时透镜 0.245 秒长满、0.23 秒落下，起落都是一上来就快、收尾软（走弹簧时自动用这条曲线）；\n· 底栏这块玻璃自己（FIX131，对着静止的系统底栏量的；“效果调整”的底栏范围）：折射、模糊和按钮同一条规律（实测折射带 0.248、深度 0.79、模糊 3.15 pt，都对得上）；浅色的面比按钮通透一点（白色面纱 0.585、提亮 0）；阴影比按钮淡得多（0.065、模糊 15 pt）；边框 iOS 26；\n· 选中胶囊：浅色 = 黑 7%，深色 = 白 14%，按住时消失；\n· 手指下的光：打开（光斑 0.15、整条 0.04）；\n· 图标和文字（FIX135）：图标高 26 pt、间距 1、整体上移 1 pt、文字 10 pt 中等；形变两半的幅度 1、落下后最扁 0.82。\n\n还原套用前的数值：第一次套用前，这些项原来的值会存一份；点这里全部放回去（只动上面这些项）。\n\n下面四项默认都是 0 / 关：\n· 每格加宽：0 = 四等分。\n· 按压时透镜加宽：0 = 至少 1.2 格宽；大于 0 时按下的透镜 = 一格 + 这么多，高度仍由“按压透镜外扩倍数”决定。\n· 松手后透镜停留：手指离开后透镜保持抬起的时间，之后再落回胶囊。\n· 切换时用系统的位置弹簧：点别的标签、拖到别的标签松手、松手回到原标签时，透镜按这条弹簧滑过去（起步快、收尾软、过头约 0.5%），这时“点按滑动时长”不起作用；手指按着拖动时的跟手还是原来的。系统“减弱动态效果”打开时这两项不生效。"),
-        WXGGroup(@"按压透镜 · Kyant R4",nil,@[
-            WXGSwitch(@"透镜使用参考项目折射与色散",@"dockKyantOptics",nil),
-            WXGSlider(@"透镜折射带宽",@"dockKyantLensRefractionHeight",nil,0,40,@"%.1f pt"),
-            WXGSlider(@"透镜折射深度",@"dockKyantLensRefractionAmount",nil,0,50,@"%.1f pt"),
-            WXGSlider(@"透镜色散",@"dockKyantDispersion",nil,0,5,@"%.2f")],
-            @"仅作用于系统实时模式下主连续底栏的按压透镜。底栏本体、原有内收和动效保持 FIX135；透镜沿用 iOS 26 边框。关闭开关可对照原方案。保留已有参数，不自动套用或重置。"),
+        WXGDockKyantGroup(nil),
         WXGGroup(@"离散样式",nil,@[WXGSwitch(@"离散底栏",@"dockDiscrete",nil),
                                  WXGSwitch(@"未选中的小球连成一体",@"dockDiscreteConnected",nil),
                                  WXGSlider(@"相连时图标向中间收拢",@"dockDiscreteGather",nil,0,.45,@"%.2f"),

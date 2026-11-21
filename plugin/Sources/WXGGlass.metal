@@ -228,6 +228,28 @@ float4 wxgLensBarSpectrum(float dd,float ddR,float ddB,float soft,float em,float
     return float4(rgb+saturate(u.extra2.z)*(float3(most)-alpha),most);
 }
 
+// Each tile has transparent padding around its own icon, label and badge.
+// Zoom the content about the installed tab's center; only the optical ray
+// and the native clip follow the moving lens.
+float4 wxgDockGlyph(float2 ray,float zoom,constant WXGUniforms &u,texture2d<float> icons) {
+    float2 base=wxgBasePoint(ray,u);
+    float cy=u.bar.y+u.bar.w*.5f;
+    if(u.extra2.x<=0.f || u.extra2.y<=0.f) {
+        // A failed tile upload can still show the ordinary atlas in register.
+        return icons.sample(wxgSampler,base/u.viewport.xy);
+    }
+    float width=u.extra2.x;
+    float y=(cy+(base.y-cy)/zoom)/u.extra2.y;
+    if(y<0.f || y>1.f)return float4(0.f);
+    float4 glyph=float4(0.f);
+    for(int i=0;i<4;i++) {
+        float x=.5f+(base.x-u.style[i])/(zoom*width);
+        if(x>0.f && x<1.f)
+            glyph=wxgOver(icons.sample(wxgSampler,float2((i+x)*.25f,y)),glyph);
+    }
+    return glyph;
+}
+
 // R4: the original render-server backdrop captures the real FIX135 bar,
 // including its material/rim. Only selected glyphs/selection are drawn here.
 float4 wxgKyantLensOverlay(float2 p,constant WXGUniforms &u,texture2d<float> icons) {
@@ -237,23 +259,36 @@ float4 wxgKyantLensOverlay(float2 p,constant WXGUniforms &u,texture2d<float> ico
     float2 ray,spread;
     WXGKyantLensDisplace(p,center,halfSize,radius>0.f?radius:min(halfSize.x,halfSize.y),
         u.lensOptics.z,u.lensOptics.x,u.lensOptics.y,0.f,&ray,&spread,nullptr);
-    float2 barCenter=u.bar.xy+u.bar.zw*.5f,barSize=u.bar.zw*u.motion.x;
-    float2 barOrigin=barCenter-barSize*.5f;
-    float2 anchor=float2(u.motion.w,u.bar.y+u.bar.w*.5f);
+    float selectionAlpha=u.selectionColor.a*wxgSelectionWeight(press,u);
+    bool splitGlyph=spread.x!=0.f || spread.y!=0.f;
+    float4 neutralGlyph=splitGlyph?float4(0.f):wxgDockGlyph(ray,zoom,u,icons);
+    if(selectionAlpha<=0.f && !splitGlyph)return neutralGlyph;
+
+    float2 barSize=u.bar.zw*u.motion.x,barOrigin=u.bar.xy+(u.bar.zw-barSize)*.5f;
+    WXGKyantMaterialBand materialEdge={};
+    float spectralInset=0.f;
+    if(selectionAlpha>0.f) {
+        spectralInset=WXGKyantSceneInset(ray,center,u.lens.zw,radius,barOrigin,barSize,0.f,
+                                        press,u.optics.z,u.lensOptics.w,zoom);
+        float2 neutral=WXGKyantSceneSource(center+(p-center)/zoom,p,center,u.lens.zw,radius,
+                                          barOrigin,barSize,0.f,press,u.optics.z,u.lensOptics.w,zoom);
+        materialEdge=WXGKyantMaterialProfile(neutral,u.lens.zw,barOrigin,barSize,0.f,
+                                             u.lensOptics.z,u.lensOptics.x,u.lensOptics.y);
+    }
     float3 rgb=float3(0.f),alpha=float3(0.f);
     for(int k=0;k<7;k++) {
-        float2 spectralRay=ray+spread*WXGKyantSpectralOffset(k);
-        float2 src=center+(spectralRay-center)/zoom;
-        src=WXGKyantSceneSource(src,ray,center,u.lens.zw,radius,barOrigin,barSize,0.f,
-                               press,u.optics.z,u.lensOptics.w,zoom);
-        WXGShapeSample field=wxgShape(src,float4(barOrigin,barSize),0.f);
-        float coverage=wxgMask(field.distance,max(.8f/u.viewport.z,fwidth(field.distance)*.75f));
-        // The atlas lives in the bar's unscaled coordinates. Keep the
-        // content zoom isotropic about its tab anchor as the lens travels.
-        float2 glyphSrc=anchor+(wxgBasePoint(spectralRay,u)-anchor)/zoom;
-        float4 glyph=icons.sample(wxgSampler,glyphSrc/u.viewport.xy);
-        float a=u.selectionColor.a*wxgSelectionWeight(press,u)*coverage;
-        float4 acc=wxgOver(glyph,float4(u.selectionColor.rgb*a,a));
+        float wave=WXGKyantSpectralOffset(k);
+        float2 spectralRay=ray+spread*wave;
+        float4 acc=splitGlyph?wxgDockGlyph(spectralRay,zoom,u,icons):neutralGlyph;
+        if(selectionAlpha>0.f) {
+            float2 src=center+(spectralRay-center)/zoom;
+            src=WXGKyantInsetSource(src,barOrigin,barSize,0.f,spectralInset);
+            src=WXGKyantMaterialSample(src,materialEdge,wave);
+            WXGShapeSample field=wxgShape(src,float4(barOrigin,barSize),0.f);
+            float coverage=wxgMask(field.distance,max(.8f/u.viewport.z,fwidth(field.distance)*.75f));
+            float a=selectionAlpha*coverage;
+            acc=wxgOver(acc,float4(u.selectionColor.rgb*a,a));
+        }
         float3 w=WXGKyantSpectralRGBWeight(k);rgb+=w*acc.rgb;alpha+=w*acc.a;
     }
     float most=max(alpha.x,max(alpha.y,alpha.z));

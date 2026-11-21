@@ -325,6 +325,7 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 @property(nonatomic,copy) NSArray<UIView *> *backdropExclusions;
 @property(nonatomic) CGRect glassRect;
 @property(nonatomic,readonly) CGRect drawnBarRect;   // Body clip in glass coordinates, including press growth.
+- (BOOL)attachDockMaterialGlow:(UIView *)glow;
 @property(nonatomic) CGRect lensRect;
 // FIX113 Y: the lens' height without the drag-speed deformation (0 unknown):
 // the strip between the smaller bar and the lens' rim is kept against it.
@@ -421,6 +422,8 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 @property(nonatomic,readonly) NSString *diagnostics;
 @property(nonatomic,readonly) NSDictionary *layerEvidence;
 - (void)setNormalIcons:(UIImage *)normal selectedIcons:(UIImage *)selected;
+- (void)setDockTabAtlas:(UIImage *)atlas texture:(id<MTLTexture>)texture centers:(NSArray<NSNumber *> *)centers;
+- (void)drawDockTabPatch:(NSInteger)tab pixels:(CGRect)pixels scale:(CGFloat)scale drawing:(void (^)(void))draw;
 - (void)setNormalIconTexture:(id<MTLTexture>)normal selectedIconTexture:(id<MTLTexture>)selected;
 // FIX113: a rectangle of an icon atlas texture redrawn in place: `pixels`
 // (the texture's pixels, top-left origin) cleared and `draw` run in the
