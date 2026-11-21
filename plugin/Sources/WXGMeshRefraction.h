@@ -304,7 +304,12 @@ typedef struct { float cx,cy,nx,ny,u; int kind; } WXGContourSample; /* kind 0 st
 static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,float t,float channel) {
     /* The curve; a channel at most WXG_LENS_SPLIT_SPAN of the
        shift from green (|I| <= 1), so the rings follow the steepest one. */
-    if(o.kyantMode>.5f)return t+WXGLensCurveOffset(t,o.kyantHeight,o.kyantAmount)*(1.f+channel*WXG_MAX(o.dispersion,0.f));
+    if(o.kyantMode>.5f) {
+        float h=o.kyantHeight,a=o.kyantAmount;
+        float off=(h>1e-4f && a>1e-4f && t<h)?WXGKyantSmoothCircleMap(1.f-WXG_MAX(t,0.f)/h)*a:0.f;
+        float disp=WXG_MAX(o.dispersion,0.f);
+        return t+off*(1.f+channel*(disp/(1.f+.08f*disp))*.25f);
+    }
     if(o.curveHeight>0.f)return t+WXGLensCurveOffsetCapped(t,o.curveHeight,o.curveAmount,o.curveSqueeze)*(1.f+channel*(o.dispersion>0.f?o.dispersion*WXG_LENS_SPLIT_SPAN:0.f));
     float d=-t;
     float off=WXGMeshOffset(o,d,width);   /* FIX113 I, FIX114 I */
@@ -330,7 +335,7 @@ static inline int WXGMeshRings(WXGMeshOptics o,float limit,float pad,WXGMeshQual
         float shapeMinHalf=WXG_MIN(WXGMeshShapeWidth(o),WXGMeshShapeHeight(o))*.5f;
         WXGKyantCrownTarget(shapeMinHalf,o.kyantHeight,o.kyantAmount,&hCrown,&aCrown);
         crownOptics.kyantHeight=hCrown;crownOptics.kyantAmount=aCrown;
-        if(o.dispersion>0.f)band=WXG_MIN(WXG_MAX(band,.40f*shapeMinHalf+.75f),limit);
+        if(o.dispersion>0.f)band=WXG_MIN(WXG_MAX(band,.55f*shapeMinHalf+.75f),limit);
     }
     int n=0;rings[n++]=-pad;
     float t=0.f;
@@ -413,11 +418,20 @@ static inline void WXGMeshContourPoint(WXGContourSample s,float hx,float hy,floa
 }
 /* FIX96: a capsule's rings follow its continuous outline (the field's
    depth is the ring's depth again): moved out along the circle's normal by
-   WXGContinuousCorrection. Rounded rectangles are unchanged. */
+   WXGContinuousCorrection (capsule == 1), or inward by WXGKyantCapsule26Offset
+   for iOS 26 continuous Kyant capsules (capsule == 2, on interior rings t >= 0).
+   Rounded rectangles are unchanged. */
 static inline void WXGMeshContourPointC(WXGContourSample s,float hx,float hy,float R,float t,int capsule,float *x,float *y) {
     WXGMeshContourPoint(s,hx,hy,R,t,x,y);
     if(!capsule)return;
     WXGShapeSample c=WXGCapsuleOpticalField(*x,*y,2.f*hx,2.f*hy);
+    if(capsule==2) {
+        if(t>=0.f) {
+            float off=WXGKyantCapsule26Offset(WXG_K_MAKE2(*x,*y),WXG_K_MAKE2(hx,hy),R);
+            *x-=c.nx*off;*y-=c.ny*off;
+        }
+        return;
+    }
     float corr=WXGContinuousCorrection(*x,*y,2.f*hx,2.f*hy);
     *x+=c.nx*corr;*y+=c.ny*corr;
 }
@@ -459,7 +473,7 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
     /* Rings end 1.25 pt past the band (plain mapping there), never at the
        centre; a tiny shape stops 0.5 pt short of collapsing. */
     float band=WXG_MIN(WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),.5f)+.75f,limit);   // FIX88: and the colour split's band
-    if(o.kyantMode>.5f && o.dispersion>0.f)band=WXG_MIN(WXG_MAX(band,.40f*limit+.75f),limit);
+    if(o.kyantMode>.5f && o.dispersion>0.f)band=WXG_MIN(WXG_MAX(band,.55f*limit+.75f),limit);
     if(o.transition>0.f)band=WXG_MIN(WXG_MAX(band,WXGMeshSoftBand(o,o.edgeWidth)+.75f),limit);   // FIX114 I: and the soft band
     float stop=WXG_MIN(band+1.25f,limit-.5f);
     /* FIX113 U: rings down past the smaller bar's outline (the bar's top /
@@ -474,7 +488,7 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
     int n=WXGMeshContour(hx,hy,R,q,contour,WXGMeshMaxContour);
     int m=WXGMeshRings(o,stop,pad,q,rings,WXGMeshMaxRings);
     if(n<4 || m<2 || n*m>pointCapacity)return 0;
-    int capsule=!(o.radius>0.f) && !(o.kyantMode>.5f);
+    int capsule=!(o.radius>0.f)?(o.kyantMode>.5f?2:1):0;
     for(int i=0;i<n;i++)WXGMeshContourPointC(contour[i],hx,hy,R,rings[m-1],capsule,&innerX[i],&innerY[i]);
     int chain=WXGMeshZipperChains(innerX,innerY,n,top,bottom,WXGMeshMaxContour);
     if(chain<2 || n*(m-1)+chain-1>faceCapacity)return 0;

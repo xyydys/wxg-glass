@@ -105,5 +105,16 @@ int main(void) {
             assert(pageChroma>5.f && longest>=16);
         }
     }
-    puts("PASS: solid mirrored crown lip, clean dark gap, continuous 7-tap crown & shoulder dispersion, neutral center.");
+    /* R9: verify strict left-right symmetry across rasterized 7-tap quad meshes
+       (eliminating left-side stepping and top-right / bottom-left pinch knots). */
+    for(int pair=0;pair<2;pair++) {
+        int colL=pair,colR=ColumnCount-1-pair;
+        for(int row=0;row<RowCount;row++) {
+            float dBarL=fabsf(luma(barScene[colL][row])-luma(barScene[colR][row]));
+            float dBarC=fabsf(chroma(barScene[colL][row])-chroma(barScene[colR][row]));
+            float dPageC=fabsf(chroma(pageScene[colL][row])-chroma(pageScene[colR][row]));
+            assert(dBarL<.25f && dBarC<.25f && dPageC<.25f);
+        }
+    }
+    puts("PASS: solid mirrored crown lip, clean dark gap, symmetric 7-tap crown & shoulder dispersion, neutral center.");
 }

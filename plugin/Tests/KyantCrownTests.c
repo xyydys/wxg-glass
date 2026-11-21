@@ -94,20 +94,96 @@ static void checkRoundAndEndRelaxation(void) {
     wxg_kf2_t r1=WXGKyantSpectralRay(p1,half1,half1,35.f,18,26,2.4f,0,0,0,1.f,NULL);
     wxg_kf2_t r2=WXGKyantSpectralRay(p2,half2,half2,35.f,18,26,2.4f,0,0,0,1.f,NULL);
     assert(hypotf(r1.x-r2.x,r1.y-r2.y)<.02f);
-    /* End-tab relaxation narrows the wrapping end cap to the crisp crown band
-       while leaving the opposite inner end full width and x=0 C1-smooth. */
+    /* End-tab relaxation narrows the wrapping end cap band while keeping enough
+       refraction depth to wrap a full luminous outer lip around 3/9 o'clock
+       across the ~12.5 pt endWrap + inset gap, leaving the inner end full width
+       and x=0 C1-smooth. */
     float hMid=0,aMid=0,cMid=0,hWrap=0,aWrap=0,cWrap=0,hInner=0,aInner=0,cInner=0;
     WXGKyantCrownBands((wxg_kf2_t){60,0},(wxg_kf2_t){62,35},18,26,0,0,&hMid,&aMid,&cMid);
     WXGKyantCrownBands((wxg_kf2_t){60,0},(wxg_kf2_t){62,35},18,26,0,1,&hWrap,&aWrap,&cWrap);
     WXGKyantCrownBands((wxg_kf2_t){-60,0},(wxg_kf2_t){62,35},18,26,0,1,&hInner,&aInner,&cInner);
     assert(fabsf(hMid-18.f)<.05f && fabsf(hInner-18.f)<.05f);
-    assert(hWrap<9.f && aWrap<24.f && cWrap>.99f);
+    assert(hWrap<10.f && aWrap>=24.f && cWrap>.60f);
+    /* Verify 3 o'clock wrapping end cap produces both a solid outer lip (>= 1.5 pt)
+       and a clean dark crescent (< 10.5 pt) across a 12.5 pt right-end gap. */
+    float endMinS=1e9f,endLip=-1.f;
+    wxg_kf2_t endHalf={54.f,35.f};
+    for(int j=0;j<=600;j++) {
+        float t=j*.025f;
+        wxg_kf2_t ray=WXGKyantRefractPoint(WXG_K_MAKE2(108.f-t,35.f),endHalf,endHalf,35.f,18.f,26.f,0.f,0.f,1.f,NULL,NULL,NULL,NULL);
+        float s=108.f-ray.x;
+        if(s<endMinS)endMinS=s;
+        if(endLip<0.f && s<12.5f)endLip=t;
+    }
+    assert(endLip>=1.5f && endLip<=3.5f && endMinS<10.5f);
     /* Zero horizontal seam across x = 0 when endRight == 1. */
     float hL=0,hC=0,hR=0;
     WXGKyantCrownBands((wxg_kf2_t){-.5f,-33},(wxg_kf2_t){62,35},18,26,0,1,&hL,NULL,NULL);
     WXGKyantCrownBands((wxg_kf2_t){0.f,-33},(wxg_kf2_t){62,35},18,26,0,1,&hC,NULL,NULL);
     WXGKyantCrownBands((wxg_kf2_t){.5f,-33},(wxg_kf2_t){62,35},18,26,0,1,&hR,NULL,NULL);
     assert(fabsf(hR-2.f*hC+hL)<.05f);
+}
+
+static void checkR9SymmetryNoPinchAndCapsule26(void) {
+    wxg_kf2_t hs={62.f,35.f};
+    /* 1. Strict 4-quadrant symmetry & zero Top-Right / Bottom-Left pinch knot
+          at both low (ca = 1.0) and max (ca = 5.0) dispersion. */
+    float xs[]={12.f,24.f,34.f,42.f,50.f};
+    for(unsigned i=0;i<sizeof(xs)/sizeof(xs[0]);i++) {
+        float dx=xs[i];
+        float yEdge=-35.f;
+        for(float y=-35.f;y<0.f;y+=.02f) {
+            if(WXGKyantSdRoundedRect(WXG_K_MAKE2(dx,y),hs,35.f)<=0.f){yEdge=y;break;}
+        }
+        float spLo[4],spMid[4],spHi[4];
+        float sx[4]={-1.f,1.f,1.f,-1.f},sy[4]={-1.f,-1.f,1.f,1.f};
+        for(int q=0;q<4;q++) {
+            wxg_kf2_t p=WXG_K_MAKE2(hs.x+sx[q]*dx,hs.y+sy[q]*(yEdge+2.f));
+            wxg_kf2_t a1=WXGKyantSpectralRay(p,hs,hs,35.f,18.f,26.f,1.0f,0.f,0.f,0.f,1.f,NULL);
+            wxg_kf2_t b1=WXGKyantSpectralRay(p,hs,hs,35.f,18.f,26.f,1.0f,0.f,0.f,0.f,-1.f,NULL);
+            spLo[q]=hypotf(a1.x-b1.x,a1.y-b1.y);
+            wxg_kf2_t a2=WXGKyantSpectralRay(p,hs,hs,35.f,18.f,26.f,2.4f,0.f,0.f,0.f,1.f,NULL);
+            wxg_kf2_t b2=WXGKyantSpectralRay(p,hs,hs,35.f,18.f,26.f,2.4f,0.f,0.f,0.f,-1.f,NULL);
+            spMid[q]=hypotf(a2.x-b2.x,a2.y-b2.y);
+            wxg_kf2_t a3=WXGKyantSpectralRay(p,hs,hs,35.f,18.f,26.f,5.0f,0.f,0.f,0.f,1.f,NULL);
+            wxg_kf2_t b3=WXGKyantSpectralRay(p,hs,hs,35.f,18.f,26.f,5.0f,0.f,0.f,0.f,-1.f,NULL);
+            spHi[q]=hypotf(a3.x-b3.x,a3.y-b3.y);
+            /* Never pinches to zero in Top-Right (q=1) or Bottom-Left (q=3),
+               and widens strictly monotonically from ca=1.0 -> 2.4 -> 5.0. */
+            assert(spLo[q]>1.5f);
+            assert(spMid[q]>spLo[q]*1.5f);
+            assert(spHi[q]>spMid[q]*1.10f);
+            /* At 3.5 pt inside the perimeter glow band, ca=5.0 widens ~2x over ca=2.4. */
+            wxg_kf2_t pIn=WXG_K_MAKE2(hs.x+sx[q]*dx,hs.y+sy[q]*(yEdge+3.5f));
+            wxg_kf2_t i2a=WXGKyantSpectralRay(pIn,hs,hs,35.f,18.f,26.f,2.4f,0.f,0.f,0.f,1.f,NULL);
+            wxg_kf2_t i2b=WXGKyantSpectralRay(pIn,hs,hs,35.f,18.f,26.f,2.4f,0.f,0.f,0.f,-1.f,NULL);
+            wxg_kf2_t i3a=WXGKyantSpectralRay(pIn,hs,hs,35.f,18.f,26.f,5.0f,0.f,0.f,0.f,1.f,NULL);
+            wxg_kf2_t i3b=WXGKyantSpectralRay(pIn,hs,hs,35.f,18.f,26.f,5.0f,0.f,0.f,0.f,-1.f,NULL);
+            float inMid=hypotf(i2a.x-i2b.x,i2a.y-i2b.y),inHi=hypotf(i3a.x-i3b.x,i3a.y-i3b.y);
+            assert(inHi>inMid*1.80f);
+        }
+        for(int q=1;q<4;q++) {
+            assert(fabsf(spLo[q]-spLo[0])<1e-3f);
+            assert(fabsf(spMid[q]-spMid[0])<1e-3f);
+            assert(fabsf(spHi[q]-spHi[0])<1e-3f);
+        }
+    }
+    /* 2. WXGCapsule26 continuous shoulder dip (~1.36% R at junction x = hx-R,
+          0 at apex x = 0, 0 on plain circles and rounded rectangles). */
+    float dipApex=WXGKyantCapsule26Offset(WXG_K_MAKE2(0.f,-35.f),hs,35.f);
+    float dipJunc=WXGKyantCapsule26Offset(WXG_K_MAKE2(hs.x-35.f,-35.f),hs,35.f);
+    float dipCirc=WXGKyantCapsule26Offset(WXG_K_MAKE2(0.f,-35.f),WXG_K_MAKE2(35.f,35.f),35.f);
+    float dipRect=WXGKyantCapsule26Offset(WXG_K_MAKE2(hs.x-12.f,-35.f),hs,12.f);
+    assert(fabsf(dipApex)<1e-5f && fabsf(dipCirc)<1e-5f && fabsf(dipRect)<1e-5f);
+    assert(dipJunc>0.40f && dipJunc<0.55f); /* 0.0136 * 35 = 0.476 pt */
+    /* 3. 15-tap glyph spectral weights sum strictly to (1, 1, 1). */
+    float sr=0.f,sg=0.f,sb=0.f;
+    for(int k=0;k<WXG_KYANT_GLYPH_TAPS;k++) {
+        wxg_kf3_t w=WXGKyantGlyphSpectralRGBWeight(k);
+        sr+=w.x; sg+=w.y; sb+=w.z;
+    }
+    assert(fabsf(sr-1.f)<1e-4f && fabsf(sg-1.f)<1e-4f && fabsf(sb-1.f)<1e-4f);
+    printf("PASS: R9 4-quadrant symmetry, zero TR/BL pinch, monotonic ca=1..5 widening, WXGCapsule26 dip (%.3f pt), 15-tap neutral weights.\n",dipJunc);
 }
 
 static void checkMeshes(void) {
@@ -186,6 +262,7 @@ int main(void) {
     checkCrownTaper();
     checkCrownDispersionAndCenterCrispness();
     checkRoundAndEndRelaxation();
+    checkR9SymmetryNoPinchAndCapsule26();
     checkMeshes();
     checkElasticFixedInnerBarHeight();
     return 0;

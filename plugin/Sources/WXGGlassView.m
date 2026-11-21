@@ -494,7 +494,7 @@ static id WXGMakeSpectralFilter(NSInteger tapIndex) {
             _group=[group copy];
         }
         id spec=WXGMakeSpectralFilter(tapIndex);
-        [self.layer setValue:@(2.) forKey:@"marginWidth"];
+        [self.layer setValue:@(MAX(2.,radius*3.)) forKey:@"marginWidth"];
         id blur=radius>=.2?WXGMakeBlurFilter(radius):nil;
         NSMutableArray *filters=[NSMutableArray array];
         if(blur)[filters addObject:blur];if(spec)[filters addObject:spec];
@@ -2254,7 +2254,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             if([self kyantOpticsActive]) {
                 CGFloat spectral=c.syncDispersion && WXGFilterFactoryAvailable()?[c extraNumber:@"dockKyantDispersion"]:0;
                 CGFloat depth=[c extraNumber:@"dockKyantLensRefractionAmount"];
-                CGFloat ring=spectral>0?4.5*spectral/(1.+.25*spectral):0;
+                CGFloat ring=spectral>0?5.5*spectral/(1.+.08*spectral):0;
                 CGFloat farSide=MAX(0.,1.55*depth-(CGFloat)shortSide);
                 pad=MIN(64.,ceil((full+MAX(ring,farSide)+4.)/2.)*2.);
             }
@@ -2294,11 +2294,14 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         lensOptics.edgeWidth=MAX(.5f,lensOptics.kyantHeight);
         lensOptics.dispersion=(float)[c extraNumber:@"dockKyantDispersion"];
         BOOL spectral=lensMesh && lensOptics.dispersion>0.f && c.syncDispersion && WXGFilterFactoryAvailable();
+        // Match iOS 26 soft spectral halo: proportional softening melts the 7
+        // backdrop taps into a continuous rainbow band while Metal glyphs stay sharp.
+        CGFloat spectralSoft=spectral?MIN(1.8,0.34*lensOptics.dispersion*press)*scale:0.;
         for(NSUInteger i=0;i<_lensStack.count;i++) {
             WXGSyncBackdropView *view=_lensStack[i];
             BOOL show=lens && press>0.f && (spectral || i==0);view.hidden=!show;
             if(!show){[view applyRefraction:lensOptics quality:WXGMeshQualityLensBar enabled:NO];continue;}
-            if(spectral)[view configureSpectralGroup:_lensGroup tapIndex:(NSInteger)i radius:lensBlur];
+            if(spectral)[view configureSpectralGroup:_lensGroup tapIndex:(NSInteger)i radius:lensBlur+spectralSoft];
             else [view configureGroup:_lensGroup radius:lensBlur channel:0 plain:YES tone:(WXGBackdropTone){1,0}];
             view.captureLimit=_lightweight || c.performanceMode?2:0;[view applyCaptureScale];
             WXGMeshOptics channelOptics=lensOptics;
