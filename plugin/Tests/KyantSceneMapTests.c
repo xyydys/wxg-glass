@@ -35,7 +35,7 @@ int main(void) {
     printf("R4 original shrink parity: %d samples, worst %.8f pt; native spectral/shrink pixels %d/%d\n",n,worst,split,shrink);
     static WXGMeshPoint points[20000];static unsigned int faces[20000][4];
     int meshes=0,maxVertices=0;
-    for(int size=0;size<3;size++)for(int pr=1;pr<=4;pr++)for(int k=0;k<7;k++) {
+    for(int size=0;size<3;size++)for(int pr=1;pr<=4;pr++)for(int k=0;k<WXG_KYANT_SPECTRAL_TAPS;k++) {
         WXGMeshOptics m={0};float pad=60,press=pr*.25f;
         m.width=100+size*20+2*pad;m.height=60+size*10+2*pad;m.padX=m.padY=pad;
         m.fieldScale=1;m.zoomAfter=1+press*.16f;m.kyantMode=1;m.kyantHeight=18*press;m.edgeWidth=m.kyantHeight;

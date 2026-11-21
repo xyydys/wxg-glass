@@ -10,6 +10,7 @@ static inline int WXGLensKyantCode(float w) { return w >= 1500.f; }
 
 #ifdef __METAL_VERSION__
 #define WXG_K_OUT thread
+#define WXG_K_NULL nullptr
 #define WXG_K_F2 float2
 #define WXG_K_F3 float3
 #define WXG_K_F4 float4
@@ -29,6 +30,7 @@ static inline int WXGLensKyantCode(float w) { return w >= 1500.f; }
 #define WXG_K_MIX mix
 #else
 #define WXG_K_OUT
+#define WXG_K_NULL NULL
 #include <math.h>
 #include <stddef.h>
 typedef struct { float x, y; } wxg_kf2_t;
@@ -63,12 +65,19 @@ static inline float WXGKyantEase(float x) {
     return x * x * (3.f - 2.f * x);
 }
 
-/* Smooth finite-slope quarter-circle lens map: preserves full rim amplitude
-   (g(0)=0, g'(0)=0, g(1)=1) while eliminating the infinite vertical slope at
-   sd=0 that exploded spectral taps into discrete concentric steps. */
+/* Real iOS 26 glassBackground quarter-circle map (eps = 0.004): sharp ethereal
+   outer mirrored bevel without strict infinity at u = 1. */
 static inline float WXGKyantSmoothCircleMap(float x) {
     x = WXG_K_SATURATE(x);
-    return (1.f - WXG_K_SQRT(WXG_K_MAX(0.04f, 1.f - 0.96f * x * x))) * 1.25f;
+    return (1.f - WXG_K_SQRT(WXG_K_MAX(0.004f, 1.f - 0.996f * x * x))) * (1.f / (1.f - 0.06324555f));
+}
+
+/* Slightly softer quarter-circle map (eps = 0.025) for ContentLensingView icons
+   so 15-tap pre-refraction rainbow stays silky smooth across both folded and
+   direct sides even on thin CJK text strokes. */
+static inline float WXGKyantIconCircleMap(float x) {
+    x = WXG_K_SATURATE(x);
+    return (1.f - WXG_K_SQRT(WXG_K_MAX(0.025f, 1.f - 0.975f * x * x))) * (1.f / (1.f - 0.15811388f));
 }
 
 static inline float WXGKyantCircleMap(float x) {
@@ -166,6 +175,25 @@ static inline WXG_K_F2 WXGKyantGradSdRoundedRect(WXG_K_F2 coord, WXG_K_F2 halfSi
     }
 }
 
+/* CASDFElementLayer.gradientOvalization: gently blends the capsule SDF normal
+   toward the elliptical radial direction from center, reproducing the convex
+   droplet grid bending captured on iOS 26.6 (f00266 / f00357). */
+static inline WXG_K_F2 WXGKyantOvalizedGrad(WXG_K_F2 centered, WXG_K_F2 halfSize, float radius, float oval) {
+    WXG_K_F2 g = WXGKyantGradSdRoundedRect(centered, halfSize, radius);
+    if (oval > 1e-4f) {
+        float ex = centered.x / WXG_K_MAX(halfSize.x, 1.f);
+        float ey = centered.y / WXG_K_MAX(halfSize.y, 1.f);
+        float el = WXG_K_SQRT(ex * ex + ey * ey);
+        if (el > 1e-5f) {
+            g.x += oval * (ex / el);
+            g.y += oval * (ey / el);
+            float gl = WXG_K_LENGTH(g);
+            if (gl > 1e-6f) { g.x /= gl; g.y /= gl; }
+        }
+    }
+    return g;
+}
+
 
 /* Inner-bar inverse mapping for the native backdrop mesh and Metal selection
    coverage. Glyphs have their own source coordinates.
@@ -205,9 +233,13 @@ static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
         barOrigin,barSize,barRadius,press,pinch,extra,extra,zoom);
 }
 
-/* iOS 26 measured crown target (golden invariant f_min = h + a - sqrt(h^2 + a^2)
-   stays < 6.2 pt < 6.75..7.5 pt gap so the dark pocket stays clean while keeping
-   a solid ~2.4..2.7 pt mirrored outer lip). */
+/* Real iOS 26 ClearGlassView (glassBackground) uniform bevel proportions
+   verified on iOS 26.6 GlassProbe 2 (f00224/f00241/f00266/f00337/f00357) &
+   IMG_9424: ONE uniform ordinary liquid-glass bevel all around the capsule
+   (band = 0.105 * shortSide = 7.35 pt, depth = 0.31 * shortSide = 21.7 pt on
+   a 70 pt lifted lens), scaled proportionally with the user's refraction sliders.
+   Eliminates Kyant's fat 18 pt fleshy neck bulge at the 4 corners so the inner
+   bar stays razor-sharp until the short, crisp ~7 pt liquid-adhesion crossing. */
 static inline void WXGKyantCrownTarget(
     float minHalf,
     float refractionHeight,
@@ -215,36 +247,35 @@ static inline void WXGKyantCrownTarget(
     WXG_K_OUT float *outH,
     WXG_K_OUT float *outA
 ) {
-    float hScale = WXGOClamp(refractionHeight / 18.f, 0.f, 2.0f);
-    float aScale = WXGOClamp(refractionAmount / 26.f, 0.f, 2.0f);
-    float hCrown = WXG_K_MIN(refractionHeight, 0.20f * minHalf * (0.55f + 0.45f * hScale));
-    float aCrown = WXG_K_MIN(refractionAmount, 0.56f * minHalf * (0.55f + 0.45f * aScale));
-    if (outH) *outH = hCrown;
-    if (outA) *outA = aCrown;
+    float shortSide = 2.f * minHalf;
+    float hScale = WXGOClamp(refractionHeight / 18.f, 0.f, 2.2f);
+    float aScale = WXGOClamp(refractionAmount / 26.f, 0.f, 2.2f);
+    float hBg = WXG_K_MIN(refractionHeight, 0.105f * shortSide * hScale);
+    float aBg = WXG_K_MIN(refractionAmount, 0.31f * shortSide * aScale);
+    if (outH) *outH = hBg;
+    if (outA) *outA = aBg;
 }
 
-/* Wrapping end-cap target at the dock's left/right ends: slightly deeper than
-   the flat top/bottom crown (f_min ~ 7.7 pt < 12.5 pt endWrap+inset gap) so
-   the luminous rainbow outer lip wraps smoothly all the way around 3/9 o'clock
-   without vanishing and flattening the capsule ends. */
-static inline void WXGKyantEndTarget(
+/* Real iOS 26 ContentLensingView (liftedContentWarpWrapper) target for selected
+   icons and titles (dumped directly from CASDFGlassDisplacementEffect in
+   GlassProbe 2: height = 0.20 * shortSide = 14 pt, depth = 0.26 * shortSide). */
+static inline void WXGKyantIconTarget(
     float minHalf,
     float refractionHeight,
     float refractionAmount,
     WXG_K_OUT float *outH,
     WXG_K_OUT float *outA
 ) {
-    float hScale = WXGOClamp(refractionHeight / 18.f, 0.f, 2.0f);
-    float aScale = WXGOClamp(refractionAmount / 26.f, 0.f, 2.0f);
-    float hEnd = WXG_K_MIN(refractionHeight, 0.255f * minHalf * (0.55f + 0.45f * hScale));
-    float aEnd = WXG_K_MIN(refractionAmount, 0.78f * minHalf * (0.55f + 0.45f * aScale));
-    if (outH) *outH = hEnd;
-    if (outA) *outA = aEnd;
+    float shortSide = 2.f * minHalf;
+    float hScale = WXGOClamp(refractionHeight / 18.f, 0.f, 2.2f);
+    float aScale = WXGOClamp(refractionAmount / 26.f, 0.f, 2.2f);
+    float hIc = WXG_K_MIN(refractionHeight, 0.20f * shortSide * hScale);
+    float aIc = WXG_K_MIN(refractionAmount, 0.26f * shortSide * aScale);
+    if (outH) *outH = hIc;
+    if (outA) *outA = aIc;
 }
 
-/* Smooth elliptical taper (ellipH^4 keeps the top/bottom dark pocket wide and
-   graceful before opening into the four necks), plus continuous end-tab
-   blending to WXGKyantEndTarget at the wrapping left/right ends. */
+/* Uniform iOS 26 ClearGlassView band wrapper (retains signature for callers/tests). */
 static inline void WXGKyantCrownBands(
     WXG_K_F2 centered,
     WXG_K_F2 halfSize,
@@ -256,30 +287,15 @@ static inline void WXGKyantCrownBands(
     WXG_K_OUT float *outA,
     WXG_K_OUT float *outCrownW
 ) {
+    (void)centered;
+    (void)endLeft;
+    (void)endRight;
     float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
-    float elongated = WXGKyantEase((halfSize.x - halfSize.y) / WXG_K_MAX(0.15f * halfSize.y, 1e-4f));
-    float ex = WXG_K_ABS(centered.x) / WXG_K_MAX(halfSize.x, 1.f);
-    float ey = WXG_K_ABS(centered.y) / WXG_K_MAX(halfSize.y, 1.f);
-    float ellipH = ex / WXG_K_MAX(WXG_K_SQRT(ex * ex + ey * ey), 1e-4f);
-    float e2 = ellipH * ellipH;
-    float shoulder = e2 * ellipH;
-    float sx = centered.x / WXG_K_MAX(halfSize.x, 1.f);
-    float endW = WXG_K_MAX(endLeft * WXGKyantEase((-sx) / 0.35f),
-                           endRight * WXGKyantEase(sx / 0.35f));
-
-    float hCrown = refractionHeight, aCrown = refractionAmount;
-    float hEnd = refractionHeight, aEnd = refractionAmount;
-    WXGKyantCrownTarget(minHalf, refractionHeight, refractionAmount, &hCrown, &aCrown);
-    WXGKyantEndTarget(minHalf, refractionHeight, refractionAmount, &hEnd, &aEnd);
-
-    float topW = elongated * (1.f - shoulder);
-    float hBase = refractionHeight + topW * (hCrown - refractionHeight);
-    float aBase = refractionAmount + topW * (aCrown - refractionAmount);
-    float hTargetEnd = hEnd + topW * (hCrown - hEnd);
-    float aTargetEnd = aEnd + topW * (aCrown - aEnd);
-    if (outH) *outH = hBase + endW * (hTargetEnd - hBase);
-    if (outA) *outA = aBase + endW * (aTargetEnd - aBase);
-    if (outCrownW) *outCrownW = WXG_K_MAX(topW, endW * 0.65f);
+    float hBg = 0.f, aBg = 0.f;
+    WXGKyantCrownTarget(minHalf, refractionHeight, refractionAmount, &hBg, &aBg);
+    if (outH) *outH = hBg;
+    if (outA) *outA = aBg;
+    if (outCrownW) *outCrownW = 1.f;
 }
 
 static inline WXG_K_F2 WXGKyantRefractPoint(
@@ -301,15 +317,9 @@ static inline WXG_K_F2 WXGKyantRefractPoint(
     float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
     float r = WXGOClamp(radius, 0.f, minHalf);
     float sd = WXGKyantSdRoundedRect(centered, halfSize, r);
-    float gradRadius = WXG_K_MIN(r * 1.5f, minHalf);
-    WXG_K_F2 g = WXGKyantGradSdRoundedRect(centered, halfSize, gradRadius);
-    if (depthEffect > 1e-4f) {
-        WXG_K_F2 cn = WXG_K_NORMALIZE(centered);
-        g = WXG_K_MAKE2(g.x + depthEffect * cn.x, g.y + depthEffect * cn.y);
-    }
-    float gl = WXG_K_LENGTH(g);
-    g = gl > 1e-6f ? WXG_K_MAKE2(g.x / gl, g.y / gl) : WXG_K_MAKE2(0.f, 0.f);
-    float hEff = refractionHeight, aEff = refractionAmount, crownW = 0.f;
+    float oval = depthEffect > 1e-4f ? depthEffect : 0.22f;
+    WXG_K_F2 g = WXGKyantOvalizedGrad(centered, halfSize, r, oval);
+    float hEff = 0.f, aEff = 0.f, crownW = 1.f;
     WXGKyantCrownBands(centered, halfSize, refractionHeight, refractionAmount,
                        endLeft, endRight, &hEff, &aEff, &crownW);
     if (outG) *outG = g;
@@ -325,13 +335,42 @@ static inline WXG_K_F2 WXGKyantRefractPoint(
     return WXG_K_MAKE2(coord.x + d * g.x, coord.y + d * g.y);
 }
 
-/* Symmetric 7-wavelength backdrop optical ray (iOS 26 glassForeground):
-   - 100% left-right and top-bottom symmetric with ZERO quadrant zero-crossings
-     (eliminates both left-side concentric stepping and top-right/bottom-left
-     opaque-overlap / near-disconnect pinch knots).
-   - Responsive slider curve (ca / (1 + 0.08*|ca|)) over a wider 0.55*minHalf
-     perimeter halo that blooms smoothly at the four shoulders while keeping
-     the central icon/text zone (depth >= 20 pt) completely crisp and neutral. */
+/* Real iOS 26 ContentLensingView refraction for selected icons/titles/badges. */
+static inline WXG_K_F2 WXGKyantIconRefractPoint(
+    WXG_K_F2 coord,
+    WXG_K_F2 center,
+    WXG_K_F2 halfSize,
+    float radius,
+    float refractionHeight,
+    float refractionAmount,
+    WXG_K_OUT float *outD,
+    WXG_K_OUT WXG_K_F2 *outG,
+    WXG_K_OUT float *outSd
+) {
+    WXG_K_F2 centered = WXG_K_MAKE2(coord.x - center.x, coord.y - center.y);
+    float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
+    float r = WXGOClamp(radius, 0.f, minHalf);
+    float sd = WXGKyantSdRoundedRect(centered, halfSize, r);
+    WXG_K_F2 g = WXGKyantOvalizedGrad(centered, halfSize, r, 0.35f);
+    float hEff = 0.f, aEff = 0.f;
+    WXGKyantIconTarget(minHalf, refractionHeight, refractionAmount, &hEff, &aEff);
+    if (outG) *outG = g;
+    if (outSd) *outSd = sd;
+    if (!(hEff > 1e-4f) || !(aEff > 1e-4f) || -sd >= hEff) {
+        if (outD) *outD = 0.f;
+        return coord;
+    }
+    float sdClamped = WXG_K_MIN(sd, 0.f);
+    float d = WXGKyantIconCircleMap(1.f - (-sdClamped) / hEff) * (-aEff);
+    if (outD) *outD = d;
+    return WXG_K_MAKE2(coord.x + d * g.x, coord.y + d * g.y);
+}
+
+/* Real iOS 26 glassForeground dispersion over uniform glassBackground:
+   - 100% 4-quadrant symmetric with ZERO blur on the inner bar or clear gap.
+   - Steep ringU^2.5 envelope keeps the inner bar edge (d >= 7.5 pt) razor-sharp
+     while fanning the outer ~7 pt bevel and short 4-corner crossing zone into
+     a vivid, ethereal, translucent rainbow that scales linearly with the slider. */
 static inline WXG_K_F2 WXGKyantSpectralRay(
     WXG_K_F2 coord,
     WXG_K_F2 center,
@@ -357,18 +396,20 @@ static inline WXG_K_F2 WXGKyantSpectralRay(
         return central;
     }
     float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
+    float shortSide = 2.f * minHalf;
+    float hBg = 0.f, aBg = 0.f;
+    WXGKyantCrownTarget(minHalf, refractionHeight, refractionAmount, &hBg, &aBg);
     float depth0 = WXG_K_MAX(-sd0, 0.f);
-    float pressScale = WXG_K_SATURATE(WXG_K_MIN(refractionHeight / 4.f, refractionAmount / 6.f));
-    float dispScale = (chromaticAberration / (1.f + 0.08f * WXG_K_ABS(chromaticAberration))) * pressScale;
+    float ringW = WXG_K_MAX(0.18f * shortSide, hBg * 1.35f);
+    float ringU = WXG_K_SATURATE(1.f - depth0 / WXG_K_MAX(ringW, 1.f));
+    if (!(ringU > 1e-4f)) return central;
 
-    float ringW = WXG_K_MAX(0.55f * minHalf, 3.f);
-    float ringU = WXG_K_SATURATE(1.f - depth0 / ringW);
-    float ringEnv = ringU * (0.42f + 0.58f * ringU);
-    float shoulderW = 1.f - crown0;
-    float ringAmt = 0.78f * dispScale * ringEnv * (1.f + 0.50f * shoulderW);
+    float pressScale = WXG_K_SATURATE(WXG_K_MIN(refractionHeight / 4.f, refractionAmount / 6.f));
+    float env = ringU * ringU * WXG_K_SQRT(ringU);
+    float shift = 0.48f * chromaticAberration * pressScale * env;
     WXG_K_F2 pShifted = WXG_K_MAKE2(
-        coord.x + spectralT * ringAmt * g0.x,
-        coord.y + spectralT * ringAmt * g0.y
+        coord.x + spectralT * shift * g0.x,
+        coord.y + spectralT * shift * g0.y
     );
 
     float dTap = 0.f, crownTap = 0.f, sdTap = 0.f;
@@ -377,40 +418,63 @@ static inline WXG_K_F2 WXGKyantSpectralRay(
         pShifted, center, halfSize, radius, refractionHeight, refractionAmount,
         depthEffect, endLeft, endRight, &dTap, &gTap, &crownTap, &sdTap);
 
-    /* Constructive Cauchy refractive dispersion (-gTap for +st) widens the
-       translucent rainbow bloom across the rim & four shoulders monotonically
-       with dispersion while keeping top/bottom inner-bar cool-blue edge intact. */
-    float shoulderFactor = 1.f - crownTap;
-    float endDisp = (-dTap) * (0.095f * dispScale) * (0.20f + 0.80f * shoulderFactor);
-    endDisp = WXG_K_MIN(endDisp, 0.40f * WXG_K_MAX(WXG_K_ABS(dTap), 1.f));
-    return WXG_K_MAKE2(rayTap.x - gTap.x * endDisp * spectralT,
-                       rayTap.y - gTap.y * endDisp * spectralT);
+    /* Constructive Cauchy refractive dispersion strictly inside the active bevel
+       (zero outside hBg -> inner bar edge stays 100% untouched and crisp!). */
+    float cauchy = (-dTap) * (0.065f * chromaticAberration * pressScale);
+    cauchy = WXG_K_MIN(cauchy, 0.42f * WXG_K_ABS(dTap));
+    return WXG_K_MAKE2(rayTap.x - gTap.x * cauchy * spectralT,
+                       rayTap.y - gTap.y * cauchy * spectralT);
 }
 
-/* Post-refraction bounded dispersion shift for crisp selected icons/labels in
-   the Metal overlay: strictly 1.0x derivative (never amplified by rim slope)
-   and 100% left-right symmetric, paired with 15 spectral taps for butter-smooth
-   continuous prism transitions even on thin text strokes and badges at max ca. */
-static inline float WXGKyantGlyphSpectralShift(
+/* Pre-refraction 15-tap glassForeground over ContentLensingView: reproduces the
+   vivid symmetric cyan + yellow/orange/red icon & text rainbow seen in real
+   iOS 26 GlassProbe frames (f00241 / f00266 / f00357 / IMG_9388). */
+static inline float WXGKyantGlyphPreShift(
     float sd0,
-    float d0,
     WXG_K_F2 halfSize,
     float refractionHeight,
     float refractionAmount,
     float chromaticAberration
 ) {
-    if (!(chromaticAberration > 1e-4f) || !(refractionHeight > 1e-4f) || !(refractionAmount > 1e-4f))
-        return 0.f;
+    if (!(chromaticAberration > 1e-4f) || !(refractionHeight > 1e-4f) || !(refractionAmount > 1e-4f)) return 0.f;
     float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
+    float hIcon = 0.f, aIcon = 0.f;
+    WXGKyantIconTarget(minHalf, refractionHeight, refractionAmount, &hIcon, &aIcon);
     float depth0 = WXG_K_MAX(-sd0, 0.f);
-    float pressScale = WXG_K_SATURATE(WXG_K_MIN(refractionHeight / 4.f, refractionAmount / 6.f));
-    float dispScale = (chromaticAberration / (1.f + 0.08f * WXG_K_ABS(chromaticAberration))) * pressScale;
-    float ringW = WXG_K_MAX(0.55f * minHalf, 3.f);
+    float ringW = WXG_K_MAX(hIcon * 1.15f, 3.f);
     float ringU = WXG_K_SATURATE(1.f - depth0 / ringW);
-    float ringEnv = ringU * (0.42f + 0.58f * ringU);
-    float baseShift = 1.05f * dispScale * ringEnv;
-    float refractShift = (-d0) * (0.095f * dispScale);
-    return WXG_K_MIN(baseShift + refractShift, 5.2f);
+    if (!(ringU > 1e-4f)) return 0.f;
+    float pressScale = WXG_K_SATURATE(WXG_K_MIN(refractionHeight / 4.f, refractionAmount / 6.f));
+    return WXG_K_MIN(0.85f * chromaticAberration * pressScale * ringU * ringU, 3.6f);
+}
+
+static inline WXG_K_F2 WXGKyantGlyphSpectralRay(
+    WXG_K_F2 coord,
+    WXG_K_F2 center,
+    WXG_K_F2 halfSize,
+    float radius,
+    float refractionHeight,
+    float refractionAmount,
+    float chromaticAberration,
+    float spectralT,
+    WXG_K_OUT WXG_K_F2 *outCentralRay
+) {
+    float d0 = 0.f, sd0 = 0.f;
+    WXG_K_F2 g0 = WXG_K_MAKE2(0.f, 0.f);
+    WXG_K_F2 central = WXGKyantIconRefractPoint(
+        coord, center, halfSize, radius, refractionHeight, refractionAmount,
+        &d0, &g0, &sd0);
+    if (outCentralRay) *outCentralRay = central;
+    if (!(WXG_K_ABS(spectralT) > 1e-6f)) return central;
+    float shift = WXGKyantGlyphPreShift(sd0, halfSize, refractionHeight, refractionAmount, chromaticAberration);
+    if (!(shift > 1e-4f)) return central;
+    WXG_K_F2 pShifted = WXG_K_MAKE2(
+        coord.x + spectralT * shift * g0.x,
+        coord.y + spectralT * shift * g0.y
+    );
+    return WXGKyantIconRefractPoint(
+        pShifted, center, halfSize, radius, refractionHeight, refractionAmount,
+        WXG_K_NULL, WXG_K_NULL, WXG_K_NULL);
 }
 
 /* Compatibility wrapper returning the central ray and +1 spectral offset. */
@@ -439,20 +503,19 @@ static inline void WXGKyantLensDisplace(
     if (outDispersed) *outDispersed = WXG_K_MAKE2(redRay.x - central.x, redRay.y - central.y);
 }
 
-/* 7-wavelength spectral tap offsets: k = 0..6 -> +1, +2/3, +1/3, 0, -1/3, -2/3, -1 */
+/* 11-wavelength unblurred spectral stack for the native backdrop:
+   k = 0..10 -> +1.0 .. -1.0; smooth continuous rainbow with ZERO blur on the
+   inner bar edge! Each RGB channel sums strictly to 1.0. */
+#define WXG_KYANT_SPECTRAL_TAPS 11
 static inline float WXGKyantSpectralOffset(int k) {
-    return 1.f - (float)k / 3.f;
+    return 1.f - (float)k * 0.2f;
 }
-
-/* Color-neutral RGB spectral weights for 7-tap native backdrop (sum strictly to 1.0). */
 static inline WXG_K_F3 WXGKyantSpectralRGBWeight(int k) {
-    if (k == 0) return WXG_K_MAKE3(1.f / 3.5f, 0.f, 0.f);          /* red */
-    if (k == 1) return WXG_K_MAKE3(1.f / 3.5f, 1.f / 7.f, 0.f);    /* orange */
-    if (k == 2) return WXG_K_MAKE3(1.f / 3.5f, 1.f / 3.5f, 0.f);   /* yellow */
-    if (k == 3) return WXG_K_MAKE3(0.f, 1.f / 3.5f, 0.f);          /* green */
-    if (k == 4) return WXG_K_MAKE3(0.f, 1.f / 3.5f, 1.f / 3.f);    /* cyan */
-    if (k == 5) return WXG_K_MAKE3(0.f, 0.f, 1.f / 3.f);           /* blue */
-    return WXG_K_MAKE3(1.f / 7.f, 0.f, 1.f / 3.f);                 /* purple */
+    float t = 1.f - (float)k * 0.2f;
+    float r = WXG_K_SATURATE(t * 1.4f + 0.3f) + 0.25f * WXG_K_SATURATE((-t - 0.55f) / 0.45f);
+    float g = WXG_K_SATURATE(1.f - WXG_K_ABS(t * 1.35f));
+    float b = WXG_K_SATURATE(-t * 1.4f + 0.3f);
+    return WXG_K_MAKE3(r * (1.f / 5.1766667f), g * (1.f / 3.76f), b * (1.f / 4.76f));
 }
 
 /* 15-wavelength spectral tap offsets & neutral RGB weights for the Metal glyph

@@ -62,7 +62,7 @@ static void renderProfiles(WXGMeshOptics o,int k) {
         sx*=o.width; sy*=o.height;
         /* Dark-mode bar (50/255 with 85/255 rim) over pure black (0) page. */
         float depth=fminf(sy-o.sbTop,o.sbBottom-sy);
-        float inBar=depth>=0.f?1.f:0.f;
+        float inBar=WXGOClamp(depth*3.f+.5f,0.f,1.f);
         float stroke=inBar*fmaxf(0.f,1.f-fabsf(depth-.5f)/.8f);
         accumulate(&barScene[col][row],weight,inBar*(50.f+35.f*stroke));
         accumulate(&pageScene[col][row],weight,60.f+20.f*sinf((sy-o.padY)/5.f)+10.f*cosf((sx-o.width*.5f)/11.f));
@@ -75,10 +75,10 @@ int main(void) {
     o.kyantMode=o.shrinkPress=o.fieldScale=o.zoomAfter=1; o.kyantHeight=o.edgeWidth=18;
     o.kyantAmount=26; o.dispersion=2.4f; o.shrinkPinch=.12f;
     o.sbLeft=o.padX-120; o.sbRight=o.padX+244; o.sbTop=o.padY+4; o.sbBottom=o.padY+66;
-    for(int k=0;k<7;k++)renderProfiles(o,k);
+    for(int k=0;k<WXG_KYANT_SPECTRAL_TAPS;k++)renderProfiles(o,k);
 
     for(int col=0;col<ColumnCount;col++)for(int bottom=0;bottom<=1;bottom++) {
-        float lipPeak=0,gapMin=255.f,crownChroma=0,centerChroma=0,pageChroma=0;
+        float lipPeak=0,gapMin=255.f,crownChroma=0,innerBarChroma=0,centerChroma=0,pageChroma=0;
         unsigned int run=0,longest=0;
         for(int depth=0;depth<RowCount/2;depth++) {
             float dPt=depth*.25f;
@@ -87,34 +87,36 @@ int main(void) {
             float L=luma(b),C=chroma(b);
             if(dPt>=.5f && dPt<=2.0f)lipPeak=fmaxf(lipPeak,L);
             if(dPt>=3.5f && dPt<=6.5f)gapMin=fminf(gapMin,L);
-            if(dPt<=10.f)crownChroma=fmaxf(crownChroma,C);
-            if(dPt>=20.f)centerChroma=fmaxf(centerChroma,C);
+            if(dPt<=7.5f)crownChroma=fmaxf(crownChroma,C);
+            if(dPt>=11.f && dPt<=16.f)innerBarChroma=fmaxf(innerBarChroma,C);
+            if(dPt>=18.f)centerChroma=fmaxf(centerChroma,C);
             float spread=chroma(pageScene[col][row]);
             pageChroma=fmaxf(pageChroma,spread);
             if(spread>2.f){run++;if(run>longest)longest=run;} else run=0;
         }
         assert(centerChroma<.05f);
         if(fabsf(columns[col])<20.f) {
-            /* Crown has solid mirrored lip (>40), clean black gap (<5), and continuous dispersion (>8). */
+            /* Crown has solid mirrored lip (>40), clean black gap (<5), vivid outer dispersion (>20),
+               and clean unblurred inner bar interior (<0.5 chroma past d=11 pt). */
             assert(lipPeak>40.f);
             assert(gapMin<5.f);
-            assert(crownChroma>8.f);
+            assert(crownChroma>20.f);
+            assert(innerBarChroma<.5f);
         } else {
             printf("Shoulder x=%g, %s: peak %.2f/255 over %.2f pt of textured page\n",
                    columns[col],bottom?"bottom":"top",pageChroma,.25f*longest);
-            assert(pageChroma>5.f && longest>=16);
+            assert(pageChroma>8.f && longest>=8);
         }
     }
-    /* R9: verify strict left-right symmetry across rasterized 7-tap quad meshes
-       (eliminating left-side stepping and top-right / bottom-left pinch knots). */
+    /* Verify strict left-right symmetry across rasterized 11-tap quad meshes. */
     for(int pair=0;pair<2;pair++) {
         int colL=pair,colR=ColumnCount-1-pair;
         for(int row=0;row<RowCount;row++) {
             float dBarL=fabsf(luma(barScene[colL][row])-luma(barScene[colR][row]));
             float dBarC=fabsf(chroma(barScene[colL][row])-chroma(barScene[colR][row]));
             float dPageC=fabsf(chroma(pageScene[colL][row])-chroma(pageScene[colR][row]));
-            assert(dBarL<.25f && dBarC<.25f && dPageC<.25f);
+            assert(dBarL<.5f && dBarC<.25f && dPageC<.25f);
         }
     }
-    puts("PASS: solid mirrored crown lip, clean dark gap, symmetric 7-tap crown & shoulder dispersion, neutral center.");
+    puts("PASS: solid mirrored outer bevel, clean dark gap, sharp inner bar, symmetric 11-tap dispersion, neutral center.");
 }

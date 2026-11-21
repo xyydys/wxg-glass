@@ -19,7 +19,7 @@ typedef struct {
     unsigned int quad[MeshCapacity][4];
     int faces;
 } SourceMesh;
-static SourceMesh channels[7];
+static SourceMesh channels[WXG_KYANT_SPECTRAL_TAPS];
 
 static int materialAt(float x,float y) {
     float cap=fmaxf(0.f,fabsf(x-cx)-(BarW-BarH)*.5f);
@@ -45,7 +45,7 @@ static WXGMeshOptics fixtureMesh(int travel) {
     return m;
 }
 static void buildLayers(int travel) {
-    for(int k=0;k<(travel?3:7);k++) {
+    for(int k=0;k<(travel?3:WXG_KYANT_SPECTRAL_TAPS);k++) {
         SourceMesh *s=&channels[k];
         WXGMeshOptics m=fixtureMesh(travel);
         if(travel)m.channel=1.f-k;
@@ -78,7 +78,7 @@ static void sampleMesh(int tap,float x,float y,float *sx,float *sy) {
 static float pixel(int travel,float x,float y,float pointerX,float phase,float spotScale,int late) {
     float cap=fmaxf(0.f,fabsf(x-cx)-(LensW-LensH)*.5f);
     int inLens=hypotf(cap,y-cy)<LensH*.5f;
-    int taps=inLens?(travel?3:7):1;
+    int taps=inLens?(travel?3:WXG_KYANT_SPECTRAL_TAPS):1;
     float luminance=0.f;
     for(int k=0;k<taps;k++) {
         float sx=x,sy=y,w=1.f;
