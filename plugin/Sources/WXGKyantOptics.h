@@ -88,8 +88,8 @@ static inline WXG_K_F2 WXGKyantGradSdRoundedRect(WXG_K_F2 coord, WXG_K_F2 halfSi
 }
 
 
-/* FIX135 R4: original inner-bar inverse map, shared by the native lens mesh
-   and Metal selected glyphs. This does not change the outer bar or motion. */
+/* Inner-bar inverse mapping for the native backdrop mesh and Metal selection
+   coverage. Glyphs have their own source coordinates. */
 static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
     WXG_K_F2 lensCenter,WXG_K_F2 lensSize,float lensRadius,
     WXG_K_F2 barOrigin,WXG_K_F2 barSize,float barRadius,
@@ -116,7 +116,13 @@ static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
     return WXG_K_MAKE2(source.x+q.nx*(t2-t),source.y+q.ny*(t2-t));
 }
 
-/* Upstream Lens.kt + Shaders.kt circular-arc edge refraction & shoulder dispersion */
+static inline float WXGKyantEase(float x) {
+    x=WXG_K_SATURATE(x);
+    return x*x*(3.f-2.f*x);
+}
+
+/* Upstream Lens.kt + Shaders.kt refraction on the shoulders. On a wide dock
+   lens the short top/bottom band should show each source row only once. */
 static inline void WXGKyantLensDisplace(
     WXG_K_F2 coord,
     WXG_K_F2 center,
@@ -150,12 +156,28 @@ static inline void WXGKyantLensDisplace(
     }
     float gl=WXG_K_LENGTH(g);
     g=gl>1e-6f?WXG_K_MAKE2(g.x/gl,g.y/gl):WXG_K_MAKE2(0.f,0.f);
+    float denom = WXG_K_MAX(halfSize.x * halfSize.y, 1.f);
+    float quadrant = (centered.x * centered.y) / denom;
+    float spectralShift = d * chromaticAberration;
+    // Fade out the specialisation as a squeezed capsule becomes round. Both
+    // the press band and its thickness scale in the caller's units (pt / px).
+    float elongated = WXGKyantEase((halfSize.x-halfSize.y)/WXG_K_MAX(.15f*halfSize.y,1e-4f));
+    float crown = elongated * (1.f-WXGKyantEase((WXG_K_ABS(g.x)-.12f)/.58f));
+    if (crown > 0.f) {
+        float band = WXG_K_MIN(.25f*refractionHeight,.10f*minHalf);
+        float u = WXG_K_SATURATE(1.f+sdClamped/WXG_K_MAX(band,1e-6f));
+        // s(t)=t+m*(1-t/band)^2. Even at maximum dispersion the spectral
+        // displacement slope stays below one throughout the straight band.
+        float magnitude = .20f*band*refractionAmount/(refractionAmount+.20f*refractionHeight);
+        float crownShift = -magnitude*u*u;
+        float crownDispersion = chromaticAberration / (1.f+WXG_K_ABS(chromaticAberration));
+        d=(1.f-crown)*d+crown*crownShift;
+        spectralShift=(1.f-crown)*spectralShift+crown*crownShift*crownDispersion;
+    }
     WXG_K_F2 shift = WXG_K_MAKE2(d * g.x, d * g.y);
     if (outRefracted) *outRefracted = WXG_K_MAKE2(coord.x + shift.x, coord.y + shift.y);
     if (outDispersed) {
-        float denom = WXG_K_MAX(halfSize.x * halfSize.y, 1.f);
-        float intensity = chromaticAberration * ((centered.x * centered.y) / denom);
-        *outDispersed = WXG_K_MAKE2(shift.x * intensity, shift.y * intensity);
+        *outDispersed = WXG_K_MAKE2(g.x*spectralShift*quadrant,g.y*spectralShift*quadrant);
     }
 }
 

@@ -41,6 +41,49 @@ int main() {
  }
  assert(moved[0]>0&&moved[1]>0&&colored[0]>0&&colored[1]>0);
  printf("R4 glyph refraction/spectrum: icon %d/%d, text %d/%d; %d empty overlay pixels fully transparent.\n",moved[0],colored[0],moved[1],colored[1],transparent);
+ // The bar material contracts on press. Even next to its new edge, this
+ // control must not move or cut the selected tab's icon or label.
+ WXGUniforms open=u;
+ open.optics.x=1.0694f;open.motion.x=1.056f;open.motion.w=84.f;
+ open.optics.z=0;open.lensOptics.w=0;
+ WXGUniforms pinched=open;
+ pinched.optics.z=.2558f;pinched.lensOptics.w=4.f;
+ auto draw=[&](int x,int y,const WXGUniforms &cfg,texture2d<float> atlas) {
+  WXGOut in={};in.uv=float2((x+.5f)/W,(y+.5f)/H);
+  return wxgFragment(in,cfg,bg,none,atlas,bg,bg,bg);
+ };
+ int visible[2]={},materialChanged=0;
+ for(int y=26;y<95;y++)for(int x=42;x<139;x++) {
+  float4 a=draw(x,y,open,icons),b=draw(x,y,pinched,icons);
+  for(int j=0;j<4;j++)assert(fabs(a[j]-b[j])<1e-6f);
+  if(b.w>.1f)++visible[y<60?0:1];
+ }
+ assert(visible[0]>0&&visible[1]>0);
+ open.selectionColor=pinched.selectionColor=float4(.25,.25,.25,.5);
+ open.extra2.w=pinched.extra2.w=2;
+ for(int y=26;y<95;y++)for(int x=42;x<139;x++)
+  if(fabs(draw(x,y,open,none).w-draw(x,y,pinched,none).w)>.01f)++materialChanged;
+ assert(materialChanged>0);
+ printf("R5 pinch isolation: %d icon and %d text pixels visible, identical RGBA; %d material pixels changed.\n",visible[0],visible[1],materialChanged);
+ // A square probe in the nonrefracting center gives a direct measurement
+ // of the original tab zoom and bar growth, through the actual fragment.
+ std::vector<float> square(W*H*4,0);
+ for(int y=53;y<67;y++)for(int x=83;x<97;x++)square[4*(y*W+x)+3]=1;
+ texture2d<float> probe{square.data(),W,H};
+ pinched.selectionColor=float4(0);pinched.motion.w=90.f;
+ pinched.lensOptics.z=8.64f;
+ for(float press:{0.f,.5f,1.f}) {
+  pinched.material.x=press;
+  int width=0,height=0;
+  for(int i=-20;i<20;i++) {
+   if(draw(90+i,60,pinched,probe).w>.5f)++width;
+   if(draw(90,60+i,pinched,probe).w>.5f)++height;
+  }
+  assert(width==height);
+  float expected=14.f*(1.f+press*(pinched.optics.x-1.f))*pinched.motion.x;
+  assert(fabs(width-expected)<=1.f);
+  printf("R5 central 14px square at press %.1f: %d x %d (expected %.2f).\n",press,width,height,expected);
+ }
  // Lens-off and body paths must match the actual original FIX135 shader,
  // not a newly written approximation of it. Test all original backends.
  int parity=0;float worst=0;

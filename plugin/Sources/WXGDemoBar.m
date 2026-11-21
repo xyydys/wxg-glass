@@ -246,7 +246,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
     [_bar addAnimation:b forKey:@"in"];
 }
 - (void)touchMovedTo:(CGPoint)point {
-    if(!_down)return;
+    if(!_down || CGPointEqualToPoint(_spot.position,point))return;
     [CATransaction begin];[CATransaction setDisableActions:YES];_spot.position=point;[CATransaction commit];
 }
 // A tap shorter than the way in still shows its light: the way in is finished first (the system's peaks about 0.15 s
@@ -454,6 +454,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 @end
 
 @implementation WXGDemoBar {
+    UIView *_glowHost;   // Same canvas and transform as the glass, above the icons and travel layers.
     WXGDockGlowView *_glow;   // FIX131: made at the first touch with the light on
     // 离散底栏: each tab's expansion (0 ball .. 1 wide) and its velocity, the
     // bridges between neighbours (connected), and where each tab was laid
@@ -614,7 +615,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
     // FIX68: bounds and centre (the end stretch may transform the glass).
     _glass.bounds=(CGRect){CGPointZero,self.bounds.size};_glass.center=CGPointMake(CGRectGetMidX(self.bounds),CGRectGetMidY(self.bounds));
     _glass.glassRect=outline;
-    _glow.frame=_materialRect;   // FIX131
+    _glowHost.bounds=_glass.bounds;_glowHost.center=_glass.center;
     _morphView.frame=self.bounds;
     if(_discreteView) {
         _discreteView.frame=self.bounds;_discreteDirty=YES;
@@ -965,12 +966,37 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 }
 // FIX131: the light under the finger (WXGDockGlowView): the spot at the finger, kept inside the bar's height.
 - (CGPoint)glowPoint:(CGPoint)point {
-    return CGPointMake(point.x-_materialRect.origin.x,WXGClamp(point.y-_materialRect.origin.y,0,_materialRect.size.height));
+    CGPoint local=[_glow convertPoint:point fromView:self];
+    if(_travelling) {
+        // The tap's additive scale lives on the render server while UIKit's model is at rest.
+        CALayer *shown=_glow.layer.presentationLayer,*source=self.layer.presentationLayer;
+        if(shown && source)local=[shown convertPoint:point fromLayer:source];
+    }
+    local.y=WXGClamp(local.y,0,_glow.bounds.size.height);
+    return local;
+}
+- (void)layoutTouchGlow {
+    if(!_glow)return;
+    CGRect rect=_glass.drawnBarRect;
+    if(!CGRectEqualToRect(_glow.frame,rect)) {
+        [UIView performWithoutAnimation:^{
+            self->_glow.frame=rect;
+            [self->_glow layoutIfNeeded];
+        }];
+    }
+    if(_fingerDown && _trackingPoint.valid)
+        [_glow touchMovedTo:[self glowPoint:CGPointMake(_trackingPoint.x,_trackingPoint.y)]];
 }
 - (void)glowDownAt:(CGPoint)point {
     WXGConfig *c=WXGConfig.shared;
     if([c extraNumber:@"dockTouchGlow"]<.5)return;
-    if(!_glow){_glow=[[WXGDockGlowView alloc] initWithFrame:_materialRect];[self addSubview:_glow];}
+    if(!_glow) {
+        _glowHost=[[UIView alloc] initWithFrame:CGRectZero];_glowHost.userInteractionEnabled=NO;
+        _glowHost.bounds=_glass.bounds;_glowHost.center=_glass.center;_glowHost.transform=_glass.transform;
+        [self addSubview:_glowHost];
+        _glow=[[WXGDockGlowView alloc] initWithFrame:CGRectZero];[_glowHost addSubview:_glow];
+    }
+    [self layoutTouchGlow];
     [_glow touchDownAt:[self glowPoint:point] spot:[c extraNumber:@"dockTouchGlowSpot"] bar:[c extraNumber:@"dockTouchGlowBar"]];
 }
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
@@ -1088,6 +1114,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
         self.glass.transform=t;if(self.travelView)self.travelView.transform=t;
+        self->_glowHost.transform=t;
         [CATransaction commit];
     }];
 }
@@ -1380,7 +1407,9 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     [_travelIconZoom addAnimation:frames(@"transform.scale",zooms,NO) forKey:@"zoom"];
     [_travelHole addAnimation:frames(@"bounds.size",holeSizes,NO) forKey:@"holeSize"];
     if(grow) {
-        [_glass.layer addAnimation:frames(@"transform",glassScale,YES) forKey:@"wxg.travelScale"];
+        CAKeyframeAnimation *barGrowth=frames(@"transform",glassScale,YES);
+        [_glass.layer addAnimation:barGrowth forKey:@"wxg.travelScale"];
+        [_glowHost.layer addAnimation:barGrowth forKey:@"wxg.travelScale"];
         [_travelNormalIcons addAnimation:frames(@"transform",iconScale,YES) forKey:@"wxg.travelScale"];
         [_travelHole addAnimation:frames(@"position",holeShift,YES) forKey:@"wxg.travelScale"];
         [_travelIconImage addAnimation:frames(@"position",iconShift,YES) forKey:@"wxg.travelScale"];
@@ -1407,6 +1436,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
 }
 - (void)removeTravelScale {
     [_glass.layer removeAnimationForKey:@"wxg.travelScale"];
+    [_glowHost.layer removeAnimationForKey:@"wxg.travelScale"];
     for(UILabel *badge in _badges)[badge.layer removeAnimationForKey:@"wxg.travelScale"];
 }
 - (void)loadTravelColors {
@@ -1846,6 +1876,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     CGFloat selection=_script.phase?_selectionShown:WXGClamp(WXGRestingSelectionWeight(press)+_selectionCarry,0,1);
     _selectionShown=selection;
     _glass.lensRect=lens; _glass.pressAmount=press; _glass.selectionWeight=selection; [_glass layoutIfNeeded];
+    [self layoutTouchGlow];
     BOOL live=WXGConfig.shared.renderMode>=2;
     _glass.hidden=!_glass.ready && !live;
     // 离散底栏: the bar glass woken from the pieces (the search morph) has its
@@ -2181,6 +2212,7 @@ static const CGFloat WXGDiscreteReturnProgress=.15;
     NSUInteger token=++_discreteFadeToken;
     __weak WXGDemoBar *weakSelf=self;
     _discreteShown=want;
+    _glowHost.hidden=want;
     [self applyBadgeVisibility];   // FIX113 G: labels only on the discrete dock
     if(want) {
         ++_discreteShows;
@@ -2532,6 +2564,7 @@ static const CGFloat WXGDiscreteReturnProgress=.15;
     float fade=WXGDockSearchTabsFade((float)progress),close=WXGDockSearchCloseReveal((float)progress);
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _glass.glassRect=shape;
+    [self layoutTouchGlow];
     if(!_discreteShown)self.layer.shadowPath=[UIBezierPath bezierPathWithRoundedRect:shape cornerRadius:radius].CGPath;   // FIX113 D: else the pieces'
     _morphMask.frame=shape;_morphMask.cornerRadius=radius;
     _morphContent.opacity=1.f-fade;

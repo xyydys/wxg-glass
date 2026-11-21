@@ -70,7 +70,7 @@ static void WXGPrepareMetal(void (^completion)(id<MTLRenderPipelineState>,id<MTL
                 BOOL referenceCompiled=library!=nil;
                 if(!library) {
                     WXGOpticsCompileError=error.localizedDescription?:@"reference shader compile failed";
-                    WXGLog(@"R4 透镜着色器编译失败，回到 FIX135：%@",WXGOpticsCompileError);
+                    WXGLog(@"%s 透镜着色器编译失败，回到 FIX135：%@",WXG_BUILD_DIAGNOSTIC_REVISION,WXGOpticsCompileError);
                     shader=[NSString stringWithUTF8String:WXGOriginalMetalSource];error=nil;
                     library=[device newLibraryWithSource:[shader stringByAppendingString:[NSString stringWithUTF8String:WXGBackdropCopySource]] options:options error:&error];
                 }
@@ -2682,6 +2682,8 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
              @"veil":@([c materialOpacityForScope:self.glassScope dark:[self darkAppearance]])};
 }
 - (NSDictionary *)layerEvidence {
+    NSUInteger channelsShown=0;
+    for(WXGSyncBackdropView *channel in _lensStack)if(!channel.hidden)channelsShown++;
     NSMutableArray *layers=[NSMutableArray array];
     NSMutableArray *views=[NSMutableArray array];
     if(_bodyClip)[views addObject:_bodyClip];if(_lensClip)[views addObject:_lensClip];
@@ -2704,7 +2706,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
                          @"lensBlur":@(_lensBackdrop.radius),@"lensShown":@(!_lensBackdrop.hidden),@"lensPad":@(_lensPad),
                          @"lensRestHeight":@(_lensRestHeight),@"lensHeight":@(_lensRect.size.height),@"meshKeptWhileMoving":@(_lensMeshKept)},   // FIX113 U / Y, FIX114 A
         @"lensCurve":@{@"band":@([self lensSettings].band),@"depth":@([self lensSettings].depth),@"split":@([self lensSettings].split),@"squeeze":@([self lensSettings].squeeze),
-                       @"channelsShown":@((NSInteger)(!_lensStack[0].hidden)+(!_lensStack[1].hidden)+(!_lensStack[2].hidden))},
+                       @"channelsShown":@(channelsShown)},
         @"meshTransformClass":@(WXGMeshTransformClass()!=nil),@"bodyMeshApplied":@(_bodyBackdrop.meshApplied),@"bodyMeshAccepted":@(_bodyBackdrop.meshAccepted),
         @"bodyMeshVertices":@(_bodyBackdrop.meshVertices),@"glass":[self glassEvidence],
         @"dropShadow":@{@"shown":@(!_dropShadow.hidden),@"opacity":@(_dropShadow.opacity),@"key":_dropShadowKey?:@"none",@"off":@(_dropShadowOff),

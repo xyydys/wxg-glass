@@ -324,6 +324,7 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 // Stored as weak membership; getter returns a temporary snapshot.
 @property(nonatomic,copy) NSArray<UIView *> *backdropExclusions;
 @property(nonatomic) CGRect glassRect;
+@property(nonatomic,readonly) CGRect drawnBarRect;   // Body clip in glass coordinates, including press growth.
 @property(nonatomic) CGRect lensRect;
 // FIX113 Y: the lens' height without the drag-speed deformation (0 unknown):
 // the strip between the smaller bar and the lens' rim is kept against it.

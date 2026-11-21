@@ -242,16 +242,16 @@ float4 wxgKyantLensOverlay(float2 p,constant WXGUniforms &u,texture2d<float> ico
     float2 anchor=float2(u.motion.w,u.bar.y+u.bar.w*.5f);
     float3 rgb=float3(0.f),alpha=float3(0.f);
     for(int k=0;k<7;k++) {
-        float2 src=center+(ray+spread*WXGKyantSpectralOffset(k)-center)/zoom;
+        float2 spectralRay=ray+spread*WXGKyantSpectralOffset(k);
+        float2 src=center+(spectralRay-center)/zoom;
         src=WXGKyantSceneSource(src,ray,center,u.lens.zw,radius,barOrigin,barSize,0.f,
                                press,u.optics.z,u.lensOptics.w,zoom);
         WXGShapeSample field=wxgShape(src,float4(barOrigin,barSize),0.f);
         float coverage=wxgMask(field.distance,max(.8f/u.viewport.z,fwidth(field.distance)*.75f));
-        // Retain original anchor zoom: the bar's normal contraction is shared
-        // with the backdrop; the icon anchor does not drift with lens stretch.
-        float2 glyphSrc=barCenter+(src-barCenter)/u.motion.x;
-        glyphSrc+=(anchor-barCenter+(barCenter-center)/u.motion.x)*(1.f-1.f/zoom);
-        float4 glyph=icons.sample(wxgSampler,glyphSrc/u.viewport.xy)*coverage;
+        // The atlas lives in the bar's unscaled coordinates. Keep the
+        // content zoom isotropic about its tab anchor as the lens travels.
+        float2 glyphSrc=anchor+(wxgBasePoint(spectralRay,u)-anchor)/zoom;
+        float4 glyph=icons.sample(wxgSampler,glyphSrc/u.viewport.xy);
         float a=u.selectionColor.a*wxgSelectionWeight(press,u)*coverage;
         float4 acc=wxgOver(glyph,float4(u.selectionColor.rgb*a,a));
         float3 w=WXGKyantSpectralRGBWeight(k);rgb+=w*acc.rgb;alpha+=w*acc.a;
