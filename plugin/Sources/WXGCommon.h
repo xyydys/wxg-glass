@@ -337,6 +337,7 @@ FOUNDATION_EXPORT NSUInteger WXGConfigRevision(void);
 
 @property(nonatomic) BOOL active;
 @property(nonatomic) BOOL dockSurface;
+@property(nonatomic) BOOL mainDockOptics;
 // FIX85: a liquid chat bubble: its own optics and rim (the "气泡" range).
 @property(nonatomic) BOOL bubbleSurface;
 @property(nonatomic,readonly) WXGGlassScope glassScope;

@@ -487,7 +487,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
         [self addSubview:_fallbackLens];
         _fallbackIcons=[UIImageView new]; _fallbackIcons.userInteractionEnabled=NO;
         [self addSubview:_fallbackIcons];
-        _glass=[[WXGGlassView alloc] initWithFrame:self.bounds];_glass.dockSurface=YES; _glass.hidden=YES;
+        _glass=[[WXGGlassView alloc] initWithFrame:self.bounds];_glass.dockSurface=YES;_glass.mainDockOptics=YES; _glass.hidden=YES;
         [self addSubview:_glass];
         // FIX34: render-server glass is visible before its overlay is ready, so
         // the fallback lens and icons sit above it, not under its blur.

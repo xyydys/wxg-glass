@@ -1,0 +1,11 @@
+{
+  "diagnostic": "user diagnostic 13",
+  "version": "0.4.120-test4fix135v3r3",
+  "confirmed_error": "Metal rejects float half declarations in WXGKyantOptics.h",
+  "ready": false,
+  "presentedFrames": 0,
+  "metal_layers_hidden": true,
+  "requestedRenderMode": 2,
+  "resolvedRenderMode": 0,
+  "conclusion": "No glass frames were rendered; this run cannot validate optics. R4 restores original body/native backend, and only transplants lens rays."
+}

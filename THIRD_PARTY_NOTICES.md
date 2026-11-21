@@ -33,3 +33,12 @@ of the licence is at the address above.
     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
     See the License for the specific language governing permissions and
     limitations under the License.
+
+## Uploaded Gemini optics patch
+
+The user-supplied patch ports Kyant's Backdrop lens equations and seven-sample
+spectral weights into WXGKyantOptics.h and WXGGlass.metal. Upstream reference:
+https://github.com/Kyant0/AndroidLiquidGlass, commit eb4a0ea2e17542ea28c2e71088f7dd9acf77aad5.
+Copyright 2025 Kyant. Apache License 2.0. Full license in LICENSES/.
+The compiler/integration fixes and local-test shader selection are documented
+in README_R4_原底栏透镜接入.md. The R4 integration is rebased on original FIX135, keeps its inner-bar mapping and adds lens-only native spectral sampling and matching glyph rays.

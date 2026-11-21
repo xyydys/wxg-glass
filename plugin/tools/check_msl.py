@@ -12,7 +12,8 @@ def literal(path, name):
     start = text.index(name)
     body = text[text.index('=', start) + 1: text.index(';\n', start)]
     return ''.join(json.loads(p) for p in re.findall(r'"(?:[^"\\]|\\.)*"', body))
-src = literal(os.path.join(root, 'Sources/WXGShaderSource.h'), 'WXGMetalSource') + \
+fallback = '--original' in sys.argv
+src = literal(os.path.join(root, 'Sources/WXGOriginalShaderSource.h' if fallback else 'Sources/WXGShaderSource.h'), 'WXGOriginalMetalSource' if fallback else 'WXGMetalSource') + \
       literal(os.path.join(root, 'Sources/WXGBackdropCopy.h'), 'WXGBackdropCopySource')
 src = re.sub(r'\b(float[234])\(', r'mk_\1(', src)   # Metal constructors -> stub overloads
 with tempfile.NamedTemporaryFile('w', suffix='.cpp', delete=False) as f:

@@ -1,0 +1,88 @@
+PASS: main-thread read budget holds 20–80% caps for 4–80 ms reads at 60/120 Hz; cheap reads keep full cadence; new scenes read at once; moving consumers relaxed but bounded.
+Backdrop ROI: full affine canvas, bilinear/clamped texels, disjoint union and coverage checks passed.
+Backdrop traversal policy: spatial pruning, atomic media, scrolling and rotated bounds PASS
+PASS: 7860 blur profiles; zero preserves TEST8, maximum fully blurred; refraction 0..20 and width 1..60.
+PASS: liquid bubble (FIX82): one-line radius kept by taller bubbles, larger text, 40 pt floor, width cap, one-line class, direction from the tail.
+ButtonPressTests: PASS (bounded single-body pose, shared artwork centre, rest/reduced-motion)
+PASS: iOS 26 capsule outline (FIX133): the measured dip (0 .. 1.70% of the radius, from half a radius before the round end to 0.55 into it), inside the stadium, symmetric, clockwise, circles and short capsules, standing ones
+PASS: captured compact three-segment row and 1200 circle/equal-ink-gap/multiline cases
+PASS: continuous corners (FIX96): the measured curve within 0.0011 R, circle for round shapes, join 1.2% R inside, 42 deg fuller, bounds kept, no steps, symmetric.
+dock default 1.15/10          1166 vertices  band mean 0.014 pt  worst 0.07 pt  >1pt 0.0%  holes 0
+dock YOURS 8.97/7.7           1908 vertices  band mean 0.022 pt  worst 0.24 pt  >1pt 0.0%  holes 0
+dock YOURS red channel        1908 vertices  band mean 0.021 pt  worst 0.23 pt  >1pt 0.0%  holes 0
+dock YOURS blue channel       1908 vertices  band mean 0.025 pt  worst 0.26 pt  >1pt 0.0%  holes 0
+nav button YOURS              1152 vertices  band mean 0.033 pt  worst 0.13 pt  >1pt 0.0%  holes 0
+lens YOURS 2.82/12.35 z1.09    754 vertices  band mean 0.020 pt  worst 0.29 pt  >1pt 0.0%  holes 0
+rounded rect r14 YOURS        1476 vertices  band mean 0.021 pt  worst 0.10 pt  holes 0
+shape 0: max vertices at one point 1, degenerate triangles 0, overlapping points 0/46501, interior max error 0.0001 pt
+shape 1: max vertices at one point 1, degenerate triangles 0, overlapping points 0/3136, interior max error 0.0000 pt
+shape 2: max vertices at one point 1, degenerate triangles 0, overlapping points 0/24453, interior max error 0.0000 pt
+shape 3: max vertices at one point 1, degenerate triangles 0, overlapping points 0/17898, interior max error 0.0000 pt
+shape 4: max vertices at one point 1, degenerate triangles 0, overlapping points 0/14706, interior max error 0.0000 pt
+PASS: contour mesh follows the TEST9 field incl. RGB channel shifts and the lens rim: no holes, no overlap, no collapse point, no degenerate face, exact interior, no edge-band pixel off by 1 pt, at your settings.
+PASS: 51 captured native title samples, departure reference and cancelled return; 26 samples detect the old >100pt offset.
+PASS: native-alpha distance transform vs exhaustive nearest-pixel oracle, at 1x/2x/3x; antialias coverage and empty mask failure.
+PASS: discrete dock (离散底栏): row fitted and aligned, wide tab = 2 cells + gap, expansions conserved through switches, interruptions and overshoot (row never moves), squeeze above the floor, drag selection never flickers, connected capsules join only between balls, content centred.
+PASS: front dock return/commit/cancel, root push, non-root navigation and disabled/covered states.
+  (on real time the 0.18 s stall jumps x 4.4 pt, press 0.74, colour 0.85 in one frame)
+PASS: tap animation script (FIX95/98/99): glide (FIX43 timing x scale, lift and colour over 40%), 0.16 s drop leading the arrival (down 0.05 s after), travel, no jumps, switch moments 0/1/2, clock capped only around a forwarded switch (max 0.5 s behind), finite rates.
+PASS: dock search row (FIX63): field left / close right both ways (left button swaps, right button stays), constant gap, proportional squeeze past the ends (no plateau), row interpolation, swell, fades, spring 230/20/1.2.
+DockSystemTests passed
+PASS: delayed nil completion retains current touch; outside, canceled, completed and nonfinite locations never revive stale input.
+PASS: edge fade (FIX64): smoothstep fade both edges (129-stop mask math), bands clamped, overlap takes the smaller; edge blur table 1 -> 0 monotonic at its exact stops; mini-program panel progress.
+PASS: clear-ring mask along the outline only: 277 shapes byte-identical to the full evaluation (rounded, capsule, coverage 0..1, 1x/2x); settings cards evaluate 34% (182x113), 33% (376x86), 13% (376x350), 9% (376x700) of their pixels.
+PASS: 85850 hybrid geometries; exact demo reveal below 65% and all zero-speed shapes; fast/brake/reversal/drop/settling at 30/60/120/240 Hz (strain -0.166/-0.143/-0.129/-0.122); FIX113 Y height share 1 / 0 / between.
+PASS: frame-rate log (FIX84): missed refreshes vs jitter at 60/120 Hz, hitch time and ms/s, drop rate, 1 ms percentiles incl. the 200 ms+ bin, merge == single pass over 5000 frames, invalid intervals ignored.
+PASS: supplied star alpha box centered; 5016 padded icon/host/size combinations; gesture host geometry is an untouched input.
+PASS: input mode 16 cases, captured overlap regression, 720 width/height cases, native geometry restoration
+PASS: stable input suffix eliminates repeating sibling writes; absent/replaced emoji preserves native order; 100000 requests and reentry stay within four repairs per display epoch, retaining latest pending work at 60/120 Hz.
+PASS: stable input width through 100 native/adapter layout cycles; native height, keyboard y, restore frame and action policy retained.
+Integration geometry: 3780 scenarios passed
+R4 original shrink parity: 54000 samples, worst 0.00000000 pt; native spectral/shrink pixels 610/834
+PASS: native layer order, stable z ties, changing presentation z and ordering invariants; no UIKit pixel claim.
+PASS: 144 resting layouts with equal cardinal gaps; radius bounds; pressed growth, margins and border visibility.
+PASS: bar following the lens' rim (FIX94): off at margin 0, the middle edge margin x band from the rim, falling to 1 toward the join, end cap at its straight end's scale and never past the rim under the lens' end, the tap animation's veil the same.
+PASS: lens curve: quarter-circle shift (whole amount at the outline, zero slope at the band's end, mirrored rim), capped squeeze, channel means, x*y split by quarter, mesh source (zoom, smaller bar), contour mesh
+end stop: FIX47 inner bar reaches the lens edge; FIX57 rim 2.00 pt, gap 6.40 pt
+PASS: 264343 lens end checks; FIX47 band in the middle (and at screenshots 1-2), relaxed to the top width as a lens end reaches the bar's end (10 pt before .. 2 pt past), mirrored, smooth; page mesh FIX47 elsewhere.
+PASS: lens end rim narrows past the bar's end (dock ends), FIX21 rule unchanged inside the bar; zero bar fields bit-identical.
+recorded drag: width rms 0.0184 of 0.0800, height 0.0284 of 0.1175
+PASS: iOS 26 lens deformation (FIX126): the recorded drag reproduced, closer than the velocity spring; builds and fades at a steady speed; the opposite shape on stopping, no ringing; signed, symmetric on request; frame-rate independent.
+PASS: lens inset along the bar (FIX88): 45 degrees at the join, flattening to the full inset, never a vertical step on the lens' side; the colour split's own band (unchanged when equal, reaching further when wider); FIX113 H: a margin only moves the mapping, outward mirrors inward at the rim and samples into the margin; FIX113 I: the rim offset cancelled (0 unchanged, 1 nothing at the rim, never folds, stays near); FIX113 U: the smaller bar (its edge at the inset, middle line unchanged, continuous, off = old mapping); FIX113 Y: the extra inset, the strip held squashed / shorter than the bar / swollen.
+PASS: 1145340 independent lens profiles; resting/body isolation, mirrored TEST9 optics, endpoints and legacy 10pt range.
+lens rim 12 pt, top ratio 0.3, curve 3: end 12.0, 30deg 9.1, 60deg 4.6, top 3.6 pt
+PASS: lens rim width is the previous isotropic width at ratio 1, full at the ends, the ratio above/below the bar, monotonic, narrowing fast then slowly.
+nav button 44x44       vertices  289  worst deviation from per-pixel TEST9 0.27 pt
+input capsule 300x40   vertices  476  worst deviation from per-pixel TEST9 0.27 pt
+dock 390x64            vertices  527  worst deviation from per-pixel TEST9 0.51 pt
+dock pressed x1.08     vertices  544  worst deviation from per-pixel TEST9 0.56 pt
+lens zoom 1.2          vertices  323  worst deviation from per-pixel TEST9 0.51 pt
+dock refraction 4, 20pt vertices  527  worst deviation from per-pixel TEST9 1.11 pt
+PASS: render-server mesh reproduces the TEST9 refraction field (same field and offset functions) within the reported interpolation error; identity without optics; interior untouched; samples stay inside the layer.
+PASS: 256 antialiased single-ink palettes; transparent, colored and shaded artwork remain distinct.
+ease-out     linear: mean  6.32 worst  46.77 tail-ahead  1.13 | 3-sample: mean  0.67 worst   5.02 tail-ahead  0.27 pt
+ease-in-out  linear: mean 12.65 worst  89.36 tail-ahead  4.54 | 3-sample: mean 10.13 worst  89.36 tail-ahead  1.09 pt
+spring       linear: mean  7.83 worst  70.23 tail-ahead  0.26 | 3-sample: mean  2.77 worst  70.23 tail-ahead  0.01 pt
+scroll deceleration 2000 pt/s, k=4/s: worst model-lead error 0.005 pt
+PASS: decay-aware prediction lowers transition error and removes most early arrival in decelerating tails; never past the end state; exact for exponential scroll deceleration.
+push 414pt/0.35s ease-out, lead 16-48 ms, 60/120 Hz: mean error 27.7 -> 6.1 pt, worst 126.2 -> 26.0 pt
+PASS: display-time prediction cuts push lag error about 4x without passing the end state; exact for steady scroll; teleports, rest, completion, interactive and overshoot bounded.
+PASS: dropped-frame spring, reversal, release, slot bounds.
+PASS: native-input immutable width/caret host; same-height single rows, bottom-aligned multiline actions; 7308 row cases plus missing actions.
+PASS: capsule optical distance, finite normals, symmetry, outer growth, uniform inner inset, unclipped extent, non-folding rays, native scale, dense Gaussian pairing.
+PASS: 2222 native affine transition/corrected-centre cases, reversal to identity, degenerate layer basis.
+PASS: 5670 pressed endpoint cases; complete cap containment; constant y; growth order; no vertical velocity squash; screen/canvas margins.
+PASS: press stretch (FIX68/70/73): rubber band, pose deforming in place (far side within 10%) (along +amount*o, across -amount*o/2, symmetric on diagonals), children follow, follow / release springs, dock end stretch keeps the far end; FIX73 exact posed reach, pull limited to what a clipping parent shows; FIX80 non-round glass only along x / y at its share, lengthening eased into the maximum, follow share of the pull.
+PASS: no temporal round-robin, all 1/2/4 pages eligible at 60/120 Hz, user cap and duplicate callback respected; spatial cost adaptation bounded to 1–2x. Numerical policy only, not measured FPS.
+PASS: resting selection preserved; fades over press 0.05..0.45 (FIX98, was 0..0.12), gradual; raised lens independent of selection colour/opacity and dock overlap; continuous endpoints.
+PASS: iOS 26 rim (FIX123, the system's recipe): 1 -> .30 over 1 pt then cut; |cos| about lower right / upper left; ring where the lights are out; dark matrix = the dumped one; dark button over slate and the light grey button all round match the captures; canvases; pixels within the 1 pt band, 3 px at 3x; bleed past the outline for the clipped layer; stretched columns alike; the real capsule's ends on the canvas (FIX124); the rim as borders one pixel wider each = the formula per pixel ring (FIX125); shadow.
+PASS: rim top-left / bottom-right fades: identical to the previous rim at 0, per-side strengths, unchanged side diagonals, continuous.
+PASS: iOS 27-like rim (FIX86/87): along the outline full where it faces the highlight angle (0 top / bottom, 90 ends, diagonals), end level across it, monotonic, sharpness, symmetric; across the edge about 1 px steps as nested bands from the outline, composited to the curve at each step's middle, fading inward, scale independent, capped. FIX109 B soft line: the line solid, a Gaussian glow inside it in quarter-pixel steps, each its average, total light exact, opacity folded into the alphas.
+PASS: 243612 TEST6 ordinary samples preserved; 2..8 amplitude grows; edge-fade/full-coverage toggle; regular parallel inner contour.
+PASS: 582471 growing rounded-editor contour samples, finite normals and native-editor containment.
+PASS: captured single/multiline heights at 3 device widths; side actions stay on the last native row and TEST9 capsule geometry is preserved.
+PASS: GPU copy pixel centres vs independent affine inverse, 1001 keyboard/return positions, 1/2/3x canvas, translation + skew + scale, invalid input guards.
+PASS: backdrop source-to-local mapping under translation, elastic press, rotation, reflection and shear; singular transforms rejected.
+PASS: render-server overlay algebra: premultiplied veil + hybrid band over a live backdrop equals w*F+(1-w)*mix(B,tint,k) for all weights; rim/selection/icon over-composition matches the readback mix.
+PASS: tap animation veil (FIX88): the outline outside the lens, the shader's inset under it, the end cap detached inside it, extra inward offset, deep bands never crossing the middle, edge-fade bands composited to the shader's fade; FIX113 M's shader helpers (flat code, full inset).
+UnlockPolicyTests: ok

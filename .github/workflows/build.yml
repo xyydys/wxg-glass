@@ -95,8 +95,12 @@ jobs:
           OUT="dist/com.runyu.wechatliquidglass_${VER}_iphoneos-arm64${SUFFIX}.deb"
           sh tools/build_deb_linux.sh "$GITHUB_WORKSPACE/plugin" "$OUT"
           ls -la dist
-          if strings "${OUT%.deb}.dylib" | grep -q "__METAL_VERSION__\|METAL_VERSION"; then
-            echo "::error::dylib 里出现了着色器文本，构建中止"; exit 1
+          # R4 intentionally bundles optics and its FIX135 fallback after authorization.
+          if grep -q -- '-DWXG_KYANT_OPTICS_LOCAL_TEST=1' Makefile; then
+            CXX="clang++-18" python3 tools/check_msl.py
+            CXX="clang++-18" python3 tools/check_msl.py --original
+          elif strings "${OUT%.deb}.dylib" | grep -q "__METAL_VERSION__\|METAL_VERSION"; then
+            echo "::error::dylib 里出现了未声明的着色器文本，构建中止"; exit 1
           fi
           # FIX106：绑定的附加偏移要能放进 dyld 启动缓存（打进 IPA 时启动即闪退的那类问题）
           OBJDUMP=/usr/lib/llvm-18/bin/llvm-objdump sh tools/check_dyld_binds.sh "${OUT%.deb}.dylib" || {
@@ -171,8 +175,12 @@ jobs:
           OUT="dist/com.runyu.wechatliquidglass_${VER}_iphoneos-arm64_obf.deb"
           sh tools/build_deb_linux.sh "$GITHUB_WORKSPACE/plugin" "$OUT"
           ls -la dist
-          if strings "${OUT%.deb}.dylib" | grep -q "__METAL_VERSION__\|METAL_VERSION"; then
-            echo "::error::dylib 里出现了着色器文本，构建中止"; exit 1
+          # R4 intentionally bundles optics and its FIX135 fallback after authorization.
+          if grep -q -- '-DWXG_KYANT_OPTICS_LOCAL_TEST=1' Makefile; then
+            CXX="${CC_DIR}/clang++" python3 tools/check_msl.py
+            CXX="${CC_DIR}/clang++" python3 tools/check_msl.py --original
+          elif strings "${OUT%.deb}.dylib" | grep -q "__METAL_VERSION__\|METAL_VERSION"; then
+            echo "::error::dylib 里出现了未声明的着色器文本，构建中止"; exit 1
           fi
           # 自检：服务器地址与公钥的明文都应被 -irobf-cse 加密掉，dylib 里搜不到
           D="${OUT%.deb}.dylib"

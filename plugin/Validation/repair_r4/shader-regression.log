@@ -1,0 +1,3 @@
+R4 glyph refraction/spectrum: icon 109/292, text 188/648; 6693 empty overlay pixels fully transparent.
+R4 original shader parity: 5700 samples, max error 0.000000000 (body and disabled lens, modes 0/1/2).
+R4 moving/releasing lens: 12 states finite, including medial axes.

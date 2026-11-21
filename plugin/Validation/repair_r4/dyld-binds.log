@@ -1,0 +1,1 @@
+check_dyld_binds: 5511 个绑定，附加偏移都在 dyld 启动缓存能存的范围内

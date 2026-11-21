@@ -131,6 +131,11 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // FIX113 I (user: an offset that cancels the refraction width): the share
     // of the lens' rim offset taken away (0 as before; 1 the rim shows what is
     // under it and the band only bends it). Needs the server's new shader.
+    // R4: original dock body, only the pressed lens uses reference optics.
+    {"dockKyantOptics",'b',1,0,1,NULL,NULL},
+    {"dockKyantLensRefractionHeight",'n',18,0,40,NULL,NULL},
+    {"dockKyantLensRefractionAmount",'n',26,0,50,NULL,NULL},
+    {"dockKyantDispersion",'n',2.4,0,5,NULL,NULL},
     {"lensOffsetCancel",'n',0,0,1,NULL,NULL},
     // FIX113 N: the chat list's segment bar in place of its search field (a
     // demo grouping); the groove's darkness over the background, per appearance.

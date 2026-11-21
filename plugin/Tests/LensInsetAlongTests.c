@@ -39,7 +39,7 @@ int main(void) {
     CHECK(steepest<1.05f,"no step steeper than 45 degrees (%.3f)",steepest);
     CHECK(fabsf(contourY(0)-(-34+full))<.05f,"full inset in the middle (%.3f)",contourY(0));
     /* Colour split band: zero fields are exactly the refraction band. */
-    WXGMeshOptics o={103,87,1,0,10,1.15f,1,1,1.2f,1.5f,1,.4f,3,-128,9.5f,231,77.5f,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+    WXGMeshOptics o={.width=103,.height=87,.fieldScale=1,.edgeWidth=10,.refraction=1.15f,.offsetScale=1,.zoomBefore=1,.zoomAfter=1.2f,.dispersion=1.5f,.channel=1,.topRatio=.4f,.sharpness=3,.barLeft=-128,.barTop=9.5f,.barRight=231,.barBottom=77.5f};
     WXGMeshOptics same=o;same.dispersionWidth=10;same.dispersionTopRatio=.4f;
     WXGMeshOptics wide=o;wide.dispersionWidth=24;
     for(float y=1;y<43;y+=2.5f)for(float x=1;x<102;x+=3.5f) {
@@ -58,7 +58,7 @@ int main(void) {
        by the same amount inward samples in from it. */
     {
         const float PAD=20;
-        WXGMeshOptics plain={140,72,1,0,8,6,1,1,1.06f,0,0,.68f,4,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0};
+        WXGMeshOptics plain={.width=140,.height=72,.fieldScale=1,.edgeWidth=8,.refraction=6,.offsetScale=1,.zoomBefore=1,.zoomAfter=1.06f,.topRatio=.68f,.sharpness=4};
         WXGMeshOptics flat=plain;flat.zoomAfter=1;flat.width+=2*PAD;flat.height+=2*PAD;flat.padX=flat.padY=PAD;   /* (no zoom: the rim alone) */
         WXGMeshOptics padded=plain;padded.width+=2*PAD;padded.height+=2*PAD;padded.padX=padded.padY=PAD;
         for(float y=1;y<71;y+=3.5f)for(float x=1;x<139;x+=4.5f) {
@@ -95,7 +95,7 @@ int main(void) {
             CHECK(fabsf(WXGLensRefractionOffset(0,w,s,1))<1e-5f && fabsf(WXGLensRefractionOffset(-w,w,s,1))<1e-5f,"cancel 1: nothing at the rim or the band's edge (s %.0f, w %.0f)",s,w);
             CHECK(worstSlope>.19f && most<=.29f*w && (s<2 || most>.05f*w),"cancel 1: monotonic, near (s %.0f, w %.0f: slope %.3f, most %.3f)",s,w,worstSlope,most);
         }
-        WXGMeshOptics mesh={140,72,1,0,8,20,1,1,1,0,0,.68f,4,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,0,0,0,0};
+        WXGMeshOptics mesh={.width=140,.height=72,.fieldScale=1,.edgeWidth=8,.refraction=20,.offsetScale=1,.zoomBefore=1,.zoomAfter=1,.topRatio=.68f,.sharpness=4,.cancel=1};
         float sx,sy;WXGMeshSource(mesh,.25f,36,&sx,&sy);
         CHECK(fabsf(sx-.25f)<.5f,"mesh: cancelled rim shows what is under it (%.3f)",sx);
     }
@@ -106,7 +106,7 @@ int main(void) {
        mapping down the column is continuous and never folds; the far ends
        change nothing there; shrink off is the old mapping exactly. */
     {
-        WXGMeshOptics z={103,87,1,0,10,0,1,1,1.2f,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,-10000,9.5f,10000,77.5f,0,1,.18f,0};
+        WXGMeshOptics z={.width=103,.height=87,.fieldScale=1,.edgeWidth=10,.offsetScale=1,.zoomBefore=1,.zoomAfter=1.2f,.sbLeft=-10000,.sbTop=9.5f,.sbRight=10000,.sbBottom=77.5f,.shrinkPress=1,.shrinkPinch=.18f};
         WXGMeshOptics off=z;off.shrinkPress=0;
         float lo=0,hi=43.5f;   /* the display row whose source is the bar's top edge (9.5) */
         for(int i=0;i<60;i++){float m=(lo+hi)*.5f,sx,sy;WXGMeshSource(z,51.5f,m,&sx,&sy);if(sy<9.5f)lo=m;else hi=m;}

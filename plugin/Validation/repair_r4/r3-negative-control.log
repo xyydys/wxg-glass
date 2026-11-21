@@ -1,0 +1,44 @@
+R3 rejected by improved stand-in as expected (half is reserved).
+/tmp/tmprz8qtlmp/r3.cpp:772:11: error: cannot combine with previous 'float' declaration specifier
+  772 |     float half=WXG_K_MAX(barHeight*.5f,1.f);
+      |           ^
+/workspace/wxg-optics-r4/plugin/tools/msl_stub/metal_stdlib:6:14: note: expanded from macro 'half'
+    6 | #define half _Float16
+      |              ^
+/tmp/tmprz8qtlmp/r3.cpp:772:15: error: expected unqualified-id
+  772 |     float half=WXG_K_MAX(barHeight*.5f,1.f);
+      |               ^
+/tmp/tmprz8qtlmp/r3.cpp:775:45: error: expected '(' for function-style cast or type construction
+  775 |     extra=WXG_K_MIN(extra,WXG_K_MAX(0.f,half*(.75f-pinch*press)));
+      |                                         ~~~~^
+/tmp/tmprz8qtlmp/r3.cpp:776:48: error: expected '(' for function-style cast or type construction
+  776 |     return WXGOClamp(1.f-pinch*press-extra/half,.2f,1.f);
+      |                                            ~~~~^
+/tmp/tmprz8qtlmp/r3.cpp:786:11: error: cannot combine with previous 'float' declaration specifier
+  786 |     float half=WXG_K_MAX(WXG_K_MIN(halfSize.x,halfSize.y),1.f);
+      |           ^
+/workspace/wxg-optics-r4/plugin/tools/msl_stub/metal_stdlib:6:14: note: expanded from macro 'half'
+    6 | #define half _Float16
+      |              ^
+/tmp/tmprz8qtlmp/r3.cpp:786:15: error: expected unqualified-id
+  786 |     float half=WXG_K_MAX(WXG_K_MIN(halfSize.x,halfSize.y),1.f);
+      |               ^
+/tmp/tmprz8qtlmp/r3.cpp:787:21: error: expected '(' for function-style cast or type construction
+  787 |     float inset=half*(1.f-WXGOClamp(innerScale,.2f,1.f));
+      |                 ~~~~^
+/tmp/tmprz8qtlmp/r3.cpp:791:32: error: expected '(' for function-style cast or type construction
+  791 |     float target=d<-inset?-half+(d+half)*half/WXG_K_MAX(half-inset,.2f):d+inset;
+      |                            ~~~~^
+/tmp/tmprz8qtlmp/r3.cpp:791:40: error: expected '(' for function-style cast or type construction
+  791 |     float target=d<-inset?-half+(d+half)*half/WXG_K_MAX(half-inset,.2f):d+inset;
+      |                                    ~~~~^
+/tmp/tmprz8qtlmp/r3.cpp:791:46: error: expected '(' for function-style cast or type construction
+  791 |     float target=d<-inset?-half+(d+half)*half/WXG_K_MAX(half-inset,.2f):d+inset;
+      |                                          ~~~~^
+/tmp/tmprz8qtlmp/r3.cpp:791:61: error: expected '(' for function-style cast or type construction
+  791 |     float target=d<-inset?-half+(d+half)*half/WXG_K_MAX(half-inset,.2f):d+inset;
+      |                                                         ~~~~^
+/tmp/tmprz8qtlmp/r3.cpp:792:15: error: expected '(' for function-style cast or type construction
+  792 |     if(d<-half)target=d;
+      |           ~~~~^
+12 errors generated.

@@ -4,6 +4,7 @@
 #include "WXGLensOptics.h"
 #include "WXGSoftEdge.h"
 #include "WXGLensCurve.h"
+#include "WXGKyantOptics.h"
 /* FIX20: TEST9 refraction as a Core Animation mesh for render-server glass.
 
    A mesh transform on the backdrop layer is evaluated by the render server
@@ -77,6 +78,8 @@ typedef struct {
     /* FIX122 E (zero = none): the most the outermost ring may squeeze the
        picture (WXGLensCurveOffsetCapped). */
     float curveSqueeze;
+    /* Kyant Backdrop refraction mode (zero = off; trailing fields keep positional init ABI). */
+    float kyantMode,kyantHeight,kyantAmount,kyantChannel;
 } WXGMeshOptics;
 /* The full inset of the smaller bar, and the inset ramped by `along` (as
    WXGInnerInsetAlong, either sign). */
@@ -219,6 +222,21 @@ static inline void WXGMeshCurveSource(WXGMeshOptics o,float px,float py,float *s
     if(WXGMeshShrinks(o))WXGMeshShrinkBar(o,bx-f.nx*off,by-f.ny*off,za,sx,sy);   /* FIX113 U, as the band path */
 }
 static inline void WXGMeshSource(WXGMeshOptics o,float px,float py,float *sx,float *sy) {
+    if(o.kyantMode>0.5f) {
+        float padX=WXG_MAX(o.padX,0.f),padY=WXG_MAX(o.padY,0.f);
+        WXG_K_F2 halfSize=WXG_K_MAKE2(WXGMeshShapeWidth(o)*.5f,WXGMeshShapeHeight(o)*.5f),ray,spread;
+        WXGKyantLensDisplace(WXG_K_MAKE2(px-padX,py-padY),halfSize,halfSize,
+            o.radius>0.f?o.radius:WXG_K_MIN(halfSize.x,halfSize.y),o.kyantHeight,o.kyantAmount,o.dispersion,0.f,&ray,&spread,NULL);
+        ray.x+=padX;ray.y+=padY;
+        WXG_K_F2 center=WXG_K_MAKE2(o.width*.5f,o.height*.5f);
+        float zoom=o.zoomAfter>0.f?o.zoomAfter:1.f;
+        WXG_K_F2 src=WXG_K_MAKE2(center.x+(ray.x+spread.x*o.kyantChannel-center.x)/zoom,
+                                 center.y+(ray.y+spread.y*o.kyantChannel-center.y)/zoom);
+        src=WXGKyantSceneSource(src,ray,center,WXG_K_MAKE2(halfSize.x*2.f,halfSize.y*2.f),o.radius,
+            WXG_K_MAKE2(o.sbLeft,o.sbTop),WXG_K_MAKE2(o.sbRight-o.sbLeft,o.sbBottom-o.sbTop),o.sbRadius,
+            o.shrinkPress,o.shrinkPinch,o.shrinkExtra,zoom);
+        *sx=src.x;*sy=src.y;return;
+    }
     if(o.curveHeight>0.f){WXGMeshCurveSource(o,px,py,sx,sy);return;}
     float cx=o.width*.5f,cy=o.height*.5f,s=o.fieldScale>0.f?o.fieldScale:1.f;
     float zb=o.zoomBefore>0.f?o.zoomBefore:1.f,za=o.zoomAfter>0.f?o.zoomAfter:1.f;
@@ -279,6 +297,7 @@ typedef struct { float cx,cy,nx,ny,u; int kind; } WXGContourSample; /* kind 0 st
 static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,float t,float channel) {
     /* The curve; a channel at most WXG_LENS_SPLIT_SPAN of the
        shift from green (|I| <= 1), so the rings follow the steepest one. */
+    if(o.kyantMode>.5f)return t+WXGLensCurveOffset(t,o.kyantHeight,o.kyantAmount)*(1.f+channel*WXG_MAX(o.dispersion,0.f));
     if(o.curveHeight>0.f)return t+WXGLensCurveOffsetCapped(t,o.curveHeight,o.curveAmount,o.curveSqueeze)*(1.f+channel*(o.dispersion>0.f?o.dispersion*WXG_LENS_SPLIT_SPAN:0.f));
     float d=-t;
     float off=WXGMeshOffset(o,d,width);   /* FIX113 I, FIX114 I */
@@ -307,7 +326,7 @@ static inline int WXGMeshRings(WXGMeshOptics o,float limit,float pad,WXGMeshQual
         for(float probe=0.f;probe<=1.5f;probe+=.25f)
             k=WXG_MAX(k,WXG_MAX(WXGMeshCurvature(o,side,dside,t+probe),WXGMeshCurvature(o,top,dtop,t+probe)));
         float dt=WXG_SQRT(8.f*err/WXG_MAX(k,1e-4f));
-        t+=WXGOClamp(dt,.12f,1.5f);
+        t+=WXGOClamp(dt,o.kyantMode>.5f?.015f:.12f,1.5f);
     }
     if(t>=band && n<capacity-1) {
         /* Beyond the band the mapping is linear (identity or zoom): coarse.
@@ -408,6 +427,7 @@ static inline int WXGMeshZipperChains(const float *xs,const float *ys,int n,int 
 static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPoint *points,int pointCapacity,
                                       unsigned int (*faces)[4],int faceCapacity,int *faceCount) {
     *faceCount=0;
+    if(o.kyantMode>.5f){q.ringError=WXG_MIN(q.ringError,.12f);q.arcStep=WXG_MIN(q.arcStep,o.dispersion>0.f?.06f:.10f);q.straightStep=WXG_MIN(q.straightStep,8.f);}
     if(!(o.width>1.f) || !(o.height>1.f))return 0;
     enum { WXGMeshMaxContour=512,WXGMeshMaxRings=160 };
     WXGContourSample contour[WXGMeshMaxContour];float rings[WXGMeshMaxRings];
@@ -433,7 +453,7 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
     int n=WXGMeshContour(hx,hy,R,q,contour,WXGMeshMaxContour);
     int m=WXGMeshRings(o,stop,pad,q,rings,WXGMeshMaxRings);
     if(n<4 || m<2 || n*m>pointCapacity)return 0;
-    int capsule=!(o.radius>0.f);
+    int capsule=!(o.radius>0.f) && !(o.kyantMode>.5f);
     for(int i=0;i<n;i++)WXGMeshContourPointC(contour[i],hx,hy,R,rings[m-1],capsule,&innerX[i],&innerY[i]);
     int chain=WXGMeshZipperChains(innerX,innerY,n,top,bottom,WXGMeshMaxContour);
     if(chain<2 || n*(m-1)+chain-1>faceCapacity)return 0;

@@ -13,6 +13,10 @@ _Static_assert(sizeof(WXGFloat4)==16,"Float4 ABI");
 #include "WXGSourceMapping.h"
 #include "WXGBackdropCopy.h"
 #include "WXGLensOptics.h"
+#include "WXGKyantOptics.h"
+#include "WXGBuildIdentity.h"
+#include "WXGShaderSource.h"
+#include "WXGOriginalShaderSource.h"
 #include "WXGMeshRefraction.h"
 #include "WXGEdgeMaskBand.h"
 #include "WXGRimGlow.h"
@@ -43,6 +47,8 @@ static id<MTLTexture> WXGTransparentTexture(void) {
 }
 // FIX113 I: the share of the lens' rim offset cancelled (the shader knows it).
 static volatile BOOL WXGShaderLensCancel;
+static volatile BOOL WXGShaderKyantOptics;
+static NSString *WXGOpticsCompileError;
 BOOL WXGLensCancelAvailable(void) {return WXGShaderLensCancel;}
 CGFloat WXGLensCancel(void) {return WXGShaderLensCancel?WXGClamp([WXGConfig.shared extraNumber:@"lensOffsetCancel"],0,1):0;}
 static void WXGPrepareMetal(void (^completion)(id<MTLRenderPipelineState>,id<MTLComputePipelineState>,id<MTLComputePipelineState>,NSString *)) {
@@ -57,10 +63,18 @@ static void WXGPrepareMetal(void (^completion)(id<MTLRenderPipelineState>,id<MTL
         // main, a few ms after the plugin loads (no wait for a main turn).
         WXGUnlockWhenShaderReady(^(NSString *shader){
             @autoreleasepool {
-                WXGShaderLensCancel=[shader rangeOfString:@"WXG_LENS_CANCEL"].location!=NSNotFound;     // FIX113 I
+                shader=[NSString stringWithUTF8String:WXGMetalSource];
                 NSError *error=nil;id<MTLDevice> device=WXGSharedDevice();
                 MTLCompileOptions *options=[MTLCompileOptions new];options.fastMathEnabled=YES;options.languageVersion=MTLLanguageVersion2_1;
                 id<MTLLibrary> library=[device newLibraryWithSource:[shader stringByAppendingString:[NSString stringWithUTF8String:WXGBackdropCopySource]] options:options error:&error];
+                BOOL referenceCompiled=library!=nil;
+                if(!library) {
+                    WXGOpticsCompileError=error.localizedDescription?:@"reference shader compile failed";
+                    WXGLog(@"R4 透镜着色器编译失败，回到 FIX135：%@",WXGOpticsCompileError);
+                    shader=[NSString stringWithUTF8String:WXGOriginalMetalSource];error=nil;
+                    library=[device newLibraryWithSource:[shader stringByAppendingString:[NSString stringWithUTF8String:WXGBackdropCopySource]] options:options error:&error];
+                }
+                WXGShaderLensCancel=[shader rangeOfString:@"WXG_LENS_CANCEL"].location!=NSNotFound;
                 if(library) {
                     MTLRenderPipelineDescriptor *d=[MTLRenderPipelineDescriptor new];
                     d.vertexFunction=[library newFunctionWithName:@"wxgVertex"];d.fragmentFunction=[library newFunctionWithName:@"wxgFragment"];
@@ -73,6 +87,7 @@ static void WXGPrepareMetal(void (^completion)(id<MTLRenderPipelineState>,id<MTL
                     id<MTLFunction> copyFn=[library newFunctionWithName:@"wxgCopyBackdrop"];
                     if(copyFn)copy=[device newComputePipelineStateWithFunction:copyFn error:&error];
                 }
+                WXGShaderKyantOptics=referenceCompiled && state && blur && copy;
                 failure=error.localizedDescription?:@"TEST9 Metal 管线初始化失败";
                 dispatch_group_leave(group);
             }
@@ -185,7 +200,9 @@ static BOOL WXGMeshOpticsClose(WXGMeshOptics a,WXGMeshOptics b) {
         fabsf(a.shrinkExtra-b.shrinkExtra)<.125f &&   // FIX113 Y
         fabsf(a.transition-b.transition)<.0005f &&   // FIX114 I
         fabsf(a.softStretch-b.softStretch)<.005f && fabsf(a.softPower-b.softPower)<.005f && fabsf(a.softWidth-b.softWidth)<.05f &&   // FIX114 J
-        fabsf(a.curveHeight-b.curveHeight)<.01f && fabsf(a.curveAmount-b.curveAmount)<.01f && fabsf(a.curveSqueeze-b.curveSqueeze)<.01f;
+        fabsf(a.curveHeight-b.curveHeight)<.01f && fabsf(a.curveAmount-b.curveAmount)<.01f && fabsf(a.curveSqueeze-b.curveSqueeze)<.01f &&
+        a.kyantMode==b.kyantMode && fabsf(a.kyantHeight-b.kyantHeight)<.01f &&
+        fabsf(a.kyantAmount-b.kyantAmount)<.01f && a.kyantChannel==b.kyantChannel;
 }
 // FIX114 A: while the lens moves (pressed, travelling, deforming with the
 // drag), a mesh a little off still serves: within 1.5 pt of size and of the
@@ -244,7 +261,7 @@ static NSUInteger WXGMeshCacheHits,WXGMeshCacheMisses;
 static id WXGBuildMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUInteger *vertexCount,NSMutableData **storage,NSInteger *subdivision);
 static id WXGMakeMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUInteger *vertexCount,NSMutableData **storage,NSInteger *subdivision) {
     // Key: the exact optics and quality, rounded so float noise cannot split it.
-    float key[44]={roundf(optics.width*100),roundf(optics.height*100),roundf(optics.fieldScale*1000),roundf(optics.radius*100),
+    float key[48]={roundf(optics.width*100),roundf(optics.height*100),roundf(optics.fieldScale*1000),roundf(optics.radius*100),
         roundf(optics.edgeWidth*100),roundf(optics.refraction*1000),roundf(optics.offsetScale*1000),roundf(optics.zoomBefore*1000),
         roundf(optics.zoomAfter*1000),roundf(optics.dispersion*1000),optics.channel,roundf(optics.topRatio*1000),roundf(optics.sharpness*100),
         roundf(quality.ringError*1000),roundf(quality.arcStep*1000),roundf(quality.straightStep*100),
@@ -254,7 +271,8 @@ static id WXGMakeMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUIn
         roundf(optics.sbLeft*10),roundf(optics.sbTop*10),roundf(optics.sbRight*10),roundf(optics.sbBottom*10),roundf(optics.sbRadius*100),
         roundf(optics.shrinkPress*1000),roundf(optics.shrinkPinch*10000),roundf(optics.shrinkExtra*4),roundf(optics.transition*1000),
         roundf(optics.softStretch*100),roundf(optics.softPower*100),roundf(optics.softWidth*4),
-        roundf(optics.curveHeight*100),roundf(optics.curveAmount*100),roundf(optics.curveSqueeze*100)};   // FIX113 H / I / U / Y, FIX114 I / J, FIX122
+        roundf(optics.curveHeight*100),roundf(optics.curveAmount*100),roundf(optics.curveSqueeze*100),optics.kyantMode,roundf(optics.kyantHeight*100),
+        roundf(optics.kyantAmount*100),optics.kyantChannel};   // FIX113 H / I / U / Y, FIX114 I / J, FIX122
     NSData *cacheKey=[NSData dataWithBytes:key length:sizeof key];
     WXGMeshCacheEntry *entry=[WXGMeshCache() objectForKey:cacheKey];
     if(entry) {
@@ -342,6 +360,23 @@ static id WXGMakePlusLighter(void) {
     id filter=WXGFilterFactoryAvailable()?[(Class<WXGCAFilterFactory>)NSClassFromString(@"CAFilter") filterWithType:@"plusL"]:nil;
     return filter?:@"plusL";
 }
+static id WXGMakeSpectralFilter(NSInteger tapIndex) {
+    if(!WXGFilterFactoryAvailable() || tapIndex<0 || tapIndex>6)return nil;
+    id filter=[(Class<WXGCAFilterFactory>)NSClassFromString(@"CAFilter") filterWithType:@"colorMatrix"];
+    WXG_K_F3 w=WXGKyantSpectralRGBWeight((int)tapIndex);
+    WXGColorMatrix matrix={{0}};
+    matrix.m[0]=w.x;
+    matrix.m[6]=w.y;
+    matrix.m[12]=w.z;
+    // Every tap samples an opaque scene. Keep its alpha valid; plusL adds the
+    // weighted RGB of later taps. Zero-alpha colored samples may be discarded
+    // by the render server before additive compositing.
+    matrix.m[18]=1.f;
+    @try {
+        [filter setValue:[NSValue valueWithBytes:&matrix objCType:"{CAColorMatrix=ffffffffffffffffffff}"] forKey:@"inputColorMatrix"];
+    } @catch(__unused NSException *error) {filter=nil;}
+    return filter;
+}
 @interface WXGSyncBackdropView : UIView
 @property(nonatomic,readonly) CGFloat radius;
 @property(nonatomic,readonly) BOOL live,filtered;
@@ -361,6 +396,7 @@ static id WXGMakePlusLighter(void) {
 - (void)configureGroup:(NSString *)group radius:(CGFloat)radius channel:(NSInteger)channel plain:(BOOL)plain;
 // FIX114 J: with the range's saturation and brightness (not when plain).
 - (void)configureGroup:(NSString *)group radius:(CGFloat)radius channel:(NSInteger)channel plain:(BOOL)plain tone:(WXGBackdropTone)tone;
+- (void)configureSpectralGroup:(NSString *)group tapIndex:(NSInteger)tapIndex radius:(CGFloat)radius;
 @property(nonatomic,readonly) WXGBackdropTone tone;
 @property(nonatomic,readonly) NSInteger channel;
 @property(nonatomic,readonly,copy) NSString *group;
@@ -436,6 +472,35 @@ static id WXGMakePlusLighter(void) {
         // Red is drawn normally; green and blue add onto it (plus-lighter).
         self.layer.compositingFilter=channel>1?WXGMakePlusLighter():nil;
         _filtered=filter!=nil;
+    } @catch(__unused NSException *error) {}
+    [CATransaction commit];
+}
+- (void)configureSpectralGroup:(NSString *)group tapIndex:(NSInteger)tapIndex radius:(CGFloat)radius {
+    if(!self.live)return;
+    BOOL sameGroup=(!group && !_group) || [group isEqualToString:_group];
+    NSInteger encodedChannel=100+tapIndex;
+    radius=MAX(0,radius);
+    if(_radius>=0 && fabs(_radius-radius)<.05 && _channel==encodedChannel && sameGroup && _plain)return;
+    BOOL first=_radius<0;_radius=radius;_channel=encodedChannel;_plain=YES;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    @try {
+        if(first) {
+            id initial=[self.layer valueForKey:@"scale"];
+            _defaultCaptureScale=[initial respondsToSelector:@selector(doubleValue)]?[initial doubleValue]:-1;
+            [self.layer setValue:@YES forKey:@"enabled"];
+        }
+        if(first || !sameGroup) {
+            [self.layer setValue:group forKey:@"groupName"];
+            _group=[group copy];
+        }
+        id spec=WXGMakeSpectralFilter(tapIndex);
+        [self.layer setValue:@(2.) forKey:@"marginWidth"];
+        id blur=radius>=.2?WXGMakeBlurFilter(radius):nil;
+        NSMutableArray *filters=[NSMutableArray array];
+        if(blur)[filters addObject:blur];if(spec)[filters addObject:spec];
+        self.layer.filters=filters.count?filters:nil;
+        self.layer.compositingFilter=tapIndex>0?WXGMakePlusLighter():nil;
+        _filtered=blur!=nil;
     } @catch(__unused NSException *error) {}
     [CATransaction commit];
 }
@@ -1040,6 +1105,8 @@ NSDictionary *WXGRimSummary(void) {
 @property(atomic) CFTimeInterval lastPresentedTime;
 @property(atomic) double presentIntervalMS,presentedBackdropAgeMS;
 @property(nonatomic,copy) NSString *failure;
+@property(nonatomic,strong) NSMutableArray<NSDictionary *> *pressedOpticsHistory;
+@property(nonatomic) CFTimeInterval lastOpticsTrace;
 @end
 
 // FIX16: post-commit glass frames. The host's display callback updates every
@@ -1165,11 +1232,12 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
         _lensRimGroup=[NSString stringWithFormat:@"wxg.glass.lensrim.%p",self];
         // Bottom to top inside the body clip: body R,G,B, edge-ring R,G,B, Metal.
         NSMutableArray *bodyStack=[NSMutableArray array],*edgeStack=[NSMutableArray array],*lensStack=[NSMutableArray array],*masks=[NSMutableArray array];
-        for(int i=0;i<3;i++) {
+        for(int i=0;i<7;i++) {
             WXGSyncBackdropView *b=[[WXGSyncBackdropView alloc] initWithFrame:CGRectZero],*e=[[WXGSyncBackdropView alloc] initWithFrame:CGRectZero];
             WXGSyncBackdropView *l=[[WXGSyncBackdropView alloc] initWithFrame:CGRectZero];
             b.hidden=e.hidden=l.hidden=YES;
-            [bodyStack addObject:b];[edgeStack addObject:e];[lensStack addObject:l];
+            if(i<3){[bodyStack addObject:b];[edgeStack addObject:e];}
+            [lensStack addObject:l];
             CALayer *mask=[CALayer layer];mask.contentsGravity=kCAGravityResize;[masks addObject:mask];
         }
         _bodyStack=bodyStack;_edgeStack=edgeStack;_lensStack=lensStack;_edgeMasks=masks;
@@ -1378,6 +1446,14 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
 #endif
 }
 - (BOOL)lensSeesBar {return _lensSeesBarApplied;}
+- (BOOL)kyantOpticsActive {
+    return WXGShaderKyantOptics && _mainDockOptics && _dockSurface && self.glassScope==WXGGlassScopeDock &&
+        !_shapeAnimating && !_deferShapeField && WXGEffectiveRenderMode()>=2 && [self lensSeesBarWanted] &&
+        [WXGConfig.shared extraNumber:@"dockKyantOptics"]>.5;
+}
+- (WXGRimStyle)effectiveLensRimStyle {
+    return [self kyantOpticsActive]?WXGRimStyle26:[WXGConfig.shared rimStyleForScope:[self lensRimScope]];
+}
 - (UIColor *)veilColor {return _veilFallback.backgroundColor?[UIColor colorWithCGColor:_veilFallback.backgroundColor]:nil;}
 - (NSArray<UIColor *> *)lensOutlineColors {return _lensOutlineColors?:@[];}
 - (NSArray<NSNumber *> *)lensOutlineWidths {return _lensOutlineWidths?:@[];}
@@ -1756,7 +1832,7 @@ NSDictionary *WXGDropShadowEvidence(void) {
     [_bodyRim configureGlows:glow?shapes:NULL count:glow?WXGRimGlowCount:0];
     CGFloat lensLift=MAX(WXGPressedBorderAlpha(_pressAmount),L.rimAtRest);
     WXGGlassScope rimLens=[self lensRimScope];   // FIX114 C: 底栏透镜 / 分组透镜
-    BOOL lensGlow=[c rimStyleForScope:rimLens]==WXGRimStyleGlow;
+    BOOL lensGlow=[self effectiveLensRimStyle]==WXGRimStyleGlow;
     {
         WXGRimGlowShape lensGlows[WXGRimGlowCount];
         for(NSInteger i=0;i<WXGRimGlowCount;i++){lensGlows[i]=[c rimGlowForScope:rimLens index:i dark:rimDark];lensGlows[i].alpha*=lensLift;}
@@ -2124,6 +2200,11 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
                 keep*MIN(MAX(0,L.growth-.86)*barHalf,barHalf*(.75-pinch)):0;
             CGFloat half=barHalf,zoom=MAX(1,L.zoom),full=half*pinch+MAX(budget,MAX(0,lensOptics.shrinkExtra));
             pad=MIN(40,ceil((half*(1-1/zoom)+full/zoom+2)/2)*2);
+            if([self kyantOpticsActive]) {
+                CGFloat spectral=[c extraNumber:@"dockKyantDispersion"];
+                CGFloat depth=[c extraNumber:@"dockKyantLensRefractionAmount"];
+                pad+=ceil((depth*MAX(0,spectral-1)+2)/2)*2;
+            }
             lensOptics.padX=lensOptics.padY=(float)pad;lensOptics.width+=(float)(2*pad);lensOptics.height+=(float)(2*pad);
             if(lensOptics.barRight>lensOptics.barLeft){lensOptics.barLeft+=(float)pad;lensOptics.barRight+=(float)pad;lensOptics.barTop+=(float)pad;lensOptics.barBottom+=(float)pad;}
             lensOptics.sbLeft+=(float)pad;lensOptics.sbRight+=(float)pad;lensOptics.sbTop+=(float)pad;lensOptics.sbBottom+=(float)pad;
@@ -2145,8 +2226,47 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
     // FIX114 A: a near mesh while the lens moves; the exact one when it rests
     // (looked at again shortly after the last move).
     BOOL moving=CACurrentMediaTime()-_lensMovedAt<.08;
-    BOOL kept=![self applyStack:_lensStack visible:lens && (!seesBar || press>0.f) split:lensSplit radius:lensBlur optics:lensOptics
+    BOOL kept=NO;
+    if(![self kyantOpticsActive]) {
+        kept=![self applyStack:_lensStack visible:lens && (!seesBar || press>0.f) split:lensSplit radius:lensBlur optics:lensOptics
              quality:WXGMeshShrinks(lensOptics)?WXGMeshQualityLensBar:WXGMeshQualityLens mesh:lensMesh group:seesBar?_lensGroup:[self bodyGroup] plain:seesBar loose:moving];
+    }else {
+        lensOptics.kyantMode=1.f;
+        lensOptics.kyantHeight=(float)[c extraNumber:@"dockKyantLensRefractionHeight"]*press;
+        lensOptics.kyantAmount=(float)[c extraNumber:@"dockKyantLensRefractionAmount"]*press;
+        lensOptics.edgeWidth=MAX(.5f,lensOptics.kyantHeight);
+        lensOptics.dispersion=(float)[c extraNumber:@"dockKyantDispersion"];
+        // Use the actual bar bounds in both CPU mesh and GPU glyph mapping.
+        CGRect bar=[self drawnBarRect];
+        lensOptics.sbLeft=(float)(CGRectGetMinX(bar)-CGRectGetMinX(_lensRect)+_lensPad);
+        lensOptics.sbRight=lensOptics.sbLeft+(float)bar.size.width;
+        lensOptics.sbTop=(float)(CGRectGetMinY(bar)-CGRectGetMinY(_lensRect)+_lensPad);
+        lensOptics.sbBottom=lensOptics.sbTop+(float)bar.size.height;
+        BOOL spectral=lensMesh && lensOptics.dispersion>0.f && c.syncDispersion && WXGFilterFactoryAvailable();
+        for(NSUInteger i=0;i<_lensStack.count;i++) {
+            WXGSyncBackdropView *view=_lensStack[i];
+            BOOL show=lens && press>0.f && (spectral || i==0);view.hidden=!show;
+            if(!show){[view applyRefraction:lensOptics quality:WXGMeshQualityLensBar enabled:NO];continue;}
+            if(spectral)[view configureSpectralGroup:_lensGroup tapIndex:(NSInteger)i radius:lensBlur];
+            else [view configureGroup:_lensGroup radius:lensBlur channel:0 plain:YES tone:(WXGBackdropTone){1,0}];
+            view.captureLimit=_lightweight || c.performanceMode?2:0;[view applyCaptureScale];
+            WXGMeshOptics channelOptics=lensOptics;
+            channelOptics.kyantChannel=spectral?WXGKyantSpectralOffset((int)i):0.f;
+            if(!spectral)channelOptics.dispersion=0.f;
+            if(![view applyRefraction:channelOptics quality:WXGMeshQualityLensBar enabled:lensMesh loose:moving])kept=YES;
+        }
+    }
+    if(_mainDockOptics && lens && press>.05f && CACurrentMediaTime()-_lastOpticsTrace>.1) {
+        _lastOpticsTrace=CACurrentMediaTime();
+        if(!_pressedOpticsHistory)_pressedOpticsHistory=[NSMutableArray array];
+        NSUInteger shown=0,accepted=0;for(WXGSyncBackdropView *v in _lensStack)if(!v.hidden){shown++;if(v.meshAccepted)accepted++;}
+        [_pressedOpticsHistory addObject:@{@"t":@(_lastOpticsTrace),@"press":@(press),@"kyant":@([self kyantOpticsActive]),
+            @"lensSeesBar":@(seesBar),@"shown":@(shown),@"accepted":@(accepted),@"vertices":@(_lensBackdrop.meshVertices),
+            @"pinch":@(lensOptics.shrinkPinch),@"extraInset":@(lensOptics.shrinkExtra),@"pad":@(_lensPad),
+            @"lensSize":@[@(lensOptics.width-2*_lensPad),@(lensOptics.height-2*_lensPad)],
+            @"band":@(lensOptics.kyantHeight),@"depth":@(lensOptics.kyantAmount),@"dispersion":@(lensOptics.dispersion)}];
+        if(_pressedOpticsHistory.count>24)[_pressedOpticsHistory removeObjectAtIndex:0];
+    }
     if(kept)++_lensMeshKept;
     if(kept && !_lensSettlePending) {
         _lensSettlePending=YES;__weak WXGGlassView *weakSelf=self;
@@ -2171,7 +2291,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
     BOOL exact=YES;
     for(NSUInteger i=0;i<stack.count;i++) {
         WXGSyncBackdropView *view=stack[i];
-        BOOL show=visible && (i==0 || split);
+        BOOL show=visible && (i==0 || (split && i<3));
         if(view.hidden==show)view.hidden=!show;
         if(!show){[view applyRefraction:optics quality:quality enabled:NO];continue;}
         [view configureGroup:group radius:radius channel:split?(NSInteger)i+1:0 plain:plain tone:_backdropTone];   // FIX114 J: the range's
@@ -2407,6 +2527,21 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             if(!lensOutline){u.borderColor.w=0;u.glowColor2.w=0;}
             if(!lensVeil)u.tintColor.w=0;
         }
+        u.extra.w=0.f;
+        if(surface && seesBar && [self kyantOpticsActive]) {
+            // Do not overwrite body optics, tint, sync backend, or original pinch.
+            float press=roundf((float)WXGClamp(_pressAmount,0,1)*32.f)/32.f;
+            u.material.x=press;
+            u.lensOptics.x=(float)[c extraNumber:@"dockKyantLensRefractionAmount"]*press;
+            u.lensOptics.y=c.syncDispersion?(float)[c extraNumber:@"dockKyantDispersion"]:0.f;
+            u.lensOptics.z=(float)[c extraNumber:@"dockKyantLensRefractionHeight"]*press;
+            CGFloat keep=WXGClamp(L.elasticKeepStrip,0,1),barHalf=[self drawnBarRect].size.height*.5;
+            CGFloat extra=keep>0 && _lensRestHeight>1?keep*(_lensRestHeight-_lensRect.size.height)*.5:0;
+            extra=MIN(extra,MAX(0,barHalf*(.75-WXGClamp(L.pinch,0,.30)*press)));
+            u.lensOptics.w=(float)(round(extra*4)/4);
+            u.optics.z=(float)(round(WXGClamp(L.pinch,0,.30)*1000)/1000);
+            u.extra.w=WXG_LENS_KYANT;
+        }
         MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
         pass.colorAttachments[0].texture=surface?lensDrawable.texture:bodyDrawable.texture;
         pass.colorAttachments[0].loadAction=MTLLoadActionClear;
@@ -2578,10 +2713,17 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
                         @"frame":@[@(_dropShadow.frame.origin.x),@(_dropShadow.frame.origin.y),@(_dropShadow.frame.size.width),@(_dropShadow.frame.size.height)]},   // FIX114 K@"lensMeshAccepted":@(_lensBackdrop.meshAccepted),
         @"edgeRingLive":@(_edgeBackdrop.live && !_edgeBackdrop.hidden),@"edgeRingMeshAccepted":@(_edgeBackdrop.meshAccepted),
         @"syncDispersionLayers":@(!_bodyStack[1].hidden),@"greenMeshAccepted":@(_bodyStack[1].meshAccepted),@"blueMeshAccepted":@(_bodyStack[2].meshAccepted),
+        @"pressedOpticsHistory":_pressedOpticsHistory?:@[],@"opticsBuild":@WXG_BUILD_DIAGNOSTIC_REVISION,@"kyantActive":@([self kyantOpticsActive]),
+        @"shaderHasKyant":@(WXGShaderKyantOptics),@"referenceCompileError":WXGOpticsCompileError?:@"",
+        @"bodyPipeline":@"original_FIX135",@"samplingBackend":WXGEffectiveRenderMode()>=2?@"original_renderServerLive":@"original_sceneTexture",
+        @"lensMapping":@"Kyant_rays_original_FIX113_U_Y_shrink",@"lensPinch":@([self lensSettings].pinch),
+        @"lensKyantBandPt":@([WXGConfig.shared extraNumber:@"dockKyantLensRefractionHeight"]),
+        @"lensKyantDepthPt":@([WXGConfig.shared extraNumber:@"dockKyantLensRefractionAmount"]),
+        @"lensKyantDispersion":@([WXGConfig.shared extraNumber:@"dockKyantDispersion"]),
         @"lensMeshVertices":@(_lensBackdrop.meshVertices),@"endReach":@[@(_endReachLeft),@(_endReachRight)],@"meshBuilder":@"contour_zipper_FIX57",@"meshCacheHits":@(WXGMeshCacheHits),@"meshCacheMisses":@(WXGMeshCacheMisses),
         @"backdropDefaultScale":@(_bodyBackdrop.defaultCaptureScale),@"backdropAppliedScale":@(_bodyBackdrop.appliedCaptureScale),
         @"backdropRequestedScale":@(_bodyBackdrop.requestedCaptureScale),
-        @"meshSubdivisionSteps":@(_bodyBackdrop.meshSubdivision),@"lensMeshSubdivisionSteps":@(_lensBackdrop.meshSubdivision),@"backdropRevision":@(_backdropRevision),@"maximumCornerRadius":@(_maximumCornerRadius),@"rim":[_bodyRim rimEvidence]?:@{},@"lensRim":[_lensRim rimEvidence]?:@{},@"rim26":[_body26 rim26Evidence]?:@{},@"lensRim26":[_lens26 rim26Evidence]?:@{},@"lensRimStyle":@([WXGConfig.shared rimStyleForScope:[self lensRimScope]]),@"lensRimScope":@([self lensRimScope]),@"samplingRequested":@(WXGConfig.shared.captureFPS),@"samplingCap":@(WXGScreenCaptureFPS(self.window.screen)),@"screenMaximumFPS":@(self.window.screen.maximumFramesPerSecond),@"captureScale":@([self screenScale]),
+        @"meshSubdivisionSteps":@(_bodyBackdrop.meshSubdivision),@"lensMeshSubdivisionSteps":@(_lensBackdrop.meshSubdivision),@"backdropRevision":@(_backdropRevision),@"maximumCornerRadius":@(_maximumCornerRadius),@"rim":[_bodyRim rimEvidence]?:@{},@"lensRim":[_lensRim rimEvidence]?:@{},@"rim26":[_body26 rim26Evidence]?:@{},@"lensRim26":[_lens26 rim26Evidence]?:@{},@"lensRimStyle":@([self effectiveLensRimStyle]),@"configuredLensRimStyle":@([WXGConfig.shared rimStyleForScope:[self lensRimScope]]),@"lensRimScope":@([self lensRimScope]),@"samplingRequested":@(WXGConfig.shared.captureFPS),@"samplingCap":@(WXGScreenCaptureFPS(self.window.screen)),@"screenMaximumFPS":@(self.window.screen.maximumFramesPerSecond),@"captureScale":@([self screenScale]),
         @"buttonPressEffect":@(_buttonPressEffect),@"lensBlur":@(WXGConfig.shared.lensBlur),@"fullLensCanvas":@YES,@"bodyMaskNative":@(_bodyMask!=nil),@"drawableWidth":@(_metal.drawableSize.width),@"drawableHeight":@(_metal.drawableSize.height)};
 }
 @end

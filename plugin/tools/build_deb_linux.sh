@@ -61,9 +61,16 @@ STRIP=$(command -v llvm-strip 2>/dev/null || echo "${CC_DIR:-/usr/lib/llvm-18/bi
 PKG="$WORK/pkg"; DST="$PKG/var/jb/Library/MobileSubstrate/DynamicLibraries"
 mkdir -p "$DST" "$PKG/DEBIAN"
 cp "$WORK/$NAME.dylib" "$DST/"; cp "$PROJ/$NAME.plist" "$DST/"
+DOC="$PKG/var/jb/usr/share/doc/$NAME"
+mkdir -p "$DOC"
+cp "$PROJ/../THIRD_PARTY_NOTICES.md" "$DOC/NOTICE.md"
+cp "$PROJ/../LICENSES/AndroidLiquidGlass-Apache-2.0.txt" "$DOC/Apache-2.0.txt"
+
 sed 's/^Architecture:.*/Architecture: iphoneos-arm64/' "$PROJ/control" > "$PKG/DEBIAN/control"
 grep -q '^Installed-Size:' "$PKG/DEBIAN/control" || echo "Installed-Size: $(du -sk "$PKG/var" | cut -f1)" >> "$PKG/DEBIAN/control"
-chmod 0755 "$PKG/DEBIAN"; chmod 0644 "$PKG/DEBIAN/control"
+find "$PKG" -type d -exec chmod 0755 {} +
+find "$PKG" -type f -exec chmod 0644 {} +
+chmod 0755 "$DST/$NAME.dylib"
 dpkg-deb --root-owner-group -Zgzip -b "$PKG" "$OUT" >/dev/null
 cp "$WORK/$NAME.dylib" "${OUT%.deb}.dylib"
 echo "built $OUT"

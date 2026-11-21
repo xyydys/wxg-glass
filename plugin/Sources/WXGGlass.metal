@@ -1,6 +1,7 @@
 #include <metal_stdlib>
 using namespace metal;
 #include "WXGLensOptics.h"
+#include "WXGKyantOptics.h"
 
 struct WXGUniforms {
     float4 viewport;   // width/height in points, drawable scale, time
@@ -226,6 +227,39 @@ float4 wxgLensBarSpectrum(float dd,float ddR,float ddB,float soft,float em,float
     float most=max(alpha.x,max(alpha.y,alpha.z));
     return float4(rgb+saturate(u.extra2.z)*(float3(most)-alpha),most);
 }
+
+// R4: the original render-server backdrop captures the real FIX135 bar,
+// including its material/rim. Only selected glyphs/selection are drawn here.
+float4 wxgKyantLensOverlay(float2 p,constant WXGUniforms &u,texture2d<float> icons) {
+    float press=clamp(u.material.x,0.f,1.f),zoom=1.f+press*(u.optics.x-1.f);
+    float2 center=u.lens.xy+u.lens.zw*.5f,halfSize=u.lens.zw*.5f;
+    float radius=u.rim.w*u.lens.w/max(1.f,u.bar.w);
+    float2 ray,spread;
+    WXGKyantLensDisplace(p,center,halfSize,radius>0.f?radius:min(halfSize.x,halfSize.y),
+        u.lensOptics.z,u.lensOptics.x,u.lensOptics.y,0.f,&ray,&spread,nullptr);
+    float2 barCenter=u.bar.xy+u.bar.zw*.5f,barSize=u.bar.zw*u.motion.x;
+    float2 barOrigin=barCenter-barSize*.5f;
+    float2 anchor=float2(u.motion.w,u.bar.y+u.bar.w*.5f);
+    float3 rgb=float3(0.f),alpha=float3(0.f);
+    for(int k=0;k<7;k++) {
+        float2 src=center+(ray+spread*WXGKyantSpectralOffset(k)-center)/zoom;
+        src=WXGKyantSceneSource(src,ray,center,u.lens.zw,radius,barOrigin,barSize,0.f,
+                               press,u.optics.z,u.lensOptics.w,zoom);
+        WXGShapeSample field=wxgShape(src,float4(barOrigin,barSize),0.f);
+        float coverage=wxgMask(field.distance,max(.8f/u.viewport.z,fwidth(field.distance)*.75f));
+        // Retain original anchor zoom: the bar's normal contraction is shared
+        // with the backdrop; the icon anchor does not drift with lens stretch.
+        float2 glyphSrc=barCenter+(src-barCenter)/u.motion.x;
+        glyphSrc+=(anchor-barCenter+(barCenter-center)/u.motion.x)*(1.f-1.f/zoom);
+        float4 glyph=icons.sample(wxgSampler,glyphSrc/u.viewport.xy)*coverage;
+        float a=u.selectionColor.a*wxgSelectionWeight(press,u)*coverage;
+        float4 acc=wxgOver(glyph,float4(u.selectionColor.rgb*a,a));
+        float3 w=WXGKyantSpectralRGBWeight(k);rgb+=w*acc.rgb;alpha+=w*acc.a;
+    }
+    float most=max(alpha.x,max(alpha.y,alpha.z));
+    return float4(rgb+saturate(u.extra2.z)*(float3(most)-alpha),most);
+}
+
 fragment float4 wxgFragment(WXGOut in [[stage_in]],constant WXGUniforms &u [[buffer(0)]],
                             texture2d<float> raw [[texture(0)]],
                             texture2d<float> normalIcons [[texture(1)]],
@@ -234,6 +268,8 @@ fragment float4 wxgFragment(WXGOut in [[stage_in]],constant WXGUniforms &u [[buf
                             texture2d<float> bodyField [[texture(4)]],
                             texture2d<float> lensSoft [[texture(5)]]) {
     float2 p=in.uv*u.viewport.xy;
+    if(u.appearance.w>.5f && u.sync.x>1.5f && WXGLensKyantCode(u.extra.w))
+        return wxgKyantLensOverlay(p,u,selectedIcons);
     // Native continuous clipping and separate native-width directional rims
     // own the final silhouette. No second analytical alpha mask cuts it again.
     float2 base=wxgBasePoint(p,u);

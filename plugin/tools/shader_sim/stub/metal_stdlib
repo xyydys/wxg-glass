@@ -2,6 +2,7 @@
 #pragma once
 #include <cmath>
 #define __METAL_VERSION__ 210
+#define half _Float16
 #define constant const
 #define device
 #define thread
@@ -74,19 +75,20 @@ inline float step(float e, float x) { return x < e ? 0.f : 1.f; }
 using std::sqrt; using std::pow; using std::fabs; using std::abs; using std::exp; using std::log; using std::fmod; using std::floor; using std::ceil;
 inline float rsqrt(float x) { return 1.f / std::sqrt(x); }
 // vector math
-#define WXG_VEC_FUNCS(V) \
-inline V min(V a, V b) { V r = a; for (int i = 0; i < (int)(sizeof(V)/sizeof(float)); i++) r[i] = a[i] < b[i] ? a[i] : b[i]; return r; } \
-inline V max(V a, V b) { V r = a; for (int i = 0; i < (int)(sizeof(V)/sizeof(float)); i++) r[i] = a[i] > b[i] ? a[i] : b[i]; return r; } \
+#define WXG_VEC_FUNCS(V,N) \
+inline V min(V a, V b) { V r = a; for (int i = 0; i < N; i++) r[i] = a[i] < b[i] ? a[i] : b[i]; return r; } \
+inline V max(V a, V b) { V r = a; for (int i = 0; i < N; i++) r[i] = a[i] > b[i] ? a[i] : b[i]; return r; } \
 inline V clamp(V x, V a, V b) { return min(b, max(a, x)); } \
-inline V clamp(V x, float a, float b) { V r = x; for (int i = 0; i < (int)(sizeof(V)/sizeof(float)); i++) r[i] = clamp(x[i], a, b); return r; } \
+inline V clamp(V x, float a, float b) { V r = x; for (int i = 0; i < N; i++) r[i] = clamp(x[i], a, b); return r; } \
 inline V saturate(V x) { return clamp(x, 0.f, 1.f); } \
 inline V mix(V a, V b, float t) { return a + (b - a) * t; } \
 inline V mix(V a, V b, V t) { return a + (b - a) * t; } \
-inline float dot(V a, V b) { float s = 0; for (int i = 0; i < (int)(sizeof(V)/sizeof(float)); i++) s += a[i] * b[i]; return s; } \
+inline float dot(V a, V b) { float s = 0; for (int i = 0; i < N; i++) s += a[i] * b[i]; return s; } \
 inline float length(V a) { return std::sqrt(dot(a, a)); } \
 inline V normalize(V a) { return a / length(a); } \
-inline V fabs(V a) { V r = a; for (int i = 0; i < (int)(sizeof(V)/sizeof(float)); i++) r[i] = std::fabs(a[i]); return r; } \
-inline V abs(V a) { return fabs(a); }
-WXG_VEC_FUNCS(float2)
-WXG_VEC_FUNCS(float3)
-WXG_VEC_FUNCS(float4)
+inline V fabs(V a) { V r = a; for (int i = 0; i < N; i++) r[i] = std::fabs(a[i]); return r; } \
+inline V abs(V a) { return fabs(a); } \
+inline V sign(V a) { V r = a; for (int i = 0; i < N; i++) r[i] = sign(a[i]); return r; }
+WXG_VEC_FUNCS(float2,2)
+WXG_VEC_FUNCS(float3,3)
+WXG_VEC_FUNCS(float4,4)
