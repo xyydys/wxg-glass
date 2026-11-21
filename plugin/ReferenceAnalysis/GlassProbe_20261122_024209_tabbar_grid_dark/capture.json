@@ -1,0 +1,81 @@
+{
+  "dark": true,
+  "backdrop": "grid",
+  "grid": "lines every 4 pt: columns at window width / 2 + 4 k (every 5th green), rows at window height - 4 k (every 5th red), 0.25 pt wide, on 15 % grey",
+  "seconds": 7.889467416680418,
+  "window": [
+    440,
+    956
+  ],
+  "tabBar": [
+    0,
+    873,
+    440,
+    83
+  ],
+  "region": [
+    0,
+    833,
+    440,
+    123
+  ],
+  "pictureScale": 2,
+  "frames": 447,
+  "pictures": 211,
+  "animations": 16,
+  "holds": 0,
+  "script": "selectedIndex 1, 2, 3, 0 at 0.6, 1.2, 1.8, 2.4 s; by hand from 3.2 s",
+  "device": {
+    "machine": "iPhone17,2",
+    "system": "26.6",
+    "screenPoints": [
+      440,
+      956
+    ],
+    "screenScale": 3,
+    "nativeScale": 3,
+    "reduceTransparency": false,
+    "increaseContrast": false,
+    "reduceMotion": false,
+    "bundle": "com.ss.iphone.ugc.Aweme",
+    "appVersion": "39.9.0",
+    "probe": "2"
+  },
+  "uniqueTabFramesPt": [
+    [
+      25,
+      877,
+      107.5,
+      54
+    ],
+    [
+      119.16666666666669,
+      877,
+      107.5,
+      54
+    ],
+    [
+      213.33333333333334,
+      877,
+      107.50000000000003,
+      54
+    ],
+    [
+      307.5,
+      877,
+      107.5,
+      54
+    ]
+  ],
+  "selectedFrameIds": [
+    0,
+    145,
+    224,
+    241,
+    266,
+    337,
+    357,
+    371,
+    436
+  ]
+}
