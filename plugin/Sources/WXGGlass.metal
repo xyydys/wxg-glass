@@ -2,6 +2,7 @@
 using namespace metal;
 #include "WXGLensOptics.h"
 #include "WXGKyantOptics.h"
+#include "WXGLensCurve.h"
 
 struct WXGUniforms {
     float4 viewport;   // width/height in points, drawable scale, time
@@ -312,6 +313,68 @@ float4 wxgKyantLensOverlay(float2 p,constant WXGUniforms &u,texture2d<float> ico
     return float4(rgb+saturate(u.extra2.z)*(float3(most)-alpha),most);
 }
 
+// Isolated pure-glass dock lens overlay: ordinary WXGLensCurve refraction and
+// early 3-channel RGB corner dispersion with a strictly flat shrunk selection
+// pill (zero 45-deg connector) and stationary per-tab glyphs.
+float4 wxgPureGlassLensOverlay(float2 p,constant WXGUniforms &u,texture2d<float> icons) {
+    float2 center=u.lens.xy+u.lens.zw*.5f,halfSize=u.lens.zw*.5f;
+    float radius=u.rim.w*u.lens.w/max(1.f,u.bar.w);
+    float2 q=p-center;
+    WXGShapeSample f=radius>0.f?WXGRoundedOpticalField(q.x,q.y,u.lens.z,u.lens.w,radius)
+                               :WXGCapsuleOpticalField(q.x,q.y,u.lens.z,u.lens.w);
+    if(f.distance>2.f)return float4(0.f);
+    if(radius>0.f) {
+        float hMin=min(halfSize.x,halfSize.y),gr=min(radius*1.5f,hMin);
+        if(gr>radius+1e-3f) {
+            WXGShapeSample gn=gr>=hMin-1e-3f?WXGCapsuleOpticalField(q.x,q.y,u.lens.z,u.lens.w)
+                                            :WXGRoundedOpticalField(q.x,q.y,u.lens.z,u.lens.w,gr);
+            if(gn.nx!=0.f || gn.ny!=0.f){f.nx=gn.nx;f.ny=gn.ny;}
+        }
+    }
+    float press=clamp(u.material.x,0.f,1.f),zoom=1.f+press*(u.optics.x-1.f);
+    float curveH=u.lensOptics.z,curveA=u.lensOptics.x,curveSqueeze=u.lensOptics.w,disp=max(0.f,u.lensOptics.y);
+    float off=WXGLensCurveOffsetCapped(-f.distance,curveH,curveA,curveSqueeze);
+    float2 n=float2(f.nx,f.ny),ray0=p-n*off;
+    float selWeight=u.selectionColor.a*wxgSelectionWeight(press,u);
+    float2 barCenter=u.bar.xy+u.bar.zw*.5f,barSize=u.bar.zw*u.motion.x;
+    float2 barOrigin=barCenter-barSize*.5f;
+    float flatInset=min(barSize.x,barSize.y)*.5f*press*clamp(u.optics.z,0.f,.60f);
+    float selAA=.8f/u.viewport.z,dSel0=0.f;
+    if(selWeight>1e-5f) {
+        dSel0=wxgShape(ray0,float4(barOrigin,barSize),0.f).distance+flatInset;
+        selAA=max(selAA,fwidth(dSel0)*.75f);
+    }
+    if(!(off>1e-4f && disp>1e-4f)) {
+        float4 glyph0=wxgDockGlyph(ray0,zoom,u,icons);
+        if(selWeight>1e-5f) {
+            float a0=selWeight*wxgMask(dSel0,selAA);
+            return wxgOver(glyph0,float4(u.selectionColor.rgb*a0,a0));
+        }
+        return glyph0;
+    }
+    float splitI=WXGLensSplitIntensity(q.x,q.y,halfSize.x,halfSize.y);
+    float sR=disp*WXGLensSplitWeight(1.f)*splitI;
+    float sG=disp*WXGLensSplitWeight(0.f)*splitI;
+    float sB=disp*WXGLensSplitWeight(-1.f)*splitI;
+    float2 rayR=p-n*off*(1.f+sR);
+    float2 rayG=p-n*off*(1.f+sG);
+    float2 rayB=p-n*off*(1.f+sB);
+    float4 cR=wxgDockGlyph(rayR,zoom,u,icons);
+    float4 cG=wxgDockGlyph(rayG,zoom,u,icons);
+    float4 cB=wxgDockGlyph(rayB,zoom,u,icons);
+    if(selWeight>1e-5f) {
+        float aR=selWeight*wxgMask(wxgShape(rayR,float4(barOrigin,barSize),0.f).distance+flatInset,selAA);
+        float aG=selWeight*wxgMask(wxgShape(rayG,float4(barOrigin,barSize),0.f).distance+flatInset,selAA);
+        float aB=selWeight*wxgMask(wxgShape(rayB,float4(barOrigin,barSize),0.f).distance+flatInset,selAA);
+        cR=wxgOver(cR,float4(u.selectionColor.rgb*aR,aR));
+        cG=wxgOver(cG,float4(u.selectionColor.rgb*aG,aG));
+        cB=wxgOver(cB,float4(u.selectionColor.rgb*aB,aB));
+    }
+    float3 rgb=float3(cR.r,cG.g,cB.b),alpha=float3(cR.a,cG.a,cB.a);
+    float most=max(alpha.x,max(alpha.y,alpha.z));
+    return float4(rgb+saturate(u.extra2.z)*(float3(most)-alpha),most);
+}
+
 fragment float4 wxgFragment(WXGOut in [[stage_in]],constant WXGUniforms &u [[buffer(0)]],
                             texture2d<float> raw [[texture(0)]],
                             texture2d<float> normalIcons [[texture(1)]],
@@ -320,8 +383,10 @@ fragment float4 wxgFragment(WXGOut in [[stage_in]],constant WXGUniforms &u [[buf
                             texture2d<float> bodyField [[texture(4)]],
                             texture2d<float> lensSoft [[texture(5)]]) {
     float2 p=in.uv*u.viewport.xy;
-    if(u.appearance.w>.5f && u.sync.x>1.5f && WXGLensKyantCode(u.extra.w))
-        return wxgKyantLensOverlay(p,u,selectedIcons);
+    if(u.appearance.w>.5f && u.sync.x>1.5f) {
+        if(WXGLensPureCode(u.extra.w))return wxgPureGlassLensOverlay(p,u,selectedIcons);
+        if(WXGLensKyantCode(u.extra.w))return wxgKyantLensOverlay(p,u,selectedIcons);
+    }
     // Native continuous clipping and separate native-width directional rims
     // own the final silhouette. No second analytical alpha mask cuts it again.
     float2 base=wxgBasePoint(p,u);

@@ -193,6 +193,35 @@ int main() {
   }
  }
  puts("R4 moving/releasing lens: 12 states finite, including medial axes.");
+ // R11 isolated pure-glass lens overlay (WXG_LENS_PURE): flat shrunk selection
+ // pill with zero 45-deg ramp, vivid 3-channel RGB bevel split, stationary glyphs.
+ WXGUniforms pu=sel;
+ pu.extra.w=WXG_LENS_PURE;pu.optics.x=1.16f;pu.optics.z=.1613f;pu.motion.x=1.f;
+ pu.material.x=1.f;pu.selectionColor=float4(.25f,.25f,.25f,.6f);pu.extra2.w=2.f;
+ pu.lens=float4(40,25,100,70);pu.lensOptics=float4(0,0,0,3.f);
+ auto pureSelRows=[&](int px) {
+  int rows=0;for(int y=25;y<95;y++)if(draw(px,y,pu,none).w>.25f)++rows;
+  return rows;
+ };
+ int leftRows=pureSelRows(50),midRows=pureSelRows(90),rightRows=pureSelRows(130);
+ assert(leftRows==midRows && rightRows==midRows && midRows>40 && midRows<56);
+ // Enable pure-glass curve + 3-channel RGB dispersion and verify bevel separation & finite output.
+ pu.selectionColor=float4(0);pu.extra2.w=1.f;
+ pu.lensOptics=float4(24.5f,1.2f,8.4f,3.f);
+ int pMoved=0,pColored=0;
+ for(int y=26;y<95;y++)for(int x=42;x<139;x++) {
+  pu.lensOptics=float4(0.f,0.f,0.f,3.f);float4 a=draw(x,y,pu,packed);
+  pu.lensOptics=float4(24.5f,0.f,8.4f,3.f);float4 b=draw(x,y,pu,packed);
+  pu.lensOptics=float4(24.5f,1.2f,8.4f,3.f);float4 c=draw(x,y,pu,packed);
+  for(int j=0;j<4;j++)assert(std::isfinite(c[j]));
+  float d=fabs(a.x-b.x)+fabs(a.y-b.y)+fabs(a.z-b.z)+fabs(a.w-b.w);
+  float sp=fabs(b.x-c.x)+fabs(b.y-c.y)+fabs(b.z-c.z);
+  if(d>1e-4f)++pMoved;if(sp>1e-4f)++pColored;
+ }
+ assert(pMoved>0 && pColored>0);
+ // Outside lens clip fast-reject returns pure transparent 0.
+ assert(draw(5,5,pu,packed).w==0.f);
+ printf("R11 pure-glass shader: flat pill rows=%d/%d/%d, bevel moved=%d, 3-RGB colored=%d.\n",leftRows,midRows,rightRows,pMoved,pColored);
 }
 '''
 s=re.sub(r'\b(float[234])\(',r'mk_\1(',s)

@@ -1,9 +1,14 @@
 #ifndef WXG_LENS_CURVE_H
 #define WXG_LENS_CURVE_H
+#ifdef __METAL_VERSION__
+#define WXG_LC_SQRT sqrt
+#else
 #include <math.h>
+#define WXG_LC_SQRT sqrtf
+#endif
 /* The glass' refraction, as iOS 26 draws it (FIX124: measured on iOS 26.6
    with the probe of probe/, on its 44 pt and 48 pt buttons, the 120 x 44
-   capsule and the 140 x 90 panel; FIX126: the tab bar's lens). Pure C.
+   capsule and the 140 x 90 panel; FIX126: the tab bar's lens). Pure C / MSL.
 
    Refraction: only within `height` of the outline. At inward depth t a
    point shows what lies amount x curve(1 - t / height) further in along the
@@ -31,7 +36,7 @@
    point, on the system's own glass. */
 static inline float WXGLensCurveMap(float x) {
     x=x<0.f?0.f:x>1.f?1.f:x;
-    return 1.f-sqrtf(1.f-x*x);
+    return 1.f-WXG_LC_SQRT(1.f-x*x);
 }
 /* The inward shift (points) at inward depth `depth` (< 0 outside). */
 static inline float WXGLensCurveOffset(float depth,float height,float amount) {
@@ -58,9 +63,9 @@ static inline float WXGLensCurveOffsetCapped(float depth,float height,float amou
     if(!(height>0.f) || !(amount>0.f))return 0.f;
     float t=depth>0.f?depth:0.f;
     if(t>=height)return 0.f;
-    float u=1.f-t/height,c=(1.f+squeeze)*height/amount,u0=c/sqrtf(1.f+c*c);
+    float u=1.f-t/height,c=(1.f+squeeze)*height/amount,u0=c/WXG_LC_SQRT(1.f+c*c);
     if(u<=u0)return amount*WXGLensCurveMap(u);
-    float g0=1.f-sqrtf(1.f-u0*u0),slope=u0/sqrtf(1.f-u0*u0);
+    float g0=1.f-WXG_LC_SQRT(1.f-u0*u0),slope=u0/WXG_LC_SQRT(1.f-u0*u0);
     return amount*(g0+slope*(u-u0));
 }
 /* A channel's mean share of d x I: +1 red, 0 green, -1 blue. */

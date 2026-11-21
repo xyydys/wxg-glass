@@ -114,4 +114,61 @@ static inline double WXGLensFlexRestingHeight(double height,double barHeight,dou
 static inline int WXGLensFlexStill(WXGLensFlex f) {
     return fabs(f.lagFast)<1e-3 && fabs(f.lagSlow)<1e-3 && fabs(f.velFast)<1e-2 && fabs(f.velSlow)<1e-2;
 }
+/* Amplitude-adaptive deformation timing: when the user reduces the flatten
+   travel (e.g., raising restFlattest from 0.82 to 0.90, or lowering flatten /
+   strength), shorten the follower settling duration in proportion to travel
+   distance (t ~ r^0.55 => omega ~ r^-0.55) so shorter travels stay crisp and
+   never feel sluggish, while remaining bit-identical at iOS 26 defaults. */
+static inline double WXGLensFlexAdaptiveSpeedup(WXGLensFlexParams p) {
+    double restFlat=WXGLensFlexClamp(p.restFlattest,.3,1.);
+    double restRatio=WXGLensFlexClamp((1.-restFlat)/.18,0.,1.5);
+    double strength=p.gainY>1e-6?p.gainY/.49:0.;
+    double fl=p.flatten<0.?0.:p.flatten,sq=p.squeeze<0.?0.:p.squeeze;
+    double flatAmp=restRatio*fl*strength,sqzAmp=sq*strength;
+    if(!(flatAmp>1e-4) && !(sqzAmp>1e-4))return 1.;
+    double effAmp=.70*flatAmp+.30*sqzAmp;
+    if(effAmp<.05)effAmp=.05;
+    double sp=pow(effAmp,-.55);
+    return WXGLensFlexClamp(sp,.75,2.20);
+}
+static inline void WXGLensFlexAdaptiveStep(WXGLensFlex *f,double lensVelocity,double pitch,WXGLensFlexParams p,double dt) {
+    double sp=WXGLensFlexAdaptiveSpeedup(p);
+    WXGLensFlexParams q=p;
+    q.fast=(p.fast>1.?p.fast:1.)*sp;
+    q.slow=(p.slow>.5?p.slow:.5)*sp;
+    WXGLensFlexStep(f,lensVelocity,pitch,q,dt);
+}
+/* Smooth-ceiling scale: eliminates the ~150 ms flat plateau freeze created by
+   hard-clamping e > most when restFlattest > 0.82, proportionally scaling the
+   resting flatten curve + C-infinity tanh soft knee so the bounce peaks cleanly
+   and springs back continuously with matched speed. */
+static inline void WXGLensFlexAdaptiveScaleAt(WXGLensFlex f,WXGLensFlexParams p,double press,double *scaleX,double *scaleY) {
+    double sp=WXGLensFlexAdaptiveSpeedup(p);
+    double bwComp=pow(sp,.45);
+    double gx=p.gainX*bwComp,gy=p.gainY*bwComp;
+    double e=f.lagSlow-f.lagFast;
+    if(p.symmetric)e=fabs(e);
+    else if(e<0.)e*=p.squeeze<0.?0.:p.squeeze;
+    if(e>0.) {
+        e*=p.flatten<0.?0.:p.flatten;
+        double flattest=WXGLensFlexClamp(p.restFlattest,.3,1.);
+        double restRatio=WXGLensFlexClamp((1.-flattest)/.18,0.,1.5);
+        double most=gy>1e-6?(1.-flattest)/gy:e;
+        double lifted=press<=0.?0.:press>=.5?1.:press/.5;
+        double eRest=0.;
+        if(most>1e-6) {
+            double eScaled=e*(restRatio<1.?restRatio:1.);
+            double knee=.75*most;
+            if(eScaled<=knee)eRest=eScaled;
+            else {
+                double span=most-knee;
+                eRest=knee+span*tanh((eScaled-knee)/span);
+            }
+        }
+        double eLifted=restRatio<1.?e*(.45+.55*restRatio):e;
+        e=eRest+(eLifted-eRest)*lifted;
+    }
+    *scaleX=WXGLensFlexClamp(1.+gx*e,p.minX,p.maxX);
+    *scaleY=WXGLensFlexClamp(1.-gy*e,p.minY,p.maxY);
+}
 #endif

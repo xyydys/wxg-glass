@@ -6,7 +6,9 @@
 /* Kyant AndroidLiquidGlass (Backdrop, Apache-2.0, upstream eb4a0ea2) optics
    cleanly integrated for FIX135 main continuous dock (C + Metal shared). */
 #define WXG_LENS_KYANT 2000.f
-static inline int WXGLensKyantCode(float w) { return w >= 1500.f; }
+#define WXG_LENS_PURE 3000.f
+static inline int WXGLensPureCode(float w) { return w >= 2500.f; }
+static inline int WXGLensKyantCode(float w) { return w >= 1500.f && w < 2500.f; }
 
 #ifdef __METAL_VERSION__
 #define WXG_K_OUT thread

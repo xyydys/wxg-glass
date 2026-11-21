@@ -80,11 +80,14 @@ typedef struct {
     float curveSqueeze;
     /* Kyant Backdrop refraction mode (zero = off; trailing fields keep positional init ABI). */
     float kyantMode,kyantHeight,kyantAmount,kyantChannel;
+    /* Pure-glass flat inner-bar shrink (zero = legacy 45-deg along-bar ramp; 1 = pure uniform flat inset). */
+    float shrinkFlat;
 } WXGMeshOptics;
 /* The full inset of the smaller bar, and the inset ramped by `along` (as
    WXGInnerInsetAlong, either sign). */
 static inline float WXGMeshShrinkFull(WXGMeshOptics o) {
-    return (o.sbBottom-o.sbTop)*.5f*WXGOClamp(o.shrinkPress,0.f,1.f)*WXGOClamp(o.shrinkPinch,0.f,.30f)+o.shrinkExtra;
+    float maxPinch=o.shrinkFlat>.5f?.60f:.30f;
+    return (o.sbBottom-o.sbTop)*.5f*WXGOClamp(o.shrinkPress,0.f,1.f)*WXGOClamp(o.shrinkPinch,0.f,maxPinch)+o.shrinkExtra;
 }
 static inline float WXGMeshShrinkAlong(float full,float along) {
     float f=WXG_ABS(full);if(!(f>1e-4f))return 0.f;
@@ -186,7 +189,8 @@ static inline void WXGMeshShrinkBar(WXGMeshOptics o,float yx,float yy,float za,f
        much further out / in): measured against the squashed lens the ramp
        never reached the full inset, and nothing once the lens was shorter
        than the bar. The join at the lens' ends lies in its refraction band. */
-    float d=WXGMeshShrinkAlong(WXGMeshShrinkFull(o),WXGLensDepthAlongBar(l.distance*s-o.shrinkExtra,-b.ny,b.nx,l.nx,l.ny));
+    float d=o.shrinkFlat>.5f?WXGMeshShrinkFull(o)
+        :WXGMeshShrinkAlong(WXGMeshShrinkFull(o),WXGLensDepthAlongBar(l.distance*s-o.shrinkExtra,-b.ny,b.nx,l.nx,l.ny));
     /* The zoom (about the layer's centre) moves that outline: before it,
        the inset is h - (h - d) / zoom, h the centre's distance to the
        outline along its normal. Swollen (a negative extra), the smaller
@@ -244,7 +248,7 @@ static inline void WXGMeshSource(WXGMeshOptics o,float px,float py,float *sx,flo
             o.shrinkPress,o.shrinkPinch,0.f,WXG_K_MAX(0.f,o.shrinkExtra),zoom);
         *sx=src.x;*sy=src.y;return;
     }
-    if(o.curveHeight>0.f){WXGMeshCurveSource(o,px,py,sx,sy);return;}
+    if(o.curveHeight>0.f || o.shrinkFlat>.5f){WXGMeshCurveSource(o,px,py,sx,sy);return;}
     float cx=o.width*.5f,cy=o.height*.5f,s=o.fieldScale>0.f?o.fieldScale:1.f;
     float zb=o.zoomBefore>0.f?o.zoomBefore:1.f,za=o.zoomAfter>0.f?o.zoomAfter:1.f;
     float x=(px-cx)/s,y=(py-cy)/s,w=WXGMeshShapeWidth(o)/s,h=WXGMeshShapeHeight(o)/s;
@@ -319,7 +323,7 @@ static inline float WXGMeshDepthSource(WXGMeshOptics o,float width,float dwidth,
         float cauchy=WXG_MIN(off*0.065f*disp*pressScale,0.42f*off);
         return tEff+off+channel*cauchy;
     }
-    if(o.curveHeight>0.f)return t+WXGLensCurveOffsetCapped(t,o.curveHeight,o.curveAmount,o.curveSqueeze)*(1.f+channel*(o.dispersion>0.f?o.dispersion*WXG_LENS_SPLIT_SPAN:0.f));
+    if(o.curveHeight>0.f || o.shrinkFlat>.5f)return t+WXGLensCurveOffsetCapped(t,o.curveHeight,o.curveAmount,o.curveSqueeze)*(1.f+channel*(o.dispersion>0.f?o.dispersion*WXG_LENS_SPLIT_SPAN:0.f));
     float d=-t;
     float off=WXGMeshOffset(o,d,width);   /* FIX113 I, FIX114 I */
     return t+off-channel*o.dispersion*wxgEdgeC(d,dwidth);

@@ -660,8 +660,18 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 // The dock's layout with the lens' anchor at `anchor` (from the bar's left).
 - (WXGDockGeometry)layoutAtAnchor:(CGFloat)anchor press:(CGFloat)press {
     WXGConfig *c=WXGConfig.shared;
+    if(c.dockPureGlassMode) {
+        return WXGDockLayoutCells((float)_materialRect.size.width,(float)_materialRect.size.height,(float)[self selectionGap],(float)anchor,(float)press,
+                                  (float)c.pureDockLensGrowth,0,(float)c.pureDockBarGrowth,(float)c.pureDockEndWrap,(float)c.dockCellExtra,(float)c.pureDockLensLiftWidth);
+    }
     return WXGDockLayoutCells((float)_materialRect.size.width,(float)_materialRect.size.height,(float)[self selectionGap],(float)anchor,(float)press,
                               (float)c.lensGrowth,0,(float)c.barGrowth,(float)c.endWrap,(float)c.dockCellExtra,(float)c.dockLensLiftWidth);
+}
+- (CGFloat)effectiveIconScale {
+    WXGConfig *c=WXGConfig.shared;
+    CGFloat zoom=c.dockPureGlassMode?c.pureDockIconZoom:c.lensZoom;
+    CGFloat growth=c.dockPureGlassMode?c.pureDockBarGrowth:c.barGrowth;
+    return WXGCaptureScale(self.window.screen.scale?:UIScreen.mainScreen.scale)*zoom*growth;
 }
 // Which tab a point is over: the quarters of the inside; with overlapping
 // cells, halfway between two tabs' centres.
@@ -702,7 +712,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 }
 - (void)applyConfig {
     [self setNeedsLayout]; [self layoutIfNeeded]; [_glass invalidateBackdrop]; [_glass applyStyle];
-    CGFloat scale=WXGCaptureScale(self.window.screen.scale?:UIScreen.mainScreen.scale)*WXGConfig.shared.lensZoom*WXGConfig.shared.barGrowth;
+    CGFloat scale=[self effectiveIconScale];
     BOOL nativeChanged=_previousNativeIcons!=WXGDockNativeIcons() || _previousTelegram!=WXGTelegramTabIconsOn();   // FIX113 (FIX115 D: 主题优先 too)
     _previousNativeIcons=WXGDockNativeIcons();
     if(_previousTelegram!=WXGTelegramTabIconsOn()){_previousTelegram=WXGTelegramTabIconsOn();[self stopTelegramAnimation];}
@@ -724,7 +734,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 - (WXGIconJob *)iconJob {
     if(self.bounds.size.width<1 || self.bounds.size.height<1)return nil;
     WXGIconJob *job=[WXGIconJob new];job.size=self.bounds.size;
-    job.scale=WXGCaptureScale(self.window.screen.scale ?: UIScreen.mainScreen.scale)*WXGConfig.shared.lensZoom*WXGConfig.shared.barGrowth;
+    job.scale=[self effectiveIconScale];
     job.materialRect=_materialRect;job.darkInk=_darkInk;job.useNative=WXGDockNativeIcons();job.nativeSize=job.useNative && !WXGTelegramTabIconsOn();job.themeFirst=WXGDockThemeFirst();   // FIX115 Djob.selectedIndex=_selectedIndex;
     NSMutableArray<NSNumber *> *centers=[NSMutableArray array];
     for(NSInteger i=0;i<4;i++)[centers addObject:@([self centerForIndex:i])];
@@ -831,7 +841,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 }
 - (void)rebuildIcons {
     _iconLayout=[self iconLayoutKey];   // FIX89
-    _iconMaterialRect=_materialRect; _iconScale=WXGCaptureScale(self.window.screen.scale?:UIScreen.mainScreen.scale)*WXGConfig.shared.lensZoom*WXGConfig.shared.barGrowth;
+    _iconMaterialRect=_materialRect; _iconScale=[self effectiveIconScale];
     WXGIconJob *job=[self iconJob];NSUInteger generation=++_iconGeneration;
     if(!_iconsReady || !job) {
         // First atlas synchronously, so the dock never shows without icons.
@@ -1056,7 +1066,8 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 }
 - (void)glowDownAt:(CGPoint)point {
     WXGConfig *c=WXGConfig.shared;
-    if([c extraNumber:@"dockTouchGlow"]<.5)return;
+    BOOL pureMode=c.dockPureGlassMode;
+    if(pureMode?!c.pureDockTouchGlow:[c extraNumber:@"dockTouchGlow"]<.5)return;
     if(!_glow) {
         _glow=[[WXGDockGlowView alloc] initWithFrame:CGRectZero];
         if(![_glass attachDockMaterialGlow:_glow]) {
@@ -1064,7 +1075,9 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
             [_fallback.contentView addSubview:_glow];
         }
     }
-    [_glow touchDownAt:[self glowPoint:point] spot:[c extraNumber:@"dockTouchGlowSpot"] bar:[c extraNumber:@"dockTouchGlowBar"]];
+    CGFloat spot=pureMode?WXG_DOCK26_GLOW_SPOT:[c extraNumber:@"dockTouchGlowSpot"];
+    CGFloat bar=pureMode?WXG_DOCK26_GLOW_BAR:[c extraNumber:@"dockTouchGlowBar"];
+    [_glow touchDownAt:[self glowPoint:point] spot:spot bar:bar];
 }
 - (BOOL)beginTrackingWithTouch:(UITouch *)touch withEvent:(UIEvent *)event {
     (void)event;
@@ -1080,12 +1093,21 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
     // FIX95: a new touch takes the lens from where it is; a landing it cut
     // short lands again if released on that tab (and holds WeChat's switch).
     // FIX98: its press and colour too (before the touch-down bump below).
+    BOOL pureMode=WXGConfig.shared.dockPureGlassMode;
     CGFloat pressBefore=WXGClamp(_press,0,1),selectionBefore=WXGClamp(_selectionShown,0,1);
+    // R11: rapid consecutive tap while the lens is still lifted/hanging keeps
+    // it continuously in liquid glass state (never dipping back to resting pill)
+    // and avoids stepping through intermediate press mesh cache keys.
+    if(pureMode && pressBefore>.25) {
+        pressBefore=MAX(pressBefore,.90);
+        selectionBefore=0;
+        _selectionShown=0;_selectionCarry=0;
+    }
     _resumeIndex=_script.phase==2?_script.index:-1;
     if(_script.phase)[self endScript];
     // FIX35: touch-down moves the lifted lens to the touched tab at once, so
     // it can be slid left and right (FIX33's lift-in-place is gone).
-    _targetPress=1; _press=MAX(_press,.10); [_feedback prepare]; [self trackPoint:point];_touchDownIndex=_selectedIndex;   // FIX88
+    _targetPress=1; _press=MAX(_press,pureMode && pressBefore>=.90?.90:.10); [_feedback prepare]; [self trackPoint:point];_touchDownIndex=_selectedIndex;   // FIX88
     [self glowDownAt:point];   // FIX131
     // FIX42: a touch on another tab glides there on the release animation's
     // curve instead of the drag spring (which crossed the bar in ~0.1 s).
@@ -1098,21 +1120,25 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
     if(_jumping){_jumpFromX=_lensX;_jumpStart=CACurrentMediaTime();_jumpDuration=.28*(.85+.05*MIN(steps,3.));_jumpPlanEnd=_jumpStart+_jumpDuration;}
     // FIX44: the glide runs in the render server (main-thread tween only as a
     // fallback), so a busy main thread cannot make it stutter.
-    if(_jumping && [self beginGlideToIndex:_selectedIndex duration:_jumpDuration])_jumping=NO;
+    if(!pureMode && _jumping && [self beginGlideToIndex:_selectedIndex duration:_jumpDuration])_jumping=NO;
     // FIX95: otherwise the real lens glides there on the same curve, lifted
     // as the render-server one was, frame by frame (tick).
     // (Not with Reduce Motion, nor as a fallback of 简化透镜: there the
     // FIX42 tween runs and WeChat switches at once, as before.)
     // FIX98: slower (点按动画时长倍数 on the FIX43 time), from the press and
     // colour it had, on the script's clock (its plan too, for a travel).
-    if(_jumping && !UIAccessibilityIsReduceMotionEnabled() && !WXGConfig.shared.dockTapSimpleTravel) {
+    if(_jumping && !UIAccessibilityIsReduceMotionEnabled() && (pureMode || !WXGConfig.shared.dockTapSimpleTravel)) {
         // FIX127: on iOS 26's position spring when asked (its own duration:
         // to where it stands still; 点按滑动时长 is the bezier's).
-        WXGConfig *tap=WXGConfig.shared;BOOL spring=tap.dockMoveSpring;
-        double glide=spring?WXGDockSpringDuration(tap.dockMoveResponse,tap.dockMoveDamping):_jumpDuration*tap.dockTapDurationScale;
+        WXGConfig *tap=WXGConfig.shared;
+        BOOL spring=pureMode?YES:tap.dockMoveSpring;
+        double resp=pureMode?tap.pureDockMoveResponse:tap.dockMoveResponse;
+        double damp=pureMode?tap.pureDockMoveDamping:tap.dockMoveDamping;
+        double liftShare=pureMode?tap.pureDockTapLiftRatio:tap.dockTapLensShare;
+        double glide=spring?WXGDockSpringDuration(resp,damp):_jumpDuration*tap.dockTapDurationScale;
         _script=WXGScriptGlide([self animationNow],_lensX,[self centerForIndex:_selectedIndex],glide,
-                               pressBefore,selectionBefore,_selectedIndex,WXGConfig.shared.dockTapLensShare);
-        if(spring)WXGScriptUseSpring(&_script,tap.dockMoveResponse,tap.dockMoveDamping);
+                               pressBefore,selectionBefore,_selectedIndex,liftShare);
+        if(spring)WXGScriptUseSpring(&_script,resp,damp);
         [self beginTapRecord:1];
         _jumpPlanEnd=_script.planEnd;
         ++_scriptGlides;_jumping=NO;
@@ -1244,8 +1270,10 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
         // FIX98: until the moment chosen (切换页面的时机: at the release, when
         // the lens has nearly arrived, or once it is down); a stall after it
         // only pauses the lens (the script's clock).
+        WXGConfig *cfg=WXGConfig.shared;
+        double dropTime=cfg.dockPureGlassMode?cfg.pureDockTapDropTime:cfg.dockTapDropDuration;
         if(_travelling && _travelPhase==1)[self dropTravel];
-        else if(scriptOnTab){WXGScriptDrop(&_script,[self animationNow],WXGConfig.shared.dockTapDropDuration);WXGScriptHang(&_script,[self animationNow],[self lensHang]);++_scriptDrops;}
+        else if(scriptOnTab){WXGScriptDrop(&_script,[self animationNow],dropTime);WXGScriptHang(&_script,[self animationNow],[self lensHang]);++_scriptDrops;}
         else if(_selectedIndex!=_initialSelected || _resumeIndex==_selectedIndex)[self beginTravelToIndex:_selectedIndex];
         _switchedAtTouchDown=_earlySent && _earlyIndex==_selectedIndex;   // FIX100
         [self sendActionsForControlEvents:UIControlEventValueChanged];
@@ -1260,7 +1288,10 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
     if(hang>0 && !_script.phase && !_travelling){_targetPress=1;_hangUntil=CACurrentMediaTime()+hang;}
 }
 // FIX127: how long the lens stays lifted after the finger leaves (松手后停留; none with Reduce Motion).
-- (CGFloat)lensHang {return UIAccessibilityIsReduceMotionEnabled()?0:WXGConfig.shared.dockLensHang;}
+- (CGFloat)lensHang {
+    WXGConfig *c=WXGConfig.shared;
+    return UIAccessibilityIsReduceMotionEnabled()?0:(c.dockPureGlassMode?c.pureDockLensHang:c.dockLensHang);
+}
 - (void)cancelTrackingWithEvent:(UIEvent *)event {
     (void)event;
     if(_closeTracking){_closeTracking=NO;[self setClosePressed:NO];return;}
@@ -1621,7 +1652,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
 // Shared set-up (call inside a transaction): the per-frame dock rests at the
 // target and the travel layers start where the real lens is.
 - (BOOL)prepareTravelToIndex:(NSInteger)index {
-    if(!WXGConfig.shared.dockTapSimpleTravel || UIAccessibilityIsReduceMotionEnabled() || !_glass.ready || !_glass.hasPresentedFrame ||
+    if(WXGConfig.shared.dockPureGlassMode || !WXGConfig.shared.dockTapSimpleTravel || UIAccessibilityIsReduceMotionEnabled() || !_glass.ready || !_glass.hasPresentedFrame ||
        !_selectedDockTiles.CGImage || _atlasCenters.count!=4 || !_normalAtlas.CGImage || CGRectIsEmpty(_materialRect) || !self.window)return NO;
     CFTimeInterval setupStart=CACurrentMediaTime();
     CGFloat minX=_materialRect.origin.x,minY=_materialRect.origin.y;
@@ -1746,14 +1777,19 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
 - (BOOL)beginTravelToIndex:(NSInteger)index {
     // FIX95: the real lens on the same timing (WXGScriptTravel).
     // FIX98: x the duration scale, the drop of its own length, from the colour shown.
-    if(!WXGConfig.shared.dockTapSimpleTravel && !UIAccessibilityIsReduceMotionEnabled() && !CGRectIsEmpty(_materialRect)) {
+    WXGConfig *c=WXGConfig.shared;
+    BOOL pureMode=c.dockPureGlassMode;
+    if((pureMode || !c.dockTapSimpleTravel) && !UIAccessibilityIsReduceMotionEnabled() && !CGRectIsEmpty(_materialRect)) {
         CGFloat slot=MAX(1,([self centerForIndex:3]-[self centerForIndex:0])/3);
-        WXGConfig *c=WXGConfig.shared;
         // FIX127: on iOS 26's position spring when asked, the drop after the hang.
-        BOOL spring=c.dockMoveSpring;
+        BOOL spring=pureMode?YES:c.dockMoveSpring;
+        double resp=pureMode?c.pureDockMoveResponse:c.dockMoveResponse;
+        double damp=pureMode?c.pureDockMoveDamping:c.dockMoveDamping;
+        double dropTime=pureMode?c.pureDockTapDropTime:c.dockTapDropDuration;
+        double liftShare=pureMode?c.pureDockTapLiftRatio:c.dockTapLensShare;
         _script=WXGScriptTravelTimed([self animationNow],_lensX,[self centerForIndex:index],slot,WXGClamp(_press,0,1),WXGClamp(_selectionShown,0,1),_jumpPlanEnd,index,
-                                     c.dockTapDurationScale,c.dockTapDropDuration,c.dockTapLensShare,spring?WXGDockSpringDuration(c.dockMoveResponse,c.dockMoveDamping):0);
-        if(spring)WXGScriptUseSpring(&_script,c.dockMoveResponse,c.dockMoveDamping);
+                                     c.dockTapDurationScale,dropTime,liftShare,spring?WXGDockSpringDuration(resp,damp):0);
+        if(spring)WXGScriptUseSpring(&_script,resp,damp);
         WXGScriptHang(&_script,[self animationNow],[self lensHang]);
         [self beginTapRecord:2];
         _jumpPlanEnd=0;++_scriptTravels;_targetX=[self centerForIndex:index];_targetPress=0;
@@ -1925,7 +1961,12 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         // spring when asked (a finger's own follow spring is the dock's).
         double stiffness=_fingerDown?620:340,friction=_fingerDown?39:29;
         WXGConfig *move=WXGConfig.shared;
-        if(!_fingerDown && !reduceMotion && move.dockMoveSpring)WXGDockSpringConstants(move.dockMoveResponse,move.dockMoveDamping,&stiffness,&friction);
+        BOOL spring=move.dockPureGlassMode?YES:move.dockMoveSpring;
+        if(!_fingerDown && !reduceMotion && spring) {
+            double resp=move.dockPureGlassMode?move.pureDockMoveResponse:move.dockMoveResponse;
+            double damp=move.dockPureGlassMode?move.pureDockMoveDamping:move.dockMoveDamping;
+            WXGDockSpringConstants(resp,damp,&stiffness,&friction);
+        }
         WXGSpring(&_lensX,&_velocityX,_targetX,stiffness,friction,dt);
     }
     // FIX127: the hang after a release is over (or a script took the press).
@@ -1939,8 +1980,13 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     if(!reduceMotion)WXGElasticStep(&_elasticMotion,_velocityX,dt);
     else _elasticMotion=(WXGElasticMotion){0};
     // FIX126: the lens' deformation follows it (WXGLensFlex.h, per tab pitch).
-    if(!reduceMotion)WXGLensFlexStep(&_flex,_velocityX,([self centerForIndex:3]-[self centerForIndex:0])/3.,WXGConfig.shared.lensFlexParams,dt);
-    else _flex=(WXGLensFlex){0};
+    // R11: pureDock uses amplitude-adaptive stepping so shallower restFlattest speeds up proportionally.
+    if(!reduceMotion) {
+        WXGConfig *fc=WXGConfig.shared;
+        double pitch=([self centerForIndex:3]-[self centerForIndex:0])/3.;
+        if(fc.dockPureGlassMode)WXGLensFlexAdaptiveStep(&_flex,_velocityX,pitch,fc.pureDockFlexParams,dt);
+        else WXGLensFlexStep(&_flex,_velocityX,pitch,fc.lensFlexParams,dt);
+    }else _flex=(WXGLensFlex){0};
     if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];   // FIX68
     [self updateGeometry]; [self layoutBadges]; [_glass tick:link.timestamp];
 }
@@ -1949,9 +1995,10 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     [self syncDiscreteVisibility];
     if(_discreteShown){_discreteDirty=YES;[self updateDiscreteGeometry];return;}   // 离散底栏
     WXGConfig *c=WXGConfig.shared;
+    BOOL pureMode=c.dockPureGlassMode;
     CGFloat press=WXGClamp(_press,0,1);
     // FIX113 Y: the drag-speed deformation can be off, and its height change limited.
-    BOOL elastic=!UIAccessibilityIsReduceMotionEnabled() && [c extraNumber:@"lensElasticOn"]>.5;
+    BOOL elastic=!UIAccessibilityIsReduceMotionEnabled() && (pureMode?c.pureDockFlexOn:[c extraNumber:@"lensElasticOn"]>.5);
     // The dock's own lens (size, growth, position, press), then the
     // deformation as it moves (WXGLensFlex.h, as the system's lens): width
     // and height scaled about the lens' centre, the width no wider than the
@@ -1959,8 +2006,11 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     WXGDockGeometry g=[self layoutAtAnchor:_lensX-_materialRect.origin.x press:press];   // FIX127: iOS 26's cells too
     _glass.lensRestHeight=g.lensHeight;   // FIX113 Y: undeformed
     if(elastic) {
-        double sx=1,sy=1;WXGLensFlexScaleAt(_flex,c.lensFlexParams,press,&sx,&sy);   // FIX135: down, not flatter than the system's pill
-        float w=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*(float)c.endWrap),h=(float)(g.lensHeight*sy);
+        double sx=1,sy=1;
+        if(pureMode)WXGLensFlexAdaptiveScaleAt(_flex,c.pureDockFlexParams,press,&sx,&sy);
+        else WXGLensFlexScaleAt(_flex,c.lensFlexParams,press,&sx,&sy);   // FIX135: down, not flatter than the system's pill
+        CGFloat wrap=pureMode?c.pureDockEndWrap:c.endWrap;
+        float w=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*(float)wrap),h=(float)(g.lensHeight*sy);
         h=(float)WXGLensFlexRestingHeight(h,g.barHeight,press,1.);   // FIX134: down, never cut by the bar
         g.lensX+=(g.lensWidth-w)*.5f;g.lensY+=(g.lensHeight-h)*.5f;g.lensWidth=w;g.lensHeight=h;
     }
@@ -1984,8 +2034,9 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     _fallbackIcons.transform=CGAffineTransformMakeScale(g.scale,g.scale);
     _fallbackLens.frame=lens; _fallbackLens.layer.cornerRadius=MIN(g.lensWidth,g.lensHeight)*.5;
     // The stand-in before the glass has drawn: the dock's own face, a thin white outline.
-    UIColor *tint=WXGColor([c materialHexForScope:WXGGlassScopeDock dark:!_darkInk]);
-    _fallback.contentView.backgroundColor=[tint colorWithAlphaComponent:CGColorGetAlpha(tint.CGColor)*[c materialOpacityForScope:WXGGlassScopeDock dark:!_darkInk]];
+    WXGGlassScope fbScope=pureMode?WXGGlassScopeOther:WXGGlassScopeDock;
+    UIColor *tint=WXGColor([c materialHexForScope:fbScope dark:!_darkInk]);
+    _fallback.contentView.backgroundColor=[tint colorWithAlphaComponent:CGColorGetAlpha(tint.CGColor)*[c materialOpacityForScope:fbScope dark:!_darkInk]];
     CGFloat outline=_darkInk?.5:.15;
     _fallback.layer.borderWidth=.65;
     _fallback.layer.borderColor=[UIColor colorWithWhite:1 alpha:outline].CGColor;
@@ -2104,7 +2155,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
 // FIX39: the tap animation's layers and refracting backdrop, built while idle
 // so the first taps after launch do not pay for them.
 - (void)prewarmTravel {
-    if(_discreteShown)return;   // 离散底栏: no lens travel
+    if(_discreteShown || WXGConfig.shared.dockPureGlassMode)return;   // 离散底栏 / R11 pureDock: no simple travel
     if(_travelling || CGRectIsEmpty(_materialRect) || !self.window || !WXGConfig.shared.dockTapSimpleTravel ||
        !_selectedDockTiles.CGImage || _atlasCenters.count!=4 || !_normalAtlas.CGImage)return;
     WXGDockGeometry g=[self layoutAtAnchor:_materialRect.size.width*.5 press:.90];   // as prepareTravelToIndex
@@ -2149,7 +2200,7 @@ static NSString * const WXGDiscreteFadeKey=@"wxg.discreteFade";
 // not after the spring has settled on a whole classic bar (it showed for
 // ~0.5 s and then turned into the discrete one).
 static const CGFloat WXGDiscreteReturnProgress=.15;
-- (BOOL)discreteWanted {return WXGConfig.shared.dockDiscrete && !_searchMode && (!_morphing || _morphProgress<WXGDiscreteReturnProgress);}
+- (BOOL)discreteWanted {return !WXGConfig.shared.dockPureGlassMode && WXGConfig.shared.dockDiscrete && !_searchMode && (!_morphing || _morphProgress<WXGDiscreteReturnProgress);}
 // Toward the search button (its side is the one with stretch room), else centred.
 - (int)discreteAlign {return _endStretchRoomLeft>0?-1:(_endStretchRoomRight>0?1:0);}
 - (void)ensureDiscreteViews {
@@ -2633,7 +2684,7 @@ static const CGFloat WXGDiscreteReturnProgress=.15;
     // FIX113 D: the spring of a close settling (its overshoot) can start the
     // morph again after it ended: with the discrete dock already back, it
     // stays (no touch cancelled, the classic bar's tabs not shown under it).
-    BOOL keepDiscrete=_discreteShown && WXGConfig.shared.dockDiscrete && !_searchMode;
+    BOOL keepDiscrete=_discreteShown && !WXGConfig.shared.dockPureGlassMode && WXGConfig.shared.dockDiscrete && !_searchMode;
     [self ensureMorphLayers];
     if(_travelling)[self finishTravelNow];
     if(!keepDiscrete)[self cancelInteraction];

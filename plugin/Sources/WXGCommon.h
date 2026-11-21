@@ -231,6 +231,23 @@ enum { WXGRimGlowCount=2 };
 - (BOOL)hasDockSystem26Backup;
 - (BOOL)restoreDockBeforeSystem26;                        // those back; NO: nothing kept
 - (WXGGlassCurve)glassCurveForScope:(WXGGlassScope)scope;   // FIX130: every range's body, iOS 26's curve
+// R11: standalone pure-glass dock test mode (overrides all legacy and Kyant dock switches).
+- (BOOL)dockPureGlassMode;
+- (WXGGlassCurve)pureDockLensCurve;
+- (CGFloat)pureDockInnerBarHeight;
+- (CGFloat)pureDockIconZoom;
+- (CGFloat)pureDockBarGrowth;
+- (CGFloat)pureDockLensGrowth;
+- (CGFloat)pureDockLensLiftWidth;
+- (CGFloat)pureDockEndWrap;
+- (BOOL)pureDockTouchGlow;
+- (BOOL)pureDockFlexOn;
+- (WXGLensFlexParams)pureDockFlexParams;
+- (CGFloat)pureDockMoveResponse;
+- (CGFloat)pureDockMoveDamping;
+- (CGFloat)pureDockTapLiftRatio;
+- (CGFloat)pureDockTapDropTime;
+- (CGFloat)pureDockLensHang;
 // FIX113 X: the 透镜 range's border as one line (the tap animation's lens,
 // a plain layer border): its colour with opacity, and width.
 - (UIColor *)lensRimLineColorDark:(BOOL)dark width:(CGFloat *)width;

@@ -136,6 +136,33 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockKyantLensRefractionHeight",'n',18,0,40,NULL,NULL},
     {"dockKyantLensRefractionAmount",'n',26,0,50,NULL,NULL},
     {"dockKyantDispersion",'n',2.4,0,5,NULL,NULL},
+    // R11: standalone isolated pure-glass dock test mode (forces all legacy & Kyant dock switches off).
+    {"dockPureGlassMode",'b',1,0,1,NULL,NULL},
+    {"dockPureLensBand",'n',.12,0,.5,NULL,NULL},
+    {"dockPureLensDepth",'n',.35,0,1.5,NULL,NULL},
+    {"dockPureLensBandMax",'n',20,4,80,NULL,NULL},
+    {"dockPureLensSqueeze",'n',3,0,20,NULL,NULL},
+    {"dockPureLensDispersion",'n',1.2,0,3,NULL,NULL},
+    {"dockPureInnerBarHeight",'n',52,24,80,NULL,NULL},
+    {"dockPureIconZoom",'n',1.16,1,1.4,NULL,NULL},
+    {"dockPureBarGrowth",'n',1.035,1,1.08,NULL,NULL},
+    {"dockPureLensGrowth",'n',1.13,1,1.4,NULL,NULL},
+    {"dockPureLensLiftWidth",'n',16,0,40,NULL,NULL},
+    {"dockPureEndWrap",'n',8.4,0,14,NULL,NULL},
+    {"dockPureTouchGlow",'b',0,0,1,NULL,NULL},
+    {"dockPureFlexOn",'b',1,0,1,NULL,NULL},
+    {"dockPureFlexStrength",'n',1,0,2,NULL,NULL},
+    {"dockPureFlexFlatten",'n',1,0,1.5,NULL,NULL},
+    {"dockPureFlexRestFloor",'n',.82,.5,1,NULL,NULL},
+    {"dockPureFlexSqueeze",'n',1,0,1.5,NULL,NULL},
+    {"dockPureFlexSlow",'n',8,3,20,NULL,NULL},
+    {"dockPureFlexDamping",'n',.5,.15,1.2,NULL,NULL},
+    {"dockPureFlexSymmetric",'b',0,0,1,NULL,NULL},
+    {"dockPureMoveResponse",'n',.40,.2,.8,NULL,NULL},
+    {"dockPureMoveDamping",'n',.86,.5,1.2,NULL,NULL},
+    {"dockPureTapLiftRatio",'n',.40,.15,.9,NULL,NULL},
+    {"dockPureTapDropTime",'n',.23,.08,.6,NULL,NULL},
+    {"dockPureLensHang",'n',.18,0,.5,NULL,NULL},
     {"lensOffsetCancel",'n',0,0,1,NULL,NULL},
     // FIX113 N: the chat list's segment bar in place of its search field (a
     // demo grouping); the groove's darkness over the background, per appearance.
@@ -1445,6 +1472,42 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
     p.symmetric=[self extraNumber:@"lensFlexSymmetric"]>.5;p.squeeze=WXGClamp([self extraNumber:@"lensFlexSqueeze"],0,1.5);p.flatten=WXGClamp([self extraNumber:@"lensFlexFlatten"],0,1.5);p.restFlattest=WXGClamp([self extraNumber:@"lensFlexRestFloor"],.5,1);
     return p;
 }
+// R11: standalone pure-glass dock test mode accessors (isolated from all legacy/Kyant dock keys).
+- (BOOL)dockPureGlassMode {return [self extraNumber:@"dockPureGlassMode"]>.5;}
+- (WXGGlassCurve)pureDockLensCurve {
+    WXGGlassCurve k;
+    k.height=WXGClamp([self extraNumber:@"dockPureLensBand"],0,.5);
+    k.amount=WXGClamp([self extraNumber:@"dockPureLensDepth"],0,1.5);
+    k.maxHeight=WXGClamp([self extraNumber:@"dockPureLensBandMax"],4,80);
+    k.squeeze=WXGClamp([self extraNumber:@"dockPureLensSqueeze"],0,20);
+    k.dispersion=WXGClamp([self extraNumber:@"dockPureLensDispersion"],0,3);
+    return k;
+}
+- (CGFloat)pureDockInnerBarHeight {return WXGClamp([self extraNumber:@"dockPureInnerBarHeight"],24,80);}
+- (CGFloat)pureDockIconZoom {return WXGClamp([self extraNumber:@"dockPureIconZoom"],1,1.4);}
+- (CGFloat)pureDockBarGrowth {return WXGClamp([self extraNumber:@"dockPureBarGrowth"],1,1.08);}
+- (CGFloat)pureDockLensGrowth {return WXGClamp([self extraNumber:@"dockPureLensGrowth"],1,1.4);}
+- (CGFloat)pureDockLensLiftWidth {return WXGClamp([self extraNumber:@"dockPureLensLiftWidth"],0,40);}
+- (CGFloat)pureDockEndWrap {return WXGClamp([self extraNumber:@"dockPureEndWrap"],0,14);}
+- (BOOL)pureDockTouchGlow {return [self extraNumber:@"dockPureTouchGlow"]>.5;}
+- (BOOL)pureDockFlexOn {return [self extraNumber:@"dockPureFlexOn"]>.5;}
+- (WXGLensFlexParams)pureDockFlexParams {
+    WXGLensFlexParams p=WXGLensFlexDefaults();
+    p.on=[self pureDockFlexOn]?1:0;
+    double k=WXGClamp([self extraNumber:@"dockPureFlexStrength"],0,2);p.gainX*=k;p.gainY*=k;
+    p.slow=WXGClamp([self extraNumber:@"dockPureFlexSlow"],3,20);
+    p.slowDamping=WXGClamp([self extraNumber:@"dockPureFlexDamping"],.15,1.2);
+    p.symmetric=[self extraNumber:@"dockPureFlexSymmetric"]>.5;
+    p.squeeze=WXGClamp([self extraNumber:@"dockPureFlexSqueeze"],0,1.5);
+    p.flatten=WXGClamp([self extraNumber:@"dockPureFlexFlatten"],0,1.5);
+    p.restFlattest=WXGClamp([self extraNumber:@"dockPureFlexRestFloor"],.5,1);
+    return p;
+}
+- (CGFloat)pureDockMoveResponse {return WXGClamp([self extraNumber:@"dockPureMoveResponse"],.2,.8);}
+- (CGFloat)pureDockMoveDamping {return WXGClamp([self extraNumber:@"dockPureMoveDamping"],.5,1.2);}
+- (CGFloat)pureDockTapLiftRatio {return WXGClamp([self extraNumber:@"dockPureTapLiftRatio"],.15,.9);}
+- (CGFloat)pureDockTapDropTime {return WXGClamp([self extraNumber:@"dockPureTapDropTime"],.08,.6);}
+- (CGFloat)pureDockLensHang {return WXGClamp([self extraNumber:@"dockPureLensHang"],0,.5);}
 - (WXGLensSettings)lensSettingsForScope:(WXGGlassScope)scope dark:(BOOL)dark {
     // Literal keys: this runs a few times a frame while the bar draws.
     WXGLensSettings l;memset(&l,0,sizeof l);

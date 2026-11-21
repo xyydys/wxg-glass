@@ -5,6 +5,7 @@ import json
 root=Path(__file__).resolve().parents[1]
 src=(root/'Sources/WXGGlass.metal').read_text()
 src=src.replace('#include "WXGKyantOptics.h"',(root/'Sources/WXGKyantOptics.h').read_text())
+src=src.replace('#include "WXGLensCurve.h"',(root/'Sources/WXGLensCurve.h').read_text())
 src=src.replace('#include \"WXGLensOptics.h\"',(root/'Sources/WXGLensOptics.h').read_text())
 src=src.replace('#include \"WXGOptics.h\"',(root/'Sources/WXGOptics.h').read_text())
 (root/'Sources/WXGShaderSource.h').write_text(

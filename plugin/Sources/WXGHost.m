@@ -4191,7 +4191,7 @@ static BOOL WXGSurfaceInNativeView(WXGSurface *surface) {
     // that). The row grows as far as they need (selected tab at its floor),
     // never wider than the search field's own row; past that they shrink.
     _discreteRowGrowth=0;
-    if(search && c.dockDiscrete) {
+    if(search && !c.dockPureGlassMode && c.dockDiscrete) {
         CGFloat need=WXGDiscreteNeededWidth((float)c.height,(float)c.dockDiscreteBall,(float)c.dockDiscreteGap,(float)c.dockDiscreteWide)+c.height+gap;
         CGFloat grown=ceil(MIN(MAX(rowWidth,need),MAX(rowWidth,usable*c.dockSearchWidthFraction)));
         if(grown>rowWidth+.5) {
