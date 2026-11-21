@@ -161,6 +161,12 @@ int main(void) {
     near(WXGDockGlowProfile(4)/WXGDockGlowProfile(0),.47,.03);
     near(WXGDockGlowProfile(0),1-exp(-2.),.002);   // the middle of a disc blurred with a Gaussian of half its radius
     assert(WXG_DOCK26_GLOW_SPOT>WXG_DOCK26_GLOW_BAR && WXG_DOCK26_BODY_VEIL<.65 && WXG_DOCK26_SHADOW<.25);
+    // R8: broad iOS 26 finger glow (93 pt disc with 46.5 pt shadowRadius -> ~186 pt reach).
+    near(WXGDockGlowBroadWeight(0.f),1.f,1e-6);
+    near(WXGDockGlowBroadWeight(62.f),.50,.03);
+    near(WXGDockGlowBroadWeight(100.f),.16,.03);
+    assert(WXGDockGlowBroadWeight((float)WXG_DOCK26_GLOW_REACH)==0.f && WXGDockGlowBroadWeight(999.f)==0.f);
+    for(int r=0;r<(int)WXG_DOCK26_GLOW_REACH;r+=2)assert(WXGDockGlowBroadWeight((float)r)>WXGDockGlowBroadWeight((float)(r+2)));
     puts("DockSystemTests passed");
     return 0;
 }

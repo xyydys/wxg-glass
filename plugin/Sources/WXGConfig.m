@@ -1371,7 +1371,7 @@ static NSString *const WXGGlassKeys[5][WXGGlassValueCount]={WXG_GLASS_KEYS("g","
              @"bodyPinch":@(WXG_DOCK26_PINCH),
              @"lensGlassRimStyle":@(WXGRimStyle26),@"lensGlassEdge26Curve":@(WXG_DOCK26_LENS_RIM_CURVE),
              @"lensGlassEdge26Height":@1,@"lensGlassEdge26Opacity":@1,@"lensGlassDarkEdge26Opacity":@1,
-             @"lensElasticOn":@YES,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO,@"lensFlexSqueeze":@1,@"lensFlexFlatten":@1,@"lensFlexRestFloor":@.82,
+             @"lensElasticOn":@YES,@"lensElasticKeepStrip":@0,@"lensFlexStrength":@1,@"lensFlexSlow":@8,@"lensFlexDamping":@.5,@"lensFlexSymmetric":@NO,@"lensFlexSqueeze":@1,@"lensFlexFlatten":@1,@"lensFlexRestFloor":@.82,
              // FIX131: the bar's own glass (the buttons' law but for its light face and its shadow), its iOS 26 border,
              // the resting selection (its colours are dockSystem26Colours), a tap's lift and drop, the light under a finger.
              @"dockGlassBand":@.25,@"dockGlassDepth":@.8,@"dockGlassBandMax":@20,@"dockGlassBlurSmall":@1.8,@"dockGlassBlurLarge":@5.5,

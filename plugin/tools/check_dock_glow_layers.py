@@ -31,17 +31,19 @@ forbid(bar, '[self addSubview:_glowHost]')
 press = between(bar, '- (void)glowDownAt:', '- (BOOL)beginTrackingWithTouch:')
 require(press, '[_glass attachDockMaterialGlow:_glow]', '[_fallback.contentView addSubview:_glow]')
 attach = between(glass, '- (BOOL)attachDockMaterialGlow:', '- (void)setLensRect:')
-require(attach, 'glow.frame=_bodyClip.bounds', '[_bodyClip addSubview:glow]')
+require(attach, 'glow.frame=_bodyClip.bounds', '[_bodyClip insertSubview:glow belowSubview:_metal]')
 require(glass, 'for(UIView *clip in @[_bodyClip,_lensClip])', '[self addSubview:clip]',
         '[self insertSubview:_bodyRim belowSubview:_lensClip]', '[self insertSubview:_body26 aboveSubview:_bodyRim]',
         '[self insertSubview:_lens26 belowSubview:_lensRim]', '[_lensClip insertSubview:v belowSubview:_lensMetal]',
-        '[view configureSpectralGroup:_lensGroup', 'matrix.m[18]=1.f', 'tapIndex>0?WXGMakePlusLighter():nil')
+        '[view configureSpectralGroup:_lensGroup', 'matrix.m[18]=1.f', 'tapIndex>0?WXGMakePlusLighter():nil',
+        'lensOptics.zoomAfter=1.f;')
 require(bar, '[self insertSubview:_travelView aboveSubview:_glass]', '_glass.lensSeesBar?nil:_glass.backdropGroupName',
         '@"wxg.travel.%p"', '[self applyTravelGroup:[self travelGroup]]', '[_travelLens insertSublayer:layer atIndex:depth++]',
-        '[_glass.layer removeAnimationForKey:@"wxg.travelScale"]')
+        '[_glass.layer removeAnimationForKey:@"wxg.travelScale"]', 'WXGDockGlowSpotImage', 'WXG_DOCK26_GLOW_REACH')
 require(glass, 'if(seesBar && barHeight>2 && barHeight<padded.height)', 'o.shrinkPress=(float)press;',
         'channel>1?WXGMakePlusLighter():nil')
 light = between(bar, '@implementation WXGDockGlowView', '@interface WXGDemoBar ()')
 require(light, '_spot.position=point', '_spot.opacity=_spotLevel', '_bar.opacity=_barLevel', 'a.duration=.10',
-        'b.duration=.15', 'out=.45', '_spot.opacity=0;_bar.opacity=0', 'WXG_DOCK26_GLOW_GROW')
-print('PASS: body-owned light, native/CA lens capture order and alpha, rim order and touch/release timing.')
+        'b.duration=.15', 'out=.45', '_spot.opacity=0;_bar.opacity=0', 'WXG_DOCK26_GLOW_GROW',
+        'WXGDockGlowSpotImage()')
+print('PASS: body-owned dithered broad glow below icons, unzoomed native lens backdrop, rim order and touch/release timing.')

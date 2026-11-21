@@ -224,17 +224,24 @@ static inline void WXGMeshCurveSource(WXGMeshOptics o,float px,float py,float *s
 static inline void WXGMeshSource(WXGMeshOptics o,float px,float py,float *sx,float *sy) {
     if(o.kyantMode>0.5f) {
         float padX=WXG_MAX(o.padX,0.f),padY=WXG_MAX(o.padY,0.f);
-        WXG_K_F2 halfSize=WXG_K_MAKE2(WXGMeshShapeWidth(o)*.5f,WXGMeshShapeHeight(o)*.5f),ray,spread;
-        WXGKyantLensDisplace(WXG_K_MAKE2(px-padX,py-padY),halfSize,halfSize,
-            o.radius>0.f?o.radius:WXG_K_MIN(halfSize.x,halfSize.y),o.kyantHeight,o.kyantAmount,o.dispersion,0.f,&ray,&spread,NULL);
-        ray.x+=padX;ray.y+=padY;
+        float shapeW=WXGMeshShapeWidth(o),shapeH=WXGMeshShapeHeight(o);
+        WXG_K_F2 halfSize=WXG_K_MAKE2(shapeW*.5f,shapeH*.5f),central;
+        float endLeft=0.f,endRight=0.f;
+        if(WXGMeshShrinks(o)) {
+            endLeft=WXGLensEndReach(o.sbLeft,o.sbRight,padX,padX+shapeW,-1);
+            endRight=WXGLensEndReach(o.sbLeft,o.sbRight,padX,padX+shapeW,1);
+        }
+        WXG_K_F2 ray=WXGKyantSpectralRay(WXG_K_MAKE2(px-padX,py-padY),halfSize,halfSize,
+            o.radius>0.f?o.radius:WXG_K_MIN(halfSize.x,halfSize.y),
+            o.kyantHeight,o.kyantAmount,o.dispersion,0.f,endLeft,endRight,o.kyantChannel,&central);
+        ray.x+=padX;ray.y+=padY;central.x+=padX;central.y+=padY;
         WXG_K_F2 center=WXG_K_MAKE2(o.width*.5f,o.height*.5f);
         float zoom=o.zoomAfter>0.f?o.zoomAfter:1.f;
-        WXG_K_F2 src=WXG_K_MAKE2(center.x+(ray.x+spread.x*o.kyantChannel-center.x)/zoom,
-                                 center.y+(ray.y+spread.y*o.kyantChannel-center.y)/zoom);
-        src=WXGKyantSceneSource(src,ray,center,WXG_K_MAKE2(halfSize.x*2.f,halfSize.y*2.f),o.radius,
+        WXG_K_F2 src=WXG_K_MAKE2(center.x+(ray.x-center.x)/zoom,
+                                 center.y+(ray.y-center.y)/zoom);
+        src=WXGKyantSceneSourceDepth(src,central,center,WXG_K_MAKE2(shapeW,shapeH),o.radius,
             WXG_K_MAKE2(o.sbLeft,o.sbTop),WXG_K_MAKE2(o.sbRight-o.sbLeft,o.sbBottom-o.sbTop),o.sbRadius,
-            o.shrinkPress,o.shrinkPinch,o.shrinkExtra,zoom);
+            o.shrinkPress,o.shrinkPinch,0.f,WXG_K_MAX(0.f,o.shrinkExtra),zoom);
         *sx=src.x;*sy=src.y;return;
     }
     if(o.curveHeight>0.f){WXGMeshCurveSource(o,px,py,sx,sy);return;}
@@ -317,16 +324,29 @@ static inline int WXGMeshRings(WXGMeshOptics o,float limit,float pad,WXGMeshQual
     float side=WXG_MAX(o.edgeWidth,.5f),top=o.topRatio>0.f?side*WXGOClamp(o.topRatio,.05f,1.f):side;
     float dside=WXG_MAX(WXGMeshDispersionSide(o),.5f),dratio=WXGMeshDispersionRatio(o),dtop=dratio>0.f?dside*WXGOClamp(dratio,.05f,1.f):dside;
     float band=WXG_MIN(WXG_MAX(WXG_MAX(side,dside),WXGMeshSoftBand(o,side))+.75f,limit),err=WXG_MAX(q.ringError,.01f);   // FIX114 I: and the soft band
+    float hCrown=0.f,aCrown=0.f;
+    WXGMeshOptics crownOptics=o;
+    if(o.kyantMode>.5f) {
+        float shapeMinHalf=WXG_MIN(WXGMeshShapeWidth(o),WXGMeshShapeHeight(o))*.5f;
+        WXGKyantCrownTarget(shapeMinHalf,o.kyantHeight,o.kyantAmount,&hCrown,&aCrown);
+        crownOptics.kyantHeight=hCrown;crownOptics.kyantAmount=aCrown;
+        if(o.dispersion>0.f)band=WXG_MIN(WXG_MAX(band,.40f*shapeMinHalf+.75f),limit);
+    }
     int n=0;rings[n++]=-pad;
     float t=0.f;
     while(t<band && n<capacity-2) {
         rings[n++]=t;
         /* Worst curvature over the next 1.5 pt, so no bend is stepped over. */
         float k=0.f;
-        for(float probe=0.f;probe<=1.5f;probe+=.25f)
+        for(float probe=0.f;probe<=1.5f;probe+=.25f) {
             k=WXG_MAX(k,WXG_MAX(WXGMeshCurvature(o,side,dside,t+probe),WXGMeshCurvature(o,top,dtop,t+probe)));
+            if(o.kyantMode>.5f && hCrown>1e-4f && aCrown>1e-4f)
+                k=WXG_MAX(k,WXGMeshCurvature(crownOptics,hCrown,hCrown,t+probe));
+        }
         float dt=WXG_SQRT(8.f*err/WXG_MAX(k,1e-4f));
-        t+=WXGOClamp(dt,o.kyantMode>.5f?.015f:.12f,1.5f);
+        float minStep=o.kyantMode>.5f?.04f:.12f;
+        float maxStep=(o.kyantMode>.5f && hCrown>1e-4f && t<hCrown+2.f)?.45f:1.5f;
+        t+=WXGOClamp(dt,minStep,maxStep);
     }
     if(t>=band && n<capacity-1) {
         /* Beyond the band the mapping is linear (identity or zoom): coarse.
@@ -427,7 +447,7 @@ static inline int WXGMeshZipperChains(const float *xs,const float *ys,int n,int 
 static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPoint *points,int pointCapacity,
                                       unsigned int (*faces)[4],int faceCapacity,int *faceCount) {
     *faceCount=0;
-    if(o.kyantMode>.5f){q.ringError=WXG_MIN(q.ringError,.12f);q.arcStep=WXG_MIN(q.arcStep,o.dispersion>0.f?.06f:.10f);q.straightStep=WXG_MIN(q.straightStep,8.f);}
+    if(o.kyantMode>.5f){q.ringError=WXG_MIN(q.ringError,.08f);q.arcStep=WXG_MIN(q.arcStep,o.dispersion>0.f?.06f:.10f);q.straightStep=WXG_MIN(q.straightStep,4.f);}
     if(!(o.width>1.f) || !(o.height>1.f))return 0;
     enum { WXGMeshMaxContour=512,WXGMeshMaxRings=160 };
     WXGContourSample contour[WXGMeshMaxContour];float rings[WXGMeshMaxRings];
@@ -439,6 +459,7 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
     /* Rings end 1.25 pt past the band (plain mapping there), never at the
        centre; a tiny shape stops 0.5 pt short of collapsing. */
     float band=WXG_MIN(WXG_MAX(WXG_MAX(o.edgeWidth,WXGMeshDispersionSide(o)),.5f)+.75f,limit);   // FIX88: and the colour split's band
+    if(o.kyantMode>.5f && o.dispersion>0.f)band=WXG_MIN(WXG_MAX(band,.40f*limit+.75f),limit);
     if(o.transition>0.f)band=WXG_MIN(WXG_MAX(band,WXGMeshSoftBand(o,o.edgeWidth)+.75f),limit);   // FIX114 I: and the soft band
     float stop=WXG_MIN(band+1.25f,limit-.5f);
     /* FIX113 U: rings down past the smaller bar's outline (the bar's top /

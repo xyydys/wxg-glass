@@ -89,11 +89,14 @@ static inline WXG_K_F2 WXGKyantGradSdRoundedRect(WXG_K_F2 coord, WXG_K_F2 halfSi
 
 
 /* Inner-bar inverse mapping for the native backdrop mesh and Metal selection
-   coverage. Glyphs have their own source coordinates. */
-static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
+   coverage. Glyphs have their own source coordinates.
+   `extra` offsets the target inset (0 keeps the fixed bodyPinch inset);
+   `depthPad` offsets the lens SDF depth test so vertical elastic squash never
+   collapses the inset ramp during fast horizontal drags. */
+static inline WXG_K_F2 WXGKyantSceneSourceDepth(WXG_K_F2 source,WXG_K_F2 centralRay,
     WXG_K_F2 lensCenter,WXG_K_F2 lensSize,float lensRadius,
     WXG_K_F2 barOrigin,WXG_K_F2 barSize,float barRadius,
-    float press,float pinch,float extra,float zoom) {
+    float press,float pinch,float extra,float depthPad,float zoom) {
     if(!(press>0.f) || !(barSize.x>2.f && barSize.y>2.f))return source;
     float barHalf=WXG_K_MIN(barSize.x,barSize.y)*.5f;
     float bx=barOrigin.x+barSize.x*.5f,by=barOrigin.y+barSize.y*.5f;
@@ -103,7 +106,7 @@ static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
     WXGShapeSample l=lensRadius>0.f?WXGRoundedOpticalField(ox-lensCenter.x,oy-lensCenter.y,lensSize.x,lensSize.y,lensRadius)
         :WXGCapsuleOpticalField(ox-lensCenter.x,oy-lensCenter.y,lensSize.x,lensSize.y);
     float full=barSize.y*.5f*WXGOClamp(press,0.f,1.f)*WXGOClamp(pinch,0.f,.30f)+extra;
-    float along=WXGLensDepthAlongBar(l.distance-extra,-b.ny,b.nx,l.nx,l.ny);
+    float along=WXGLensDepthAlongBar(l.distance-depthPad,-b.ny,b.nx,l.nx,l.ny);
     float absFull=WXG_K_ABS(full),ramp=absFull>1e-4f?WXGOClamp(along/(2.f*absFull),0.f,1.f):0.f;
     float inset=full*ramp*(2.f-ramp);
     float h=(ox-lensCenter.x)*b.nx+(oy-lensCenter.y)*b.ny;
@@ -115,14 +118,176 @@ static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
     if(t<-barHalf)t2=t;
     return WXG_K_MAKE2(source.x+q.nx*(t2-t),source.y+q.ny*(t2-t));
 }
+static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
+    WXG_K_F2 lensCenter,WXG_K_F2 lensSize,float lensRadius,
+    WXG_K_F2 barOrigin,WXG_K_F2 barSize,float barRadius,
+    float press,float pinch,float extra,float zoom) {
+    return WXGKyantSceneSourceDepth(source,centralRay,lensCenter,lensSize,lensRadius,
+        barOrigin,barSize,barRadius,press,pinch,extra,extra,zoom);
+}
 
 static inline float WXGKyantEase(float x) {
     x=WXG_K_SATURATE(x);
     return x*x*(3.f-2.f*x);
 }
 
-/* Upstream Lens.kt + Shaders.kt refraction on the shoulders. On a wide dock
-   lens the short top/bottom band should show each source row only once. */
+/* iOS 26 measured crown target (band ~0.105*height, depth ~0.30*height),
+   scaled softly with the user's refraction sliders and capped so the top/bottom
+   mirrored outer lip stays crisp without folding back to swallow the gap. */
+static inline void WXGKyantCrownTarget(
+    float minHalf,
+    float refractionHeight,
+    float refractionAmount,
+    WXG_K_OUT float *outH,
+    WXG_K_OUT float *outA
+) {
+    float hScale = WXGOClamp(refractionHeight / 18.f, 0.f, 1.6f);
+    float aScale = WXGOClamp(refractionAmount / 26.f, 0.f, 1.6f);
+    float hCrown = WXG_K_MIN(refractionHeight, 0.215f * minHalf * (0.55f + 0.45f * hScale));
+    float aCrown = WXG_K_MIN(refractionAmount, 0.60f * minHalf * (0.55f + 0.45f * aScale));
+    if (outH) *outH = hCrown;
+    if (outA) *outA = aCrown;
+}
+
+/* Smooth elliptical taper from the four Kyant shoulders/ends (crownW -> 0)
+   to the iOS 26 top/bottom apex (crownW -> 1, zero horizontal slope at x = 0),
+   plus end-tab relaxation when the lens wraps around the bar's left/right end. */
+static inline void WXGKyantCrownBands(
+    WXG_K_F2 centered,
+    WXG_K_F2 halfSize,
+    float refractionHeight,
+    float refractionAmount,
+    float endLeft,
+    float endRight,
+    WXG_K_OUT float *outH,
+    WXG_K_OUT float *outA,
+    WXG_K_OUT float *outCrownW
+) {
+    float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
+    float elongated = WXGKyantEase((halfSize.x - halfSize.y) / WXG_K_MAX(0.15f * halfSize.y, 1e-4f));
+    float ex = WXG_K_ABS(centered.x) / WXG_K_MAX(halfSize.x, 1.f);
+    float ey = WXG_K_ABS(centered.y) / WXG_K_MAX(halfSize.y, 1.f);
+    float ellipH = ex / WXG_K_MAX(WXG_K_SQRT(ex * ex + ey * ey), 1e-4f);
+    float shoulder = ellipH * ellipH;
+    float sx = centered.x / WXG_K_MAX(halfSize.x, 1.f);
+    float endW = WXG_K_MAX(endLeft * WXGKyantEase((-sx) / 0.35f),
+                           endRight * WXGKyantEase(sx / 0.35f));
+    float crownW = WXG_K_MAX(elongated * (1.f - shoulder), endW);
+    float hCrown = refractionHeight, aCrown = refractionAmount;
+    WXGKyantCrownTarget(minHalf, refractionHeight, refractionAmount, &hCrown, &aCrown);
+    if (outH) *outH = refractionHeight + crownW * (hCrown - refractionHeight);
+    if (outA) *outA = refractionAmount + crownW * (aCrown - refractionAmount);
+    if (outCrownW) *outCrownW = crownW;
+}
+
+static inline WXG_K_F2 WXGKyantRefractPoint(
+    WXG_K_F2 coord,
+    WXG_K_F2 center,
+    WXG_K_F2 halfSize,
+    float radius,
+    float refractionHeight,
+    float refractionAmount,
+    float depthEffect,
+    float endLeft,
+    float endRight,
+    WXG_K_OUT float *outD,
+    WXG_K_OUT WXG_K_F2 *outG,
+    WXG_K_OUT float *outCrownW,
+    WXG_K_OUT float *outSd
+) {
+    WXG_K_F2 centered = WXG_K_MAKE2(coord.x - center.x, coord.y - center.y);
+    float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
+    float r = WXGOClamp(radius, 0.f, minHalf);
+    float sd = WXGKyantSdRoundedRect(centered, halfSize, r);
+    float gradRadius = WXG_K_MIN(r * 1.5f, minHalf);
+    WXG_K_F2 g = WXGKyantGradSdRoundedRect(centered, halfSize, gradRadius);
+    if (depthEffect > 1e-4f) {
+        WXG_K_F2 cn = WXG_K_NORMALIZE(centered);
+        g = WXG_K_MAKE2(g.x + depthEffect * cn.x, g.y + depthEffect * cn.y);
+    }
+    float gl = WXG_K_LENGTH(g);
+    g = gl > 1e-6f ? WXG_K_MAKE2(g.x / gl, g.y / gl) : WXG_K_MAKE2(0.f, 0.f);
+    float hEff = refractionHeight, aEff = refractionAmount, crownW = 0.f;
+    WXGKyantCrownBands(centered, halfSize, refractionHeight, refractionAmount,
+                       endLeft, endRight, &hEff, &aEff, &crownW);
+    if (outG) *outG = g;
+    if (outCrownW) *outCrownW = crownW;
+    if (outSd) *outSd = sd;
+    if (!(hEff > 1e-4f) || !(aEff > 1e-4f) || -sd >= hEff) {
+        if (outD) *outD = 0.f;
+        return coord;
+    }
+    float sdClamped = WXG_K_MIN(sd, 0.f);
+    float d = WXGKyantCircleMap(1.f - (-sdClamped) / hEff) * (-aEff);
+    if (outD) *outD = d;
+    return WXG_K_MAKE2(coord.x + d * g.x, coord.y + d * g.y);
+}
+
+/* Unified 7-wavelength optical ray for both the native contour mesh and the
+   Metal glyph overlay:
+   1. Screen-space post-refraction ring aberration (iOS 26 glassForeground)
+      runs smoothly around the full perimeter (top/bottom + four necks),
+      leaving the central content crisp and keeping the mirrored outer lip solid.
+   2. Bounded Kyant shoulder dispersion enriches curved ends and icons while
+      fading out across the flat crown so taps never wash out its opacity. */
+static inline WXG_K_F2 WXGKyantSpectralRay(
+    WXG_K_F2 coord,
+    WXG_K_F2 center,
+    WXG_K_F2 halfSize,
+    float radius,
+    float refractionHeight,
+    float refractionAmount,
+    float chromaticAberration,
+    float depthEffect,
+    float endLeft,
+    float endRight,
+    float spectralT,
+    WXG_K_OUT WXG_K_F2 *outCentralRay
+) {
+    float d0 = 0.f, crown0 = 0.f, sd0 = 0.f;
+    WXG_K_F2 g0 = WXG_K_MAKE2(0.f, 0.f);
+    WXG_K_F2 central = WXGKyantRefractPoint(
+        coord, center, halfSize, radius, refractionHeight, refractionAmount,
+        depthEffect, endLeft, endRight, &d0, &g0, &crown0, &sd0);
+    if (outCentralRay) *outCentralRay = central;
+    if (!(WXG_K_ABS(spectralT) > 1e-6f) || !(chromaticAberration > 1e-4f) ||
+        !(refractionHeight > 1e-4f) || !(refractionAmount > 1e-4f)) {
+        return central;
+    }
+    WXG_K_F2 c0 = WXG_K_MAKE2(coord.x - center.x, coord.y - center.y);
+    float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
+    float depth0 = WXG_K_MAX(-sd0, 0.f);
+    float pressScale = WXG_K_SATURATE(WXG_K_MIN(refractionHeight / 4.f, refractionAmount / 6.f));
+    float dispNorm = (chromaticAberration / (1.f + 0.25f * WXG_K_ABS(chromaticAberration))) * pressScale;
+
+    float ringW = WXG_K_MAX(0.40f * minHalf, 2.f);
+    float ringU = WXG_K_SATURATE(1.f - depth0 / ringW);
+    float ringAmt = 1.25f * dispNorm * ringU * ringU;
+    const float ca = 0.9659258f, sa = -0.2588190f; /* -15 deg AberrationAngle */
+    WXG_K_F2 ringDir = WXG_K_MAKE2(g0.x * ca - g0.y * sa, g0.x * sa + g0.y * ca);
+    float denom = WXG_K_MAX(halfSize.x * halfSize.y, 1.f);
+    float quadrant = (c0.x * c0.y) / denom;
+    float ringSign = 1.f + 2.5f * quadrant;
+    WXG_K_F2 pShifted = WXG_K_MAKE2(
+        coord.x + spectralT * ringAmt * ringSign * ringDir.x,
+        coord.y + spectralT * ringAmt * ringSign * ringDir.y
+    );
+
+    float dTap = 0.f, crownTap = 0.f, sdTap = 0.f;
+    WXG_K_F2 gTap = WXG_K_MAKE2(0.f, 0.f);
+    WXG_K_F2 rayTap = WXGKyantRefractPoint(
+        pShifted, center, halfSize, radius, refractionHeight, refractionAmount,
+        depthEffect, endLeft, endRight, &dTap, &gTap, &crownTap, &sdTap);
+
+    float shoulderFactor = 1.f - crownTap;
+    float iconDisp = dTap * chromaticAberration * quadrant * shoulderFactor * 0.90f;
+    float cap = 0.55f * WXG_K_MAX(WXG_K_ABS(dTap), 1.f);
+    iconDisp = WXGOClamp(iconDisp, -cap, cap);
+    return WXG_K_MAKE2(rayTap.x + gTap.x * iconDisp * spectralT,
+                       rayTap.y + gTap.y * iconDisp * spectralT);
+}
+
+/* Compatibility wrapper returning the central ray and +1 spectral offset. */
 static inline void WXGKyantLensDisplace(
     WXG_K_F2 coord,
     WXG_K_F2 center,
@@ -139,46 +304,13 @@ static inline void WXGKyantLensDisplace(
     WXG_K_F2 centered = WXG_K_MAKE2(coord.x - center.x, coord.y - center.y);
     float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
     float r = WXGOClamp(radius, 0.f, minHalf);
-    float sd = WXGKyantSdRoundedRect(centered, halfSize, r);
-    if (outSd) *outSd = sd;
-    if (!(refractionHeight > 1e-4f) || !(refractionAmount > 1e-4f) || -sd >= refractionHeight) {
-        if (outRefracted) *outRefracted = coord;
-        if (outDispersed) *outDispersed = WXG_K_MAKE2(0.f, 0.f);
-        return;
-    }
-    float sdClamped = WXG_K_MIN(sd, 0.f);
-    float d = WXGKyantCircleMap(1.f - (-sdClamped) / refractionHeight) * (-refractionAmount);
-    float gradRadius = WXG_K_MIN(r * 1.5f, minHalf);
-    WXG_K_F2 g = WXGKyantGradSdRoundedRect(centered, halfSize, gradRadius);
-    if (depthEffect > 1e-4f) {
-        WXG_K_F2 cn = WXG_K_NORMALIZE(centered);
-        g = WXG_K_MAKE2(g.x + depthEffect * cn.x, g.y + depthEffect * cn.y);
-    }
-    float gl=WXG_K_LENGTH(g);
-    g=gl>1e-6f?WXG_K_MAKE2(g.x/gl,g.y/gl):WXG_K_MAKE2(0.f,0.f);
-    float denom = WXG_K_MAX(halfSize.x * halfSize.y, 1.f);
-    float quadrant = (centered.x * centered.y) / denom;
-    float spectralShift = d * chromaticAberration;
-    // Fade out the specialisation as a squeezed capsule becomes round. Both
-    // the press band and its thickness scale in the caller's units (pt / px).
-    float elongated = WXGKyantEase((halfSize.x-halfSize.y)/WXG_K_MAX(.15f*halfSize.y,1e-4f));
-    float crown = elongated * (1.f-WXGKyantEase((WXG_K_ABS(g.x)-.12f)/.58f));
-    if (crown > 0.f) {
-        float band = WXG_K_MIN(.25f*refractionHeight,.10f*minHalf);
-        float u = WXG_K_SATURATE(1.f+sdClamped/WXG_K_MAX(band,1e-6f));
-        // s(t)=t+m*(1-t/band)^2. Even at maximum dispersion the spectral
-        // displacement slope stays below one throughout the straight band.
-        float magnitude = .20f*band*refractionAmount/(refractionAmount+.20f*refractionHeight);
-        float crownShift = -magnitude*u*u;
-        float crownDispersion = chromaticAberration / (1.f+WXG_K_ABS(chromaticAberration));
-        d=(1.f-crown)*d+crown*crownShift;
-        spectralShift=(1.f-crown)*spectralShift+crown*crownShift*crownDispersion;
-    }
-    WXG_K_F2 shift = WXG_K_MAKE2(d * g.x, d * g.y);
-    if (outRefracted) *outRefracted = WXG_K_MAKE2(coord.x + shift.x, coord.y + shift.y);
-    if (outDispersed) {
-        *outDispersed = WXG_K_MAKE2(g.x*spectralShift*quadrant,g.y*spectralShift*quadrant);
-    }
+    if (outSd) *outSd = WXGKyantSdRoundedRect(centered, halfSize, r);
+    WXG_K_F2 central = coord;
+    WXG_K_F2 redRay = WXGKyantSpectralRay(
+        coord, center, halfSize, r, refractionHeight, refractionAmount,
+        chromaticAberration, depthEffect, 0.f, 0.f, 1.f, &central);
+    if (outRefracted) *outRefracted = central;
+    if (outDispersed) *outDispersed = WXG_K_MAKE2(redRay.x - central.x, redRay.y - central.y);
 }
 
 /* 7-wavelength spectral tap offsets: k = 0..6 -> +1, +2/3, +1/3, 0, -1/3, -2/3, -1 */
@@ -210,8 +342,7 @@ static inline void WXGKyantMeshSource(
 ) {
     WXG_K_F2 halfSize = WXG_K_MAKE2(width * 0.5f, height * 0.5f);
     float r = radius > 0.f ? radius : WXG_K_MIN(halfSize.x, halfSize.y);
-    WXG_K_F2 refracted, dispersed;
-    WXGKyantLensDisplace(
+    WXG_K_F2 ray = WXGKyantSpectralRay(
         WXG_K_MAKE2(px, py),
         halfSize,
         halfSize,
@@ -220,12 +351,13 @@ static inline void WXGKyantMeshSource(
         refractionAmount,
         chromaticAberration,
         0.f,
-        &refracted,
-        &dispersed,
+        0.f,
+        0.f,
+        spectralT,
         NULL
     );
-    *sx = refracted.x + dispersed.x * spectralT;
-    *sy = refracted.y + dispersed.y * spectralT;
+    *sx = ray.x;
+    *sy = ray.y;
 }
 #endif
 

@@ -1091,7 +1091,9 @@ NSDictionary *WXGRimSummary(void) {
 @property(nonatomic,strong) id<MTLRenderPipelineState> pipeline;
 @property(nonatomic,strong) id<MTLComputePipelineState> blurPipeline,backdropCopyPipeline;
 @property(nonatomic,strong) MTKTextureLoader *textureLoader;
-@property(nonatomic,strong) id<MTLTexture> normalIcons, selectedIcons;
+@property(nonatomic,strong) id<MTLTexture> normalIcons, selectedIcons, dockTabIcons;
+@property(nonatomic) WXGFloat4 dockTabCenters;
+@property(nonatomic) CGSize dockTabTile;
 @property(nonatomic,strong) NSMutableArray<WXGBackdropFrame *> *pool;
 @property(nonatomic,strong) WXGBackdropFrame *currentFrame;
 @property(nonatomic,strong) dispatch_semaphore_t inFlight;
@@ -1187,6 +1189,7 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
     CFTimeInterval _pendingTickTime;
     NSInteger _syncMode;
     CALayer *_veilFallback;
+    __weak UIView *_materialGlow;
     NSUInteger _veilRevision,_veilReorders;
     NSString *_syncGroup,*_lensGroup;   // FIX113 U: the lens' own capture (it sees the bar)
     NSString *_lensRimGroup;   // FIX113 X: the lens' 取自背景 border samples what the lens shows
@@ -1281,9 +1284,12 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
 - (CGRect)drawnBarRect { return CGRectInset(_glassRect,-_glassRect.size.width*(_barScale-1)*.5,-_glassRect.size.height*(_barScale-1)*.5); }
 - (BOOL)attachDockMaterialGlow:(UIView *)glow {
     if(!_bodyClip)return NO;
-    // The lens backdrop samples this face, including its light. Both native rim views sit above it.
+    // The lens backdrop samples this face, including its light. Keep the glow
+    // above the material veil and below _metal so unselected icons stay crisp.
+    _materialGlow=glow;
     glow.frame=_bodyClip.bounds;
-    [_bodyClip addSubview:glow];
+    if(_metal && _metal.superview==_bodyClip)[_bodyClip insertSubview:glow belowSubview:_metal];
+    else [_bodyClip addSubview:glow];
     return YES;
 }
 - (void)setLensRect:(CGRect)rect {
@@ -1813,8 +1819,9 @@ NSDictionary *WXGDropShadowEvidence(void) {
         // FIX42: the veil must sit right below the Metal overlay, above every
         // blur layer (an opaque backdrop above it would hide it completely).
         NSArray<CALayer *> *order=_bodyClip.layer.sublayers;
-        NSUInteger veilAt=[order indexOfObjectIdenticalTo:_veilFallback],metalAt=[order indexOfObjectIdenticalTo:_metal.layer];
-        if(metalAt!=NSNotFound && veilAt+1!=metalAt){[_bodyClip.layer insertSublayer:_veilFallback below:_metal.layer];++_veilReorders;}
+        CALayer *above=(_materialGlow && _materialGlow.superview==_bodyClip)?_materialGlow.layer:_metal.layer;
+        NSUInteger veilAt=[order indexOfObjectIdenticalTo:_veilFallback],aboveAt=[order indexOfObjectIdenticalTo:above];
+        if(aboveAt!=NSNotFound && veilAt+1!=aboveAt){[_bodyClip.layer insertSublayer:_veilFallback below:above];++_veilReorders;}
         [CATransaction commit];
     }
     // The borders (FIX130: two styles, each range its own): iOS 26's, a
@@ -1999,11 +2006,37 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
 - (void)setNormalIconTexture:(id<MTLTexture>)normal selectedIconTexture:(id<MTLTexture>)selected {
     if(normal)_normalIcons=normal;if(selected)_selectedIcons=selected;_needsDraw=YES;
 }
+- (void)setDockTabAtlas:(UIImage *)atlas texture:(id<MTLTexture>)texture centers:(NSArray<NSNumber *> *)centers {
+    if(!texture && atlas && _gpu) {
+        id<MTLTexture> uploaded=[self iconTexture:atlas];
+        if(uploaded!=WXGTransparentTexture())texture=uploaded;
+    }
+    _dockTabIcons=(atlas && texture && atlas.scale>0 && centers.count==4)?texture:nil;
+    if(_dockTabIcons) {
+        for(NSUInteger i=0;i<4;i++)_dockTabCenters[i]=(float)centers[i].doubleValue;
+        _dockTabTile=CGSizeMake(texture.width/(4.*atlas.scale),texture.height/atlas.scale);
+    }else _dockTabTile=CGSizeZero;
+    _needsDraw=YES;
+}
 // FIX113: the dock's Telegram icon animation redraws one tab's icon box in
 // the atlases, frame by frame, without a new atlas: the patch converted to
 // the texture's own layout (premultiplied, top row first) and written over it.
 - (BOOL)drawIconPatchAtPixels:(CGRect)pixels scale:(CGFloat)scale selected:(BOOL)selected drawing:(void (^)(void))draw {
-    id<MTLTexture> texture=selected?_selectedIcons:_normalIcons;
+    return [self drawIconPatchAtPixels:pixels scale:scale texture:selected?_selectedIcons:_normalIcons drawing:draw];
+}
+- (void)drawDockTabPatch:(NSInteger)tab pixels:(CGRect)pixels scale:(CGFloat)scale drawing:(void (^)(void))draw {
+    if(!_dockTabIcons || tab<0 || tab>=4 || !draw || scale<=0 || _dockTabTile.width<=0)return;
+    CGFloat shift=(tab+.5)*_dockTabTile.width-_dockTabCenters[tab];
+    CGRect dest=CGRectIntegral(CGRectOffset(pixels,shift*scale,0));
+    CGFloat width=_dockTabIcons.width/4.;
+    dest=CGRectIntersection(dest,CGRectMake(tab*width,0,width,_dockTabIcons.height));
+    if(CGRectIsEmpty(dest))return;
+    [self drawIconPatchAtPixels:dest scale:scale texture:_dockTabIcons drawing:^{
+        CGContextTranslateCTM(UIGraphicsGetCurrentContext(),shift,0);
+        draw();
+    }];
+}
+- (BOOL)drawIconPatchAtPixels:(CGRect)pixels scale:(CGFloat)scale texture:(id<MTLTexture>)texture drawing:(void (^)(void))draw {
     if(!draw || scale<=0 || !texture || texture.storageMode!=MTLStorageModeShared || texture==WXGTransparentTexture())return NO;
     MTLPixelFormat format=texture.pixelFormat;BOOL bgra=format==MTLPixelFormatBGRA8Unorm;
     if(!bgra && format!=MTLPixelFormatRGBA8Unorm)return NO;
@@ -2183,15 +2216,25 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             lensOptics.sbBottom=(float)(round((CGRectGetMaxY(bar)-CGRectGetMinY(_lensRect))*2)/2);
             lensOptics.sbRadius=0;   // the dock and the segment bar are capsules (a rounded field's normals jump across its middle lines)
             lensOptics.shrinkPress=press;lensOptics.shrinkPinch=(float)(round(WXGClamp(L.pinch,0,.30)*1000)/1000);
-            // FIX113 Y: the drag-speed deformation must not open / close the
-            // strip between the smaller bar and the rim: inset more / less by
-            // what the lens lost / gained in half height (quarter points).
-            // Capped so the smaller bar keeps at least a quarter of its height.
-            CGFloat keep=WXGClamp(L.elasticKeepStrip,0,1),barHalf=bar.size.height*.5;
-            if(keep>0 && _lensRestHeight>1) {
-                CGFloat extra=keep*(_lensRestHeight-_lensRect.size.height)*.5;
-                extra=MIN(extra,MAX(0,barHalf*(.75-WXGClamp(L.pinch,0,.30)*press)));
-                lensOptics.shrinkExtra=(float)(round(extra*4)/4);
+            CGFloat barHalf=bar.size.height*.5;
+            if([self kyantOpticsActive]) {
+                // Keep the inner bar inset strictly fixed at bodyPinch during
+                // fast elastic height deformation; pass only the positive
+                // squash delta as depth padding so the inset ramp never
+                // collapses when the lens flattens.
+                CGFloat squash=_lensRestHeight>1?MAX(0.,(_lensRestHeight-_lensRect.size.height)*.5):0.;
+                lensOptics.shrinkExtra=(float)(round(squash*4)/4);
+            }else {
+                // FIX113 Y: the drag-speed deformation must not open / close the
+                // strip between the smaller bar and the rim: inset more / less by
+                // what the lens lost / gained in half height (quarter points).
+                // Capped so the smaller bar keeps at least a quarter of its height.
+                CGFloat keep=WXGClamp(L.elasticKeepStrip,0,1);
+                if(keep>0 && _lensRestHeight>1) {
+                    CGFloat extra=keep*(_lensRestHeight-_lensRect.size.height)*.5;
+                    extra=MIN(extra,MAX(0,barHalf*(.75-WXGClamp(L.pinch,0,.30)*press)));
+                    lensOptics.shrinkExtra=(float)(round(extra*4)/4);
+                }
             }
             // Outside the smaller bar the page beyond the bar's edge is shown,
             // the source pushed out by up to h(1 - 1/zoom) + inset/zoom: the
@@ -2203,14 +2246,17 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             // within the cap above), so the margin holds still as it
             // squashes and swells; never less than the extra in use.
             CGFloat pinch=WXGClamp(L.pinch,0,.30);
+            CGFloat keep=[self kyantOpticsActive]?0:WXGClamp(L.elasticKeepStrip,0,1);
             CGFloat budget=keep>0 && L.elasticOn && !UIAccessibilityIsReduceMotionEnabled()?
                 keep*MIN(MAX(0,L.growth-.86)*barHalf,barHalf*(.75-pinch)):0;
-            CGFloat half=barHalf,zoom=MAX(1,L.zoom),full=half*pinch+MAX(budget,MAX(0,lensOptics.shrinkExtra));
+            CGFloat half=barHalf,zoom=MAX(1,L.zoom),full=half*pinch+([self kyantOpticsActive]?0:MAX(budget,MAX(0,lensOptics.shrinkExtra)));
             pad=MIN(40,ceil((half*(1-1/zoom)+full/zoom+2)/2)*2);
             if([self kyantOpticsActive]) {
-                CGFloat spectral=[c extraNumber:@"dockKyantDispersion"];
+                CGFloat spectral=c.syncDispersion && WXGFilterFactoryAvailable()?[c extraNumber:@"dockKyantDispersion"]:0;
                 CGFloat depth=[c extraNumber:@"dockKyantLensRefractionAmount"];
-                pad+=ceil((depth*MAX(0,spectral-1)+2)/2)*2;
+                CGFloat ring=spectral>0?4.5*spectral/(1.+.25*spectral):0;
+                CGFloat farSide=MAX(0.,1.55*depth-(CGFloat)shortSide);
+                pad=MIN(64.,ceil((full+MAX(ring,farSide)+4.)/2.)*2.);
             }
             lensOptics.padX=lensOptics.padY=(float)pad;lensOptics.width+=(float)(2*pad);lensOptics.height+=(float)(2*pad);
             if(lensOptics.barRight>lensOptics.barLeft){lensOptics.barLeft+=(float)pad;lensOptics.barRight+=(float)pad;lensOptics.barTop+=(float)pad;lensOptics.barBottom+=(float)pad;}
@@ -2239,16 +2285,14 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
              quality:WXGMeshShrinks(lensOptics)?WXGMeshQualityLensBar:WXGMeshQualityLens mesh:lensMesh group:seesBar?_lensGroup:[self bodyGroup] plain:seesBar loose:moving];
     }else {
         lensOptics.kyantMode=1.f;
+        // Match iOS 26 glassBackground: keep the captured bar & touch glow at
+        // 1x so brightness flows seamlessly across the lens silhouette; the
+        // Metal glyph overlay still applies L.zoom (1.16x) to selected icons.
+        lensOptics.zoomAfter=1.f;
         lensOptics.kyantHeight=(float)[c extraNumber:@"dockKyantLensRefractionHeight"]*press;
         lensOptics.kyantAmount=(float)[c extraNumber:@"dockKyantLensRefractionAmount"]*press;
         lensOptics.edgeWidth=MAX(.5f,lensOptics.kyantHeight);
         lensOptics.dispersion=(float)[c extraNumber:@"dockKyantDispersion"];
-        // Use the actual bar bounds in both CPU mesh and GPU glyph mapping.
-        CGRect bar=[self drawnBarRect];
-        lensOptics.sbLeft=(float)(CGRectGetMinX(bar)-CGRectGetMinX(_lensRect)+_lensPad);
-        lensOptics.sbRight=lensOptics.sbLeft+(float)bar.size.width;
-        lensOptics.sbTop=(float)(CGRectGetMinY(bar)-CGRectGetMinY(_lensRect)+_lensPad);
-        lensOptics.sbBottom=lensOptics.sbTop+(float)bar.size.height;
         BOOL spectral=lensMesh && lensOptics.dispersion>0.f && c.syncDispersion && WXGFilterFactoryAvailable();
         for(NSUInteger i=0;i<_lensStack.count;i++) {
             WXGSyncBackdropView *view=_lensStack[i];
@@ -2508,7 +2552,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
     NSUInteger canvasWidth=(pure || !f)?bodyDrawable.texture.width:f.width,canvasHeight=(pure || !f)?bodyDrawable.texture.height:f.height;
     // FIX113 L: the dock's lens pass without the bar's outline (and its second
     // highlight): only the lens' own rim borders it (N: always, the switch gone).
-    WXGFloat4 barBorder=u.borderColor,barGlow2=u.glowColor2,barVeil=u.tintColor,barExtra2=u.extra2,barOptics=u.optics,barLensOptics=u.lensOptics,barSync=u.sync;
+    WXGFloat4 barBorder=u.borderColor,barGlow2=u.glowColor2,barVeil=u.tintColor,barExtra2=u.extra2,barOptics=u.optics,barLensOptics=u.lensOptics,barSync=u.sync,barStyle=u.style;
     // FIX113 T: the bar seen in the lens: its outline only when switched on
     // (L / N: never), its background unless switched off.
     BOOL lensOutline=NO,lensVeil=YES;   // (the two switches are gone: never the outline, always the background)
@@ -2521,7 +2565,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
     BOOL seesBar=_syncMode>=2 && _lensSeesBarApplied;
     for(NSUInteger surface=0;surface<(hasLens?2u:1u);surface++) {
         u.appearance.w=(!surface && _buttonPressEffect)?-1.f:(float)surface;
-        u.borderColor=barBorder;u.glowColor2=barGlow2;u.tintColor=barVeil;u.extra2=barExtra2;u.optics=barOptics;u.lensOptics=barLensOptics;u.sync=barSync;
+        u.borderColor=barBorder;u.glowColor2=barGlow2;u.tintColor=barVeil;u.extra2=barExtra2;u.optics=barOptics;u.lensOptics=barLensOptics;u.sync=barSync;u.style=barStyle;
         if(surface && seesBar) {
             u.borderColor.w=0;u.glowColor2.w=0;u.tintColor.w=0;
             u.extra2.x=0;u.extra2.y=0;
@@ -2535,17 +2579,20 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             if(!lensVeil)u.tintColor.w=0;
         }
         u.extra.w=0.f;
-        if(surface && seesBar && [self kyantOpticsActive]) {
+        BOOL dockLens=surface && seesBar && [self kyantOpticsActive];
+        if(dockLens) {
+            // Keep the uniform ABI shared with the fallback Metal source while
+            // carrying per-tab stationary centers and tile dimensions.
+            u.style=_dockTabCenters;
+            u.extra2.x=(float)_dockTabTile.width;u.extra2.y=(float)_dockTabTile.height;
             // Do not overwrite body optics, tint, sync backend, or original pinch.
             float press=roundf((float)WXGClamp(_pressAmount,0,1)*32.f)/32.f;
             u.material.x=press;
             u.lensOptics.x=(float)[c extraNumber:@"dockKyantLensRefractionAmount"]*press;
             u.lensOptics.y=c.syncDispersion?(float)[c extraNumber:@"dockKyantDispersion"]:0.f;
             u.lensOptics.z=(float)[c extraNumber:@"dockKyantLensRefractionHeight"]*press;
-            CGFloat keep=WXGClamp(L.elasticKeepStrip,0,1),barHalf=[self drawnBarRect].size.height*.5;
-            CGFloat extra=keep>0 && _lensRestHeight>1?keep*(_lensRestHeight-_lensRect.size.height)*.5:0;
-            extra=MIN(extra,MAX(0,barHalf*(.75-WXGClamp(L.pinch,0,.30)*press)));
-            u.lensOptics.w=(float)(round(extra*4)/4);
+            CGFloat squash=_lensRestHeight>1?MAX(0.,(_lensRestHeight-_lensRect.size.height)*.5):0.;
+            u.lensOptics.w=(float)(round(squash*4)/4);
             u.optics.z=(float)(round(WXGClamp(L.pinch,0,.30)*1000)/1000);
             u.extra.w=WXG_LENS_KYANT;
         }
@@ -2559,6 +2606,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         // FIX35: during the dock's tap animation the overlay is the bar only;
         // the animation layers draw every icon (none doubled under the lens).
         id<MTLTexture> normalIcons=_lensSuppressed?WXGTransparentTexture():_normalIcons,selectedIcons=_lensSuppressed?WXGTransparentTexture():_selectedIcons;
+        if(dockLens && !_lensSuppressed && _dockTabIcons)selectedIcons=_dockTabIcons;
         [encoder setFragmentTexture:raw atIndex:0]; [encoder setFragmentTexture:normalIcons atIndex:1];
         [encoder setFragmentTexture:selectedIcons atIndex:2]; [encoder setFragmentTexture:soft atIndex:3];
         [encoder setFragmentTexture:_bodyMask?:raw atIndex:4];

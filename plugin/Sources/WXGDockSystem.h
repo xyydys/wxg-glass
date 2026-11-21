@@ -183,6 +183,8 @@ static inline void WXGDockSpringConstants(double response,double damping,double 
 #define WXG_DOCK26_GLOW_SPOT .15
 #define WXG_DOCK26_GLOW_BAR .04
 #define WXG_DOCK26_GLOW_DISC 93.
+#define WXG_DOCK26_GLOW_REACH 186.       /* 93 pt disc with 46.5 pt shadowRadius reaches ~186 pt across adjacent tabs */
+#define WXG_DOCK26_GLOW_SIGMA 52.5       /* effective Gaussian width of the blurred 93 pt disc (fitted on iOS 26) */
 #define WXG_DOCK26_GLOW_GROW 4.
 #define WXG_DOCK_GLOW_STOPS 9
 /* The spot's alpha by distance from its centre, at k / 8 of its reach (the
@@ -191,5 +193,18 @@ static inline void WXGDockSpringConstants(double response,double damping,double 
 static inline float WXGDockGlowProfile(int k) {
     static const float v[WXG_DOCK_GLOW_STOPS]={.864f,.834f,.733f,.589f,.404f,.233f,.119f,.047f,0.f};
     return v[k<0?0:(k>=WXG_DOCK_GLOW_STOPS?WXG_DOCK_GLOW_STOPS-1:k)];
+}
+/* Continuous normalized radial falloff for the broad iOS 26 touch glow
+   (disc radius 46.5 pt blurred with shadowRadius 46.5 pt, smoothly windowed
+   to exact 0 with zero slope at WXG_DOCK26_GLOW_REACH). */
+static inline float WXGDockGlowBroadWeight(float radius) {
+    float d=radius<0.f?-radius:radius;
+    const float reach=(float)WXG_DOCK26_GLOW_REACH;
+    if(d>=reach)return 0.f;
+    float u=d/(float)WXG_DOCK26_GLOW_SIGMA;
+    float g=expf(-.5f*u*u);
+    float w=WXGOClamp((d-.75f*reach)/(.25f*reach),0.f,1.f);
+    w=1.f-w*w*(3.f-2.f*w);
+    return g*w;
 }
 #endif

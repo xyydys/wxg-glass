@@ -3,13 +3,15 @@
 #include <stdio.h>
 #include "../Sources/WXGMeshRefraction.h"
 
-// Test two separate scenes. A thin gray stroke reveals unwanted refraction
-// of the inset bar rim. Smooth gray page texture reveals shoulder dispersion
-// independently of the stroke. Rasterize the meshes sent to Core Animation.
+// Rasterize the actual 7-layer CAMeshTransform contour meshes across both crown
+// columns (-16, 0, +16) and shoulders (-40, +40), checking:
+// 1) Solid mirrored outer lip + clean dark page gap + bright inner bar edge;
+// 2) Continuous 7-wavelength chromatic dispersion across both crown and shoulders;
+// 3) Crisp, neutral interior (zero color bleed in the icon/text zone).
 static const float columns[]={-40,-16,0,16,40};
 enum { ColumnCount=5, RowCount=281, Capacity=20000 };
 typedef struct { float rgb[3]; } Pixel;
-static Pixel rim[ColumnCount][RowCount],page[ColumnCount][RowCount];
+static Pixel barScene[ColumnCount][RowCount],pageScene[ColumnCount][RowCount];
 static WXGMeshPoint points[Capacity];
 static unsigned int faces[Capacity][4];
 
@@ -22,6 +24,10 @@ static void accumulate(Pixel *p,wxg_kf3_t weight,float value) {
 static float chroma(Pixel p) {
     return fmaxf(p.rgb[0],fmaxf(p.rgb[1],p.rgb[2]))-
            fminf(p.rgb[0],fminf(p.rgb[1],p.rgb[2]));
+}
+
+static float luma(Pixel p) {
+    return .2126f*p.rgb[0]+.7152f*p.rgb[1]+.0722f*p.rgb[2];
 }
 
 static int sampleTriangle(float x,float y,WXGMeshPoint a,WXGMeshPoint b,
@@ -44,7 +50,7 @@ static void renderProfiles(WXGMeshOptics o,int k) {
     wxg_kf3_t weight=WXGKyantSpectralRGBWeight(k);
     for(int col=0;col<ColumnCount;col++)for(int row=0;row<RowCount;row++) {
         float t=row*.25f,y=(o.padY+t)/o.height,x=.5f+columns[col]/o.width;
-        if(WXGKyantSdRoundedRect((wxg_kf2_t){columns[col],t-35},(wxg_kf2_t){60,35},35)>-.125f)continue;
+        if(WXGKyantSdRoundedRect((wxg_kf2_t){columns[col],t-35},(wxg_kf2_t){62,35},35)>-.125f)continue;
         float sx=0,sy=0;
         int covered=0;
         for(int i=0;i<count && !covered;i++) {
@@ -54,49 +60,50 @@ static void renderProfiles(WXGMeshOptics o,int k) {
         }
         assert(covered);
         sx*=o.width; sy*=o.height;
+        /* Dark-mode bar (50/255 with 85/255 rim) over pure black (0) page. */
         float depth=fminf(sy-o.sbTop,o.sbBottom-sy);
-        float stroke=fmaxf(0.f,1.f-fabsf(depth-.4f)/.7f);
-        accumulate(&rim[col][row],weight,25.f+40.f*stroke);
-        accumulate(&page[col][row],weight,60.f+20.f*sinf((sy-o.padY)/5.f)+10.f*cosf((sx-o.width*.5f)/11.f));
+        float inBar=depth>=0.f?1.f:0.f;
+        float stroke=inBar*fmaxf(0.f,1.f-fabsf(depth-.5f)/.8f);
+        accumulate(&barScene[col][row],weight,inBar*(50.f+35.f*stroke));
+        accumulate(&pageScene[col][row],weight,60.f+20.f*sinf((sy-o.padY)/5.f)+10.f*cosf((sx-o.width*.5f)/11.f));
     }
 }
 
 int main(void) {
     WXGMeshOptics o={0};
-    o.padX=o.padY=64; o.width=120+2*o.padX; o.height=70+2*o.padY;
-    o.kyantMode=o.shrinkPress=o.fieldScale=1; o.kyantHeight=o.edgeWidth=18;
-    o.kyantAmount=26; o.dispersion=2.4f; o.zoomAfter=1.16f; o.shrinkPinch=.25f;
-    o.sbLeft=o.padX-120; o.sbRight=o.padX+240; o.sbTop=o.padY+4; o.sbBottom=o.padY+66;
+    o.padX=o.padY=64; o.width=124+2*o.padX; o.height=70+2*o.padY;
+    o.kyantMode=o.shrinkPress=o.fieldScale=o.zoomAfter=1; o.kyantHeight=o.edgeWidth=18;
+    o.kyantAmount=26; o.dispersion=2.4f; o.shrinkPinch=.12f;
+    o.sbLeft=o.padX-120; o.sbRight=o.padX+244; o.sbTop=o.padY+4; o.sbBottom=o.padY+66;
     for(int k=0;k<7;k++)renderProfiles(o,k);
 
     for(int col=0;col<ColumnCount;col++)for(int bottom=0;bottom<=1;bottom++) {
-        float rimChroma=0,rimBrightness=0,pageChroma=0;
+        float lipPeak=0,gapMin=255.f,crownChroma=0,centerChroma=0,pageChroma=0;
         unsigned int run=0,longest=0;
         for(int depth=0;depth<RowCount/2;depth++) {
+            float dPt=depth*.25f;
             int row=bottom?RowCount-1-depth:depth;
-            Pixel r=rim[col][row];
-            rimChroma=fmaxf(rimChroma,chroma(r));
-            rimBrightness=fmaxf(rimBrightness,r.rgb[1]);
-            float spread=chroma(page[col][row]);
+            Pixel b=barScene[col][row];
+            float L=luma(b),C=chroma(b);
+            if(dPt>=.5f && dPt<=2.0f)lipPeak=fmaxf(lipPeak,L);
+            if(dPt>=3.5f && dPt<=6.5f)gapMin=fminf(gapMin,L);
+            if(dPt<=10.f)crownChroma=fmaxf(crownChroma,C);
+            if(dPt>=20.f)centerChroma=fmaxf(centerChroma,C);
+            float spread=chroma(pageScene[col][row]);
             pageChroma=fmaxf(pageChroma,spread);
-            if(spread>2.f) {
-                run++;
-                if(run>longest)longest=run;
-            } else {
-                run=0;
-            }
+            if(spread>2.f){run++;if(run>longest)longest=run;} else run=0;
         }
+        assert(centerChroma<.05f);
         if(fabsf(columns[col])<20.f) {
-            // A missing stroke would also be neutral. It must still be bright.
-            if(rimChroma>=.1f)fprintf(stderr,"Inner rim at x=%g, %s: RGB spread %.3f/255\n",
-                                      columns[col],bottom?"bottom":"top",rimChroma);
-            assert(rimChroma<.1f);
-            assert(rimBrightness>45.f);
+            /* Crown has solid mirrored lip (>40), clean black gap (<5), and continuous dispersion (>8). */
+            assert(lipPeak>40.f);
+            assert(gapMin<5.f);
+            assert(crownChroma>8.f);
         } else {
-            printf("Shoulder x=%g, %s: peak %.2f/255 over a contiguous %.2f pt of textured page\n",
+            printf("Shoulder x=%g, %s: peak %.2f/255 over %.2f pt of textured page\n",
                    columns[col],bottom?"bottom":"top",pageChroma,.25f*longest);
             assert(pageChroma>5.f && longest>=16);
         }
     }
-    puts("PASS: inset rim stays bright and neutral across the crown; both shoulders still disperse page texture.");
+    puts("PASS: solid mirrored crown lip, clean dark gap, continuous 7-tap crown & shoulder dispersion, neutral center.");
 }
