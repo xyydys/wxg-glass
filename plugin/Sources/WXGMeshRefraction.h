@@ -232,21 +232,9 @@ static inline void WXGMeshSource(WXGMeshOptics o,float px,float py,float *sx,flo
         float zoom=o.zoomAfter>0.f?o.zoomAfter:1.f;
         WXG_K_F2 src=WXG_K_MAKE2(center.x+(ray.x+spread.x*o.kyantChannel-center.x)/zoom,
                                  center.y+(ray.y+spread.y*o.kyantChannel-center.y)/zoom);
-        WXG_K_F2 size=WXG_K_MAKE2(halfSize.x*2.f,halfSize.y*2.f);
-        WXG_K_F2 origin=WXG_K_MAKE2(o.sbLeft,o.sbTop),barSize=WXG_K_MAKE2(o.sbRight-o.sbLeft,o.sbBottom-o.sbTop);
-        src=WXGKyantSceneSource(src,ray,center,size,o.radius,origin,barSize,o.sbRadius,
-                               o.shrinkPress,o.shrinkPinch,o.shrinkExtra,zoom);
-        if(o.shrinkPress>0.f) {
-            WXG_K_F2 neutral=src;
-            if(ray.x!=px || ray.y!=py || (o.kyantChannel!=0.f && (spread.x!=0.f || spread.y!=0.f))) {
-                neutral=WXG_K_MAKE2(center.x+(px-center.x)/zoom,center.y+(py-center.y)/zoom);
-                neutral=WXGKyantSceneSource(neutral,WXG_K_MAKE2(px,py),center,size,o.radius,origin,barSize,o.sbRadius,
-                                            o.shrinkPress,o.shrinkPinch,o.shrinkExtra,zoom);
-            }
-            WXGKyantMaterialBand edge=WXGKyantMaterialProfile(neutral,size,origin,barSize,o.sbRadius,
-                                                             o.kyantHeight,o.kyantAmount,o.dispersion);
-            src=WXGKyantMaterialSample(src,edge,o.kyantChannel);
-        }
+        src=WXGKyantSceneSource(src,ray,center,WXG_K_MAKE2(halfSize.x*2.f,halfSize.y*2.f),o.radius,
+            WXG_K_MAKE2(o.sbLeft,o.sbTop),WXG_K_MAKE2(o.sbRight-o.sbLeft,o.sbBottom-o.sbTop),o.sbRadius,
+            o.shrinkPress,o.shrinkPinch,o.shrinkExtra,zoom);
         *sx=src.x;*sy=src.y;return;
     }
     if(o.curveHeight>0.f){WXGMeshCurveSource(o,px,py,sx,sy);return;}

@@ -125,87 +125,47 @@ static UIImage *WXGDockTabArtwork(WXGNativeIconPair *pair,NSInteger i,BOOL selec
     if(textColor)*textColor=color;
     return icon;
 }
-// The flat atlas and per-tab lens atlas must use the exact same artwork and metrics.
-static CGRect WXGDrawDockTab(WXGIconJob *job,NSInteger i,BOOL useSelected,BOOL draw) {
-    NSArray *art=useSelected?job.selectedArt:job.normalArt;
-    NSArray<UIColor *> *colors=useSelected?job.selectedColors:job.normalColors;
-    id artwork=i<(NSInteger)art.count?art[(NSUInteger)i]:nil;
-    UIImage *icon=[artwork isKindOfClass:UIImage.class]?artwork:nil;
-    UIColor *color=i<(NSInteger)colors.count?colors[(NSUInteger)i]:UIColor.grayColor;
-    NSString *title=i<(NSInteger)job.titles.count?job.titles[(NSUInteger)i]:@"";
-    CGFloat cx=i<(NSInteger)job.centers.count?job.centers[i].doubleValue:0,cy=CGRectGetMidY(job.materialRect)-8+job.iconShift;
-    // FIX114 B (user: the dock's icons do not look like WeChat's): at
-    // WeChat's own size (a tab bar draws its items' images as they are),
-    // only larger ones fitted to 30 x 30 (was always fitted to 28 x 26:
-    // WeChat's 28 pt icons were drawn smaller).
-    CGFloat ratio=job.nativeSize?MIN(1,MIN(30/MAX(icon.size.width,1),30/MAX(icon.size.height,1))):MIN(28/MAX(icon.size.width,1),26/MAX(icon.size.height,1));
-    // FIX135: a set height (iOS 26's tab icons are 24.7 - 27.3 pt high in a 26 pt row, up to 37 pt wide).
-    if(job.iconHeight>1)ratio=MIN(job.iconHeight*(37./26.)/MAX(icon.size.width,1),job.iconHeight/MAX(icon.size.height,1));
-    // FIX115 D: 底栏主题优先: at the size WeChat / the theme shows it (any
-    // size; a PNG's own size depends on the scale it was loaded at).
-    NSArray<NSValue *> *shownSizes=useSelected?job.selectedShown:job.normalShown;
-    CGSize shown=job.themeFirst && i<(NSInteger)shownSizes.count?shownSizes[(NSUInteger)i].CGSizeValue:CGSizeZero;
-    if(shown.width>=4 && shown.height>=4)ratio=MIN(shown.width/MAX(icon.size.width,1),shown.height/MAX(icon.size.height,1));
-    CGSize sz=CGSizeMake(icon.size.width*ratio,icon.size.height*ratio);
-    CGRect iconRect=CGRectMake(cx-sz.width/2,cy-sz.height/2,sz.width,sz.height);
-    // FIX91: size and weight from the settings (10.5 pt, medium /
-    // semibold when selected before: too heavy at the dock's size).
-    static const CGFloat weights[5]={-.4,0,.23,.3,.4};   // UIFontWeightLight .. UIFontWeightBold
-    NSInteger step=MAX(0,MIN(4,job.titleWeight+((useSelected && job.bolderSelected)?1:0)));
-    UIFont *font=[UIFont systemFontOfSize:job.titleSize>1?job.titleSize:10 weight:weights[step]];
-    NSDictionary *attrs=@{NSFontAttributeName:font,NSForegroundColorAttributeName:color};
-    CGSize text=[title sizeWithAttributes:attrs];
-    CGRect titleRect=CGRectMake(cx-text.width/2,CGRectGetMidY(job.materialRect)+10+job.titleShift,text.width,text.height);
-    if(draw) {
-        [icon drawInRect:iconRect];
-        [title drawAtPoint:titleRect.origin withAttributes:attrs];
-    }
-    return CGRectUnion(iconRect,titleRect);
-}
-
-static UIGraphicsImageRenderer *WXGIconRenderer(WXGIconJob *job,CGSize size) {
-    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];
-    format.scale=job.scale;format.opaque=NO;format.preferredRange=UIGraphicsImageRendererFormatRangeStandard;
-    return [[UIGraphicsImageRenderer alloc] initWithSize:size format:format];
-}
-
 static UIImage *WXGRenderDockIcons(WXGIconJob *job,BOOL selected,BOOL fallback) {
     if(!job || job.size.width<1 || job.size.height<1)return nil;
-    return [WXGIconRenderer(job,job.size) imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];
+    format.scale=job.scale;format.opaque=NO;format.preferredRange=UIGraphicsImageRendererFormatRangeStandard;
+    UIGraphicsImageRenderer *r=[[UIGraphicsImageRenderer alloc] initWithSize:job.size format:format];
+    return [r imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
         (void)ctx;
-        for(NSInteger i=0;i<4;i++)WXGDrawDockTab(job,i,fallback?(i==job.selectedIndex):selected,YES);
-        for(NSDictionary *badge in job.badges)[(UIImage *)badge[@"image"] drawInRect:[badge[@"rect"] CGRectValue]];
-    }];
-}
-
-// Store each tab's icon, title and badge in its own transparent tile. Content
-// may extend across the midpoint between tabs, especially for themed badges.
-static UIImage *WXGRenderSelectedDockTiles(WXGIconJob *job) {
-    if(job.centers.count!=4 || job.size.height<1 || job.scale<=0)return nil;
-    CGRect canvas=(CGRect){CGPointZero,job.size};
-    CGFloat halfWidth=14;   // includes the animated 26 pt Telegram icon and its patch
-    for(NSInteger i=0;i<4;i++) {
-        CGRect extent=WXGDrawDockTab(job,i,YES,NO);
-        for(NSDictionary *badge in job.badges)if([badge[@"tab"] integerValue]==i)
-            extent=CGRectUnion(extent,[badge[@"rect"] CGRectValue]);
-        extent=CGRectIntersection(extent,canvas);
-        if(CGRectIsEmpty(extent))continue;
-        CGFloat cx=job.centers[i].doubleValue;
-        halfWidth=MAX(halfWidth,MAX(cx-CGRectGetMinX(extent),CGRectGetMaxX(extent)-cx));
-    }
-    // Two transparent texels protect linear sampling and fractional tab origins.
-    CGFloat width=2*(ceil(halfWidth*job.scale)+2)/job.scale;
-    return [WXGIconRenderer(job,CGSizeMake(4*width,job.size.height)) imageWithActions:^(UIGraphicsImageRendererContext *ctx) {
+        // FIX106 D: only what the job holds (resolved on the main thread).
         for(NSInteger i=0;i<4;i++) {
-            CGContextSaveGState(ctx.CGContext);
-            CGContextClipToRect(ctx.CGContext,CGRectMake(i*width,0,width,job.size.height));
-            CGContextTranslateCTM(ctx.CGContext,(i+.5)*width-job.centers[i].doubleValue,0);
-            CGContextClipToRect(ctx.CGContext,canvas);
-            WXGDrawDockTab(job,i,YES,YES);
-            for(NSDictionary *badge in job.badges)if([badge[@"tab"] integerValue]==i)
-                [(UIImage *)badge[@"image"] drawInRect:[badge[@"rect"] CGRectValue]];
-            CGContextRestoreGState(ctx.CGContext);
+            BOOL useSelected=fallback?(i==job.selectedIndex):selected;
+            NSArray *art=useSelected?job.selectedArt:job.normalArt;
+            NSArray<UIColor *> *colors=useSelected?job.selectedColors:job.normalColors;
+            id artwork=i<(NSInteger)art.count?art[(NSUInteger)i]:nil;
+            UIImage *icon=[artwork isKindOfClass:UIImage.class]?artwork:nil;
+            UIColor *color=i<(NSInteger)colors.count?colors[(NSUInteger)i]:UIColor.grayColor;
+            NSString *title=i<(NSInteger)job.titles.count?job.titles[(NSUInteger)i]:@"";
+            CGFloat cx=i<(NSInteger)job.centers.count?job.centers[i].doubleValue:0,cy=CGRectGetMidY(job.materialRect)-8+job.iconShift;
+            // FIX114 B (user: the dock's icons do not look like WeChat's): at
+            // WeChat's own size (a tab bar draws its items' images as they are),
+            // only larger ones fitted to 30 x 30 (was always fitted to 28 x 26:
+            // WeChat's 28 pt icons were drawn smaller).
+            CGFloat ratio=job.nativeSize?MIN(1,MIN(30/MAX(icon.size.width,1),30/MAX(icon.size.height,1))):MIN(28/MAX(icon.size.width,1),26/MAX(icon.size.height,1));
+            // FIX135: a set height (iOS 26's tab icons are 24.7 - 27.3 pt high in a 26 pt row, up to 37 pt wide).
+            if(job.iconHeight>1)ratio=MIN(job.iconHeight*(37./26.)/MAX(icon.size.width,1),job.iconHeight/MAX(icon.size.height,1));
+            // FIX115 D: 底栏主题优先: at the size WeChat / the theme shows it (any
+            // size; a PNG's own size depends on the scale it was loaded at).
+            NSArray<NSValue *> *shownSizes=useSelected?job.selectedShown:job.normalShown;
+            CGSize shown=job.themeFirst && i<(NSInteger)shownSizes.count?shownSizes[(NSUInteger)i].CGSizeValue:CGSizeZero;
+            if(shown.width>=4 && shown.height>=4)ratio=MIN(shown.width/MAX(icon.size.width,1),shown.height/MAX(icon.size.height,1));
+            CGSize sz=CGSizeMake(icon.size.width*ratio,icon.size.height*ratio);
+            [icon drawInRect:CGRectMake(cx-sz.width/2,cy-sz.height/2,sz.width,sz.height)];
+            // FIX91: size and weight from the settings (10.5 pt, medium /
+            // semibold when selected before: too heavy at the dock's size).
+            static const CGFloat weights[5]={-.4,0,.23,.3,.4};   // UIFontWeightLight .. UIFontWeightBold
+            NSInteger step=MAX(0,MIN(4,job.titleWeight+((useSelected && job.bolderSelected)?1:0)));
+            UIFont *font=[UIFont systemFontOfSize:job.titleSize>1?job.titleSize:10 weight:weights[step]];
+            NSDictionary *attrs=@{NSFontAttributeName:font,NSForegroundColorAttributeName:color};
+            CGSize text=[title sizeWithAttributes:attrs];
+            [title drawAtPoint:CGPointMake(cx-text.width/2,CGRectGetMidY(job.materialRect)+10+job.titleShift) withAttributes:attrs];
         }
+        for(NSDictionary *badge in job.badges)[(UIImage *)badge[@"image"] drawInRect:[badge[@"rect"] CGRectValue]];   // FIX113 G
     }];
 }
 
@@ -386,9 +346,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 @property(nonatomic,strong) CALayer *travelLensTint;   // FIX112: the whole lens's filter colour, as on the real lens
 @property(nonatomic,strong) UIColor *travelLensTintColor;
 @property(nonatomic) CGFloat travelLensTintAlpha;
-@property(nonatomic,strong) UIImage *selectedAtlas,*normalAtlas,*selectedDockTiles;
-@property(nonatomic,copy) NSArray<CALayer *> *travelTabLayers;
-@property(nonatomic,copy) NSArray<NSNumber *> *travelTabCenters;
+@property(nonatomic,strong) UIImage *selectedAtlas,*normalAtlas;
 @property(nonatomic,strong) CALayer *travelNormalIcons;
 @property(nonatomic,strong) NSArray<UIView *> *travelBackdrops;
 @property(nonatomic,copy) NSString *travelBackdropKey;
@@ -763,7 +721,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
             }];
         }
         rect.origin=CGPointMake(round(rect.origin.x*scale)/scale,round(rect.origin.y*scale)/scale);   // on the atlas's pixels
-        if(image)[out addObject:@{@"image":image,@"tab":@(i),@"rect":[NSValue valueWithCGRect:rect]}];
+        if(image)[out addObject:@{@"image":image,@"rect":[NSValue valueWithCGRect:rect]}];
     }
     return out;
 }
@@ -812,8 +770,6 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
         // First atlas synchronously, so the dock never shows without icons.
         UIImage *selected=WXGRenderDockIcons(job,YES,NO),*normal=WXGRenderDockIcons(job,NO,NO);
         [_glass setNormalIcons:normal selectedIcons:selected];
-        _selectedDockTiles=WXGRenderSelectedDockTiles(job);
-        [_glass setDockTabAtlas:_selectedDockTiles texture:WXGMakeIconTexture(_selectedDockTiles) centers:job.centers];
         _selectedAtlas=selected;_normalAtlas=normal;_iconsReady=job!=nil;
         _atlasCenters=job.centers;_atlasIconY=CGRectGetMidY(job.materialRect)-8+job.iconShift;_atlasBadges=job.badges;   // FIX113 C / G
         if(_telegramTab>=0)_telegramLastFrame=-1;   // the playing frame drawn again into the new atlas
@@ -824,13 +780,10 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
         ++_asyncIconBuilds;__weak WXGDemoBar *weakSelf=self;
         dispatch_async(WXGDockIconQueue(),^{
             UIImage *normal=WXGRenderDockIcons(job,NO,NO),*selected=WXGRenderDockIcons(job,YES,NO);
-            UIImage *tiles=WXGRenderSelectedDockTiles(job);
-            id<MTLTexture> tileTexture=WXGMakeIconTexture(tiles);
             id<MTLTexture> normalTexture=WXGMakeIconTexture(normal),selectedTexture=WXGMakeIconTexture(selected);
             dispatch_async(dispatch_get_main_queue(),^{
                 WXGDemoBar *bar=weakSelf;if(!bar || generation!=bar.iconGeneration)return;
-                bar.selectedAtlas=selected;bar.normalAtlas=normal;bar.selectedDockTiles=tiles;
-                [bar.glass setDockTabAtlas:tiles texture:tileTexture centers:job.centers];
+                bar.selectedAtlas=selected;bar.normalAtlas=normal;
                 if(bar.morphing)[bar loadMorphContent];
                 if(normalTexture && selectedTexture)[bar.glass setNormalIconTexture:normalTexture selectedIconTexture:selectedTexture];
                 else [bar.glass setNormalIcons:normal selectedIcons:selected];
@@ -986,11 +939,6 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
         [_glass drawIconPatchAtPixels:pixels scale:scale selected:state==1 drawing:^{
             [tinted drawInRect:icon];
             for(NSDictionary *badge in over)[(UIImage *)badge[@"image"] drawInRect:[badge[@"rect"] CGRectValue]];
-        }];
-        if(state==1)[_glass drawDockTabPatch:tab pixels:pixels scale:scale drawing:^{
-            [tinted drawInRect:icon];
-            for(NSDictionary *badge in over)if([badge[@"tab"] integerValue]==tab)
-                [(UIImage *)badge[@"image"] drawInRect:[badge[@"rect"] CGRectValue]];
         }];
     }
 }
@@ -1261,12 +1209,6 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
     _travelTint=[CALayer layer];_travelTint.anchorPoint=CGPointZero;_travelTint.position=CGPointZero;
     _travelIconZoom=[CALayer layer];_travelIconImage=[CALayer layer];_travelIconImage.anchorPoint=CGPointZero;
     [_travelIconZoom addSublayer:_travelIconImage];
-    NSMutableArray *tabs=[NSMutableArray arrayWithCapacity:4];
-    for(NSInteger i=0;i<4;i++) {
-        CALayer *tile=[CALayer layer];tile.contentsRect=CGRectMake(i*.25,0,.25,1);
-        [_travelIconImage addSublayer:tile];[tabs addObject:tile];
-    }
-    _travelTabLayers=tabs;
     // FIX88: the bar seen through the lens (bands of the veil, its outline),
     // under the selection tint and the icons; paths in the lens's own space.
     _travelVeil=[CALayer layer];_travelVeil.anchorPoint=CGPointZero;_travelVeil.position=CGPointZero;_travelVeil.hidden=YES;
@@ -1283,7 +1225,6 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 }
 - (NSArray<CALayer *> *)travelLayers {
     NSMutableArray *layers=[NSMutableArray arrayWithObjects:_travelLens,_travelTint,_travelIconZoom,_travelIconImage,_travelNormalIcons,_travelHole,_travelLensTint,nil];
-    [layers addObjectsFromArray:_travelTabLayers];
     [layers addObjectsFromArray:_travelOutlines];
     [layers addObjectsFromArray:_travelVeilBands];
     return layers;
@@ -1418,7 +1359,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     BOOL grow=[self travelBarScaleForPress:1]>1.0005;
     NSInteger count=MAX(2,MIN(121,(NSInteger)ceil(MAX(0,duration)*60)+1));
     NSMutableArray *keyTimes=[NSMutableArray array],*glassScale=[NSMutableArray array],*iconScale=[NSMutableArray array],*holeShift=[NSMutableArray array];
-    NSMutableArray *holeSizes=[NSMutableArray array],*zooms=[NSMutableArray array],*scales=[NSMutableArray array];
+    NSMutableArray *holeSizes=[NSMutableArray array],*zooms=[NSMutableArray array],*iconShift=[NSMutableArray array],*scales=[NSMutableArray array];
     NSMutableArray<NSMutableArray *> *bandPaths=[NSMutableArray array],*outlinePaths=[NSMutableArray array];
     for(NSUInteger k=0;k<_travelOutlines.count;k++)[outlinePaths addObject:[NSMutableArray array]];
     for(NSInteger k=0;k<_travelVeilCount;k++)[bandPaths addObject:[NSMutableArray array]];
@@ -1436,6 +1377,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         [holeShift addObject:[NSValue valueWithCGPoint:CGPointMake((lens.x-barCentre.x)*(1/s-1),(lens.y-barCentre.y)*(1/s-1))]];
         [holeSizes addObject:[NSValue valueWithCGSize:CGSizeMake(size.width*WXG_HOLE_KW/s,size.height*WXG_HOLE_KH/s)]];
         [zooms addObject:@((1+p*zoomGain)*s)];
+        [iconShift addObject:[NSValue valueWithCGPoint:CGPointMake((lens.x-barCentre.x)*(1-1/s),(lens.y-barCentre.y)*(1-1/s))]];
         for(NSInteger k=0;k<_travelVeilCount;k++) {
             CGPathRef path=[self newTravelVeilPathForLens:size centre:lens press:p scale:s extra:_travelVeilDepths[k]*s];
             [bandPaths[k] addObject:(__bridge id)path];CGPathRelease(path);
@@ -1451,19 +1393,13 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         a.values=values;a.keyTimes=keyTimes;a.calculationMode=kCAAnimationLinear;a.duration=MAX(duration,1e-3);a.additive=additive;
         a.fillMode=kCAFillModeForwards;a.removedOnCompletion=NO;return a;
     };
-    for(NSUInteger i=0;i<_travelTabLayers.count;i++) {
-        CALayer *tile=_travelTabLayers[i];
-        NSMutableArray *positions=[NSMutableArray arrayWithCapacity:scales.count];
-        for(NSNumber *scale in scales)
-            [positions addObject:[NSValue valueWithCGPoint:[self travelTabCenter:i barScale:scale.doubleValue]]];
-        [tile addAnimation:frames(@"position",positions,NO) forKey:@"tabCentre"];
-        [tile addAnimation:frames(@"transform.scale",zooms,NO) forKey:@"zoom"];
-    }
+    [_travelIconZoom addAnimation:frames(@"transform.scale",zooms,NO) forKey:@"zoom"];
     [_travelHole addAnimation:frames(@"bounds.size",holeSizes,NO) forKey:@"holeSize"];
     if(grow) {
         [_glass.layer addAnimation:frames(@"transform",glassScale,YES) forKey:@"wxg.travelScale"];
         [_travelNormalIcons addAnimation:frames(@"transform",iconScale,YES) forKey:@"wxg.travelScale"];
         [_travelHole addAnimation:frames(@"position",holeShift,YES) forKey:@"wxg.travelScale"];
+        [_travelIconImage addAnimation:frames(@"position",iconShift,YES) forKey:@"wxg.travelScale"];
         for(UILabel *badge in _badges) {
             if(badge.hidden)continue;
             // layoutBadges scales the badge's top-left corner about the bar's centre.
@@ -1516,22 +1452,6 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     if(fabs(span)<.5)return _travelStartPress;
     return WXGClamp(.90*(size.height-_travelRestSize.height)/span,0,1);
 }
-// The moving lens and the counter-moving container cancel; only a tab's
-// local transform magnifies its art. The positions grow with the whole bar.
-- (void)loadTravelTabArtwork {
-    _travelTabCenters=_atlasCenters;
-    UIImage *atlas=_selectedDockTiles;
-    CGSize tile=CGSizeMake(CGImageGetWidth(atlas.CGImage)/(4*atlas.scale),CGImageGetHeight(atlas.CGImage)/atlas.scale);
-    for(CALayer *layer in _travelTabLayers) {
-        layer.contents=(__bridge id)atlas.CGImage;layer.contentsScale=atlas.scale;
-        layer.bounds=(CGRect){CGPointZero,tile};
-        layer.anchorPoint=CGPointMake(.5,CGRectGetMidY(_materialRect)/tile.height);
-    }
-}
-- (CGPoint)travelTabCenter:(NSUInteger)tab barScale:(CGFloat)scale {
-    CGFloat mid=CGRectGetMidX(_materialRect),x=_travelTabCenters[tab].doubleValue;
-    return CGPointMake(mid+(x-mid)*scale,CGRectGetMidY(_materialRect));
-}
 // Model (final) values of everything that follows the lens shape.
 - (void)setTravelShapeModel:(CGSize)size press:(CGFloat)press {
     for(CALayer *layer in [self travelShapeLayers])layer.bounds=(CGRect){CGPointZero,size};
@@ -1542,11 +1462,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     // FIX88: on the grown bar (s): the zoom on top of it, the hole in the
     // icons' own (unscaled) space.
     CGFloat s=[self travelBarScaleForPress:press],z=(1+press*(WXGConfig.shared.lensZoom-1))*s;
-    _travelIconZoom.position=CGPointMake(size.width*.5,size.height*.5);
-    for(NSUInteger i=0;i<_travelTabLayers.count;i++) {
-        CALayer *tile=_travelTabLayers[i];tile.position=[self travelTabCenter:i barScale:s];
-        tile.transform=CATransform3DMakeScale(z,z,1);
-    }
+    _travelIconZoom.position=CGPointMake(size.width*.5,size.height*.5);_travelIconZoom.transform=CATransform3DMakeScale(z,z,1);
     _travelHole.bounds=(CGRect){CGPointZero,CGSizeMake(size.width*WXG_HOLE_KW/s,size.height*WXG_HOLE_KH/s)};
 }
 // One clock for the lens shape: size, corner, pill tint, rim, zoom, hole.
@@ -1595,7 +1511,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
 // target and the travel layers start where the real lens is.
 - (BOOL)prepareTravelToIndex:(NSInteger)index {
     if(!WXGConfig.shared.dockTapSimpleTravel || UIAccessibilityIsReduceMotionEnabled() || !_glass.ready || !_glass.hasPresentedFrame ||
-       !_selectedDockTiles.CGImage || _atlasCenters.count!=4 || !_normalAtlas.CGImage || CGRectIsEmpty(_materialRect) || !self.window)return NO;
+       !_selectedAtlas.CGImage || !_normalAtlas.CGImage || CGRectIsEmpty(_materialRect) || !self.window)return NO;
     CFTimeInterval setupStart=CACurrentMediaTime();
     CGFloat minX=_materialRect.origin.x,minY=_materialRect.origin.y;
     CGFloat fromX=_lensX,toX=[self centerForIndex:index],fromPress=WXGClamp(_press,0,1);
@@ -1631,7 +1547,8 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     }
     for(CALayer *layer in [self travelLayers])[layer removeAllAnimations];
     [self removeTravelScale];[self loadTravelVeil];   // FIX88
-    [self loadTravelTabArtwork];
+    _travelIconImage.contents=(__bridge id)_selectedAtlas.CGImage;_travelIconImage.contentsScale=_selectedAtlas.scale;
+    _travelIconImage.bounds=(CGRect){CGPointZero,self.bounds.size};
     _travelNormalIcons.contents=(__bridge id)_normalAtlas.CGImage;_travelNormalIcons.contentsScale=_normalAtlas.scale;
     _travelNormalIcons.frame=self.bounds;
     [self setTravelShapeModel:_travelStartSize press:fromPress];
@@ -2079,7 +1996,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
 - (void)prewarmTravel {
     if(_discreteShown)return;   // 离散底栏: no lens travel
     if(_travelling || CGRectIsEmpty(_materialRect) || !self.window || !WXGConfig.shared.dockTapSimpleTravel ||
-       !_selectedDockTiles.CGImage || _atlasCenters.count!=4 || !_normalAtlas.CGImage)return;
+       !_selectedAtlas.CGImage || !_normalAtlas.CGImage)return;
     WXGDockGeometry g=[self layoutAtAnchor:_materialRect.size.width*.5 press:.90];   // as prepareTravelToIndex
     CGSize size=CGSizeMake(g.lensWidth,g.lensHeight);NSString *key=[self travelBackdropKeyForSize:size];
     [self ensureTravelLayers];
@@ -2091,7 +2008,8 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     [self loadTravelColors];
     unsigned depth=0;
     for(UIView *v in _travelBackdrops){CALayer *layer=v.layer;layer.anchorPoint=CGPointZero;layer.position=CGPointZero;[_travelLens insertSublayer:layer atIndex:depth++];}
-    [self loadTravelTabArtwork];
+    _travelIconImage.contents=(__bridge id)_selectedAtlas.CGImage;_travelIconImage.contentsScale=_selectedAtlas.scale;
+    _travelIconImage.bounds=(CGRect){CGPointZero,self.bounds.size};
     _travelNormalIcons.contents=(__bridge id)_normalAtlas.CGImage;_travelNormalIcons.contentsScale=_normalAtlas.scale;
     _travelNormalIcons.frame=self.bounds;
     CGPoint centre=CGPointMake(CGRectGetMidX(_materialRect),CGRectGetMidY(_materialRect));

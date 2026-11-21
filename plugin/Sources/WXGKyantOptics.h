@@ -90,26 +90,15 @@ static inline WXG_K_F2 WXGKyantGradSdRoundedRect(WXG_K_F2 coord, WXG_K_F2 halfSi
 
 /* Inner-bar inverse mapping for the native backdrop mesh and Metal selection
    coverage. Glyphs have their own source coordinates. */
-static inline WXGShapeSample WXGKyantBarField(WXG_K_F2 p,WXG_K_F2 origin,WXG_K_F2 size,float radius) {
-    float x=p.x-(origin.x+size.x*.5f),y=p.y-(origin.y+size.y*.5f);
-    if(radius>0.f) return WXGRoundedOpticalField(x,y,size.x,size.y,radius);
-    // Exact straight segment of WXGCapsuleOpticalField. The continuous
-    // corner starts 24 degrees before the circular join (WXGContinuousCorrection).
-    float ay=WXG_K_ABS(y);
-    if(size.x>=size.y && WXG_K_ABS(x)-(size.x-size.y)*.5f < -.4452f*ay) {
-        WXGShapeSample flat;
-        flat.distance=ay-size.y*.5f; flat.nx=0.f; flat.ny=y/WXG_K_MAX(ay,.0001f);
-        return flat;
-    }
-    return WXGCapsuleOpticalField(x,y,size.x,size.y);
-}
-
-static inline float WXGKyantSceneInset(WXG_K_F2 centralRay,WXG_K_F2 lensCenter,WXG_K_F2 lensSize,
-    float lensRadius,WXG_K_F2 barOrigin,WXG_K_F2 barSize,float barRadius,
+static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
+    WXG_K_F2 lensCenter,WXG_K_F2 lensSize,float lensRadius,
+    WXG_K_F2 barOrigin,WXG_K_F2 barSize,float barRadius,
     float press,float pinch,float extra,float zoom) {
-    if(!(press>0.f) || !(barSize.x>2.f && barSize.y>2.f)) return 0.f;
+    if(!(press>0.f) || !(barSize.x>2.f && barSize.y>2.f))return source;
     float barHalf=WXG_K_MIN(barSize.x,barSize.y)*.5f;
-    WXGShapeSample b=WXGKyantBarField(centralRay,barOrigin,barSize,barRadius);
+    float bx=barOrigin.x+barSize.x*.5f,by=barOrigin.y+barSize.y*.5f;
+    WXGShapeSample b=barRadius>0.f?WXGRoundedOpticalField(centralRay.x-bx,centralRay.y-by,barSize.x,barSize.y,barRadius)
+        :WXGCapsuleOpticalField(centralRay.x-bx,centralRay.y-by,barSize.x,barSize.y);
     float ox=centralRay.x-b.nx*b.distance,oy=centralRay.y-b.ny*b.distance;
     WXGShapeSample l=lensRadius>0.f?WXGRoundedOpticalField(ox-lensCenter.x,oy-lensCenter.y,lensSize.x,lensSize.y,lensRadius)
         :WXGCapsuleOpticalField(ox-lensCenter.x,oy-lensCenter.y,lensSize.x,lensSize.y);
@@ -118,68 +107,18 @@ static inline float WXGKyantSceneInset(WXG_K_F2 centralRay,WXG_K_F2 lensCenter,W
     float absFull=WXG_K_ABS(full),ramp=absFull>1e-4f?WXGOClamp(along/(2.f*absFull),0.f,1.f):0.f;
     float inset=full*ramp*(2.f-ramp);
     float h=(ox-lensCenter.x)*b.nx+(oy-lensCenter.y)*b.ny;
-    return WXGOClamp(h-(h-inset)/WXG_K_MAX(zoom,.01f),extra<0.f?-barHalf*.5f:0.f,barHalf*.9f);
-}
-
-static inline WXG_K_F2 WXGKyantInsetSource(WXG_K_F2 source,WXG_K_F2 origin,WXG_K_F2 size,float radius,float dz) {
+    float dz=WXGOClamp(h-(h-inset)/WXG_K_MAX(zoom,.01f),extra<0.f?-barHalf*.5f:0.f,barHalf*.9f);
     if(!(WXG_K_ABS(dz)>0.f))return source;
-    WXGShapeSample q=WXGKyantBarField(source,origin,size,radius);
-    float barHalf=WXG_K_MIN(size.x,size.y)*.5f;
+    WXGShapeSample q=barRadius>0.f?WXGRoundedOpticalField(source.x-bx,source.y-by,barSize.x,barSize.y,barRadius)
+        :WXGCapsuleOpticalField(source.x-bx,source.y-by,barSize.x,barSize.y);
     float t=q.distance,t2=t<-dz?-barHalf+(t+barHalf)*barHalf/(barHalf-dz):t+dz;
     if(t<-barHalf)t2=t;
     return WXG_K_MAKE2(source.x+q.nx*(t2-t),source.y+q.ny*(t2-t));
 }
 
-static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
-    WXG_K_F2 lensCenter,WXG_K_F2 lensSize,float lensRadius,WXG_K_F2 barOrigin,WXG_K_F2 barSize,
-    float barRadius,float press,float pinch,float extra,float zoom) {
-    float dz=WXGKyantSceneInset(centralRay,lensCenter,lensSize,lensRadius,barOrigin,barSize,barRadius,press,pinch,extra,zoom);
-    return WXGKyantInsetSource(source,barOrigin,barSize,barRadius,dz);
-}
-
 static inline float WXGKyantEase(float x) {
     x=WXG_K_SATURATE(x);
     return x*x*(3.f-2.f*x);
-}
-
-/* The outer lens and the inset bar have different outlines. Evaluate this
-   second interface in the source image, after zoom and the inverse inset.
-   Every wavelength sees the same surface and bends along its one normal. */
-typedef struct {
-    WXG_K_F2 center,normal;
-    float weight,bend,spread;
-} WXGKyantMaterialBand;
-
-static inline WXGKyantMaterialBand WXGKyantMaterialProfile(WXG_K_F2 center,WXG_K_F2 lensSize,
-    WXG_K_F2 barOrigin,WXG_K_F2 barSize,float radius,float height,float amount,float dispersion) {
-    WXGKyantMaterialBand band;
-    band.center=center; band.normal=WXG_K_MAKE2(0.f,0.f);
-    band.weight=0.f; band.bend=0.f; band.spread=0.f;
-    if (!(height>0.f && amount>0.f && barSize.x>2.f && barSize.y>2.f)) return band;
-    float halfHeight=lensSize.y*.5f;
-    float elongated=WXGKyantEase((lensSize.x-lensSize.y)/WXG_K_MAX(.15f*lensSize.y,1e-4f));
-    if (!(halfHeight>0.f && elongated>0.f)) return band;
-    WXGShapeSample field=WXGKyantBarField(center,barOrigin,barSize,radius);
-    float reach=.8f*height*halfHeight/(halfHeight+.5f*height);
-    float t=WXG_K_ABS(field.distance)/reach;
-    if (t>=1.f) return band;
-    // A C1 strip follows the actual top/bottom material edge. The bound
-    // 1.5 * .50 < 1 leaves room for the outer lens mapping across a straight edge.
-    band.weight=elongated*field.ny*field.ny*(1.f-WXGKyantEase(t));
-    band.normal=WXG_K_MAKE2(field.nx,field.ny);
-    float amplitude=.50f*reach*amount/(amount+.55f*halfHeight);
-    band.bend=.28f*amplitude;
-    band.spread=.72f*amplitude*WXG_K_SATURATE(1.8f*dispersion/(4.f+WXG_K_MAX(0.f,dispersion)));
-    return band;
-}
-
-static inline WXG_K_F2 WXGKyantMaterialSample(WXG_K_F2 source,WXGKyantMaterialBand band,float wave) {
-    if (!(band.weight>0.f)) return source;
-    // Transition the normal component of the old spectral ray to the material
-    // interface's ray. Its tangential component still follows the shoulder.
-    float previous=(source.x-band.center.x)*band.normal.x+(source.y-band.center.y)*band.normal.y;
-    float shift=band.weight*(band.bend+wave*band.spread-previous);
-    return WXG_K_MAKE2(source.x+shift*band.normal.x,source.y+shift*band.normal.y);
 }
 
 /* Upstream Lens.kt + Shaders.kt refraction on the shoulders. On a wide dock
