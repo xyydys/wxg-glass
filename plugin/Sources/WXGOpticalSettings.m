@@ -100,16 +100,16 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
     if([module isEqual:@"pureDock"])return @{@"title":@"底栏纯玻璃测试",@"scoped":@NO,@"groups":@[
         WXGGroup(@"独立测试模式",nil,@[WXGSwitch(@"启用底栏独立测试模式",@"dockPureGlassMode",nil)],
                  @"开启后强制屏蔽全部旧版底栏、旧 Kyant 页、离散底栏、简化透镜、旧透镜折射/色散/滤色等旧开关干扰；底栏本体直接复用「效果调整 → 其余玻璃」整套玻璃参数与边框，透镜折射与色散由本页的 R8 模型独立控制。关闭此开关即可恢复旧版逻辑。"),
-        WXGGroup(@"透镜折射与色散 · R8 模型",nil,@[
+        WXGGroup(@"透镜折射与色散 · R8 极光连续模型",nil,@[
             WXGSlider(@"透镜折射带宽",@"dockPureR8Band",nil,0,40,@"%.1f pt"),
             WXGSlider(@"透镜折射深度",@"dockPureR8Depth",nil,0,50,@"%.1f pt"),
-            WXGSlider(@"透镜 7 色光谱色散",@"dockPureR8Dispersion",nil,0,5,@"%.2f")],
-            @"已切回 R8 透镜折射与 7 层连续光谱色散模型（四角 Kyant 颈部平滑收拢至上下端 iOS 26 细边，保留完整折射包圆与端头收拢，不再受通用页旧 RGB 开关屏蔽）。默认参数与 R8 一致：带宽 18.0 pt、深度 26.0 pt、色散 2.40；带宽或深度拉到 0 可关闭折射检查基础形态。"),
+            WXGSlider(@"透镜连续极光色散",@"dockPureR8Dispersion",nil,0,5,@"%.2f")],
+            @"保留 R8 颈部折射骨架，并修复四角象限符号反转导致的右上/左下收窄近乎断开问题；色散升级为无折返尖点的单表面连续极光模型（背景 7 层高斯钟形混色 + 图标 15 层连续极光光谱，彻底消除一圈一圈的阶梯环，严格限制在折射带内不污染内底栏直边）。默认：带宽 18.0 pt、深度 26.0 pt、色散 2.40。"),
         WXGGroup(@"透镜内缩窄底栏与图标放大",nil,@[
             WXGSlider(@"透镜内底栏高度（上下边框间距）",@"dockPureInnerBarHeight",nil,24,80,@"%.1f pt"),
             WXGSwitch(@"内底栏纯平无颈部斜坡（对比开关）",@"dockPureInnerFlat",nil),
             WXGSlider(@"透镜内图标与标题放大",@"dockPureIconZoom",nil,1,1.4,@"%.2f 倍")],
-            @"内底栏高度直接控制透镜内部底栏的上下边框间距（默认 51.0 pt ≈ R8 默认 0.18 缩窄），快速滑动形变时高度严格锁定不漂移。默认关闭「纯平无颈部斜坡」以还原 R8 颈部自然过渡，开启后可即时对比纯平直边效果。图标与标题围绕各标签页固定中心放大，无反向位移。"),
+            @"内底栏高度直接控制透镜内部底栏的上下边框间距（默认 51.0 pt ≈ R8 默认 0.18 缩窄），快速滑动形变时高度严格锁定；已对齐苹果连续圆角（kCACornerCurveContinuous）与底栏左右两端同心圆弧，解决上下端被挤扁及两端缺失连续圆角的问题。"),
         WXGGroup(@"按压尺寸与底栏本体",nil,@[
             WXGSlider(@"按压时底栏放大",@"dockPureBarGrowth",nil,1,1.08,@"%.3f 倍"),
             WXGSlider(@"按压时透镜高度放大",@"dockPureLensGrowth",nil,1,1.4,@"%.2f 倍"),
@@ -135,7 +135,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
             WXGSwitch(@"压扁与拉高对称",@"dockPureFlexSymmetric",nil)],
             @"修改最扁高度（如 0.82 → 0.90）时按有效形变路程自动缩短回弹耗时，并用平滑软膝替代硬截断，确保任意压扁参数下都顺滑连贯。"),
         WXGGroup(@"恢复",nil,@[WXGAction(@"恢复本页默认",@"resetPage",YES)],
-                 @"仅将本页独立测试模式的所有参数恢复为 R12 默认值，不影响其他页面。")
+                 @"仅将本页独立测试模式的所有参数恢复为 R13 默认值，不影响其他页面。")
     ]};
     if([module isEqual:@"effect"])return @{@"title":@"效果调整",@"scoped":@YES,@"scopes":@[@"other",@"dock",@"lens",@"segment",@"segmentLens",@"bubble",@"card",@"finder"],@"groups":@[
         WXGNotIn(WXGGroup(@"折射",nil,@[WXGSlider3(@"折射带宽（短边的比例）",@"glassBand",@"dockGlassBand",@"bubbleGlassBand",.02,.5,@"%.3f"),

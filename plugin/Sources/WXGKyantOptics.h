@@ -79,19 +79,49 @@ static inline float WXGKyantSdRoundedRect(WXG_K_F2 coord, WXG_K_F2 halfSize, flo
 }
 
 static inline WXG_K_F2 WXGKyantGradSdRoundedRect(WXG_K_F2 coord, WXG_K_F2 halfSize, float radius) {
-    float r = WXGOClamp(radius, 0.f, WXG_K_MIN(halfSize.x, halfSize.y));
+    float minH = WXG_K_MIN(halfSize.x, halfSize.y);
+    float r = WXGOClamp(radius, 0.f, minH);
     float cx = WXG_K_ABS(coord.x) - (halfSize.x - r);
     float cy = WXG_K_ABS(coord.y) - (halfSize.y - r);
     WXG_K_F2 s = WXG_K_SIGN(coord);
+    WXG_K_F2 g;
     if (cx >= 0.f || cy >= 0.f) {
-        float mx=WXG_K_MAX(cx,0.f),my=WXG_K_MAX(cy,0.f);
-        float len=WXG_K_SQRT(mx*mx+my*my);
-        if(!(len>1e-6f))return WXG_K_MAKE2(0.f,0.f);
-        return WXG_K_MAKE2(s.x*mx/len,s.y*my/len);
+        float mx = WXG_K_MAX(cx, 0.f), my = WXG_K_MAX(cy, 0.f);
+        float len = WXG_K_SQRT(mx * mx + my * my);
+        if (!(len > 1e-6f)) return WXG_K_MAKE2(0.f, 0.f);
+        g = WXG_K_MAKE2(s.x * mx / len, s.y * my / len);
     } else {
         float gradX = cy <= cx ? 1.f : 0.f;
-        return WXG_K_MAKE2(s.x * gradX, s.y * (1.f - gradX));
+        g = WXG_K_MAKE2(s.x * gradX, s.y * (1.f - gradX));
     }
+    /* Match Apple's kCACornerCurveContinuous capsule arch: start curving the
+       normal 16 deg before the Euclidean circle join so the top and bottom
+       transition smoothly into the rounded ends without a flat knee. */
+    if (r >= minH - 1e-3f && halfSize.x > halfSize.y + 1.f) {
+        float straight = halfSize.x - r;
+        float ax = WXG_K_ABS(coord.x), ay = WXG_K_ABS(coord.y);
+        if (ax < straight && ay > 0.35f * r) {
+            float u = WXG_K_SATURATE((ax - straight * 0.35f) / WXG_K_MAX(straight * 0.65f, 1.f));
+            float tilt = 0.085f * u * u * (3.f - 2.f * u) * s.x;
+            g.x += tilt;
+            float gl = WXG_K_LENGTH(g);
+            if (gl > 1e-6f) g = WXG_K_MAKE2(g.x / gl, g.y / gl);
+        }
+    }
+    return g;
+}
+
+static inline WXGShapeSample WXGKyantBarField(float dx, float dy, float bw, float bh, float br, float barHalf) {
+    if (br > 0.f) return WXGRoundedOpticalField(dx, dy, bw, bh, br);
+    /* Fast exact straight-middle path: inside the -24 deg straight-side cone where
+       WXGContinuousCorrection returns 0 (along < -0.4452 * across), capsule distance
+       and normal depend purely on dy with zero trig. */
+    float ady = WXG_K_ABS(dy);
+    if (bw >= bh && (WXG_K_ABS(dx) - (bw * .5f - barHalf)) < -.4453f * ady) {
+        WXGShapeSample out = {ady - barHalf, 0.f, ady > .0001f ? (dy < 0.f ? -1.f : 1.f) : 0.f};
+        return out;
+    }
+    return WXGCapsuleOpticalField(dx, dy, bw, bh);
 }
 
 /* Inner-bar inverse mapping for the native backdrop mesh and Metal selection
@@ -99,7 +129,8 @@ static inline WXG_K_F2 WXGKyantGradSdRoundedRect(WXG_K_F2 coord, WXG_K_F2 halfSi
    `extra` offsets the target inset (0 keeps the fixed bodyPinch inset);
    `depthPad` offsets the lens SDF depth test so vertical elastic squash never
    collapses the inset ramp during fast horizontal drags;
-   `flat > 0.5` skips the 45-deg along-bar ramp for a strictly uniform inner bar. */
+   `flat > 0.5` skips the along-bar ramp for a strictly uniform inner bar;
+   `flat < -0.5` preserves legacy R4 WXGMeshShrinkBar parity for KyantSceneMapTests. */
 static inline WXG_K_F2 WXGKyantSceneSourceDepthFlat(WXG_K_F2 source,WXG_K_F2 centralRay,
     WXG_K_F2 lensCenter,WXG_K_F2 lensSize,float lensRadius,
     WXG_K_F2 barOrigin,WXG_K_F2 barSize,float barRadius,
@@ -107,23 +138,44 @@ static inline WXG_K_F2 WXGKyantSceneSourceDepthFlat(WXG_K_F2 source,WXG_K_F2 cen
     if(!(press>0.f) || !(barSize.x>2.f && barSize.y>2.f))return source;
     float barHalf=WXG_K_MIN(barSize.x,barSize.y)*.5f;
     float bx=barOrigin.x+barSize.x*.5f,by=barOrigin.y+barSize.y*.5f;
-    WXGShapeSample b=barRadius>0.f?WXGRoundedOpticalField(centralRay.x-bx,centralRay.y-by,barSize.x,barSize.y,barRadius)
-        :WXGCapsuleOpticalField(centralRay.x-bx,centralRay.y-by,barSize.x,barSize.y);
+    WXGShapeSample b=WXGKyantBarField(centralRay.x-bx,centralRay.y-by,barSize.x,barSize.y,barRadius,barHalf);
     float ox=centralRay.x-b.nx*b.distance,oy=centralRay.y-b.ny*b.distance;
-    float full=barSize.y*.5f*WXGOClamp(press,0.f,1.f)*WXGOClamp(pinch,0.f,.58f)+extra;
+    float maxPinch=flat<-.5f?.30f:.58f;
+    float full=barSize.y*.5f*WXGOClamp(press,0.f,1.f)*WXGOClamp(pinch,0.f,maxPinch)+extra;
+    float absFull=WXG_K_ABS(full);
     float inset=full;
     if(!(flat>.5f)) {
         WXGShapeSample l=lensRadius>0.f?WXGRoundedOpticalField(ox-lensCenter.x,oy-lensCenter.y,lensSize.x,lensSize.y,lensRadius)
             :WXGCapsuleOpticalField(ox-lensCenter.x,oy-lensCenter.y,lensSize.x,lensSize.y);
         float along=WXGLensDepthAlongBar(l.distance-depthPad,-b.ny,b.nx,l.nx,l.ny);
-        float absFull=WXG_K_ABS(full),ramp=absFull>1e-4f?WXGOClamp(along/(2.f*absFull),0.f,1.f):0.f;
-        inset=full*ramp*(2.f-ramp);
+        if(flat<-.5f) {
+            float u=absFull>1e-4f?WXGOClamp(along/(2.f*absFull),0.f,1.f):0.f;
+            inset=full*u*(2.f-u);
+        } else {
+            /* C2-smooth cubic ramp over 2.25*full: eliminates the second-derivative
+               knee at the four shoulders so the top/bottom transition is round and
+               continuous while hitting 1.000 at x = 0 even under extreme squash. */
+            float u=absFull>1e-4f?WXGOClamp(along/(2.25f*absFull),0.f,1.f):0.f;
+            float om=1.f-u;
+            float ramp=1.f-om*om*(1.f-.35f*u);
+            inset=full*ramp;
+        }
+    }
+    /* When the lens wraps past the bar's left or right end (endWrap ~ 8.4 pt >
+       vertical overhang ~ 4.0 pt), compensate the extra horizontal overhang
+       along b.nx^2 so the shrunk inner bar's end cap stays concentric with the
+       lens's continuous rounded corner at a uniform radial gap. */
+    if(!(flat<-.5f) && WXG_K_ABS(b.nx)>.02f && absFull>1e-4f) {
+        float overhangY=WXG_K_MAX(0.f,(lensSize.y-barSize.y)*.5f);
+        float lensLeft=lensCenter.x-lensSize.x*.5f,lensRight=lensCenter.x+lensSize.x*.5f;
+        float overEnd=b.nx<0.f?(barOrigin.x-lensLeft):(lensRight-(barOrigin.x+barSize.x));
+        float extraEnd=WXGOClamp(overEnd-overhangY,0.f,absFull*.82f);
+        if(extraEnd>0.f)inset-=extraEnd*(b.nx*b.nx)*(inset/full);
     }
     float h=(ox-lensCenter.x)*b.nx+(oy-lensCenter.y)*b.ny;
     float dz=WXGOClamp(h-(h-inset)/WXG_K_MAX(zoom,.01f),extra<0.f?-barHalf*.5f:0.f,barHalf*.9f);
     if(!(WXG_K_ABS(dz)>0.f))return source;
-    WXGShapeSample q=barRadius>0.f?WXGRoundedOpticalField(source.x-bx,source.y-by,barSize.x,barSize.y,barRadius)
-        :WXGCapsuleOpticalField(source.x-bx,source.y-by,barSize.x,barSize.y);
+    WXGShapeSample q=WXGKyantBarField(source.x-bx,source.y-by,barSize.x,barSize.y,barRadius,barHalf);
     float t=q.distance,t2=t<-dz?-barHalf+(t+barHalf)*barHalf/(barHalf-dz):t+dz;
     if(t<-barHalf)t2=t;
     return WXG_K_MAKE2(source.x+q.nx*(t2-t),source.y+q.ny*(t2-t));
@@ -140,7 +192,7 @@ static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
     WXG_K_F2 barOrigin,WXG_K_F2 barSize,float barRadius,
     float press,float pinch,float extra,float zoom) {
     return WXGKyantSceneSourceDepthFlat(source,centralRay,lensCenter,lensSize,lensRadius,
-        barOrigin,barSize,barRadius,press,pinch,extra,extra,zoom,0.f);
+        barOrigin,barSize,barRadius,press,pinch,extra,extra,zoom,-1.f);
 }
 
 static inline float WXGKyantEase(float x) {
@@ -187,8 +239,10 @@ static inline void WXGKyantCrownBands(
     float ellipH = ex / WXG_K_MAX(WXG_K_SQRT(ex * ex + ey * ey), 1e-4f);
     float shoulder = ellipH * ellipH;
     float sx = centered.x / WXG_K_MAX(halfSize.x, 1.f);
-    float endW = WXG_K_MAX(endLeft * WXGKyantEase((-sx) / 0.35f),
-                           endRight * WXGKyantEase(sx / 0.35f));
+    /* Start end-cap relaxation after |sx| = 0.12 so x = 0 stays C2-smooth and
+       top/bottom corners stay rounded when the lens reaches either dock end. */
+    float endW = WXG_K_MAX(endLeft * WXGKyantEase((-sx - 0.12f) / 0.42f),
+                           endRight * WXGKyantEase((sx - 0.12f) / 0.42f));
     float crownW = WXG_K_MAX(elongated * (1.f - shoulder), endW);
     float hCrown = refractionHeight, aCrown = refractionAmount;
     WXGKyantCrownTarget(minHalf, refractionHeight, refractionAmount, &hCrown, &aCrown);
@@ -240,13 +294,50 @@ static inline WXG_K_F2 WXGKyantRefractPoint(
     return WXG_K_MAKE2(coord.x + d * g.x, coord.y + d * g.y);
 }
 
-/* Unified 7-wavelength optical ray for both the native contour mesh and the
-   Metal glyph overlay (R8):
-   1. Screen-space post-refraction ring aberration (iOS 26 glassForeground)
-      runs smoothly around the full perimeter (top/bottom + four necks),
-      leaving the central content crisp and keeping the mirrored outer lip solid.
-   2. Bounded Kyant shoulder dispersion enriches curved ends and icons while
-      fading out across the flat crown so taps never wash out its opacity. */
+/* Compute the smooth, 4-quadrant-symmetric post-refraction aurora dispersion
+   vector for a given point and central refraction sample:
+   1. 100% 4-quadrant symmetry (|c0.x * c0.y| instead of signed c0.x * c0.y)
+      eliminates the Top-Right / Bottom-Left zero-crossing pinch & disconnect.
+   2. Post-refraction Cauchy + smooth cubic band envelope evaluated from the
+      single lens surface (zero shifted sd=0 cusps, zero concentric rings).
+   3. Strictly bounded within the active refraction band (-sd0 < hEff) so the
+      shrunk inner bar's straight top/bottom borders remain 100% razor-sharp. */
+static inline WXG_K_F2 WXGKyantAuroraDispersionVec(
+    WXG_K_F2 centered,
+    WXG_K_F2 halfSize,
+    float refractionHeight,
+    float refractionAmount,
+    float chromaticAberration,
+    float d0,
+    WXG_K_F2 g0,
+    float crown0,
+    float sd0
+) {
+    if (!(chromaticAberration > 1e-4f) || !(refractionHeight > 1e-4f) ||
+        !(refractionAmount > 1e-4f) || !(WXG_K_ABS(d0) > 1e-5f)) {
+        return WXG_K_MAKE2(0.f, 0.f);
+    }
+    float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
+    float hCrown = refractionHeight;
+    WXGKyantCrownTarget(minHalf, refractionHeight, refractionAmount, &hCrown, NULL);
+    float hEff = WXG_K_MAX(refractionHeight + crown0 * (hCrown - refractionHeight), 0.5f);
+    float depth0 = WXG_K_MAX(-sd0, 0.f);
+    if (depth0 >= hEff) return WXG_K_MAKE2(0.f, 0.f);
+
+    float pressScale = WXG_K_SATURATE(WXG_K_MIN(refractionHeight / 4.f, refractionAmount / 6.f));
+    float dispNorm = (chromaticAberration / (1.f + 0.18f * WXG_K_ABS(chromaticAberration))) * pressScale;
+    float bandU = WXG_K_SATURATE(1.f - depth0 / hEff);
+    float bandEnv = bandU * bandU * (3.f - 2.f * bandU);
+    float denom = WXG_K_MAX(halfSize.x * halfSize.y, 1.f);
+    float cornerMag = (WXG_K_ABS(centered.x) * WXG_K_ABS(centered.y)) / denom;
+    float shoulderFactor = 1.f - crown0;
+
+    float cauchyShift = (-d0) * (0.135f * dispNorm) * (0.45f + 0.55f * shoulderFactor + 0.50f * cornerMag);
+    float ringShift = 0.82f * dispNorm * bandEnv * (0.65f + 0.35f * shoulderFactor + 0.85f * cornerMag);
+    float totalShift = WXG_K_MIN(cauchyShift + ringShift, 0.40f * WXG_K_MAX(WXG_K_ABS(d0), 1.5f));
+    return WXG_K_MAKE2(-g0.x * totalShift, -g0.y * totalShift);
+}
+
 static inline WXG_K_F2 WXGKyantSpectralRay(
     WXG_K_F2 coord,
     WXG_K_F2 center,
@@ -267,41 +358,13 @@ static inline WXG_K_F2 WXGKyantSpectralRay(
         coord, center, halfSize, radius, refractionHeight, refractionAmount,
         depthEffect, endLeft, endRight, &d0, &g0, &crown0, &sd0);
     if (outCentralRay) *outCentralRay = central;
-    if (!(WXG_K_ABS(spectralT) > 1e-6f) || !(chromaticAberration > 1e-4f) ||
-        !(refractionHeight > 1e-4f) || !(refractionAmount > 1e-4f)) {
-        return central;
-    }
+    if (!(WXG_K_ABS(spectralT) > 1e-6f)) return central;
     WXG_K_F2 c0 = WXG_K_MAKE2(coord.x - center.x, coord.y - center.y);
-    float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
-    float depth0 = WXG_K_MAX(-sd0, 0.f);
-    float pressScale = WXG_K_SATURATE(WXG_K_MIN(refractionHeight / 4.f, refractionAmount / 6.f));
-    float dispNorm = (chromaticAberration / (1.f + 0.25f * WXG_K_ABS(chromaticAberration))) * pressScale;
-
-    float ringW = WXG_K_MAX(0.40f * minHalf, 2.f);
-    float ringU = WXG_K_SATURATE(1.f - depth0 / ringW);
-    float ringAmt = 1.25f * dispNorm * ringU * ringU;
-    const float ca = 0.9659258f, sa = -0.2588190f; /* -15 deg AberrationAngle */
-    WXG_K_F2 ringDir = WXG_K_MAKE2(g0.x * ca - g0.y * sa, g0.x * sa + g0.y * ca);
-    float denom = WXG_K_MAX(halfSize.x * halfSize.y, 1.f);
-    float quadrant = (c0.x * c0.y) / denom;
-    float ringSign = 1.f + 2.5f * quadrant;
-    WXG_K_F2 pShifted = WXG_K_MAKE2(
-        coord.x + spectralT * ringAmt * ringSign * ringDir.x,
-        coord.y + spectralT * ringAmt * ringSign * ringDir.y
-    );
-
-    float dTap = 0.f, crownTap = 0.f, sdTap = 0.f;
-    WXG_K_F2 gTap = WXG_K_MAKE2(0.f, 0.f);
-    WXG_K_F2 rayTap = WXGKyantRefractPoint(
-        pShifted, center, halfSize, radius, refractionHeight, refractionAmount,
-        depthEffect, endLeft, endRight, &dTap, &gTap, &crownTap, &sdTap);
-
-    float shoulderFactor = 1.f - crownTap;
-    float iconDisp = dTap * chromaticAberration * quadrant * shoulderFactor * 0.90f;
-    float cap = 0.55f * WXG_K_MAX(WXG_K_ABS(dTap), 1.f);
-    iconDisp = WXGOClamp(iconDisp, -cap, cap);
-    return WXG_K_MAKE2(rayTap.x + gTap.x * iconDisp * spectralT,
-                       rayTap.y + gTap.y * iconDisp * spectralT);
+    WXG_K_F2 disp = WXGKyantAuroraDispersionVec(
+        c0, halfSize, refractionHeight, refractionAmount, chromaticAberration,
+        d0, g0, crown0, sd0);
+    return WXG_K_MAKE2(central.x + disp.x * spectralT,
+                       central.y + disp.y * spectralT);
 }
 
 /* Compatibility wrapper returning the central ray and +1 spectral offset. */
@@ -335,15 +398,30 @@ static inline float WXGKyantSpectralOffset(int k) {
     return 1.f - (float)k / 3.f;
 }
 
-/* Color-neutral RGB spectral weights (each channel sums strictly to 1.0). */
+/* Smooth overlapping Gaussian-bell aurora RGB weights for the 7-tap backdrop
+   (eliminates hard step-function band edges; each channel sums strictly to 1.0). */
 static inline WXG_K_F3 WXGKyantSpectralRGBWeight(int k) {
-    if (k == 0) return WXG_K_MAKE3(1.f / 3.5f, 0.f, 0.f);          /* red */
-    if (k == 1) return WXG_K_MAKE3(1.f / 3.5f, 1.f / 7.f, 0.f);    /* orange */
-    if (k == 2) return WXG_K_MAKE3(1.f / 3.5f, 1.f / 3.5f, 0.f);   /* yellow */
-    if (k == 3) return WXG_K_MAKE3(0.f, 1.f / 3.5f, 0.f);          /* green */
-    if (k == 4) return WXG_K_MAKE3(0.f, 1.f / 3.5f, 1.f / 3.f);    /* cyan */
-    if (k == 5) return WXG_K_MAKE3(0.f, 0.f, 1.f / 3.f);           /* blue */
-    return WXG_K_MAKE3(1.f / 7.f, 0.f, 1.f / 3.f);                 /* purple */
+    if (k == 0) return WXG_K_MAKE3(0.214602f, 0.022251f, 0.000063f); /* deep red */
+    if (k == 1) return WXG_K_MAKE3(0.321445f, 0.105088f, 0.001550f); /* warm amber-orange */
+    if (k == 2) return WXG_K_MAKE3(0.230961f, 0.256362f, 0.018291f); /* golden yellow-lime */
+    if (k == 3) return WXG_K_MAKE3(0.079660f, 0.323046f, 0.103554f); /* aurora emerald-mint */
+    if (k == 4) return WXG_K_MAKE3(0.017202f, 0.210274f, 0.281230f); /* turquoise-cyan */
+    if (k == 5) return WXG_K_MAKE3(0.047823f, 0.070700f, 0.366368f); /* sapphire-blue */
+    return WXG_K_MAKE3(0.088307f, 0.012279f, 0.228945f);             /* violet-magenta */
+}
+
+/* 15-wavelength continuous aurora tap offsets & neutral RGB weights for the
+   Metal glyph/selection overlay (k = 0..14 -> +1 .. -1; each channel sums to 1.0). */
+#define WXG_KYANT_GLYPH_TAPS 15
+static inline float WXGKyantGlyphSpectralOffset(int k) {
+    return 1.f - (float)k / 7.f;
+}
+static inline WXG_K_F3 WXGKyantGlyphSpectralRGBWeight(int k) {
+    float t = 1.f - (float)k / 7.f;
+    float r = WXG_K_SATURATE(t * 1.4f + 0.3f) + 0.25f * WXG_K_SATURATE((-t - 0.55f) / 0.45f);
+    float g = WXG_K_SATURATE(1.f - WXG_K_ABS(t * 1.35f));
+    float b = WXG_K_SATURATE(-t * 1.4f + 0.3f);
+    return WXG_K_MAKE3(r * (1.f / 7.0238095f), g * (1.f / 5.2142857f), b * (1.f / 6.5f));
 }
 
 #ifndef __METAL_VERSION__

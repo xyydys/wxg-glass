@@ -211,13 +211,13 @@ static BOOL WXGMeshOpticsClose(WXGMeshOptics a,WXGMeshOptics b) {
 // rebuilt on every frame of a tab switch. The exact one is built once it rests.
 static BOOL WXGMeshOpticsNear(WXGMeshOptics a,WXGMeshOptics b) {
     WXGMeshOptics t=b;
-    if(fabsf(a.width-b.width)<2.0f && fabsf(a.height-b.height)<2.0f)t.width=a.width,t.height=a.height;
-    if(fabsf(a.sbLeft-b.sbLeft)<2.5f && fabsf(a.sbRight-b.sbRight)<2.5f && fabsf(a.sbTop-b.sbTop)<2.0f && fabsf(a.sbBottom-b.sbBottom)<2.0f)
+    if(fabsf(a.width-b.width)<3.0f && fabsf(a.height-b.height)<3.0f)t.width=a.width,t.height=a.height;
+    if(fabsf(a.sbLeft-b.sbLeft)<3.5f && fabsf(a.sbRight-b.sbRight)<3.5f && fabsf(a.sbTop-b.sbTop)<2.5f && fabsf(a.sbBottom-b.sbBottom)<2.5f)
         t.sbLeft=a.sbLeft,t.sbRight=a.sbRight,t.sbTop=a.sbTop,t.sbBottom=a.sbBottom;
     if(fabsf(a.barLeft-b.barLeft)<2.0f && fabsf(a.barRight-b.barRight)<2.0f && fabsf(a.barTop-b.barTop)<2.0f && fabsf(a.barBottom-b.barBottom)<2.0f)
         t.barLeft=a.barLeft,t.barRight=a.barRight,t.barTop=a.barTop,t.barBottom=a.barBottom;
     if(fabsf(a.shrinkPress-b.shrinkPress)<.04f)t.shrinkPress=a.shrinkPress;
-    if(fabsf(a.shrinkExtra-b.shrinkExtra)<.5f)t.shrinkExtra=a.shrinkExtra;
+    if(fabsf(a.shrinkExtra-b.shrinkExtra)<1.5f)t.shrinkExtra=a.shrinkExtra;
     if(fabsf(a.zoomBefore-b.zoomBefore)<.006f && fabsf(a.zoomAfter-b.zoomAfter)<.006f)t.zoomBefore=a.zoomBefore,t.zoomAfter=a.zoomAfter;
     // (review) What follows the press during a tap: the rim offset's scale
     // (= press), the refraction, width, dispersion and radius on their way
@@ -911,7 +911,8 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
     return out;
 }
 - (void)applyShape:(WXGRim26Shape)shape bounds:(CGRect)bounds radius:(CGFloat)r scale:(CGFloat)scale {
-    double key[12]={shape.height,shape.curve,shape.angle,shape.key,shape.fill,shape.spread,shape.ring,bounds.size.width,bounds.size.height,r,scale,shape.floor};
+    double key[12]={shape.height,shape.curve,shape.angle,shape.key,shape.fill,shape.spread,shape.ring,
+                    round(bounds.size.width*2.)*.5,round(bounds.size.height*2.)*.5,round(r*2.)*.5,scale,shape.floor};
     self.frame=bounds;
     if(_applied && !memcmp(key,_key,sizeof key))return;
     memcpy(_key,key,sizeof key);_applied=YES;
@@ -2239,17 +2240,17 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             CGFloat ring=spectralDisp>0?4.5*spectralDisp/(1.+.25*spectralDisp):0.;
             CGFloat farSide=MAX(0.,1.55*(CGFloat)r8Depth-refShort);
             pad=MIN(64.,ceil((full+MAX(ring,farSide)+4.)/2.)*2.);
-            CGFloat reach=barH*.75+pad+2;
+            CGFloat reach=barH*.65+4.;
             CGFloat left=CGRectGetMinX(bar)-CGRectGetMinX(_lensRect),right=CGRectGetMaxX(bar)-CGRectGetMinX(_lensRect);
-            lensOptics.sbLeft=left<-reach?-10000.f:(float)(round(left*2)/2);
-            lensOptics.sbRight=right>size.width+reach?10000.f:(float)(round(right*2)/2);
+            lensOptics.sbLeft=left<-reach?-10000.f:(float)(moving?round(left):round(left*2)/2);
+            lensOptics.sbRight=right>size.width+reach?10000.f:(float)(moving?round(right):round(right*2)/2);
             lensOptics.sbTop=(float)(round((CGRectGetMinY(bar)-CGRectGetMinY(_lensRect))*2)/2);
             lensOptics.sbBottom=(float)(round((CGRectGetMaxY(bar)-CGRectGetMinY(_lensRect))*2)/2);
             lensOptics.sbRadius=0;
             lensOptics.shrinkPress=press;
             lensOptics.shrinkPinch=(float)(round(pinch*1000.)/1000.);
             CGFloat squash=_lensRestHeight>1?MAX(0.,(_lensRestHeight-_lensRect.size.height)*.5):0.;
-            lensOptics.shrinkExtra=(float)(round(squash*4)/4);
+            lensOptics.shrinkExtra=(float)(moving?round(squash):round(squash*4)/4);
             lensOptics.padX=lensOptics.padY=(float)pad;lensOptics.width+=(float)(2*pad);lensOptics.height+=(float)(2*pad);
             lensOptics.sbLeft+=(float)pad;lensOptics.sbRight+=(float)pad;lensOptics.sbTop+=(float)pad;lensOptics.sbBottom+=(float)pad;
         }

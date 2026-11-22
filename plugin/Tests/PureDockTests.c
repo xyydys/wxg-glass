@@ -262,10 +262,74 @@ static void testR8PureDockModelAndMotionTier(void) {
            shoulderSpread, moveVerts, settledVerts, flatVerts);
 }
 
+static void testR13AuroraSymmetryAndEndRoundness(void) {
+    /* 1. 4-quadrant symmetry & zero Top-Right / Bottom-Left pinch across x = 4..44 pt. */
+    wxg_kf2_t hs = WXG_K_MAKE2(62.f, 35.f);
+    wxg_kf2_t a1 = WXGKyantSpectralRay(WXG_K_MAKE2(hs.x, 1.5f), hs, hs, 35.f, 18.f, 26.f, 2.4f, 0.f, 0.f, 0.f, 1.f, NULL);
+    wxg_kf2_t a2 = WXGKyantSpectralRay(WXG_K_MAKE2(hs.x, 1.5f), hs, hs, 35.f, 18.f, 26.f, 2.4f, 0.f, 0.f, 0.f, -1.f, NULL);
+    float apexSpread = hypotf(a1.x - a2.x, a1.y - a2.y);
+    assert(apexSpread > 2.f);
+    for (int ix = 4; ix <= 44; ix += 4) {
+        float x = (float)ix;
+        float cx = fmaxf(0.f, x - (hs.x - 35.f));
+        float yEdge = 35.f - sqrtf(fmaxf(0.f, 35.f * 35.f - cx * cx));
+        float sp[4] = {0};
+        float sx[4] = {-1.f, 1.f, -1.f, 1.f};
+        float sy[4] = {-1.f, -1.f, 1.f, 1.f};
+        for (int q = 0; q < 4; q++) {
+            wxg_kf2_t p = WXG_K_MAKE2(hs.x + sx[q] * x, hs.y + sy[q] * (35.f - yEdge - 1.5f));
+            wxg_kf2_t r1 = WXGKyantSpectralRay(p, hs, hs, 35.f, 18.f, 26.f, 2.4f, 0.f, 0.f, 0.f, 1.f, NULL);
+            wxg_kf2_t r2 = WXGKyantSpectralRay(p, hs, hs, 35.f, 18.f, 26.f, 2.4f, 0.f, 0.f, 0.f, -1.f, NULL);
+            sp[q] = hypotf(r1.x - r2.x, r1.y - r2.y);
+            assert(sp[q] >= apexSpread * 0.95f);
+        }
+        assert(fabsf(sp[0] - sp[1]) < 1e-4f && fabsf(sp[0] - sp[2]) < 1e-4f && fabsf(sp[0] - sp[3]) < 1e-4f);
+    }
+
+    /* 2. Both 7-tap backdrop and 15-tap glyph aurora weights sum strictly to (1, 1, 1). */
+    float sr7 = 0.f, sg7 = 0.f, sb7 = 0.f;
+    for (int k = 0; k < WXG_KYANT_SPECTRAL_TAPS; k++) {
+        wxg_kf3_t w = WXGKyantSpectralRGBWeight(k);
+        sr7 += w.x; sg7 += w.y; sb7 += w.z;
+    }
+    assert(fabsf(sr7 - 1.f) < 1e-4f && fabsf(sg7 - 1.f) < 1e-4f && fabsf(sb7 - 1.f) < 1e-4f);
+    float sr15 = 0.f, sg15 = 0.f, sb15 = 0.f;
+    for (int k = 0; k < WXG_KYANT_GLYPH_TAPS; k++) {
+        wxg_kf3_t w = WXGKyantGlyphSpectralRGBWeight(k);
+        sr15 += w.x; sg15 += w.y; sb15 += w.z;
+    }
+    assert(fabsf(sr15 - 1.f) < 1e-4f && fabsf(sg15 - 1.f) < 1e-4f && fabsf(sb15 - 1.f) < 1e-4f);
+
+    /* 3. Concentric end-cap alignment at dock right end (endWrap = 8.4 pt vs 4.0 pt vertical overhang). */
+    float pad = 20.f, w = 115.f, h = 70.f, barH = 62.f, innerH = 51.f;
+    WXGMeshOptics endO = {0};
+    endO.width = w + 2.f * pad; endO.height = h + 2.f * pad;
+    endO.fieldScale = 1.f; endO.edgeWidth = 18.f; endO.zoomBefore = 1.f; endO.zoomAfter = 1.f;
+    endO.padX = pad; endO.padY = pad;
+    endO.sbLeft = pad - 280.f; endO.sbRight = pad + w - 8.4f;
+    endO.sbTop = pad + (h - barH) * .5f; endO.sbBottom = pad + (h + barH) * .5f;
+    endO.shrinkPress = 1.f; endO.shrinkPinch = (barH - innerH) / barH;
+    endO.kyantMode = 1.f; endO.kyantHeight = 0.f; endO.kyantAmount = 0.f;
+    /* Find where the shrunk inner bar's right tip lands along y = cy. */
+    float cy = pad + h * .5f;
+    float lo = pad + w * .5f, hi = pad + w;
+    for (int it = 0; it < 40; it++) {
+        float mid = .5f * (lo + hi), sx = 0.f, sy = 0.f;
+        WXGMeshSource(endO, mid, cy, &sx, &sy);
+        if (sx < endO.sbRight) lo = mid; else hi = mid;
+    }
+    float rightGap = (pad + w) - .5f * (lo + hi);
+    float topGap = (h - innerH) * .5f; /* 9.5 pt */
+    assert(fabsf(rightGap - topGap) < 1.2f);
+    printf("PASS: R13 4-quadrant aurora symmetry, zero TR/BL pinch, concentric end-cap gap (right=%.2f vs top=%.2f pt).\n",
+           rightGap, topGap);
+}
+
 int main(void) {
     testFlatInnerBarZeroRefraction();
     testPureGlassRGBAndMeshBudget();
     testAdaptiveFlexTiming();
     testR8PureDockModelAndMotionTier();
+    testR13AuroraSymmetryAndEndRoundness();
     return 0;
 }
