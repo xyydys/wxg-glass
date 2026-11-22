@@ -318,8 +318,8 @@ static inline WXG_K_F2 WXGKyantAuroraDispersionVec(
         return WXG_K_MAKE2(0.f, 0.f);
     }
     float minHalf = WXG_K_MIN(halfSize.x, halfSize.y);
-    float hCrown = refractionHeight;
-    WXGKyantCrownTarget(minHalf, refractionHeight, refractionAmount, &hCrown, NULL);
+    float hCrown = refractionHeight, aCrown = refractionAmount;
+    WXGKyantCrownTarget(minHalf, refractionHeight, refractionAmount, &hCrown, &aCrown);
     float hEff = WXG_K_MAX(refractionHeight + crown0 * (hCrown - refractionHeight), 0.5f);
     float depth0 = WXG_K_MAX(-sd0, 0.f);
     if (depth0 >= hEff) return WXG_K_MAKE2(0.f, 0.f);

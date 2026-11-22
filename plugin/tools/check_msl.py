@@ -16,6 +16,8 @@ fallback = '--original' in sys.argv
 src = literal(os.path.join(root, 'Sources/WXGOriginalShaderSource.h' if fallback else 'Sources/WXGShaderSource.h'), 'WXGOriginalMetalSource' if fallback else 'WXGMetalSource') + \
       literal(os.path.join(root, 'Sources/WXGBackdropCopy.h'), 'WXGBackdropCopySource')
 src = re.sub(r'\b(float[234])\(', r'mk_\1(', src)   # Metal constructors -> stub overloads
+# Metal 2.1 <metal_stdlib> does not define C's NULL macro; fail fast if it leaks into MSL.
+src = src.replace('#include <metal_stdlib>\n', '#include <metal_stdlib>\n#undef NULL\n', 1)
 with tempfile.NamedTemporaryFile('w', suffix='.cpp', delete=False) as f:
     f.write(src); name = f.name
 cmd = [os.environ.get('CXX', 'clang++'), '-std=c++14', '-fsyntax-only', '-I', os.path.join(root, 'tools', 'msl_stub'),
