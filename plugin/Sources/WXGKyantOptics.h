@@ -161,16 +161,13 @@ static inline WXG_K_F2 WXGKyantSceneSourceDepthFlat(WXG_K_F2 source,WXG_K_F2 cen
             inset=full*ramp;
         }
     }
-    /* When the lens wraps past the bar's left or right end (endWrap ~ 8.4 pt >
-       vertical overhang ~ 4.0 pt), compensate the extra horizontal overhang
-       along b.nx^2 so the shrunk inner bar's end cap stays concentric with the
-       lens's continuous rounded corner at a uniform radial gap. */
+    /* At the bar's semicircular left/right ends (|b.nx| > 0), keep the
+       horizontal inset at 20% of the vertical pinch (independent of live
+       elastic lensSize.x / lensSize.y flex) so the shrunk inner bar's end cap
+       stays concentric with the lens corner (~9.5 pt gap) and never oscillates
+       long -> short -> long when braking at either dock end. */
     if(!(flat<-.5f) && WXG_K_ABS(b.nx)>.02f && absFull>1e-4f) {
-        float overhangY=WXG_K_MAX(0.f,(lensSize.y-barSize.y)*.5f);
-        float lensLeft=lensCenter.x-lensSize.x*.5f,lensRight=lensCenter.x+lensSize.x*.5f;
-        float overEnd=b.nx<0.f?(barOrigin.x-lensLeft):(lensRight-(barOrigin.x+barSize.x));
-        float extraEnd=WXGOClamp(overEnd-overhangY,0.f,absFull*.82f);
-        if(extraEnd>0.f)inset-=extraEnd*(b.nx*b.nx)*(inset/full);
+        inset-=full*.80f*(b.nx*b.nx)*(inset/full);
     }
     float h=(ox-lensCenter.x)*b.nx+(oy-lensCenter.y)*b.ny;
     float dz=WXGOClamp(h-(h-inset)/WXG_K_MAX(zoom,.01f),extra<0.f?-barHalf*.5f:0.f,barHalf*.9f);

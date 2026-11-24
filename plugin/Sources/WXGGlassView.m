@@ -212,7 +212,8 @@ static BOOL WXGMeshOpticsClose(WXGMeshOptics a,WXGMeshOptics b) {
 static BOOL WXGMeshOpticsNear(WXGMeshOptics a,WXGMeshOptics b) {
     WXGMeshOptics t=b;
     if(fabsf(a.width-b.width)<3.0f && fabsf(a.height-b.height)<3.0f)t.width=a.width,t.height=a.height;
-    if(fabsf(a.sbLeft-b.sbLeft)<3.5f && fabsf(a.sbRight-b.sbRight)<3.5f && fabsf(a.sbTop-b.sbTop)<2.5f && fabsf(a.sbBottom-b.sbBottom)<2.5f)
+    float endTol=(a.sbLeft>-5000.f || a.sbRight<5000.f || b.sbLeft>-5000.f || b.sbRight<5000.f)?.5f:3.5f;
+    if(fabsf(a.sbLeft-b.sbLeft)<endTol && fabsf(a.sbRight-b.sbRight)<endTol && fabsf(a.sbTop-b.sbTop)<2.5f && fabsf(a.sbBottom-b.sbBottom)<2.5f)
         t.sbLeft=a.sbLeft,t.sbRight=a.sbRight,t.sbTop=a.sbTop,t.sbBottom=a.sbBottom;
     if(fabsf(a.barLeft-b.barLeft)<2.0f && fabsf(a.barRight-b.barRight)<2.0f && fabsf(a.barTop-b.barTop)<2.0f && fabsf(a.barBottom-b.barBottom)<2.0f)
         t.barLeft=a.barLeft,t.barRight=a.barRight,t.barTop=a.barTop,t.barBottom=a.barBottom;
@@ -2242,8 +2243,8 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             pad=MIN(64.,ceil((full+MAX(ring,farSide)+4.)/2.)*2.);
             CGFloat reach=barH*.65+4.;
             CGFloat left=CGRectGetMinX(bar)-CGRectGetMinX(_lensRect),right=CGRectGetMaxX(bar)-CGRectGetMinX(_lensRect);
-            lensOptics.sbLeft=left<-reach?-10000.f:(float)(moving?round(left):round(left*2)/2);
-            lensOptics.sbRight=right>size.width+reach?10000.f:(float)(moving?round(right):round(right*2)/2);
+            lensOptics.sbLeft=left<-reach?-10000.f:(float)(round(left*2)/2);
+            lensOptics.sbRight=right>size.width+reach?10000.f:(float)(round(right*2)/2);
             lensOptics.sbTop=(float)(round((CGRectGetMinY(bar)-CGRectGetMinY(_lensRect))*2)/2);
             lensOptics.sbBottom=(float)(round((CGRectGetMaxY(bar)-CGRectGetMinY(_lensRect))*2)/2);
             lensOptics.sbRadius=0;
