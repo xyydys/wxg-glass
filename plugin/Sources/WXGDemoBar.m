@@ -2020,7 +2020,14 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         CGFloat wrap=pureMode?c.pureDockEndWrap:c.endWrap;
         float w=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*(float)wrap),h=(float)(g.lensHeight*sy);
         h=(float)WXGLensFlexRestingHeight(h,g.barHeight,press,1.);   // FIX134: down, never cut by the bar
-        g.lensX+=(g.lensWidth-w)*.5f;g.lensY+=(g.lensHeight-h)*.5f;g.lensWidth=w;g.lensHeight=h;
+        // Anchor horizontal flex by dock position (as WXGElasticMotion.h / WXGDockLayoutCells):
+        // at left end (posT=0) the outer left edge stays pinned at barLeft-endWrap; at right end
+        // (posT=1) the outer right edge stays pinned at barRight+endWrap, preventing the lens &
+        // inner bar ends from shooting out, retracting inside the bar, and bouncing long->short->long.
+        float first=WXGDockCellCenter((float)_materialRect.size.width,(float)[self selectionGap],(float)c.dockCellExtra,0);
+        float last=WXGDockCellCenter((float)_materialRect.size.width,(float)[self selectionGap],(float)c.dockCellExtra,3);
+        float posT=WXGOClamp((float)((_lensX-_materialRect.origin.x-first)/MAX(1.f,last-first)),0.f,1.f);
+        g.lensX+=(g.lensWidth-w)*posT;g.lensY+=(g.lensHeight-h)*.5f;g.lensWidth=w;g.lensHeight=h;
     }
     CGRect bar=CGRectMake(_materialRect.origin.x+g.barX,_materialRect.origin.y+g.barY,g.barWidth,g.barHeight);
     CGRect lens=CGRectMake(_materialRect.origin.x+g.lensX,_materialRect.origin.y+g.lensY,g.lensWidth,g.lensHeight);

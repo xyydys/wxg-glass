@@ -590,11 +590,10 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
         }
         float bw=o.sbRight-o.sbLeft,bh=o.sbBottom-o.sbTop;
         float bx=o.sbLeft+bw*.5f,by=o.sbTop+bh*.5f,barHalf=WXG_K_MIN(bw,bh)*.5f;
-        float full=bh*.5f*WXGOClamp(o.shrinkPress,0.f,1.f)*WXGOClamp(o.shrinkPinch,0.f,.58f);
-        float absFull=WXG_K_ABS(full),depthPad=WXG_K_MAX(0.f,o.shrinkExtra);
+        float depthPad=WXG_K_MAX(0.f,o.shrinkExtra);
         float zoom=o.zoomAfter>0.f?o.zoomAfter:1.f;
-        float overhangY=WXG_K_MAX(0.f,(shapeH-bh)*.5f);
-        float lensLeft=lx-shapeW*.5f,lensRight=lx+shapeW*.5f;
+        WXG_K_F2 lensCenter=WXG_K_MAKE2(lx,ly),lensSz=WXG_K_MAKE2(shapeW,shapeH);
+        WXG_K_F2 barOrg=WXG_K_MAKE2(o.sbLeft,o.sbTop),barSz=WXG_K_MAKE2(bw,bh);
         for(int r=0;r<m;r++)for(int i=0;i<n;i++) {
             float x,y;WXGMeshContourPointC(contour[i],hx,hy,R,rings[r],capsule,&x,&y);
             float px=x+lx,py=y+ly;
@@ -608,29 +607,8 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
             float cxRay=central.x+padX,cyRay=central.y+padY;
             kyantCache.centralX[k]=cxRay;kyantCache.centralY[k]=cyRay;
             kyantCache.dispX[k]=disp.x;kyantCache.dispY[k]=disp.y;
-            float dzVal=0.f;
-            if(shrinks) {
-                WXGShapeSample b=WXGKyantBarField(cxRay-bx,cyRay-by,bw,bh,o.sbRadius,barHalf);
-                float ox=cxRay-b.nx*b.distance,oy=cyRay-b.ny*b.distance;
-                float inset=full;
-                if(!(o.shrinkFlat>.5f)) {
-                    WXGShapeSample l=o.radius>0.f?WXGRoundedOpticalField(ox-lx,oy-ly,shapeW,shapeH,o.radius)
-                        :WXGCapsuleOpticalField(ox-lx,oy-ly,shapeW,shapeH);
-                    float along=WXGLensDepthAlongBar(l.distance-depthPad,-b.ny,b.nx,l.nx,l.ny);
-                    float u=absFull>1e-4f?WXGOClamp(along/(2.25f*absFull),0.f,1.f):0.f;
-                    float om=1.f-u;
-                    float ramp=1.f-om*om*(1.f-.35f*u);
-                    inset=full*ramp;
-                }
-                if(WXG_K_ABS(b.nx)>.02f && absFull>1e-4f) {
-                    float overEnd=b.nx<0.f?(o.sbLeft-lensLeft):(lensRight-o.sbRight);
-                    float extraEnd=WXGOClamp(overEnd-overhangY,0.f,absFull*.82f);
-                    if(extraEnd>0.f)inset-=extraEnd*(b.nx*b.nx)*(inset/full);
-                }
-                float h=(ox-lx)*b.nx+(oy-ly)*b.ny;
-                dzVal=WXGOClamp(h-(h-inset)/WXG_K_MAX(zoom,.01f),0.f,barHalf*.9f);
-            }
-            kyantCache.dz[k]=dzVal;
+            kyantCache.dz[k]=shrinks?WXGKyantSceneDz(WXG_K_MAKE2(cxRay,cyRay),lensCenter,lensSz,o.radius,
+                barOrg,barSz,o.sbRadius,o.shrinkPress,o.shrinkPinch,0.f,depthPad,zoom,o.shrinkFlat):0.f;
             ++k;
         }
         for(int fi=0;fi<f;fi++) {

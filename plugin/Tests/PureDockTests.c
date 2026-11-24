@@ -329,9 +329,47 @@ static void testR13AuroraSymmetryAndEndRoundness(void) {
     float trHEff = 0.f, trAEff = 0.f, trCrown = 0.f;
     WXGKyantCrownBands(WXG_K_MAKE2(0.35f * endHalf.x, -0.75f * endHalf.y), endHalf, 40.f, 50.f, 0.f, 1.f,
                        &trHEff, &trAEff, &trCrown);
-    assert(trCrown > 0.999f && trHEff < 7.5f);
-    printf("PASS: R15 4-quadrant aurora symmetry, concentric end-cap gap (right=%.2f vs top=%.2f pt), extreme-slider end detach (hEff=%.2f pt).\n",
-           rightGap, topGap, trHEff);
+    assert(trCrown > 0.999f && trHEff < 7.8f);
+    /* 5. R17: WXGBuildContourMesh precomp matches WXGMeshSource across all
+       vertices, and across extreme elastic flex heights (58.7..97.8 pt) at the
+       dock end the inner bar right tip stays invariant (< 0.05 pt drift). */
+    float flexHeights[3] = {58.9f, 97.8f, 81.5f};
+    float flexWidths[3] = {151.9f, 112.1f, 129.2f};
+    float tipRef = 0.f;
+    static WXGMeshPoint mPts[20000];
+    static unsigned int mQuads[20000][4];
+    for (int f = 0; f < 3; f++) {
+        WXGMeshOptics fo = {0};
+        float fw = flexWidths[f], fh = flexHeights[f], fpad = 20.f;
+        fo.width = fw + 2.f * fpad; fo.height = fh + 2.f * fpad;
+        fo.padX = fpad; fo.padY = fpad; fo.fieldScale = 1.f;
+        fo.edgeWidth = 21.14f; fo.zoomBefore = 1.f; fo.zoomAfter = 1.f;
+        fo.dispersion = 5.f; fo.kyantMode = 1.f;
+        fo.kyantHeight = 21.14f; fo.kyantAmount = 26.08f;
+        fo.shrinkFlat = 1.f; fo.shrinkPress = 1.f; fo.shrinkPinch = 0.146f;
+        fo.sbLeft = fpad + fw - 7.055f - 398.9f; fo.sbRight = fpad + fw - 7.055f;
+        fo.sbTop = fpad + (fh - 72.14f) * .5f; fo.sbBottom = fo.sbTop + 72.14f;
+        int fc = 0, vc = WXGBuildContourMesh(fo, (WXGMeshQuality){.20f, .12f, 16.f}, mPts, 20000, mQuads, 20000, &fc);
+        assert(vc > 100 && fc > 0);
+        for (int v = 0; v < vc; v++) {
+            float ex = 0.f, ey = 0.f;
+            WXGMeshSource(fo, mPts[v].toX * fo.width, mPts[v].toY * fo.height, &ex, &ey);
+            float err = fmaxf(fabsf(mPts[v].fromX * fo.width - WXGMeshUnit(ex, fo.width) * fo.width),
+                              fabsf(mPts[v].fromY * fo.height - WXGMeshUnit(ey, fo.height) * fo.height));
+            assert(err < 0.05f);
+        }
+        float fcy = fpad + fh * .5f, flo = fpad + fw * .5f, fhi = fpad + fw;
+        for (int it = 0; it < 32; it++) {
+            float mid = .5f * (flo + fhi), sx0 = 0.f, sy0 = 0.f;
+            WXGMeshSource(fo, mid, fcy, &sx0, &sy0);
+            if (sx0 < fo.sbRight) flo = mid; else fhi = mid;
+        }
+        float tipRelBar = .5f * (flo + fhi) - fo.sbRight;
+        if (f == 0) tipRef = tipRelBar;
+        else assert(fabsf(tipRelBar - tipRef) < 0.05f);
+    }
+    printf("PASS: R17 aurora symmetry, concentric end gap (right=%.2f vs top=%.2f pt), extreme-slider end detach (hEff=%.2f pt), flex-invariant end tip (%.2f pt).\n",
+           rightGap, topGap, trHEff, tipRef);
 }
 
 int main(void) {

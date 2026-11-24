@@ -95,17 +95,22 @@ static inline WXG_K_F2 WXGKyantGradSdRoundedRect(WXG_K_F2 coord, WXG_K_F2 halfSi
         g = WXG_K_MAKE2(s.x * gradX, s.y * (1.f - gradX));
     }
     /* Match Apple's kCACornerCurveContinuous capsule arch: start curving the
-       normal 16 deg before the Euclidean circle join so the top and bottom
-       transition smoothly into the rounded ends without a flat knee. */
+       normal 16 deg before the Euclidean circle join and fade smoothly past it
+       so g is C1-continuous across ax == straight with zero seam or crease. */
     if (r >= minH - 1e-3f && halfSize.x > halfSize.y + 1.f) {
         float straight = halfSize.x - r;
         float ax = WXG_K_ABS(coord.x), ay = WXG_K_ABS(coord.y);
-        if (ax < straight && ay > 0.35f * r) {
-            float u = WXG_K_SATURATE((ax - straight * 0.35f) / WXG_K_MAX(straight * 0.65f, 1.f));
-            float tilt = 0.085f * u * u * (3.f - 2.f * u) * s.x;
-            g.x += tilt;
-            float gl = WXG_K_LENGTH(g);
-            if (gl > 1e-6f) g = WXG_K_MAKE2(g.x / gl, g.y / gl);
+        if (ay > 0.35f * r) {
+            float uIn = WXG_K_SATURATE((ax - straight * 0.35f) / WXG_K_MAX(straight * 0.65f, 1.f));
+            float uOut = WXG_K_SATURATE(1.f - (ax - straight) / WXG_K_MAX(0.35f * r, 1.f));
+            float u = ax <= straight ? uIn : uOut;
+            float ayFade = WXG_K_SATURATE((ay - 0.35f * r) / WXG_K_MAX(0.25f * r, 1.f));
+            float tilt = 0.075f * u * u * (3.f - 2.f * u) * ayFade * s.x;
+            if (WXG_K_ABS(tilt) > 1e-6f) {
+                g.x += tilt;
+                float gl = WXG_K_LENGTH(g);
+                if (gl > 1e-6f) g = WXG_K_MAKE2(g.x / gl, g.y / gl);
+            }
         }
     }
     return g;
@@ -131,11 +136,13 @@ static inline WXGShapeSample WXGKyantBarField(float dx, float dy, float bw, floa
    collapses the inset ramp during fast horizontal drags;
    `flat > 0.5` skips the along-bar ramp for a strictly uniform inner bar;
    `flat < -0.5` preserves legacy R4 WXGMeshShrinkBar parity for KyantSceneMapTests. */
-static inline WXG_K_F2 WXGKyantSceneSourceDepthFlat(WXG_K_F2 source,WXG_K_F2 centralRay,
+/* Single-source-of-truth inner-bar inset dz shared by WXGKyantSceneSourceDepthFlat,
+   Metal wxgKyantLensOverlay, and WXGBuildContourMesh's 7-tap precomp cache. */
+static inline float WXGKyantSceneDz(WXG_K_F2 centralRay,
     WXG_K_F2 lensCenter,WXG_K_F2 lensSize,float lensRadius,
     WXG_K_F2 barOrigin,WXG_K_F2 barSize,float barRadius,
     float press,float pinch,float extra,float depthPad,float zoom,float flat) {
-    if(!(press>0.f) || !(barSize.x>2.f && barSize.y>2.f))return source;
+    if(!(press>0.f) || !(barSize.x>2.f && barSize.y>2.f))return 0.f;
     float barHalf=WXG_K_MIN(barSize.x,barSize.y)*.5f;
     float bx=barOrigin.x+barSize.x*.5f,by=barOrigin.y+barSize.y*.5f;
     WXGShapeSample b=WXGKyantBarField(centralRay.x-bx,centralRay.y-by,barSize.x,barSize.y,barRadius,barHalf);
@@ -162,16 +169,26 @@ static inline WXG_K_F2 WXGKyantSceneSourceDepthFlat(WXG_K_F2 source,WXG_K_F2 cen
         }
     }
     /* At the bar's semicircular left/right ends (|b.nx| > 0), keep the
-       horizontal inset at 20% of the vertical pinch (independent of live
-       elastic lensSize.x / lensSize.y flex) so the shrunk inner bar's end cap
-       stays concentric with the lens corner (~9.5 pt gap) and never oscillates
-       long -> short -> long when braking at either dock end. */
+       horizontal inset at 35% of the vertical pinch (completely independent of
+       live elastic lensSize.x / lensSize.y flex) so the shrunk inner bar's end
+       cap stays concentric with the lens corner with generous clearance past
+       hCrown and never oscillates long -> short -> long when braking at ends. */
     if(!(flat<-.5f) && WXG_K_ABS(b.nx)>.02f && absFull>1e-4f) {
-        inset-=full*.80f*(b.nx*b.nx)*(inset/full);
+        inset-=full*.65f*(b.nx*b.nx)*(inset/full);
     }
     float h=(ox-lensCenter.x)*b.nx+(oy-lensCenter.y)*b.ny;
-    float dz=WXGOClamp(h-(h-inset)/WXG_K_MAX(zoom,.01f),extra<0.f?-barHalf*.5f:0.f,barHalf*.9f);
+    return WXGOClamp(h-(h-inset)/WXG_K_MAX(zoom,.01f),extra<0.f?-barHalf*.5f:0.f,barHalf*.9f);
+}
+
+static inline WXG_K_F2 WXGKyantSceneSourceDepthFlat(WXG_K_F2 source,WXG_K_F2 centralRay,
+    WXG_K_F2 lensCenter,WXG_K_F2 lensSize,float lensRadius,
+    WXG_K_F2 barOrigin,WXG_K_F2 barSize,float barRadius,
+    float press,float pinch,float extra,float depthPad,float zoom,float flat) {
+    float dz=WXGKyantSceneDz(centralRay,lensCenter,lensSize,lensRadius,
+        barOrigin,barSize,barRadius,press,pinch,extra,depthPad,zoom,flat);
     if(!(WXG_K_ABS(dz)>0.f))return source;
+    float barHalf=WXG_K_MIN(barSize.x,barSize.y)*.5f;
+    float bx=barOrigin.x+barSize.x*.5f,by=barOrigin.y+barSize.y*.5f;
     WXGShapeSample q=WXGKyantBarField(source.x-bx,source.y-by,barSize.x,barSize.y,barRadius,barHalf);
     float t=q.distance,t2=t<-dz?-barHalf+(t+barHalf)*barHalf/(barHalf-dz):t+dz;
     if(t<-barHalf)t2=t;
@@ -198,9 +215,9 @@ static inline float WXGKyantEase(float x) {
 }
 
 /* iOS 26 measured crown target (band ~0.105*height, depth ~0.30*height),
-   conservatively capped below the physical inner-bar gap (~9.5 pt) so even at
-   extreme max refraction sliders (40 pt band / 50 pt depth) the outer lip and
-   end wrap cleanly detach from the inner bar without bridging. */
+   anchored to refHalf <= 34 pt so tall docks or vertical elastic swell (up to
+   ~98 pt) never inflate hCrown into the fixed horizontal end-wrap gap, and
+   extreme sliders stay cleanly detached from the inner bar. */
 static inline void WXGKyantCrownTarget(
     float minHalf,
     float refractionHeight,
@@ -208,10 +225,11 @@ static inline void WXGKyantCrownTarget(
     WXG_K_OUT float *outH,
     WXG_K_OUT float *outA
 ) {
+    float refHalf = WXG_K_MIN(minHalf, 36.f);
     float hScale = WXGOClamp(refractionHeight / 18.f, 0.f, 1.20f);
     float aScale = WXGOClamp(refractionAmount / 26.f, 0.f, 1.35f);
-    float hCrown = WXG_K_MIN(refractionHeight, 0.195f * minHalf * (0.60f + 0.40f * hScale));
-    float aCrown = WXG_K_MIN(refractionAmount, 0.56f * minHalf * (0.58f + 0.42f * aScale));
+    float hCrown = WXG_K_MIN(refractionHeight, 0.195f * refHalf * (0.60f + 0.40f * hScale));
+    float aCrown = WXG_K_MIN(refractionAmount, 0.56f * refHalf * (0.58f + 0.42f * aScale));
     if (outH) *outH = hCrown;
     if (outA) *outA = aCrown;
 }

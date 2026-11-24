@@ -211,8 +211,9 @@ static BOOL WXGMeshOpticsClose(WXGMeshOptics a,WXGMeshOptics b) {
 // rebuilt on every frame of a tab switch. The exact one is built once it rests.
 static BOOL WXGMeshOpticsNear(WXGMeshOptics a,WXGMeshOptics b) {
     WXGMeshOptics t=b;
-    if(fabsf(a.width-b.width)<3.0f && fabsf(a.height-b.height)<3.0f)t.width=a.width,t.height=a.height;
-    float endTol=(a.sbLeft>-5000.f || a.sbRight<5000.f || b.sbLeft>-5000.f || b.sbRight<5000.f)?.5f:3.5f;
+    BOOL endNear=a.sbLeft>-5000.f || a.sbRight<5000.f || b.sbLeft>-5000.f || b.sbRight<5000.f;
+    float wTol=endNear?.75f:3.0f,endTol=endNear?.5f:3.5f;
+    if(fabsf(a.width-b.width)<wTol && fabsf(a.height-b.height)<3.0f)t.width=a.width,t.height=a.height;
     if(fabsf(a.sbLeft-b.sbLeft)<endTol && fabsf(a.sbRight-b.sbRight)<endTol && fabsf(a.sbTop-b.sbTop)<2.5f && fabsf(a.sbBottom-b.sbBottom)<2.5f)
         t.sbLeft=a.sbLeft,t.sbRight=a.sbRight,t.sbTop=a.sbTop,t.sbBottom=a.sbBottom;
     if(fabsf(a.barLeft-b.barLeft)<2.0f && fabsf(a.barRight-b.barRight)<2.0f && fabsf(a.barTop-b.barTop)<2.0f && fabsf(a.barBottom-b.barBottom)<2.0f)
