@@ -1188,7 +1188,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 // end of the bar out with a rubber band; the other end stays (WXGPressStretch.h).
 - (void)followEndStretch:(CGFloat)x {
     WXGConfig *c=WXGConfig.shared;
-    if(c.dockPureGlassMode || !c.dockEndStretch || UIAccessibilityIsReduceMotionEnabled() || _searchMode || _morphing || !_fingerDown){[self releaseEndStretch];return;}
+    if(!c.dockEndStretch || UIAccessibilityIsReduceMotionEnabled() || _searchMode || _morphing || !_fingerDown){[self releaseEndStretch];return;}
     CGFloat lo=[self centerForIndex:0],hi=[self centerForIndex:3],dead=8;
     int side=x>hi?1:-1;
     CGFloat over=side>0?x-hi-dead:lo-x-dead;
@@ -2215,7 +2215,7 @@ static NSString * const WXGDiscreteFadeKey=@"wxg.discreteFade";
 // not after the spring has settled on a whole classic bar (it showed for
 // ~0.5 s and then turned into the discrete one).
 static const CGFloat WXGDiscreteReturnProgress=.15;
-- (BOOL)discreteWanted {return !WXGConfig.shared.dockPureGlassMode && WXGConfig.shared.dockDiscrete && !_searchMode && (!_morphing || _morphProgress<WXGDiscreteReturnProgress);}
+- (BOOL)discreteWanted {return WXGConfig.shared.dockDiscrete && !_searchMode && (!_morphing || _morphProgress<WXGDiscreteReturnProgress);}
 // Toward the search button (its side is the one with stretch room), else centred.
 - (int)discreteAlign {return _endStretchRoomLeft>0?-1:(_endStretchRoomRight>0?1:0);}
 - (void)ensureDiscreteViews {
@@ -2699,7 +2699,7 @@ static const CGFloat WXGDiscreteReturnProgress=.15;
     // FIX113 D: the spring of a close settling (its overshoot) can start the
     // morph again after it ended: with the discrete dock already back, it
     // stays (no touch cancelled, the classic bar's tabs not shown under it).
-    BOOL keepDiscrete=_discreteShown && !WXGConfig.shared.dockPureGlassMode && WXGConfig.shared.dockDiscrete && !_searchMode;
+    BOOL keepDiscrete=_discreteShown && WXGConfig.shared.dockDiscrete && !_searchMode;
     [self ensureMorphLayers];
     if(_travelling)[self finishTravelNow];
     if(!keepDiscrete)[self cancelInteraction];

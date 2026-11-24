@@ -209,6 +209,12 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"homeMenuIconSize",'n',44,34,56,NULL,NULL},
     {"homeMenuStagger",'n',45,0,80,NULL,NULL},
     {"homeMenuSpeed",'n',1,.5,2,NULL,NULL},
+    {"homeMenuAutoClose",'n',0,0,30,NULL,NULL},
+    {"homeTitleSegments",'b',0,0,1,NULL,NULL},
+    {"homeTitleSegmentsEnglish",'b',0,0,1,NULL,NULL},
+    {"homeSearchWidthPct",'n',0,0,98,NULL,NULL},
+    {"homeSearchHeight",'n',0,0,64,NULL,NULL},
+    {"homeSearchTopGap",'n',-1,-1,32,NULL,NULL},
     // FIX118 A (user, 11-04: the 我 page as Telegram's profile, the avatar
     // melting into the Dynamic Island; "给这次要做的功能加一个开关，关掉开关的话就只做
     // 头像上收，打开开关的话就完全替换掉状态"; WXGMeHeader.m): the header itself, the
@@ -562,6 +568,43 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"cardDarkGlassShadow",'n',0,0,.6,NULL,NULL},
     {"cardGlassShadowBlur",'n',18,.5,40,"glassShadowBlur",NULL},
     {"cardGlassShadowOffset",'n',8,-10,30,"glassShadowOffset",NULL},
+    // R20: global shadow switch, full Finder glass body/material/shadow keys, and per-scope custom tint color.
+    {"glassShadowOn",'b',1,0,1,NULL,NULL},
+    {"glassTintOn",'b',0,0,1,NULL,NULL},
+    {"glassTintHex",'h',0,0,0,NULL,"#FFFFFFFF"},
+    {"darkGlassTintHex",'h',0,0,0,NULL,"#000000FF"},
+    {"dockGlassTintOn",'b',0,0,1,NULL,NULL},
+    {"dockGlassTintHex",'h',0,0,0,"glassTintHex","#FFFFFFFF"},
+    {"dockDarkGlassTintHex",'h',0,0,0,"darkGlassTintHex","#000000FF"},
+    {"bubbleGlassTintOn",'b',0,0,1,NULL,NULL},
+    {"bubbleGlassTintHex",'h',0,0,0,"glassTintHex","#FFFFFFFF"},
+    {"bubbleDarkGlassTintHex",'h',0,0,0,"darkGlassTintHex","#000000FF"},
+    {"segmentGlassTintOn",'b',0,0,1,NULL,NULL},
+    {"segmentGlassTintHex",'h',0,0,0,"glassTintHex","#FFFFFFFF"},
+    {"segmentDarkGlassTintHex",'h',0,0,0,"darkGlassTintHex","#000000FF"},
+    {"cardGlassTintOn",'b',0,0,1,NULL,NULL},
+    {"cardGlassTintHex",'h',0,0,0,"glassTintHex","#FFFFFFFF"},
+    {"cardDarkGlassTintHex",'h',0,0,0,"darkGlassTintHex","#000000FF"},
+    {"finderGlassBand",'n',.25,.02,.5,"glassBand",NULL},
+    {"finderGlassDepth",'n',.8,0,1,"glassDepth",NULL},
+    {"finderGlassBandMax",'n',20,4,80,"glassBandMax",NULL},
+    {"finderGlassSqueeze",'n',3,0,20,"glassSqueeze",NULL},
+    {"finderGlassDispersion",'n',0,0,3,"glassDispersion",NULL},
+    {"finderGlassBlurSmall",'n',1.8,0,10,"glassBlurSmall",NULL},
+    {"finderGlassBlurLarge",'n',5.5,0,20,"glassBlurLarge",NULL},
+    {"finderGlassVeil",'n',0,0,1,NULL,NULL},
+    {"finderDarkGlassVeil",'n',0,0,1,NULL,NULL},
+    {"finderGlassSaturation",'n',1.34,0,3,"glassSaturation",NULL},
+    {"finderDarkGlassSaturation",'n',1.67,0,3,"darkGlassSaturation",NULL},
+    {"finderGlassBrightness",'n',-.03,-.3,.3,"glassBrightness",NULL},
+    {"finderDarkGlassBrightness",'n',.18,-.3,.3,"darkGlassBrightness",NULL},
+    {"finderGlassShadow",'n',0,0,.6,NULL,NULL},
+    {"finderDarkGlassShadow",'n',0,0,.6,NULL,NULL},
+    {"finderGlassShadowBlur",'n',18,.5,40,"glassShadowBlur",NULL},
+    {"finderGlassShadowOffset",'n',8,-10,30,"glassShadowOffset",NULL},
+    {"finderGlassTintOn",'b',0,0,1,NULL,NULL},
+    {"finderGlassTintHex",'h',0,0,0,"glassTintHex","#FFFFFFFF"},
+    {"finderDarkGlassTintHex",'h',0,0,0,"darkGlassTintHex","#000000FF"},
     // The lens of the dock and of the segment bar (while held): the same curve, its band and depth shares of the
     // lens' height (the system tab bar's lens: 0.10 and, by the recording, 0.30), the colour split toward its corners.
     {"lensCurveBand",'n',.10,.02,.5,NULL,NULL},
@@ -1314,22 +1357,31 @@ NSUInteger WXGConfigRevision(void) {return WXGConfigRevisionCounter;}
     return r;
 }
 - (BOOL)bubbleFullGlass {return [self extraNumber:@"bubbleFullGlass"]>.5;}
+- (BOOL)glassShadowOn {return [self extraNumber:@"glassShadowOn"]>.5;}
+- (CGFloat)homeMenuAutoClose {return WXGClamp([self extraNumber:@"homeMenuAutoClose"],0,30);}
+- (BOOL)homeTitleSegments {return [self extraNumber:@"homeTitleSegments"]>.5;}
+- (BOOL)homeTitleSegmentsEnglish {return [self extraNumber:@"homeTitleSegmentsEnglish"]>.5;}
+- (CGFloat)homeSearchWidthPct {return WXGClamp([self extraNumber:@"homeSearchWidthPct"],0,98);}
+- (CGFloat)homeSearchHeight {return WXGClamp([self extraNumber:@"homeSearchHeight"],0,64);}
+- (CGFloat)homeSearchTopGap {return WXGClamp([self extraNumber:@"homeSearchTopGap"],-1,32);}
 #pragma mark FIX130 one glass for every range
-// The row of a range's glass values: 其余玻璃, the dock (and its lens' border range), the bubbles, the segment bar
-// (and its lens'), the settings page; 视频号 (its border only) is 其余玻璃's glass.
+// The row of a range's glass values: 其余玻璃, dock, bubble, segment, card, 视频号.
 static NSInteger WXGGlassRow(WXGGlassScope scope) {
     return scope==WXGGlassScopeDock || scope==WXGGlassScopeLens?1:scope==WXGGlassScopeBubble?2:
-           scope==WXGGlassScopeSegment || scope==WXGGlassScopeSegmentLens?3:scope==WXGGlassScopeCard?4:0;
+           scope==WXGGlassScopeSegment || scope==WXGGlassScopeSegmentLens?3:scope==WXGGlassScopeCard?4:
+           scope==WXGGlassScopeFinder?5:0;
 }
 enum {WXGGlassBand,WXGGlassDepth,WXGGlassBandMax,WXGGlassSqueeze,WXGGlassDispersion,WXGGlassBlurSmall,WXGGlassBlurLarge,
       WXGGlassVeil,WXGGlassDarkVeil,WXGGlassSaturation,WXGGlassDarkSaturation,WXGGlassBrightness,WXGGlassDarkBrightness,
-      WXGGlassShadow,WXGGlassDarkShadow,WXGGlassShadowBlur,WXGGlassShadowOffset,WXGGlassValueCount};
+      WXGGlassShadow,WXGGlassDarkShadow,WXGGlassShadowBlur,WXGGlassShadowOffset,
+      WXGGlassTintOn,WXGGlassTintHex,WXGGlassDarkTintHex,WXGGlassValueCount};
 // Literal keys: these run every frame for every glass.
 #define WXG_GLASS_KEYS(p,d) {@p "lassBand",@p "lassDepth",@p "lassBandMax",@p "lassSqueeze",@p "lassDispersion",@p "lassBlurSmall",@p "lassBlurLarge",\
     @p "lassVeil",@d "lassVeil",@p "lassSaturation",@d "lassSaturation",@p "lassBrightness",@d "lassBrightness",\
-    @p "lassShadow",@d "lassShadow",@p "lassShadowBlur",@p "lassShadowOffset"}
-static NSString *const WXGGlassKeys[5][WXGGlassValueCount]={WXG_GLASS_KEYS("g","darkG"),WXG_GLASS_KEYS("dockG","dockDarkG"),WXG_GLASS_KEYS("bubbleG","bubbleDarkG"),
-                                                            WXG_GLASS_KEYS("segmentG","segmentDarkG"),WXG_GLASS_KEYS("cardG","cardDarkG")};
+    @p "lassShadow",@d "lassShadow",@p "lassShadowBlur",@p "lassShadowOffset",\
+    @p "lassTintOn",@p "lassTintHex",@d "lassTintHex"}
+static NSString *const WXGGlassKeys[6][WXGGlassValueCount]={WXG_GLASS_KEYS("g","darkG"),WXG_GLASS_KEYS("dockG","dockDarkG"),WXG_GLASS_KEYS("bubbleG","bubbleDarkG"),
+                                                            WXG_GLASS_KEYS("segmentG","segmentDarkG"),WXG_GLASS_KEYS("cardG","cardDarkG"),WXG_GLASS_KEYS("finderG","finderDarkG")};
 - (double)glass:(NSInteger)value scope:(WXGGlassScope)scope {return [self extraNumber:WXGGlassKeys[WXGGlassRow(scope)][value]];}
 // 共用 (a range using another's settings of a page) is gone: every range its own.
 // The body's refraction is the curve's (glassCurveForScope:) and its blur goes by its size (glassBlurForScope:side:).
@@ -1338,32 +1390,42 @@ static NSString *const WXGGlassKeys[5][WXGGlassValueCount]={WXG_GLASS_KEYS("g","
 - (WXGScopeOptics)opticsForScope:(WXGGlassScope)scope {
     return (WXGScopeOptics){0,0,10,[self glassBlurForScope:scope side:scope==WXGGlassScopeDock?_height:44],100};
 }
-// The system's blur for a glass whose short side is `side` points.
+// The system's blur for a glass whose short side is `side` points (unified to 其余玻璃 defaults in R20).
 - (CGFloat)glassBlurForScope:(WXGGlassScope)scope side:(CGFloat)side {
-    CGFloat small=WXGClamp([self glass:WXGGlassBlurSmall scope:scope],0,10),large=WXGClamp([self glass:WXGGlassBlurLarge scope:scope],0,20);
+    (void)scope;
+    CGFloat small=WXGClamp([self glass:WXGGlassBlurSmall scope:WXGGlassScopeOther],0,10),large=WXGClamp([self glass:WXGGlassBlurLarge scope:WXGGlassScopeOther],0,20);
     if(!(side>48))return small;
     return WXGClamp(small+(large-small)*(side-48)/42.,MIN(small,large),MAX(MAX(small,large)*1.5,small));
 }
 // The system's face is (1 - a) x (levels of the backdrop's luma + its colour kept) + a x fill; here: the backdrop's
-// saturation and brightness, then the veil (white in light mode, black in dark) at `a`.
+// saturation and brightness, then the veil (white/black or per-scope custom tint color when enabled) at `a`.
 - (WXGBackdropTone)backdropToneForScope:(WXGGlassScope)scope dark:(BOOL)dark {
     return (WXGBackdropTone){WXGClamp([self glass:dark?WXGGlassDarkSaturation:WXGGlassSaturation scope:scope],0,3),
                              WXGClamp([self glass:dark?WXGGlassDarkBrightness:WXGGlassBrightness scope:scope],-.3,.3)};
 }
-- (NSString *)materialHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {(void)scope;return dark?@"#000000FF":@"#FFFFFFFF";}
-- (CGFloat)materialOpacityForScope:(WXGGlassScope)scope dark:(BOOL)dark {return WXGClamp([self glass:dark?WXGGlassDarkVeil:WXGGlassVeil scope:scope],0,1);}
-// The system's shadow: a Gaussian of `blur` points, `offset` down (the lens borders' ranges are their glass's).
+- (NSString *)materialHexForScope:(WXGGlassScope)scope dark:(BOOL)dark {
+    if([self glass:WXGGlassTintOn scope:scope]>.5) {
+        NSString *hex=[self extraHex:WXGGlassKeys[WXGGlassRow(scope)][dark?WXGGlassDarkTintHex:WXGGlassTintHex]];
+        if(hex.length)return hex;
+    }
+    return dark?@"#000000FF":@"#FFFFFFFF";
+}
+- (CGFloat)materialOpacityForScope:(WXGGlassScope)scope dark:(BOOL)dark {
+    return WXGClamp([self glass:dark?WXGGlassDarkVeil:WXGGlassVeil scope:scope],0,1);
+}
+// The system's shadow: a Gaussian of `blur` points, `offset` down (globally gated by glassShadowOn in R20).
 - (WXGDropShadowSettings)dropShadowForScope:(WXGGlassScope)scope dark:(BOOL)dark {
+    if(!self.glassShadowOn)return (WXGDropShadowSettings){0,18,8,0};
     return (WXGDropShadowSettings){WXGClamp([self glass:dark?WXGGlassDarkShadow:WXGGlassShadow scope:scope],0,.6),
                                    WXGClamp([self glass:WXGGlassShadowBlur scope:scope],.5,40),WXGClamp([self glass:WXGGlassShadowOffset scope:scope],-10,30),0};
 }
-// The refraction of a glass' body (WXGLensCurve.h): the band and the depth at the outline as shares of its short
-// side, the band at most `maxHeight` points (the depth with it in proportion), the colour split toward its corners.
+// The refraction of a glass' body (WXGLensCurve.h): unified across all scopes to validated 其余玻璃 defaults in R20.
 - (WXGGlassCurve)glassCurveForScope:(WXGGlassScope)scope {
+    (void)scope;
     WXGGlassCurve k;
-    k.height=WXGClamp([self glass:WXGGlassBand scope:scope],.02,.5);k.amount=WXGClamp([self glass:WXGGlassDepth scope:scope],0,1);
-    k.maxHeight=WXGClamp([self glass:WXGGlassBandMax scope:scope],4,80);k.squeeze=WXGClamp([self glass:WXGGlassSqueeze scope:scope],0,20);
-    k.dispersion=WXGClamp([self glass:WXGGlassDispersion scope:scope],0,3);
+    k.height=WXGClamp([self glass:WXGGlassBand scope:WXGGlassScopeOther],.02,.5);k.amount=WXGClamp([self glass:WXGGlassDepth scope:WXGGlassScopeOther],0,1);
+    k.maxHeight=WXGClamp([self glass:WXGGlassBandMax scope:WXGGlassScopeOther],4,80);k.squeeze=WXGClamp([self glass:WXGGlassSqueeze scope:WXGGlassScopeOther],0,20);
+    k.dispersion=WXGClamp([self glass:WXGGlassDispersion scope:WXGGlassScopeOther],0,3);
     return k;
 }
 // FIX127: iOS 26's tab bar in the dock's own settings.

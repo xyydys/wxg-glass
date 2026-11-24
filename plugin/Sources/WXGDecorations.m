@@ -62,10 +62,27 @@
 // FIX116 B: the home menu's glass is closed, open (laid out, entrance played, following the rows) or leaving (its exit running, deaf to WeChat's own close).
 typedef NS_ENUM(NSInteger,WXGMenuPhase) {WXGMenuPhaseClosed,WXGMenuPhaseOpen,WXGMenuPhaseExiting};
 
+@protocol WXGMenuCAFilterFactory <NSObject>
++ (id)filterWithType:(NSString *)type;
+@end
+static id WXGMenuMakeBlurFilter(double radius) {
+    Class cls=NSClassFromString(@"CAFilter");
+    if(!cls || ![cls respondsToSelector:@selector(filterWithType:)])return nil;
+    id f=[(Class<WXGMenuCAFilterFactory>)cls filterWithType:@"gaussianBlur"];
+    if(!f)return nil;
+    @try {
+        [f setValue:@"wxgMenuBlur" forKey:@"name"];
+        [f setValue:@(radius) forKey:@"inputRadius"];
+        [f setValue:@NO forKey:@"inputNormalizeEdges"];
+    } @catch(__unused NSException *e) {}
+    return f;
+}
+
 // Track 3: 5 organic ink-drop particles bound 1:1 to the "+" ring's 5 bottom dots,
-// rendered on the absolute topmost Z-order via CADisplayLink without triggering layout.
+// flying directly to each menu row's icon centre and morphing via Gaussian blur
+// directly into the icons (and playing in exact reverse on collapse).
 @interface WXGMenuInkOverlayView : UIView
-- (void)playOpen:(BOOL)open speed:(double)speed plusRect:(CGRect)plusRect lastRowMidY:(CGFloat)lastRowMidY completion:(void (^)(void))completion;
+- (void)playOpen:(BOOL)open speed:(double)speed stagger:(double)stagger plusRect:(CGRect)plusRect targets:(NSArray<NSValue *> *)targets completion:(void (^)(void))completion;
 - (void)stop;
 - (void)inkTick:(CADisplayLink *)link;
 @end
@@ -83,10 +100,13 @@ typedef NS_ENUM(NSInteger,WXGMenuPhase) {WXGMenuPhaseClosed,WXGMenuPhaseOpen,WXG
 @end
 @implementation WXGMenuInkOverlayView {
     CALayer *_dots[WXGMenuParticleCount];
+    BOOL _dotBlurred[WXGMenuParticleCount];
+    CGPoint _targets[WXGMenuParticleCount];
+    int _count;
     CADisplayLink *_link;
     BOOL _opening;
     CFTimeInterval _startTime;
-    double _duration,_speed,_plusMidX,_plusMidY,_ringRadius,_lastRowMidY;
+    double _duration,_speed,_stagger,_plusMidX,_plusMidY,_buttonSize;
     void (^_onFinish)(void);
 }
 - (instancetype)initWithFrame:(CGRect)frame {
@@ -94,8 +114,9 @@ typedef NS_ENUM(NSInteger,WXGMenuPhase) {WXGMenuPhaseClosed,WXGMenuPhaseOpen,WXG
         self.userInteractionEnabled=NO;self.isAccessibilityElement=NO;self.accessibilityElementsHidden=YES;
         self.backgroundColor=UIColor.clearColor;self.opaque=NO;self.hidden=YES;
         self.layer.zPosition=20000;
+        CGFloat scale=UIScreen.mainScreen.scale;
         for(int i=0;i<WXGMenuParticleCount;i++) {
-            CALayer *dot=[CALayer layer];dot.hidden=YES;
+            CALayer *dot=[CALayer layer];dot.hidden=YES;dot.contentsScale=scale;
             _dots[i]=dot;[self.layer addSublayer:dot];
         }
         [self updateInkColor];
@@ -116,7 +137,10 @@ typedef NS_ENUM(NSInteger,WXGMenuPhase) {WXGMenuPhaseClosed,WXGMenuPhaseOpen,WXG
 - (void)stop {
     [_link invalidate];_link=nil;_onFinish=nil;
     [CATransaction begin];[CATransaction setDisableActions:YES];
-    for(int i=0;i<WXGMenuParticleCount;i++)_dots[i].hidden=YES;
+    for(int i=0;i<WXGMenuParticleCount;i++) {
+        _dots[i].hidden=YES;
+        if(_dotBlurred[i]){_dots[i].filters=nil;_dotBlurred[i]=NO;}
+    }
     self.hidden=YES;
     [CATransaction commit];
 }
@@ -124,28 +148,59 @@ typedef NS_ENUM(NSInteger,WXGMenuPhase) {WXGMenuPhaseClosed,WXGMenuPhaseOpen,WXG
     [_link invalidate];_link=nil;
 }
 - (void)renderAt:(double)t {
+    CGFloat screenScale=self.traitCollection.displayScale>0?self.traitCollection.displayScale:UIScreen.mainScreen.scale;
     [CATransaction begin];[CATransaction setDisableActions:YES];
     for(int i=0;i<WXGMenuParticleCount;i++) {
-        WXGMenuParticle p=WXGMenuParticlePoseAt(i,_opening?1:0,t,_speed,_plusMidX,_plusMidY,_ringRadius,_lastRowMidY);
+        int ti=i<_count?i:(_count>0?_count-1:0);
+        CGPoint dst=_targets[ti];
+        WXGMenuParticle p=WXGMenuDotMorphPoseAt(i,_count>0?_count:WXGMenuParticleCount,_opening?1:0,t,_speed,_stagger,
+                                                _plusMidX,_plusMidY,_buttonSize,dst.x,dst.y);
         CALayer *dot=_dots[i];
-        if(p.diameter<=.15 || p.alpha<=.005){dot.hidden=YES;continue;}
+        if(p.diameter<=.15 || p.alpha<=.005) {
+            dot.hidden=YES;
+            if(_dotBlurred[i]){dot.filters=nil;_dotBlurred[i]=NO;}
+            continue;
+        }
         dot.hidden=NO;
+        dot.contentsScale=screenScale;
         dot.bounds=CGRectMake(0,0,(CGFloat)p.diameter,(CGFloat)p.diameter);
         dot.cornerRadius=(CGFloat)(p.diameter*.5);
         dot.position=CGPointMake((CGFloat)p.x,(CGFloat)p.y);
         dot.opacity=(float)p.alpha;
+        if(p.blurRadius>.15) {
+            if(!_dotBlurred[i]) {
+                id f=WXGMenuMakeBlurFilter(p.blurRadius);
+                if(f){dot.filters=@[f];_dotBlurred[i]=YES;}
+            }else {
+                @try {[dot setValue:@(p.blurRadius) forKeyPath:@"filters.wxgMenuBlur.inputRadius"];} @catch(__unused NSException *e) {}
+            }
+        }else if(_dotBlurred[i]) {
+            dot.filters=nil;_dotBlurred[i]=NO;
+        }
     }
     [CATransaction commit];
 }
-- (void)playOpen:(BOOL)open speed:(double)speed plusRect:(CGRect)plusRect lastRowMidY:(CGFloat)lastRowMidY completion:(void (^)(void))completion {
+- (void)playOpen:(BOOL)open speed:(double)speed stagger:(double)stagger plusRect:(CGRect)plusRect targets:(NSArray<NSValue *> *)targets completion:(void (^)(void))completion {
     [self stop];
     _opening=open;
     _speed=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
-    _duration=(open?.550:.350)/_speed;
+    _stagger=WXGMenuClamp(isfinite(stagger)?stagger:.045,0.,.080);
     _plusMidX=CGRectGetMidX(plusRect);
     _plusMidY=CGRectGetMidY(plusRect);
-    _ringRadius=WXGMenuRingRadius(MIN(plusRect.size.width,plusRect.size.height));
-    _lastRowMidY=lastRowMidY;
+    _buttonSize=MIN(plusRect.size.width,plusRect.size.height);
+    if(_buttonSize<20.)_buttonSize=44.;
+    _count=(int)MIN((NSUInteger)WXGMenuParticleCount,targets.count);
+    for(int i=0;i<WXGMenuParticleCount;i++) {
+        if(i<_count)_targets[i]=targets[(NSUInteger)i].CGPointValue;
+        else if(_count>0)_targets[i]=_targets[_count-1];
+        else _targets[i]=CGPointMake(_plusMidX,_plusMidY+56.*(i+1));
+    }
+    if(open) {
+        double lastArr=WXGMenuDotArriveAt((_count>0?_count:WXGMenuParticleCount)-1,_count>0?_count:WXGMenuParticleCount,_stagger);
+        _duration=(lastArr+.105)/_speed;
+    }else {
+        _duration=.365/_speed;
+    }
     _onFinish=[completion copy];
     [self updateInkColor];
     self.hidden=NO;
@@ -654,14 +709,46 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     [parent bringSubviewToFront:ink];
     return ink;
 }
-- (CGFloat)lastDrawnRowMidY:(WXGDecoration *)entry plusRect:(CGRect)plusRect {
-    CGFloat maxY=CGRectGetMidY(plusRect)+120.;BOOL found=NO;
+static void WXGMenuAnimateGlyphBlur(CALayer *glyphLayer,double fromRadius,double toRadius,double duration,CFTimeInterval begin,BOOL easeOut) {
+    if(!glyphLayer)return;
+    [glyphLayer removeAnimationForKey:@"wxg.menu.blur"];
+    id f=WXGMenuMakeBlurFilter(toRadius);
+    if(!f){glyphLayer.filters=nil;return;}
+    glyphLayer.filters=@[f];
+    CABasicAnimation *a=[CABasicAnimation animationWithKeyPath:@"filters.wxgMenuBlur.inputRadius"];
+    a.fromValue=@(fromRadius);a.toValue=@(toRadius);
+    a.duration=MAX(duration,.01);a.beginTime=begin;
+    a.timingFunction=easeOut?[CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f]
+                            :[CAMediaTimingFunction functionWithControlPoints:.55f :0.f :1.f :.45f];
+    a.fillMode=kCAFillModeBackwards;a.removedOnCompletion=YES;
+    [glyphLayer addAnimation:a forKey:@"wxg.menu.blur"];
+}
+- (NSArray<NSValue *> *)drawnIconTargets:(WXGDecoration *)entry {
+    NSMutableArray<NSValue *> *out=[NSMutableArray array];
     for(WXGMenuRow *row in entry.rows) {
         if(!row.drawn)continue;
-        CGFloat y=CGRectGetMidY(row.iconRect);
-        if(!found || y>maxY){maxY=y;found=YES;}
+        [out addObject:[NSValue valueWithCGPoint:CGPointMake(CGRectGetMidX(row.iconRect),CGRectGetMidY(row.iconRect))]];
     }
-    return maxY;
+    return out;
+}
+- (void)dismissMenuAutomatically:(WXGDecoration *)entry {
+    if(!entry || entry.phase!=WXGMenuPhaseOpen)return;
+    UIView *host=entry.host;
+    if(host && host.window) {
+        for(NSString *name in @[@"hide",@"dismiss",@"onTapBackground",@"onTapBg",@"hideMenu"]) {
+            SEL sel=NSSelectorFromString(name);
+            if([host respondsToSelector:sel]) {
+                ((void (*)(id,SEL))objc_msgSend)(host,sel);
+                return;
+            }
+        }
+    }
+    UIControl *btn=entry.plusSurface.original?:entry.plusControl;
+    if(btn && btn.window && WXGCanForward(btn)) {
+        [btn sendActionsForControlEvents:UIControlEventTouchUpInside];
+        return;
+    }
+    [self beginExit:entry];
 }
 - (void)hideRows:(WXGDecoration *)entry remove:(BOOL)remove {
     [entry.inkOverlay stop];
@@ -672,6 +759,7 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     for(WXGMenuRow *row in entry.rows) {
         for(WXGSurface *s in @[row.icon,row.capsule]) {
             WXGMenuClearAnimations(s.layer);s.layer.transform=CATransform3DIdentity;
+            [s.iconView.layer removeAnimationForKey:@"wxg.menu.blur"];s.iconView.layer.filters=nil;
             s.active=NO;s.hidden=YES;s.glass.backdropExclusions=@[];
             if(remove)[s removeFromSuperview];
         }
@@ -691,7 +779,7 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     }
     return NO;
 }
-// FIX116 B: the glass leaves (WXGMenuCascade.h's 5-track 350ms collapse) from the pose it is in,
+// FIX116 B: the glass leaves (R20 exact reverse collapse) from the pose it is in,
 // at the places it was laid out: whatever WeChat does to its own menu while
 // closing it (it moves it, fades it, hides it) no longer reaches the glass.
 - (void)beginExit:(WXGDecoration *)entry {
@@ -714,10 +802,13 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     [entry.plusSurface setHomePlusDotsHidden:NO];
     for(WXGMenuRow *row in entry.rows)for(WXGSurface *s in @[row.icon,row.capsule]) {
         WXGMenuClearAnimations(s.layer);s.layer.transform=CATransform3DIdentity;
+        [s.iconView.layer removeAnimationForKey:@"wxg.menu.blur"];s.iconView.layer.filters=nil;
         s.active=NO;s.hidden=YES;
     }
 }
-// Returns when all 5 collapse tracks are complete, in seconds (350ms at 1x speed).
+// Exact time-reversed collapse (~365ms at 1x speed): capsules vanish synchronously,
+// icons Gaussian-blur back into the 5 dots which fly back into the bottom arc anchors,
+// x shrinks/swaps back to +, and the 270-deg arc grows CW back to full.
 - (double)playExit:(WXGDecoration *)entry token:(NSUInteger)token {
     BOOL calm=UIAccessibilityIsReduceMotionEnabled();
     double stagger=WXGMenuClamp([WXGConfig.shared extraNumber:@"homeMenuStagger"],0,80)/1000.0;
@@ -727,17 +818,14 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     UIWindow *win=entry.host.window?:parent.window;
     WXGSurface *plus=entry.plusSurface?:[WXGIntegrationHost.shared homePlusSurfaceInWindow:win];
     entry.plusSurface=plus;
-    // Track 1 & 2: close 270-deg arc (30..250ms) and swap x -> + (0..350ms, zero bounce).
     [plus setHomePlusMenuOpen:NO animated:!calm speed:speed];
-    // Track 3: respawn ink drops at bottom, sweep rapidly up to 6:00 (0..250ms),
-    // then dock precisely into the 5 bottom dots at 350ms and hand back to the static dots.
-    if(!calm && parent) {
+    NSArray<NSValue *> *targets=[self drawnIconTargets:entry];
+    if(!calm && parent && targets.count) {
         CGRect plusRect=[self plusRectFor:entry parent:parent];
-        CGFloat lastMidY=[self lastDrawnRowMidY:entry plusRect:plusRect];
         [plus setHomePlusDotsHidden:YES];
         WXGMenuInkOverlayView *ink=[self ensureInkOverlay:entry inParent:parent];
         __weak WXGDecoration *weakEntry=entry;
-        [ink playOpen:NO speed:speed plusRect:plusRect lastRowMidY:lastMidY completion:^{
+        [ink playOpen:NO speed:speed stagger:stagger plusRect:plusRect targets:targets completion:^{
             WXGDecoration *later=weakEntry;
             if(later && later.exitToken==token)[later.plusSurface setHomePlusDotsHidden:NO];
         }];
@@ -749,13 +837,13 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     NSMutableArray<WXGMenuRow *> *drawn=[NSMutableArray array];
     for(WXGMenuRow *row in entry.rows)if(row.drawn && (!row.icon.hidden || !row.capsule.hidden))[drawn addObject:row];
     CFTimeInterval now=CACurrentMediaTime();
-    double total=calm?.14:(.350/v);
+    double total=calm?.14:(.365/v);
     [CATransaction begin];[CATransaction setDisableActions:YES];
     for(NSUInteger k=0;k<drawn.count;k++) {
         WXGMenuRow *row=drawn[k];
-        WXGMenuExit e=WXGMenuExitFor((int)(drawn.count-1-k),row.slotDistance,stagger,speed);   // tiny bottom-first offset on icon suction
+        WXGMenuExit e=WXGMenuExitFor((int)(drawn.count-1-k),row.slotDistance,stagger,speed);
         if(calm){e.iconDelay=e.capsuleDelay=e.textDelay=0;e.iconFade=e.capsuleFade=e.textDuration=.12;e.iconDuration=e.capsuleDuration=.12;}
-        // Track 4: collective accelerating suction straight into the "+" centre.
+        // Glass icon blurs & condenses directly back into its dot.
         if(!row.icon.hidden) {
             CALayer *layer=row.icon.layer,*now_=layer.presentationLayer?:layer;
             float fromAlpha=now_.opacity;CATransform3D fromT=now_.transform;
@@ -765,11 +853,12 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
                 CATransform3D toT=CATransform3DConcat(CATransform3DMakeScale((CGFloat)e.iconScale,(CGFloat)e.iconScale,1.),
                                                       CATransform3DMakeTranslation(0.,(CGFloat)(-e.travel),0.));
                 WXGMenuTransformAnimate(layer,fromT,toT,e.iconDuration,begin,NO,@"wxg.menu.transform");
+                WXGMenuAnimateGlyphBlur(row.icon.iconView.layer,0.,e.iconBlurEnd,e.iconDuration,begin,NO);
             }
             if(fromAlpha>.01f)WXGMenuFadeAnimate(layer,fromAlpha,0,e.iconFade,begin,NO,@"wxg.menu.alpha");
             total=MAX(total,e.iconDelay+e.iconDuration);
         }
-        // Track 5: priority synchronous 100ms vanish at t=0 (zero stagger, clears before icons overlap).
+        // Glass capsule priority synchronous vanish at t=0.
         if(!row.capsule.hidden) {
             CALayer *layer=row.capsule.layer,*text=row.capsule.label.layer,*layerNow=layer.presentationLayer?:layer;
             float fromAlpha=layerNow.opacity;CATransform3D fromT=layerNow.transform;
@@ -794,6 +883,7 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
 - (void)fadeInLate:(WXGSurface *)s {
     [CATransaction begin];[CATransaction setDisableActions:YES];
     WXGMenuClearAnimations(s.layer);WXGMenuClearAnimations(s.label.layer);
+    [s.iconView.layer removeAnimationForKey:@"wxg.menu.blur"];s.iconView.layer.filters=nil;
     s.layer.transform=CATransform3DIdentity;s.layer.opacity=1;s.label.layer.opacity=1;
     [CATransaction commit];
     if(!UIAccessibilityIsReduceMotionEnabled())WXGMenuFadeAnimate(s.layer,0,1,.2,[s.layer convertTime:CACurrentMediaTime() fromLayer:nil],YES,@"wxg.menu.alpha");
@@ -811,19 +901,12 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     BOOL same=entry.rows.count==items.count;   // (WeChat's rows are the views the glass was made for)
     for(NSUInteger i=0;same && i<items.count;i++)same=entry.rows[i].item==items[i];
     if(entry.phase==WXGMenuPhaseOpen) {
-        // A menu that has opened and then moves, or loses its rows, is WeChat closing it (it slides it away
-        // while it fades, and empties it): the glass leaves from where it is instead of following. Other rows
-        // (WeChat made them anew) are a rebuild, below. (While the entrance is still playing only a long way counts:
-        // WeChat lays the menu out again a pass after it opens.)
         if(entry.entranceDone) {
             BOOL settled=now-entry.openAt>.65;
             if(!items.count || (same && [self rowsMovedOf:entry items:items parent:parent limit:settled?6:40])){[self beginExit:entry];return;}
         }
     }else {
-        // Closed, or on its way out while WeChat still shows the menu.
         if(entry.blockReopen) {
-            // Opened again: rows back where they were, or other rows (a new menu), or it has stood on screen long
-            // after the exit; not while there is nothing to read in it, nor while it is still leaving.
             BOOL again=items.count && WXGMenuHasParts(items) &&
                 (!same || ![self rowsMovedOf:entry items:items parent:parent limit:3] || (now-entry.exitAt>.8 && WXGMenuAlpha(body)>=.99));
             if(!again)return;
@@ -834,7 +917,6 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     }
     if(!items.count){[self hideRows:entry remove:YES];entry.phase=WXGMenuPhaseClosed;return;}
     entry.menuParent=parent;
-    // The rows (made anew when WeChat made its own anew).
     if(!same) {
         [self hideRows:entry remove:YES];entry.rows=[NSMutableArray array];
         for(UIView *item in items) {
@@ -846,7 +928,6 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
         }
         entry.entranceDone=NO;entry.openAt=now;
     }
-    // Where WeChat has each row, and the "+" the icons line up with.
     NSMutableArray<NSValue *> *frames=[NSMutableArray array];
     CGFloat minHeight=CGFLOAT_MAX,pitch=CGFLOAT_MAX,lastMid=0;BOOL haveLast=NO;
     for(UIView *item in items) {
@@ -861,7 +942,7 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     UIFont *font=[UIFont systemFontOfSize:m.fontSize weight:UIFontWeightSemibold];
     double minX=parent.bounds.origin.x+parent.safeAreaInsets.left+10,centreX=CGRectGetMidX(plus);
     UIView *source=_source?:WXGContentSourceForView(host);
-    NSUInteger drawn=0;BOOL late=entry.entranceDone;   // (rows that turn up after the entrance fade in by themselves)
+    NSUInteger drawn=0;BOOL late=entry.entranceDone;
     for(NSUInteger i=0;i<entry.rows.count;i++) {
         WXGMenuRow *row=entry.rows[i];UIView *item=items[i];CGRect r=frames[i].CGRectValue;
         UIImageView *iconView=nil;UILabel *label=nil;WXGMenuParts(item,&iconView,&label);
@@ -870,12 +951,8 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
         row.drawn=hasIcon || hasTitle;
         if(!row.drawn){row.icon.hidden=YES;row.capsule.hidden=YES;row.icon.active=NO;row.capsule.active=NO;continue;}
         ++drawn;
-        // WeChat's icon and title are hidden (masked), never moved: the row
-        // stays where it is and keeps the touches and the action.
         if(iconView)[entry.states conceal:iconView];
         if(label)[entry.states conceal:label];
-        // FIX117 A: and the row itself: what WeChat draws in it while it is held (its grey highlight) is not
-        // seen either (a mask: the row keeps its touches and its action; the glass shows the press).
         [entry.states conceal:item];
         CGFloat textWidth=hasTitle?ceil([title sizeWithAttributes:@{NSFontAttributeName:font}].width):0;
         WXGMenuRowBoxes b=WXGMenuRowBoxesFor(CGRectGetMidY(r),centreX,textWidth,m,minX);
@@ -900,11 +977,10 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     if(!entry.rowsReady)return;
     if(!entry.entranceDone){entry.entranceDone=YES;++entry.entrances;[self playEntrance:entry];}
 }
-// 5-track ink-drop particle disintegration expand (600ms at 1x speed):
-// Track 1: 270-deg arc retracts CCW; Track 2: + -> x two-stage scale swap;
-// Track 3: 5 ink drops fall along sine-wiggle trail; Track 4: staggered glass
-// icons ease smoothly into place with ZERO post-expand bounce; Track 5: glass
-// capsules slide horizontally out from right-middle (+100ms after icon, dy=0).
+// R20 expand: outer arc retracts CCW -> 5 dots detach & fly directly to each menu
+// icon centre -> hardware Gaussian-blur morph directly into crisp liquid glass icons
+// (ZERO post-expand bounce!) -> glass capsules glide horizontally out; optional
+// auto-close timer dismisses after configured seconds.
 - (void)playEntrance:(WXGDecoration *)entry {
     BOOL calm=UIAccessibilityIsReduceMotionEnabled();
     double stagger=WXGMenuClamp([WXGConfig.shared extraNumber:@"homeMenuStagger"],0,80)/1000.0;
@@ -914,21 +990,23 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     entry.plusSurface=plus;
     [plus setHomePlusDotsHidden:YES];
     [plus setHomePlusMenuOpen:YES animated:!calm speed:speed];
-    if(!calm && parent) {
+    NSArray<NSValue *> *targets=[self drawnIconTargets:entry];
+    int drawnCount=(int)targets.count;
+    if(!calm && parent && drawnCount>0) {
         CGRect plusRect=[self plusRectFor:entry parent:parent];
-        CGFloat lastMidY=[self lastDrawnRowMidY:entry plusRect:plusRect];
         WXGMenuInkOverlayView *ink=[self ensureInkOverlay:entry inParent:parent];
-        [ink playOpen:YES speed:speed plusRect:plusRect lastRowMidY:lastMidY completion:nil];
+        [ink playOpen:YES speed:speed stagger:stagger plusRect:plusRect targets:targets completion:nil];
     }else {
         [entry.inkOverlay stop];
     }
 
-    CFTimeInterval now=CACurrentMediaTime();int index=0;
+    CFTimeInterval now=CACurrentMediaTime();int index=0;double maxSettle=0.;
+    NSUInteger openToken=entry.exitToken;
     [CATransaction begin];[CATransaction setDisableActions:YES];
     for(WXGMenuRow *row in entry.rows) {
         if(!row.drawn)continue;
-        WXGMenuEntrance e=WXGMenuEntranceFor(index++,row.slotDistance,stagger,speed);
-        // Track 4: circular glass icon (ty: -45 -> 0, scale: 0.40 -> 1.0, zero bounce!).
+        WXGMenuEntrance e=WXGMenuEntranceForCount(index++,drawnCount>0?drawnCount:5,row.slotDistance,stagger,speed);
+        // Circular glass icon: materializes via Gaussian-blur morph directly where dot arrives (ZERO bounce!).
         if(!row.icon.hidden) {
             CALayer *layer=row.icon.layer;
             WXGMenuClearAnimations(layer);layer.transform=CATransform3DIdentity;layer.opacity=1;
@@ -937,10 +1015,15 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
                 CATransform3D fromT=CATransform3DConcat(CATransform3DMakeScale((CGFloat)e.iconScale,(CGFloat)e.iconScale,1.),
                                                         CATransform3DMakeTranslation(0.,(CGFloat)(-e.travel),0.));
                 WXGMenuTransformAnimate(layer,fromT,CATransform3DIdentity,e.iconDuration,begin,YES,@"wxg.menu.transform");
+                WXGMenuAnimateGlyphBlur(row.icon.iconView.layer,e.iconBlurStart,0.,e.iconDuration,begin,YES);
+            }else {
+                [row.icon.iconView.layer removeAnimationForKey:@"wxg.menu.blur"];
+                row.icon.iconView.layer.filters=nil;
             }
             WXGMenuFadeAnimate(layer,0,1,calm?.14:e.iconFade,begin,YES,@"wxg.menu.alpha");
+            maxSettle=MAX(maxSettle,e.iconDelay+e.iconDuration);
         }
-        // Track 5: text glass capsule (dy: 0, horizontal slide from right-middle, zero bounce!).
+        // Left text glass capsule: horizontal slide from right-middle (dy=0, ZERO bounce!).
         if(!row.capsule.hidden) {
             CALayer *layer=row.capsule.layer,*text=row.capsule.label.layer;
             WXGMenuClearAnimations(layer);WXGMenuClearAnimations(text);
@@ -954,9 +1037,31 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
                 WXGMenuTransformAnimate(layer,fromT,CATransform3DIdentity,e.capsuleDuration,begin,YES,@"wxg.menu.transform");
             }
             WXGMenuFadeAnimate(layer,0,1,calm?.14:e.capsuleFade,begin,YES,@"wxg.menu.alpha");
+            maxSettle=MAX(maxSettle,e.capsuleDelay+e.capsuleDuration);
         }
     }
     [CATransaction commit];
+
+    // Remove settled 0-radius blur filters so resting icons stay razor-sharp with zero filter overhead.
+    if(!calm && maxSettle>0.) {
+        __weak WXGDecoration *weakEntry=entry;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)((maxSettle+.05)*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+            WXGDecoration *later=weakEntry;
+            if(!later || later.exitToken!=openToken || later.phase!=WXGMenuPhaseOpen)return;
+            for(WXGMenuRow *row in later.rows){row.icon.iconView.layer.filters=nil;}
+        });
+    }
+
+    // Optional auto-close timer (seconds after menu opens).
+    CGFloat autoClose=WXGConfig.shared.homeMenuAutoClose;
+    if(autoClose>=.5) {
+        __weak WXGDecoration *weakEntry=entry;
+        __weak WXGDecorations *weakSelf=self;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(autoClose*NSEC_PER_SEC)),dispatch_get_main_queue(),^{
+            WXGDecoration *later=weakEntry;
+            if(later && later.exitToken==openToken && later.phase==WXGMenuPhaseOpen)[weakSelf dismissMenuAutomatically:later];
+        });
+    }
 }
 - (void)refresh {
     if(!WXGPluginEnabled() || !WXGPreferences.shared.nav){[self restore];return;}

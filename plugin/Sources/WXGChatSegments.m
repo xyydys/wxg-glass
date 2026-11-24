@@ -112,7 +112,7 @@ static WXGDockGeometry WXGSegLayout(float width,float height,float gap,float anc
     if((self=[super initWithFrame:frame])) {
         self.backgroundColor=UIColor.clearColor;self.opaque=NO;self.clipsToBounds=NO;self.isAccessibilityElement=NO;
         _resumeIndex=-1;_selectionShown=1;
-        _glass=[[WXGGlassView alloc] initWithFrame:self.bounds];_glass.dockSurface=YES;_glass.glassScopeOverride=WXGGlassScopeSegment;_glass.userInteractionEnabled=NO;
+        _glass=[[WXGGlassView alloc] initWithFrame:self.bounds];_glass.dockSurface=YES;_glass.mainDockOptics=YES;_glass.glassScopeOverride=WXGGlassScopeSegment;_glass.userInteractionEnabled=NO;
         [self addSubview:_glass];
         // Until the overlay's first frame (cold start: the shader may still be
         // on its way) the pill and the titles are plain layers; the background is
@@ -182,7 +182,7 @@ static WXGDockGeometry WXGSegLayout(float width,float height,float gap,float anc
 #pragma mark Colours and titles
 - (void)setPillColor:(UIColor *)color {
     if(color==_pillColor || [color isEqual:_pillColor])return;
-    _pillColor=color;_glass.selectionOverride=color;_fallbackPill.backgroundColor=color;[self wake];
+    _pillColor=color;_glass.selectionOverride=color;_fallbackPill.backgroundColor=color?:[UIColor colorWithWhite:self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark?1:0 alpha:.12];[self wake];
 }
 - (void)setInkColor:(UIColor *)color {
     if(color==_inkColor || [color isEqual:_inkColor])return;
@@ -192,15 +192,22 @@ static WXGDockGeometry WXGSegLayout(float width,float height,float gap,float anc
     if(color==_accentColor || [color isEqual:_accentColor])return;
     _accentColor=color;[self rebuildTitles:NO];[self wake];
 }
-// FIX113 O: the segment bar's own lens (size, growth, zoom, pill inset).
+// R20: synchronize directly with dock's validated R8-Aurora style scaled proportionally by height / 62pt.
+- (CGFloat)dockScale {return WXGClamp(_materialRect.size.height/62.,.35,1.);}
 - (WXGLensSettings)lens {return [WXGConfig.shared lensSettingsForScope:WXGGlassScopeSegment dark:self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark];}
-- (CGFloat)selectionGap {return WXGSelectionGap([self lens].selectionInset,_materialRect.size.height);}
+- (CGFloat)selectionGap {
+    CGFloat s=[self dockScale];
+    CGFloat inset=WXGConfig.shared.dockPureGlassMode?WXGConfig.shared.selectionInset*s:[self lens].selectionInset;
+    return WXGSelectionGap(inset,_materialRect.size.height);
+}
 - (CGFloat)centerForIndex:(NSInteger)index {return CGRectGetMinX(_materialRect)+WXGSegCenter(_materialRect.size.width,[self selectionGap],(int)index,(int)self.count);}
 - (CGFloat)atlasScale {
-    WXGLensSettings l=[self lens];
-    return WXGCaptureScale(self.window.screen.scale?:UIScreen.mainScreen.scale)*MAX(1,l.zoom)*MAX(1,l.barGrowth);
+    WXGConfig *cfg=WXGConfig.shared;
+    CGFloat zoom=cfg.dockPureGlassMode?[cfg pureDockIconZoom]:[self lens].zoom;
+    CGFloat grow=cfg.dockPureGlassMode?[cfg pureDockBarGrowth]:[self lens].barGrowth;
+    return WXGCaptureScale(self.window.screen.scale?:UIScreen.mainScreen.scale)*MAX(1,zoom)*MAX(1,grow);
 }
-// The four titles at their segments' centres, the whole view's size (the
+// The titles at their segments' centres, the whole view's size (the
 // glass's icon atlases): the body draws the unselected ones, the lens the
 // selected ones (a little heavier), magnified with it.
 - (UIImage *)titlesSelected:(BOOL)selected {
@@ -265,18 +272,35 @@ static WXGDockGeometry WXGSegLayout(float width,float height,float gap,float anc
 }
 - (void)updateGeometry {
     if(CGRectIsEmpty(_materialRect))return;
-    WXGLensSettings c=[self lens];BOOL reduce=UIAccessibilityIsReduceMotionEnabled() || !c.elasticOn;   // FIX113 Y: the deformation can be off
-    CGFloat press=WXGClamp(_press,0,1);
+    WXGConfig *cfg=WXGConfig.shared;
+    BOOL pure=cfg.dockPureGlassMode;
+    WXGLensSettings c=[self lens];
+    BOOL reduce=UIAccessibilityIsReduceMotionEnabled() || (pure?!cfg.pureDockFlexOn:!c.elasticOn);
+    CGFloat press=WXGClamp(_press,0,1),s=[self dockScale];
     float w=(float)_materialRect.size.width,h=(float)_materialRect.size.height,gap=(float)[self selectionGap],anchor=(float)(_lensX-_materialRect.origin.x);
     int n=(int)self.count;
-    // The segment bar's own lens, then the system's deformation (as the dock's: WXGLensFlex.h).
-    WXGDockGeometry g=WXGSegLayout(w,h,gap,anchor,(float)press,(float)c.growth,0,(float)c.barGrowth,(float)c.endWrap,n);
-    _glass.lensRestHeight=g.lensHeight;   // FIX113 Y: undeformed
+    float growth=(float)(pure?[cfg pureDockLensGrowth]:c.growth);
+    float barGrow=(float)(pure?[cfg pureDockBarGrowth]:c.barGrowth);
+    float endWrap=(float)(pure?[cfg pureDockEndWrap]*s:c.endWrap);
+    float liftW=(float)(pure?[cfg pureDockLensLiftWidth]*s:0.);
+    WXGDockGeometry g=WXGSegLayout(w,h,gap,anchor,(float)press,growth,0,barGrow,endWrap,n);
+    if(liftW>0.f && press>0.f) {
+        float add=liftW*(float)press;
+        float nw=WXG_MIN(g.lensWidth+add,g.barWidth+2.f*endWrap);
+        float c0=WXGSegCenter(w,gap,0,n),c1=n>1?WXGSegCenter(w,gap,n-1,n):c0;
+        float posT=(c1>c0)?WXGClamp((anchor-c0)/(c1-c0),0.f,1.f):.5f;
+        g.lensX+=(g.lensWidth-nw)*posT;g.lensWidth=nw;
+    }
+    _glass.lensRestHeight=g.lensHeight;
     if(!reduce) {
-        double sx=1,sy=1;WXGLensFlexScaleAt(_flex,WXGConfig.shared.lensFlexParams,press,&sx,&sy);   // FIX126: as the system's lens; FIX135: down, not too flat
-        float lw=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*(float)c.endWrap),lh=(float)(g.lensHeight*sy);
-        lh=(float)WXGLensFlexRestingHeight(lh,g.barHeight,press,1.);   // FIX134: down, never cut by the bar
-        g.lensX+=(g.lensWidth-lw)*.5f;g.lensY+=(g.lensHeight-lh)*.5f;g.lensWidth=lw;g.lensHeight=lh;
+        double sx=1,sy=1;
+        if(pure)WXGLensFlexAdaptiveScaleAt(_flex,[cfg pureDockFlexParams],press,&sx,&sy);
+        else WXGLensFlexScaleAt(_flex,cfg.lensFlexParams,press,&sx,&sy);
+        float lw=WXG_MIN((float)(g.lensWidth*sx),g.barWidth+2.f*endWrap),lh=(float)(g.lensHeight*sy);
+        lh=(float)WXGLensFlexRestingHeight(lh,g.barHeight,press,1.);
+        float c0=WXGSegCenter(w,gap,0,n),c1=n>1?WXGSegCenter(w,gap,n-1,n):c0;
+        float posT=(c1>c0)?WXGClamp((anchor-c0)/(c1-c0),0.f,1.f):.5f;
+        g.lensX+=(g.lensWidth-lw)*posT;g.lensY+=(g.lensHeight-lh)*.5f;g.lensWidth=lw;g.lensHeight=lh;
     }
     CGRect lens=CGRectMake(_materialRect.origin.x+g.lensX,_materialRect.origin.y+g.lensY,g.lensWidth,g.lensHeight);
     _glass.barScale=g.scale;_glass.lensAnchorX=_materialRect.origin.x+g.anchorX;
@@ -456,8 +480,11 @@ static WXGDockGeometry WXGSegLayout(float width,float height,float gap,float anc
     if(!scripted)WXGSpring(&_press,&_pressVelocity,_targetPress,reduce?600:420,reduce?49:31,dt);
     dt=motionDT;
     if(!reduce)WXGElasticStep(&_elastic,_velocityX,dt);else _elastic=(WXGElasticMotion){0};
-    if(!reduce && self.count>1)WXGLensFlexStep(&_flex,_velocityX,([self centerForIndex:self.count-1]-[self centerForIndex:0])/(double)(self.count-1),WXGConfig.shared.lensFlexParams,dt);   // FIX126
-    else _flex=(WXGLensFlex){0};
+    if(!reduce && self.count>1) {
+        double cellStep=([self centerForIndex:self.count-1]-[self centerForIndex:0])/(double)(self.count-1);
+        if(WXGConfig.shared.dockPureGlassMode)WXGLensFlexAdaptiveStep(&_flex,_velocityX,cellStep,WXGConfig.shared.pureDockFlexParams,dt);
+        else WXGLensFlexStep(&_flex,_velocityX,cellStep,WXGConfig.shared.lensFlexParams,dt);
+    }else _flex=(WXGLensFlex){0};
     if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];
     BOOL still=!_fingerDown && !scripted && fabs(_press)<.002 && fabs(_pressVelocity)<.01 && fabs(_lensX-_targetX)<.05 && fabs(_velocityX)<1 &&
                fabs(_elastic.stretch)<.0005 && fabs(_elastic.velocity)<.01 && WXGLensFlexStill(_flex) && !_endStretch.tracking && fabs(_endStretch.x)<.01 && _selectionCarry==0;
@@ -1606,6 +1633,8 @@ static BOOL WXGPushedOver(UIViewController *below,UIViewController *leaf) {
 
 @implementation WXGChatSegments {
     WXGSegmentBar *_bar;
+    WXGSegmentBar *_titleBar;    // R20: compact All/Unread group bar replacing home MFTitleView
+    NSInteger _titleSelected;
     __weak UIView *_searchBar,*_container;__weak UITableView *_table;__weak UIViewController *_page;
     WXGStateBag *_states;
     NSString *_status,*_fieldSource,*_colorSource;
@@ -1617,6 +1646,15 @@ static BOOL WXGPushedOver(UIViewController *below,UIViewController *leaf) {
     __weak UIView *_hiddenBar;   // the bar faded out by us (its alpha was WeChat's own then)
     __weak UIView *_floatHost;   // FIX114 B: where hostTick last floated the bar (the before-commit pass places it there too)
     NSUInteger _rehides,_commitPlacements;   // FIX114 B: diagnostics
+    NSUInteger _transformMoves,_frameWrites,_skippedLaidOuts;   // R20: pull-down/scroll stutter diagnostics
+    double _maxPlaceMS;
+    CGPoint _floatBaseOrigin;
+    CGSize _floatBaseSize;
+    CGFloat _lastFloatY;
+    BOOL _hasLastFloatY,_adjustingHeader;
+    __weak UIView *_resizedHeader;
+    CGFloat _nativeHeaderHeight,_lastCustomKey;
+    CGSize _lastMeasuredBarSize;
     CGRect _naturalFrame;        // FIX113 O: the segment bar's frame in its container (in the list)
     BOOL _segmentFloating;       // FIX113 O: it is in the navigation overlay now
     NSMapTable<UIViewController *,WXGFloatSlot *> *_floats;
@@ -1645,15 +1683,11 @@ static BOOL WXGPushedOver(UIViewController *below,UIViewController *leaf) {
 - (BOOL)wanted {
     return WXGPluginEnabled() && WXGEffectiveRenderMode()>=2 && [WXGConfig.shared extraNumber:@"chatSegments"]>.5;
 }
+- (BOOL)titleModeWanted {
+    return WXGPluginEnabled() && WXGEffectiveRenderMode()>=2 && WXGConfig.shared.homeTitleSegments;
+}
 - (void)observe {
     if(_observing)return;_observing=YES;
-    // FIX114 B (user: pulled down, the bar and the title row move at different
-    // speeds, the gap changes; an extra capsule shows now and then): before
-    // every Core Animation commit (just ahead of it), the floating bar is put
-    // where the list is in that same commit (hostTick ran on the display
-    // link, a frame behind the scrolling on a slow phone), and WeChat's search
-    // bar is faded out again if WeChat brought it back (it does, pulling the
-    // list down: its own search bar then showed at its place, empty).
     __weak WXGChatSegments *weakSelf=self;
     CFRunLoopObserverRef commit=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,1999000,
         ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity a){[weakSelf beforeCommit];});
@@ -1672,9 +1706,15 @@ static BOOL WXGPushedOver(UIViewController *below,UIViewController *leaf) {
     } @catch(__unused NSException *error) {}
 }
 - (void)settingsChanged:(__unused NSNotification *)note {
-    if(![self wanted]){[self restore];return;}
-    UIViewController *page=_page;if(page)[self updateOnPage:page];
-    [_bar refreshLook];   // its lens, pill inset and titles may have changed
+    if(![self wanted])[self restore];
+    else {
+        UIViewController *page=_page;if(page)[self updateOnPage:page];
+        [_bar refreshLook];
+    }
+    if(![self titleModeWanted]) {
+        [self hideTitleBar];
+        if(![self wanted] && atomic_load(&WXGFilterIndex)>0)[self applyRule:0 members:nil name:nil];
+    }else [_titleBar refreshLook];
     for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects)[slot.clone.surface applyConfig];
 }
 // WeChat's own search took its field (its search button, the dock's search
@@ -1785,13 +1825,56 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
     if(source)*source=from;
     return best;
 }
+// R20: custom home search / segment bar width, height, and locked top gap.
+static CGFloat WXGHomeSearchCustomKey(void) {
+    WXGConfig *c=WXGConfig.shared;
+    return c.homeSearchWidthPct*10000.+c.homeSearchHeight*100.+(c.homeSearchTopGap+10.);
+}
+static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,CGFloat nativeHeaderH,CGFloat *requiredHeaderH) {
+    WXGConfig *c=WXGConfig.shared;
+    CGFloat wPct=c.homeSearchWidthPct,customH=c.homeSearchHeight,topGap=c.homeSearchTopGap;
+    CGFloat w=wPct>.5?WXGClamp(hostWidth*(wPct/100.),120,MAX(120,hostWidth-4)):naturalField.size.width;
+    CGFloat h=customH>.5?WXGClamp(customH,24,64):naturalField.size.height;
+    CGFloat x=wPct>.5?(hostWidth-w)*.5:naturalField.origin.x;
+    CGFloat y=topGap>=0?topGap:naturalField.origin.y;
+    CGFloat bottomPad=MAX(4,nativeHeaderH-CGRectGetMaxY(naturalField));
+    if(requiredHeaderH)*requiredHeaderH=MAX(nativeHeaderH,y+h+bottomPad);
+    return CGRectMake(x,y,w,h);
+}
+- (void)applyHeaderHeight:(CGFloat)needed onHeader:(UIView *)header table:(UITableView *)table {
+    if(!header || !table || needed<20)return;
+    if(_resizedHeader!=header) {
+        if(_resizedHeader && _resizedHeader!=header)[self restoreResizedHeader];
+        _resizedHeader=header;_nativeHeaderHeight=header.frame.size.height;
+    }
+    if(fabs(header.frame.size.height-needed)<=.5)return;
+    _adjustingHeader=YES;
+    [UIView performWithoutAnimation:^{
+        CGRect f=header.frame;f.size.height=needed;header.frame=f;
+        if(table.tableHeaderView==header)table.tableHeaderView=header;
+    }];
+    _adjustingHeader=NO;
+}
+- (void)restoreResizedHeader {
+    UIView *header=_resizedHeader;UITableView *table=_table;
+    if(header && _nativeHeaderHeight>10 && fabs(header.frame.size.height-_nativeHeaderHeight)>.5) {
+        _adjustingHeader=YES;
+        [UIView performWithoutAnimation:^{
+            CGRect f=header.frame;f.size.height=self->_nativeHeaderHeight;header.frame=f;
+            if(table && table.tableHeaderView==header)table.tableHeaderView=header;
+        }];
+        _adjustingHeader=NO;
+    }
+    _resizedHeader=nil;_nativeHeaderHeight=0;
+}
 // The colours: the bar's background is its range's material (分组, the
-// settings); the pill the page's own background colour (or the one set),
-// the titles the colour set.
-- (void)applyColorsFrom:(UIView *)bar {
-    UITraitCollection *traits=bar.traitCollection;BOOL dark=traits.userInterfaceStyle==UIUserInterfaceStyleDark;
+// settings); the pill the dock's own in R8-Aurora mode (or the page's/set
+// colour in legacy mode), the titles the colour set.
+- (void)applyColorsToBar:(WXGSegmentBar *)target from:(UIView *)ref {
+    if(!target || !ref)return;
+    UITraitCollection *traits=ref.traitCollection;BOOL dark=traits.userInterfaceStyle==UIUserInterfaceStyleDark;
     UIColor *bg=nil;NSString *from=nil;
-    for(UIView *v=bar.superview;v && ![v isKindOfClass:UIWindow.class];v=v.superview) {
+    for(UIView *v=ref.superview;v && ![v isKindOfClass:UIWindow.class];v=v.superview) {
         if(WXGIsPluginView(v) || !v.backgroundColor)continue;
         UIColor *resolved=[v.backgroundColor resolvedColorWithTraitCollection:traits];CGFloat r=0,g=0,b=0,a=0;
         if(![resolved getRed:&r green:&g blue:&b alpha:&a])continue;   // a pattern (a theme's picture): not a colour
@@ -1799,16 +1882,24 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
     }
     if(!bg){bg=dark?[UIColor colorWithWhite:.11 alpha:1]:UIColor.whiteColor;from=@"default";}
     WXGConfig *c=WXGConfig.shared;
-    UIColor *pill=[c extraNumber:@"segmentPillAuto"]>.5?bg:WXGColor([c extraHex:dark?@"segmentDarkPillHex":@"segmentPillHex"]);
-    CGFloat pr=1,pg=1,pb=1,pa=1;if(![pill getRed:&pr green:&pg blue:&pb alpha:&pa]){pr=pg=pb=dark?.23:1;pa=1;}
-    _bar.pillColor=[UIColor colorWithRed:pr green:pg blue:pb alpha:pa*WXGClamp([c extraNumber:dark?@"segmentDarkPillOpacity":@"segmentPillOpacity"],0,1)];
-    _bar.glass.selectionOverridePressedAlpha=pa*WXGClamp([c extraNumber:@"segmentPillPressedOpacity"],0,1);   // FIX113 P: fades into the lens as the dock's
-    _bar.inkColor=WXGColor([c extraHex:dark?@"segmentDarkInkHex":@"segmentInkHex"])?:(dark?UIColor.whiteColor:UIColor.blackColor);
-    _bar.accentColor=[c extraNumber:@"segmentAccentOn"]>.5?WXGColor([c extraHex:@"segmentAccentHex"]):nil;
-    CGFloat r=0,g=0,b=0,a=0;[bg getRed:&r green:&g blue:&b alpha:&a];
-    _colorSource=[NSString stringWithFormat:@"page %@ #%02X%02X%02X; pill %@",from,(int)round(r*255),(int)round(g*255),(int)round(b*255),
-                  [c extraNumber:@"segmentPillAuto"]>.5?@"page":@"set"];
+    if(c.dockPureGlassMode) {
+        target.pillColor=nil;
+        target.glass.selectionOverridePressedAlpha=-1;
+    }else {
+        UIColor *pill=[c extraNumber:@"segmentPillAuto"]>.5?bg:WXGColor([c extraHex:dark?@"segmentDarkPillHex":@"segmentPillHex"]);
+        CGFloat pr=1,pg=1,pb=1,pa=1;if(![pill getRed:&pr green:&pg blue:&pb alpha:&pa]){pr=pg=pb=dark?.23:1;pa=1;}
+        target.pillColor=[UIColor colorWithRed:pr green:pg blue:pb alpha:pa*WXGClamp([c extraNumber:dark?@"segmentDarkPillOpacity":@"segmentPillOpacity"],0,1)];
+        target.glass.selectionOverridePressedAlpha=pa*WXGClamp([c extraNumber:@"segmentPillPressedOpacity"],0,1);
+    }
+    target.inkColor=WXGColor([c extraHex:dark?@"segmentDarkInkHex":@"segmentInkHex"])?:(dark?UIColor.whiteColor:UIColor.blackColor);
+    target.accentColor=[c extraNumber:@"segmentAccentOn"]>.5?WXGColor([c extraHex:@"segmentAccentHex"]):nil;
+    if(target==_bar) {
+        CGFloat r=0,g=0,b=0,a=0;[bg getRed:&r green:&g blue:&b alpha:&a];
+        _colorSource=[NSString stringWithFormat:@"page %@ #%02X%02X%02X; pill %@",from,(int)round(r*255),(int)round(g*255),(int)round(b*255),
+                      c.dockPureGlassMode?@"dock":([c extraNumber:@"segmentPillAuto"]>.5?@"page":@"set")];
+    }
 }
+- (void)applyColorsFrom:(UIView *)bar {[self applyColorsToBar:_bar from:bar];}
 - (void)updateOnPage:(UIViewController *)page {
     if(!NSThread.isMainThread)return;
     if(![self wanted]){[self restore];return;}
@@ -1822,7 +1913,15 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
     [self mountOver:bar header:header table:table];
 }
 - (void)searchBarLaidOut:(UIView *)view {
-    if(view!=_searchBar || !_bar.superview || ![self wanted])return;
+    if(_adjustingHeader || view!=_searchBar || !_bar.superview || ![self wanted])return;
+    // R20: during pull-down/scroll, UIKit re-invokes layoutSubviews on the
+    // hidden search bar even when its geometry hasn't changed; skip the
+    // 200-view subview scan when cached size & custom dimensions match.
+    CGFloat customKey=WXGHomeSearchCustomKey();
+    if(CGSizeEqualToSize(view.bounds.size,_lastMeasuredBarSize) && fabs(customKey-_lastCustomKey)<.01 &&
+       [_fieldSource isEqualToString:WXGDrawnBoxSource]) {
+        ++_skippedLaidOuts;return;
+    }
     UITableView *table=_table;UIView *header=table.tableHeaderView;
     if(!table || !header || ![view isDescendantOfView:header])return;
     [self mountOver:view header:header table:table];
@@ -1835,10 +1934,6 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
         if(using)return;
         _nativeSearching=NO;
     }
-    // A bar at alpha 0 that is not ours (WeChat's own search transition):
-    // not now, or restoring would give it back invisible. FIX113 O: one the
-    // floating search faded (分组栏 switched on while the list was scrolled)
-    // is given back first, then taken over.
     WXGFloatSlot *floated=nil;
     for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects)if(slot.pinned && slot.bar==bar){floated=slot;break;}
     if(bar!=_hiddenBar && bar.alpha<.01 && !floated){_status=@"搜索栏此刻是透明的（微信在做动画），稍后再取代";return;}
@@ -1846,20 +1941,16 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
     if(CGRectIsNull(field) || field.size.width<80){_status=@"搜索栏里没有找到输入框";return;}
     if(floated)[self unpin:floated];
     _fieldRect=field;_fieldSource=source;
-    // In the header (it scrolls with the list); a header that IS the bar:
-    // in the table, at the bar's place (the bar is faded out).
     UIView *container=header==bar?table:header;
     if(!_bar) {
         _bar=[[WXGSegmentBar alloc] initWithFrame:CGRectZero];
         [_bar addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
-        // FIX113 R: the group chosen before (this run), else the whole list's.
         NSArray *groups=WXGChatGroupList();NSInteger index=-1;
         for(NSUInteger i=0;i<groups.count;i++)if([groups[i][@"id"] isEqual:_selectedGroupID])index=(NSInteger)i;
         if(index<0 || atomic_load(&WXGFilterIndex)==0){NSInteger whole=[self wholeListIndex];if(whole>=0)index=whole;}
         _selected=MAX(0,index);_selectedGroupID=groups[(NSUInteger)_selected][@"id"];
         _bar.titles=[self groupNames];
         _bar.selectedIndex=_selected;
-        // No group shows the whole list: the one shown is applied once the bar is up.
         NSDictionary *chosen=groups[(NSUInteger)_selected];
         if([chosen[@"rule"] integerValue]!=0 && atomic_load(&WXGFilterIndex)==0) {
             __weak WXGChatSegments *weakSelf=self;
@@ -1867,15 +1958,21 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
         }
     }
     _bar.titles=[self groupNames];
-    // FIX114 E (user: “at the native search box's size and place: stable”):
-    // exactly WeChat's field (FIX113 P / Q's width, extra height and gap to
-    // the title row are gone).
-    _naturalFrame=CGRectInset([bar convertRect:field toView:container],-WXGCanvasPaddingX,-WXGCanvasPaddingY);
+    if(_resizedHeader!=header){_resizedHeader=header;_nativeHeaderHeight=header.frame.size.height;}
+    CGFloat nativeH=_nativeHeaderHeight>10?_nativeHeaderHeight:header.frame.size.height;
+    CGRect naturalInContainer=[bar convertRect:field toView:container];
+    CGFloat neededH=nativeH;
+    CGRect targetField=WXGApplyHomeSearchGeometry(naturalInContainer,container.bounds.size.width,nativeH,&neededH);
+    if(WXGConfig.shared.homeSearchTopGap>=0)neededH=MAX(neededH,CGRectGetMaxY(targetField)+MAX(4,nativeH-CGRectGetMaxY(naturalInContainer))+MAX(0,_gapDelta));
+    [self applyHeaderHeight:neededH onHeader:header table:table];
+    _naturalFrame=CGRectInset(targetField,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
+    _lastMeasuredBarSize=bar.bounds.size;_lastCustomKey=WXGHomeSearchCustomKey();
     CGRect frame=[self listFrame];
-    if(container!=_container)_segmentFloating=NO;   // a new list: in it first
-    if(!_segmentFloating)[UIView performWithoutAnimation:^{   // floating: hostTick places it
+    if(container!=_container)_segmentFloating=NO;
+    if(!_segmentFloating)[UIView performWithoutAnimation:^{
         if(self->_bar.superview!=container){[container addSubview:self->_bar];++self->_mounts;}
         else if(container.subviews.lastObject!=self->_bar)[container bringSubviewToFront:self->_bar];
+        if(!CGAffineTransformIsIdentity(self->_bar.transform))self->_bar.transform=CGAffineTransformIdentity;
         if(!CGRectEqualToRect(self->_bar.frame,frame)){self->_bar.frame=frame;++self->_moves;}
     }];
     _container=container;
@@ -1885,28 +1982,29 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
     if(!_states)_states=[WXGStateBag new];
     [_states hide:bar];_hiddenBar=bar;
     [self applyColorsFrom:bar];
-    WXGInstallFilterHook();   // FIX113 Q: passes through until a group is chosen; it notes which thread WeChat rebuilds on
+    WXGInstallFilterHook();
     WXGFilterWatching=YES;
-    _bar.hidden=NO;_bar.active=YES;   // FIX113 S: not by the window (a layout while a chat was open left it inactive: no taps after coming back)
+    _bar.hidden=NO;_bar.active=YES;
     _status=@"已取代搜索框";
 }
-// Its frame in the list: where WeChat's field is (moved down with the title row, FIX114 C).
 - (CGRect)listFrame {return CGRectOffset(_naturalFrame,0,_gapDelta);}
-// FIX114 C / E: the bar stays where WeChat's field is; only when the title
-// row is moved down (顶部按钮往下移) it moves down with it, so the row never
-// covers it (inside the list's header).
 - (void)updateGapOn:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning {
-    // (review) Another page on top (a chat pushed / popping): kept as it is, or
-    // it jumps while the list's page slides and again when it is back.
     if(leaf!=_page)return;
     CGFloat follow=WXGPreferences.shared.nav?[WXGIntegrationHost.shared titleRowOffsetForPage:leaf]:0;
-    if(!isfinite(follow))return;   // the row not laid out for it yet
+    if(!isfinite(follow))return;
     if(follow<.01){_gapDelta=0;return;}
     UIView *container=_container;UITableView *table=_table;UIView *header=table.tableHeaderView;
-    if(!_bar || !container || leaf!=_page || !overlay.window || !table || !header || transitioning)return;   // kept as it was
+    if(!_bar || !container || leaf!=_page || !overlay.window || !table || !header || transitioning)return;
     if(!(container==table || [container isDescendantOfView:table]))return;
-    // The glass stays inside the header (outside it, it could not be touched
-    // and would lie over the first chat).
+    // When custom top gap is locked, expand header downward as needed so the
+    // title row offset never compresses the bar against the chat list.
+    if(WXGConfig.shared.homeSearchTopGap>=0) {
+        _gapDelta=follow;
+        CGRect material=CGRectInset(_naturalFrame,WXGCanvasPaddingX,WXGCanvasPaddingY);
+        CGFloat needed=MAX(_nativeHeaderHeight,CGRectGetMaxY(material)+_gapDelta+6);
+        [self applyHeaderHeight:needed onHeader:header table:table];
+        return;
+    }
     CGRect material=CGRectInset(_naturalFrame,WXGCanvasPaddingX,WXGCanvasPaddingY);
     CGRect area=container==table?header.frame:container.bounds;
     CGFloat lo=CGRectGetMinY(area)-CGRectGetMinY(material),hi=CGRectGetMaxY(area)-CGRectGetMaxY(material);
@@ -1920,6 +2018,62 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
     stamped[@"since"]=@(round(WXGSecondsSinceLoad()*10)/10);
     _probe=stamped;_probeAt=CACurrentMediaTime();
 }
+// R20: compact All / Unread group switcher replacing Home's MFTitleView.
+- (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect alpha:(CGFloat)alpha englishHint:(BOOL)englishHint {
+    if(!NSThread.isMainThread)return;
+    if(![self titleModeWanted] || !page || !overlay || CGRectIsEmpty(rect) || rect.size.width<40 || rect.size.height<20) {
+        [self hideTitleBar];return;
+    }
+    [self observe];
+    if(page.isViewLoaded && page.view.window) {
+        _page=page;
+        if(!_table || ![_table isDescendantOfView:page.view])_table=[self tableIn:page.view];
+        WXGInstallFilterHook();WXGFilterWatching=YES;
+    }
+    if(!_titleBar) {
+        _titleBar=[[WXGSegmentBar alloc] initWithFrame:CGRectZero];
+        [_titleBar addTarget:self action:@selector(titleSegmentChanged:) forControlEvents:UIControlEventValueChanged];
+    }
+    BOOL en=WXGConfig.shared.homeTitleSegmentsEnglish || englishHint;
+    NSArray<NSString *> *titles=en?@[@"All",@"Unread"]:@[@"全部",@"未读"];
+    if(![_titleBar.titles isEqualToArray:titles])_titleBar.titles=titles;
+    NSInteger liveIdx=atomic_load(&WXGFilterIndex)==1?1:0;
+    if(_titleSelected!=liveIdx){_titleSelected=liveIdx;_titleBar.selectedIndex=liveIdx;}
+    [self applyColorsToBar:_titleBar from:overlay];
+    CGRect target=CGRectInset(rect,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        if(self->_titleBar.superview!=overlay)[overlay addSubview:self->_titleBar];
+        if(!CGRectEqualToRect(self->_titleBar.frame,target))self->_titleBar.frame=target;
+        self->_titleBar.alpha=alpha;
+        self->_titleBar.hidden=alpha<.01;
+        [CATransaction commit];
+    }];
+    _titleBar.active=alpha>=.01 && overlay.window!=nil;
+}
+- (void)titleSegmentChanged:(WXGSegmentBar *)bar {
+    NSInteger idx=(NSInteger)WXGClamp(bar.selectedIndex,0,1);
+    _titleSelected=idx;++_switches;
+    NSInteger rule=idx==1?1:0;
+    NSString *name=idx==1?@"未读":@"全部";
+    BOOL ok=[self applyRule:rule members:nil name:name];
+    if(!_switchLog)_switchLog=[NSMutableArray array];
+    if(_switchLog.count>=20)[_switchLog removeObjectAtIndex:0];
+    [_switchLog addObject:[NSString stringWithFormat:@"%.1f s title #%ld rule %ld %@",WXGSecondsSinceLoad(),(long)idx,(long)rule,ok?@"ok":_filterStatus?:@"?"]];
+    if(!ok) {
+        _titleSelected=0;[bar returnToIndex:0];
+    }else if(_bar) {
+        NSArray<NSDictionary *> *groups=WXGChatGroupList();
+        for(NSUInteger i=0;i<groups.count;i++)if([groups[i][@"rule"] integerValue]==rule) {
+            _selected=(NSInteger)i;_selectedGroupID=groups[i][@"id"];[_bar returnToIndex:(NSInteger)i];break;
+        }
+    }
+}
+- (void)hideTitleBar {
+    if(!_titleBar)return;
+    _titleBar.active=NO;_titleBar.hidden=YES;
+    [_titleBar removeFromSuperview];
+}
 - (void)segmentChanged:(WXGSegmentBar *)bar {
     NSArray<NSDictionary *> *groups=WXGChatGroupList();
     NSInteger previous=_selected;
@@ -1930,8 +2084,10 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
     if(_switchLog.count>=20)[_switchLog removeObjectAtIndex:0];
     [_switchLog addObject:[NSString stringWithFormat:@"%.1f s #%ld rule %@ %@",WXGSecondsSinceLoad(),(long)_selected,group[@"rule"],ok?@"ok":_filterStatus?:@"?"]];
     if(_switches<=3 || !ok)WXGLog(@"聊天分组：切到第 %ld 组，%@",(long)_selected+1,_filterStatus?:@"");
-    if(ok)_selectedGroupID=group[@"id"];
-    else {   // back to the group that shows WeChat's whole list (none: the bar stays, the list is whole), said in the diagnostics
+    if(ok) {
+        _selectedGroupID=group[@"id"];
+        if(_titleBar){NSInteger ti=[group[@"rule"] integerValue]==1?1:0;_titleSelected=ti;[_titleBar returnToIndex:ti];}
+    }else {   // back to the group that shows WeChat's whole list (none: the bar stays, the list is whole), said in the diagnostics
         NSInteger whole=[self wholeListIndex];
         if(whole>=0){_selected=whole;_selectedGroupID=groups[(NSUInteger)whole][@"id"];[bar returnToIndex:whole];}
         else {_selected=previous;_selectedGroupID=nil;[bar returnToIndex:previous];}
@@ -2118,36 +2274,65 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
 - (void)placeSegmentIn:(UIView *)host {
     WXGSegmentBar *bar=_bar;UIView *container=_container;UITableView *table=_table;
     if(!bar)return;
-    if(!container) {   // its list went away while it floated: not left over the page (mounted again on the next refresh)
-        if(_segmentFloating){[bar removeFromSuperview];_segmentFloating=NO;++_floatMoves;}
+    CFTimeInterval t0=CACurrentMediaTime();
+    if(!container) {
+        if(_segmentFloating){bar.transform=CGAffineTransformIdentity;[bar removeFromSuperview];_segmentFloating=NO;_hasLastFloatY=NO;_floatBaseSize=CGSizeZero;++_floatMoves;}
         return;
     }
-    // A header WeChat replaced (the old one no longer in the list): back into it, out of sight, until mounted again.
     BOOL live=table && (container==table || [container isDescendantOfView:table]);
     CGRect inList=[self listFrame];
     if(!host || !live || !table.tableHeaderView || table.superview!=host) {
-        if(_segmentFloating || bar.superview!=container || !CGRectEqualToRect(bar.frame,inList)) {
-            [UIView performWithoutAnimation:^{[container addSubview:bar];bar.frame=inList;}];
+        if(_segmentFloating || bar.superview!=container || !CGAffineTransformIsIdentity(bar.transform) || !CGRectEqualToRect(bar.frame,inList)) {
+            [UIView performWithoutAnimation:^{
+                [CATransaction begin];[CATransaction setDisableActions:YES];
+                if(bar.superview!=container)[container addSubview:bar];
+                bar.transform=CGAffineTransformIdentity;
+                bar.frame=inList;
+                [CATransaction commit];
+            }];
             if(_segmentFloating)++_floatMoves;
-            _segmentFloating=NO;
+            _segmentFloating=NO;_hasLastFloatY=NO;_floatBaseSize=CGSizeZero;++_frameWrites;
         }
         return;
     }
     CGRect natural=[container convertRect:inList toView:host];
     CGFloat fieldTop=CGRectGetMinY(natural)+WXGCanvasPaddingY;
-    CGFloat pinned=WXGFloatPinnedTop(table,table.tableHeaderView,fieldTop,host);
+    CGFloat topGap=WXGConfig.shared.homeSearchTopGap;
+    CGFloat pinned;
+    if(topGap>=0) {
+        CGRect tableRect=[table convertRect:table.bounds toView:host];
+        pinned=CGRectGetMinY(tableRect)+table.adjustedContentInset.top+topGap+_gapDelta;
+    }else pinned=WXGFloatPinnedTop(table,table.tableHeaderView,fieldTop,host);
     CGRect frame=natural;
-    // FIX114 E: where WeChat's field is (pulled down too: FIX114 A's hold at
-    // the title row's distance is gone); scrolled up, it stops under the row.
     if(fieldTop<pinned)frame.origin.y+=pinned-fieldTop;
-    if(bar.superview!=host)++_floatMoves;
+    BOOL movedParent=bar.superview!=host;
+    if(movedParent)++_floatMoves;
     WXGRaiseAboveList(bar,host,table);
-    [UIView performWithoutAnimation:^{
-        [CATransaction begin];[CATransaction setDisableActions:YES];
-        if(!CGRectEqualToRect(bar.frame,frame))bar.frame=frame;
-        [CATransaction commit];
-    }];
+    // R20: transform-only vertical tracking eliminates per-frame UIKit layout
+    // churn on NewMainFrameViewController.view during pull-down / scroll-up.
+    BOOL baseMatches=!movedParent && _segmentFloating &&
+        CGSizeEqualToSize(_floatBaseSize,frame.size) && fabs(_floatBaseOrigin.x-frame.origin.x)<.5;
+    if(baseMatches) {
+        if(!_hasLastFloatY || fabs(_lastFloatY-frame.origin.y)>=.05) {
+            CGFloat dy=frame.origin.y-_floatBaseOrigin.y;
+            [CATransaction begin];[CATransaction setDisableActions:YES];
+            bar.transform=CGAffineTransformMakeTranslation(0,dy);
+            [CATransaction commit];
+            _lastFloatY=frame.origin.y;_hasLastFloatY=YES;++_transformMoves;
+        }
+    }else {
+        [UIView performWithoutAnimation:^{
+            [CATransaction begin];[CATransaction setDisableActions:YES];
+            bar.transform=CGAffineTransformIdentity;
+            bar.bounds=CGRectMake(0,0,frame.size.width,frame.size.height);
+            bar.center=CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame));
+            [CATransaction commit];
+        }];
+        _floatBaseOrigin=frame.origin;_floatBaseSize=frame.size;_lastFloatY=frame.origin.y;_hasLastFloatY=YES;++_frameWrites;
+    }
     _segmentFloating=YES;
+    double ms=(CACurrentMediaTime()-t0)*1000.;
+    if(ms>_maxPlaceMS)_maxPlaceMS=ms;
 }
 - (WXGFloatSlot *)floatSlotFor:(UIViewController *)page {
     if(!_floats)_floats=[NSMapTable weakToStrongObjectsMapTable];
@@ -2199,29 +2384,21 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
         slot.table=table;slot.bar=bar;slot.measured=0;
         if(!bar)slot.field=CGRectNull;
     }
-    // FIX114 F: WeChat's drawn box. Until it is found (WeChat lays out its
-    // stack views after the bar): every frame for a second, then twice a
-    // second, 80 more times at most; found: again each second (0.5 s unpinned).
     if(bar) {
         BOOL due=slot.measured==0 || (slot.exact?now-slot.measured>(slot.pinned?1:.5):(now-slot.since<1 || (now-slot.measured>.5 && slot.misses<80)));
         if(due)[self measureSlot:slot now:now];
     }
     UIView *header=table.tableHeaderView,*host=table.superview;
     if(!table || !bar || !header || !host.window || ![bar isDescendantOfView:header] || CGRectIsNull(slot.field) || _nativeSearching){[self unpin:slot];return;}
-    // The header folded away (隐藏聊天列表顶部搜索栏) or the bar hidden: nothing to keep in view.
     if(header.bounds.size.height<CGRectGetMaxY([bar convertRect:slot.field toView:header])-.5){[self unpin:slot];return;}
     for(UIView *v=bar;v && v!=table;v=v.superview)if(v.hidden){[self unpin:slot];return;}
-    // WeChat's own search using its bar (or fading it for that): left alone.
     if([self nativeSearchActive:bar page:page] || (bar.alpha<.01 && !slot.pinned)){[self unpin:slot];return;}
-    if(!slot.pinned && slot.measured!=now)[self measureSlot:slot now:now];   // FIX114 F: as it is now (after WeChat's search: its full width again)
+    if(!slot.pinned && slot.measured!=now)[self measureSlot:slot now:now];
     if(!slot.clone) {
         slot.clone=[[WXGFloatingSearch alloc] initWithFrame:CGRectZero];
         [slot.clone addTarget:self action:@selector(floatingTapped:) forControlEvents:UIControlEventTouchUpInside];
     }
     WXGFloatingSearch *clone=slot.clone;
-    // FIX114 F: WeChat's icon and text: each frame in the first second, then
-    // twice a second, 90 more tries at most; light / dark switched: now and once
-    // more half a second later (WeChat may set fixed colours per theme).
     UIUserInterfaceStyle style=bar.traitCollection.userInterfaceStyle;
     if(slot.lookCopied && style!=slot.lookStyle){slot.lookCopied=NO;slot.lookTries=0;slot.lookTried=0;slot.lookAgainAt=now+.5;}
     if(slot.lookAgainAt && now>=slot.lookAgainAt){slot.lookAgainAt=0;slot.lookCopied=NO;slot.lookTries=0;slot.lookTried=0;}
@@ -2229,16 +2406,23 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
         slot.lookTried=now;if(now-slot.since>=1)++slot.lookTries;
         if((slot.lookCopied=[clone copyLookOf:bar])){slot.lookStyle=style;slot.lookTries=0;}
     }
-    // First shown once both are WeChat's, so it never changes in front of the
-    // user; WeChat's own bar (its glass the same box) until then, a second at most.
     if(!slot.pinned && !(slot.exact && slot.lookCopied) && now-slot.since<1)return;
-    CGRect natural=[bar convertRect:slot.field toView:host];
-    CGFloat pinned=WXGFloatPinnedTop(table,header,CGRectGetMinY(natural),host);
+    static Class homeClass;static dispatch_once_t homeOnce;dispatch_once(&homeOnce,^{homeClass=NSClassFromString(@"NewMainFrameViewController");});
+    CGRect fieldInBar=slot.field;
+    if(homeClass && [page isKindOfClass:homeClass]) {
+        CGFloat needed=header.frame.size.height;
+        CGRect inHeader=[bar convertRect:slot.field toView:header];
+        CGRect custom=WXGApplyHomeSearchGeometry(inHeader,header.bounds.size.width,header.frame.size.height,&needed);
+        fieldInBar=[header convertRect:custom toView:bar];
+    }
+    CGRect natural=[bar convertRect:fieldInBar toView:host];
+    CGFloat topGap=(homeClass && [page isKindOfClass:homeClass])?WXGConfig.shared.homeSearchTopGap:-1;
+    CGFloat pinned;
+    if(topGap>=0) {
+        CGRect tableRect=[table convertRect:table.bounds toView:host];
+        pinned=CGRectGetMinY(tableRect)+table.adjustedContentInset.top+topGap;
+    }else pinned=WXGFloatPinnedTop(table,header,CGRectGetMinY(natural),host);
     CGRect frame=natural;if(CGRectGetMinY(natural)<pinned)frame.origin.y=pinned;
-    // FIX114 M (user: tapping the home page's search box stuck with a field
-    // up that took no typing): at the bar's own place a tap is WeChat's own
-    // (its bar takes it: its search opens as without the plugin); held below
-    // the title row (the bar scrolled away) the capsule takes it.
     clone.passThrough=CGRectGetMinY(natural)>=pinned-.5;
     WXGRaiseAboveList(clone,host,table);
     [UIView performWithoutAnimation:^{
@@ -2249,7 +2433,7 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
     }];
     if(!slot.pinned){slot.pinned=YES;++slot.pins;}
     if(!slot.states)slot.states=[WXGStateBag new];
-    [slot.states conceal:bar];   // FIX114 M: hidden by a mask (a faded view takes no touches)
+    [slot.states conceal:bar];
     [clone.surface tick:time];
 }
 // The floating capsule tapped (held below the title row: WeChat's bar has
@@ -2317,21 +2501,14 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
         }
     }
     if(!floatOn){if(_floats.count)[self restoreFloats];return;}
-    // FIX114 F (review): capsules floatNativeOn does not see this tick (their
-    // page sliding, or on screen under / beside a pushed one): still over
-    // WeChat's bar in the same list and that bar kept faded (WeChat may give
-    // it its alpha back), else WeChat's bar back. A page gone: its capsule too.
     for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects) {
         if(!slot.page){[self unpin:slot];[slot.clone removeFromSuperview];slot.clone=nil;continue;}
         if(!slot.pinned || !slot.clone.window || (slot.page==leaf && !transitioning))continue;
         UIView *bar=slot.bar;UITableView *table=slot.table;
         if(!bar || !table || ![bar isDescendantOfView:table.tableHeaderView] || slot.clone.superview!=table.superview || [self nativeSearchActive:bar page:slot.page]){[self unpin:slot];continue;}
-        if(slot.states)[slot.states conceal:bar];   // FIX114 M (review): masked, not faded (it must still take touches back on its page)
+        if(slot.states)[slot.states conceal:bar];
     }
-    if(transitioning)return;   // each page keeps what it shows while it slides
-    // FIX114 F: a page pushed over this one in its navigation stack (a chat):
-    // the capsule stays (the page carries it off screen and back), so coming
-    // back shows no swap from WeChat's bar to it. Anything else: WeChat's bar.
+    if(transitioning)return;
     for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects)if(slot.page!=leaf && !WXGPushedOver(slot.page,leaf))[self unpin:slot];
     if(!leaf.isViewLoaded || !leaf.view.window)return;
     static Class home,contacts;static dispatch_once_t once;
@@ -2339,45 +2516,48 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
     BOOL native=(contacts && [leaf isKindOfClass:contacts]) || (home && [leaf isKindOfClass:home] && !(_bar && _page==leaf));
     if(native)[self floatNativeOn:leaf time:time];
 }
-// FIX113 O: a page left native (web, Flutter, these settings): the floating
-// capsules go and WeChat's bars come back; the segment bar back in its list.
 - (void)suspendFloating {
     for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects)[self unpin:slot];
     if(_segmentFloating)[self placeSegmentIn:nil];
 }
-- (void)restoreAll {[self restoreFloats];[self restore];}
-// The segment bar only: the floating capsules of WeChat's own bars are
-// hostTick's (分组栏 off with 悬浮 on keeps them).
+- (void)restoreAll {[self restoreFloats];[self hideTitleBar];[self restore];}
 - (void)restore {
-    if(atomic_load(&WXGFilterIndex)>0)[self applyRule:0 members:nil name:nil];   // FIX113 Q: WeChat's whole list back
-    _selected=0;_selectedGroupID=nil;WXGFilterWatching=NO;WXGFilterSnapshot=nil;
+    if(![self titleModeWanted] && atomic_load(&WXGFilterIndex)>0)[self applyRule:0 members:nil name:nil];
+    _selected=0;_selectedGroupID=nil;
+    if(![self titleModeWanted]){WXGFilterWatching=NO;WXGFilterSnapshot=nil;}
+    [self restoreResizedHeader];
+    _hasLastFloatY=NO;_floatBaseSize=CGSizeZero;_lastMeasuredBarSize=CGSizeZero;
     if(!_bar && !_states)return;
     _segmentFloating=NO;
+    _bar.transform=CGAffineTransformIdentity;
     [_bar removeFromSuperview];_bar.active=NO;_bar=nil;
     [_states restore];_states=nil;_searchBar=nil;_container=nil;_nativeSearching=NO;_hiddenBar=nil;
     ++_restores;_status=@"已恢复微信的搜索栏";
 }
-// The chat list is read only here: the diagnostics (shown or exported) and
-// the settings opening over the page; never while WeChat is used.
 - (NSDictionary *)evidence {
     UITableView *table=_table;
-    if(table && [self wanted] && (!_probe || CACurrentMediaTime()-_probeAt>5))[self takeProbe];   // FIX113 O: off screen too (settings opened from another tab)
+    if(table && [self wanted] && (!_probe || CACurrentMediaTime()-_probeAt>5))[self takeProbe];
     NSMutableArray *floats=[NSMutableArray array];
     for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects)
         [floats addObject:@{@"page":slot.page?NSStringFromClass(slot.page.class):@"",@"bar":slot.bar?NSStringFromClass(slot.bar.class):@"",
                             @"field":NSStringFromCGRect(slot.field),@"pinned":@(slot.pinned),@"pins":@(slot.pins),@"taps":@(slot.taps),
                             @"clone":slot.clone?NSStringFromCGRect(slot.clone.frame):@"",@"passThrough":@(slot.clone.passThrough),@"directSearches":@(_directSearches)}];
-    UIView *bar=_searchBar;
-    return @{@"switch":@([WXGConfig.shared extraNumber:@"chatSegments"]>.5),@"wanted":@([self wanted]),@"status":_status?:@"",
+    UIView *bar=_searchBar;WXGConfig *cfg=WXGConfig.shared;
+    return @{@"switch":@([cfg extraNumber:@"chatSegments"]>.5),@"wanted":@([self wanted]),@"status":_status?:@"",
              @"mounted":@(_bar.superview!=nil),@"container":_container?NSStringFromClass(_container.class):@"",
              @"searchBar":bar?[NSString stringWithFormat:@"%@ %@ alpha %.2f",NSStringFromClass(bar.class),NSStringFromCGRect(bar.frame),bar.alpha]:@"",
              @"field":NSStringFromCGRect(_fieldRect),@"fieldSource":_fieldSource?:@"",@"colors":_colorSource?:@"",
              @"counts":@{@"mounts":@(_mounts),@"moves":@(_moves),@"switches":@(_switches),@"restores":@(_restores),@"nativeSearches":@(_nativeSearches)},
+             @"stutter":@{@"transformMoves":@(_transformMoves),@"frameWrites":@(_frameWrites),@"skippedLaidOuts":@(_skippedLaidOuts),@"maxPlaceMS":@(round(_maxPlaceMS*100)/100)},
+             @"customSearch":@{@"widthPct":@(cfg.homeSearchWidthPct),@"height":@(cfg.homeSearchHeight),@"topGap":@(cfg.homeSearchTopGap),
+                               @"nativeHeaderH":@(_nativeHeaderHeight),@"resizedHeaderH":@(_resizedHeader?_resizedHeader.frame.size.height:0)},
+             @"titleBar":@{@"wanted":@([self titleModeWanted]),@"mounted":@(_titleBar.superview!=nil),@"selected":@(_titleSelected),
+                           @"frame":_titleBar?NSStringFromCGRect(_titleBar.frame):@"",@"bar":_titleBar?[_titleBar evidence]:@{}},
              @"selected":@(_selected),@"groups":[self groupsEvidence],@"switchLog":_switchLog?:@[],
              @"bar":_bar?[_bar evidence]:@{},@"chatList":_probe?:@{},
-             @"float":@{@"switch":@([WXGConfig.shared extraNumber:@"searchFloat"]>.5),@"segmentFloating":@(_segmentFloating),@"moves":@(_floatMoves),@"native":floats},
+             @"float":@{@"switch":@([cfg extraNumber:@"searchFloat"]>.5),@"segmentFloating":@(_segmentFloating),@"moves":@(_floatMoves),@"native":floats},
              @"gap":@{@"delta":@(_gapDelta)},@"returnTrace":_returnTrace?:@[],
-             @"searchBarRehides":@(_rehides),@"commitPlacements":@(_commitPlacements),   // FIX114 B
+             @"searchBarRehides":@(_rehides),@"commitPlacements":@(_commitPlacements),
              @"sessionFilter":[self filterEvidence]};
 }
 // FIX113 Q: whether the grouping can work here and what it did (counts only).

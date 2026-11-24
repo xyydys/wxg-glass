@@ -19,6 +19,9 @@ static NSDictionary *WXGSlider(NSString *title,NSString *key,NSString *dock,CGFl
 static NSDictionary *WXGSwitch(NSString *title,NSString *key,NSString *dock) {return WXGRow(@"switch",title,key,dock);}
 // FIX85: a row with a third key for the 气泡 range.
 static NSDictionary *WXGBubbleKey(NSDictionary *row,NSString *bubble) {NSMutableDictionary *m=[row mutableCopy];m[@"bubble"]=bubble;return m;}
+static NSDictionary *WXGSwitch3(NSString *title,NSString *key,NSString *dock,NSString *bubble) {
+    return WXGBubbleKey(WXGSwitch(title,key,dock),bubble);
+}
 static NSDictionary *WXGSlider3(NSString *title,NSString *key,NSString *dock,NSString *bubble,CGFloat lo,CGFloat hi,NSString *format) {
     return WXGBubbleKey(WXGSlider(title,key,dock,lo,hi,format),bubble);
 }
@@ -53,10 +56,8 @@ static NSDictionary *WXGGroup(NSString *title,NSString *scope,NSArray *rows,NSSt
 static NSDictionary *WXGStyled(NSDictionary *group,NSArray<NSNumber *> *styles) {NSMutableDictionary *m=[group mutableCopy];m[@"styles"]=styles;return m;}
 // FIX113 O: a group not shown in these ranges.
 static NSDictionary *WXGNotIn(NSDictionary *group,NSArray<NSString *> *scopes) {NSMutableDictionary *m=[group mutableCopy];m[@"notIn"]=scopes;return m;}
-/* FIX113 O: a row's key in a range. 分组 and 设置页 rows are derived from the
-   bubbles' (or the dock's) key of the row: bubbleRimOpacity -> segmentRimOpacity,
-   dockMaterialHex -> cardMaterialHex; @"" when that range has no such key
-   (the row is not shown there); a row with one key is shared. */
+/* FIX113 O / R20: a row's key in a range. 分组、设置页、视频号 rows are derived from
+   the bubbles' (or dock's) key: bubbleGlassVeil -> finderGlassVeil, bubbleRimStyle -> finderGlassRimStyle. */
 static NSString *WXGRowKeyForScope(NSDictionary *spec,NSString *scope) {
     if([scope isEqual:@"dock"])return spec[@"dock"]?:spec[@"key"];
     if([scope isEqual:@"bubble"])return spec[@"bubble"]?:spec[@"key"];
@@ -65,65 +66,52 @@ static NSString *WXGRowKeyForScope(NSDictionary *spec,NSString *scope) {
         NSString *from=spec[@"bubble"],*prefix=@"bubble";
         if(!from){from=spec[@"dock"];prefix=@"dock";}
         if([from hasPrefix:prefix]) {
-            // FIX113 X: the 透镜 range's keys are lensGlass… (lensRim… were the lens' plain line);
-            // FIX114 C: 分组透镜's segmentLensGlass….
-            // FIX115 S: 视频号's finderGlass… (its border only).
-            NSString *stem=[scope isEqual:@"lens"]?@"lensGlass":[scope isEqual:@"segmentLens"]?@"segmentLensGlass":[scope isEqual:@"finder"]?@"finderGlass":scope;
-            NSString *derived=[stem stringByAppendingString:[from substringFromIndex:prefix.length]];
+            NSString *suffix=[from substringFromIndex:prefix.length];
+            NSString *stem=scope;
+            if([scope isEqual:@"lens"])stem=@"lensGlass";
+            else if([scope isEqual:@"segmentLens"])stem=@"segmentLensGlass";
+            else if([scope isEqual:@"finder"])stem=([suffix hasPrefix:@"Glass"] || [suffix hasPrefix:@"DarkGlass"])?@"finder":@"finderGlass";
+            NSString *derived=[stem stringByAppendingString:suffix];
             return [WXGConfig.shared knowsKey:derived]?derived:@"";
         }
     }
     return spec[@"key"];
 }
-// FIX115 E: 复制到 (a range's settings handed to another, whose own values
-// become these), a place filled for the range shown when the page is built.
-// FIX130: 共用 (a range using another's settings while it stays set) is gone
-// with the four glass pages: one page, every range its own values.
-#define WXG_COPY_NOTE @"复制到：把这个范围现在的设置一次性复制给另一个范围——那个范围自己的值直接被替换成这里的（不能撤销），之后两边各调各的。只复制两边都有的项：比如透镜的边框范围只有边框，视频号也只有边框。"
+#define WXG_COPY_NOTE @"复制到：把这个范围现在的设置一次性复制给另一个范围——那个范围自己的值直接被替换成这里的（不能撤销），之后两边各调各的。只复制两边都有的项（例如透镜边框范围只复制边框）。"
 static NSDictionary *WXGCopyGroup(void) {
     NSMutableDictionary *c=[WXGGroup(@"复制到",nil,@[],WXG_COPY_NOTE) mutableCopy];
     c[@"copySlot"]=@YES;
     return c;
 }
-// A choice whose stored values are not 0, 1, 2 ...: the value of each choice.
 static NSDictionary *WXGChoiceValues(NSDictionary *row,NSArray<NSNumber *> *values) {NSMutableDictionary *m=[row mutableCopy];m[@"values"]=values;return m;}
-// Both settings pages edit the same press-optics values in points.
-static NSDictionary *WXGDockKyantGroup(NSString *scope) {
-    return WXGGroup(@"按压透镜 · Kyant 折射",scope,@[
-        WXGSwitch(@"透镜使用参考项目折射与色散",@"dockKyantOptics",nil),
-        WXGSlider(@"透镜折射带宽",@"dockKyantLensRefractionHeight",nil,0,40,@"%.1f pt"),
-        WXGSlider(@"透镜折射深度",@"dockKyantLensRefractionAmount",nil,0,50,@"%.1f pt"),
-        WXGSlider(@"透镜色散",@"dockKyantDispersion",nil,0,5,@"%.2f")],
-        @"用于主连续底栏的系统实时透镜。带宽控制折射沿边缘向内延伸的距离，深度控制背景取样的偏移量。开启通用页的 RGB 色散可查看分色。");
-}
 static NSDictionary *WXGModuleSpec(NSString *module) {
-    if([module isEqual:@"pureDock"])return @{@"title":@"底栏纯玻璃测试",@"scoped":@NO,@"groups":@[
-        WXGGroup(@"独立测试模式",nil,@[WXGSwitch(@"启用底栏独立测试模式",@"dockPureGlassMode",nil)],
-                 @"开启后强制屏蔽全部旧版底栏、旧 Kyant 页、离散底栏、简化透镜、旧透镜折射/色散/滤色等旧开关干扰；底栏本体直接复用「效果调整 → 其余玻璃」整套玻璃参数与边框，透镜折射与色散由本页的 R8 模型独立控制。关闭此开关即可恢复旧版逻辑。"),
+    if([module isEqual:@"pureDock"])return @{@"title":@"底栏透镜与形变",@"scoped":@NO,@"groups":@[
+        WXGGroup(@"R8 极光透镜引擎",nil,@[WXGSwitch(@"启用 R8 极光透镜与形变",@"dockPureGlassMode",nil)],
+                 @"底栏与首页分组栏（含标题分组栏）统一使用本页的 R8 连续极光透镜与自适应形变，并直接兼容离散底栏、Telegram 图标、底栏搜索与 iOS 27 边框。"),
         WXGGroup(@"透镜折射与色散 · R8 极光连续模型",nil,@[
             WXGSlider(@"透镜折射带宽",@"dockPureR8Band",nil,0,40,@"%.1f pt"),
             WXGSlider(@"透镜折射深度",@"dockPureR8Depth",nil,0,50,@"%.1f pt"),
             WXGSlider(@"透镜连续极光色散",@"dockPureR8Dispersion",nil,0,5,@"%.2f")],
-            @"保留 R8 颈部折射骨架，并修复四角象限符号反转导致的右上/左下收窄近乎断开问题；色散升级为无折返尖点的单表面连续极光模型（背景 7 层高斯钟形混色 + 图标 15 层连续极光光谱，彻底消除一圈一圈的阶梯环，严格限制在折射带内不污染内底栏直边）。默认：带宽 18.0 pt、深度 26.0 pt、色散 2.40。"),
+            @"默认：带宽 18.0 pt、深度 26.0 pt、色散 2.40。首页分组栏与标题分组栏会自动按自身高度相对底栏等比缩放。"),
         WXGGroup(@"透镜内缩窄底栏与图标放大",nil,@[
             WXGSlider(@"透镜内底栏高度（上下边框间距）",@"dockPureInnerBarHeight",nil,24,80,@"%.1f pt"),
             WXGSwitch(@"内底栏纯平无颈部斜坡（对比开关）",@"dockPureInnerFlat",nil),
             WXGSlider(@"透镜内图标与标题放大",@"dockPureIconZoom",nil,1,1.4,@"%.2f 倍")],
-            @"内底栏高度直接控制透镜内部底栏的上下边框间距（默认 51.0 pt ≈ R8 默认 0.18 缩窄），快速滑动形变时高度严格锁定；已对齐苹果连续圆角（kCACornerCurveContinuous）与底栏左右两端同心圆弧，解决上下端被挤扁及两端缺失连续圆角的问题。"),
+            @"内底栏高度直接控制透镜内部底栏的上下边框间距（默认 51.0 pt），快速滑动形变时高度严格锁定并保持连续圆角。"),
         WXGGroup(@"按压尺寸与底栏本体",nil,@[
             WXGSlider(@"按压时底栏放大",@"dockPureBarGrowth",nil,1,1.08,@"%.3f 倍"),
             WXGSlider(@"按压时透镜高度放大",@"dockPureLensGrowth",nil,1,1.4,@"%.2f 倍"),
             WXGSlider(@"抬起时透镜加宽",@"dockPureLensLiftWidth",nil,0,40,@"%.1f pt"),
             WXGSlider(@"透镜超出底栏两端",@"dockPureEndWrap",nil,0,14,@"%.1f pt"),
             WXGSwitch(@"按压时底栏发光（可选）",@"dockPureTouchGlow",nil)],
-            @"底栏本体材质、模糊、折射、阴影和边框直接取自「效果调整 → 其余玻璃」。按压发光默认关闭，方便专注对比透镜折射。"),
+            @"底栏、分组栏、视频号及各类玻璃的自定义色彩材质、阴影与 iOS 27 边框均可在「效果调整」里独立微调。"),
         WXGGroup(@"iOS 26 胶囊切换透镜时机",nil,@[
             WXGSlider(@"切换弹簧响应时间",@"dockPureMoveResponse",nil,.2,.8,@"%.2f s"),
             WXGSlider(@"切换弹簧阻尼比",@"dockPureMoveDamping",nil,.5,1.2,@"%.2f"),
             WXGSlider(@"胶囊变透镜时机（滑动比例）",@"dockPureTapLiftRatio",nil,.15,.9,@"%.2f"),
             WXGSlider(@"透镜回落为胶囊耗时",@"dockPureTapDropTime",nil,.08,.6,@"%.2f s"),
             WXGSlider(@"松手后保持透镜停留",@"dockPureLensHang",nil,0,.5,@"%.2f s")],
-            @"保留高系统实测的胶囊→透镜切换时机与停留节奏。透镜尚未落下时连续点切其他标签会自动维持玻璃透镜状态，不会中途回弹成胶囊。"),
+            @"保留实测的胶囊→透镜切换时机与停留节奏。透镜尚未落下时连续点切其他标签会自动维持玻璃透镜状态。"),
         WXGGroup(@"运动时透镜形变（幅度自适应时长）",nil,@[
             WXGSwitch(@"开启运动形变",@"dockPureFlexOn",nil),
             WXGSlider(@"落下后最扁高度（改大自动提速）",@"dockPureFlexRestFloor",nil,.5,1,@"%.2f"),
@@ -133,35 +121,33 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
             WXGSlider(@"基础回弹频率",@"dockPureFlexSlow",nil,3,20,@"%.1f rad/s"),
             WXGSlider(@"回弹阻尼比",@"dockPureFlexDamping",nil,.15,1.2,@"%.2f"),
             WXGSwitch(@"压扁与拉高对称",@"dockPureFlexSymmetric",nil)],
-            @"修改最扁高度（如 0.82 → 0.90）时按有效形变路程自动缩短回弹耗时，并用平滑软膝替代硬截断，确保任意压扁参数下都顺滑连贯。"),
+            @"修改最扁高度时按有效形变路程自动缩短回弹耗时，并用平滑软膝替代硬截断。"),
         WXGGroup(@"恢复",nil,@[WXGAction(@"恢复本页默认",@"resetPage",YES)],
-                 @"仅将本页独立测试模式的所有参数恢复为 R13 默认值，不影响其他页面。")
+                 @"仅恢复本页透镜与形变参数为默认值，不影响其他页面。")
     ]};
     if([module isEqual:@"effect"])return @{@"title":@"效果调整",@"scoped":@YES,@"scopes":@[@"other",@"dock",@"lens",@"segment",@"segmentLens",@"bubble",@"card",@"finder"],@"groups":@[
-        WXGNotIn(WXGGroup(@"折射",nil,@[WXGSlider3(@"折射带宽（短边的比例）",@"glassBand",@"dockGlassBand",@"bubbleGlassBand",.02,.5,@"%.3f"),
-                 WXGSlider3(@"边缘取样深度（短边的比例）",@"glassDepth",@"dockGlassDepth",@"bubbleGlassDepth",0,1,@"%.3f"),
-                 WXGSlider3(@"带宽上限",@"glassBandMax",@"dockGlassBandMax",@"bubbleGlassBandMax",4,80,@"%.0f pt"),
-                 WXGSlider3(@"最外圈最大压缩（0 = 不限制）",@"glassSqueeze",@"dockGlassSqueeze",@"bubbleGlassSqueeze",0,20,@"%.1f 倍"),
-                 WXGSlider3(@"色散",@"glassDispersion",@"dockGlassDispersion",@"bubbleGlassDispersion",0,3,@"%.2f")],
-                 @"iOS 26 的玻璃折射（在 iOS 26.6 真机上量的，逐点核对过）：只在轮廓往里“折射带宽”这一圈里，按四分之一圆弧往里取内容——最外沿取到“取样深度”那么深，往里平滑减到 0，所以看不出折射带的内边；深度大于带宽时最外一小条会把更里面的东西镜像过来，就是圆润玻璃边的那种反光。系统的数：带宽 = 短边 × 0.25，取样深度 = 短边 × 0.8，大玻璃的带宽到 20 pt 封顶（深度按比例缩）。\n最外圈最大压缩：曲线在轮廓处无限陡，最外不到 1 pt 会把好几 pt 的内容挤成一条极细的圈，看起来是毛边；这里限制最多挤成几倍（默认 3），0 = 不限制（曲线原样）。\n色散：系统的按钮没有（默认 0）；大于 0 时往四个角方向分色。只在同步渲染模式下生效。"),@[@"lens",@"segmentLens",@"finder"]),
-        WXGNotIn(WXGGroup(@"模糊",nil,@[WXGSlider3(@"小玻璃（短边 ≤ 48 pt）",@"glassBlurSmall",@"dockGlassBlurSmall",@"bubbleGlassBlurSmall",0,10,@"%.2f"),
-                 WXGSlider3(@"大玻璃（短边 90 pt）",@"glassBlurLarge",@"dockGlassBlurLarge",@"bubbleGlassBlurLarge",0,20,@"%.2f")],
-                 @"系统的模糊随玻璃大小变：44–48 pt 的小按钮几乎不糊，90 pt 高的大块明显更糊；中间按直线过渡，更大的继续按这条线（最多到大玻璃的 1.5 倍）。整块玻璃都按这个值模糊。"),@[@"lens",@"segmentLens",@"finder"]),
-        WXGNotIn(WXGGroup(@"材质 · 浅色模式",nil,@[WXGSlider3(@"白色遮盖",@"glassVeil",@"dockGlassVeil",@"bubbleGlassVeil",0,1,@"%.3f"),
+        WXGNotIn(WXGGroup(@"自定义色彩材质 · 浅色模式",nil,@[
+                 WXGSwitch3(@"启用自定义色彩材质",@"glassTintOn",@"dockGlassTintOn",@"bubbleGlassTintOn"),
+                 WXGColor3(@"材质颜色",@"glassTintHex",@"dockGlassTintHex",@"bubbleGlassTintHex"),
+                 WXGSlider3(@"色彩材质覆盖比例",@"glassVeil",@"dockGlassVeil",@"bubbleGlassVeil",0,1,@"%.3f"),
                  WXGSlider3(@"背景饱和度",@"glassSaturation",@"dockGlassSaturation",@"bubbleGlassSaturation",0,3,@"%.2f"),
                  WXGSlider3(@"背景亮度",@"glassBrightness",@"dockGlassBrightness",@"bubbleGlassBrightness",-.3,.3,@"%+.2f")],
-                 @"系统的玻璃面 = 背景先调饱和度和亮度，再盖一层纯色。浅色：白色 65%、饱和度 1.34、亮度 −0.03。气泡的颜色在“聊天页”里选，这里的遮盖浓度不作用于气泡的颜色。"),@[@"lens",@"segmentLens",@"finder"]),
-        WXGNotIn(WXGGroup(@"材质 · 深色模式",nil,@[WXGSlider3(@"黑色遮盖",@"darkGlassVeil",@"dockDarkGlassVeil",@"bubbleDarkGlassVeil",0,1,@"%.3f"),
+                 @"所有玻璃（含底栏、分组栏、视频号、气泡、设置页等）均已统一使用已验证的液态折射与模糊。这里可为每个范围单独启用自定义色彩材质并调节覆盖比例；未启用自定义颜色时，按系统默认白/黑面纱覆盖。"),@[@"lens",@"segmentLens"]),
+        WXGNotIn(WXGGroup(@"自定义色彩材质 · 深色模式",nil,@[
+                 WXGColor3(@"材质颜色",@"darkGlassTintHex",@"dockDarkGlassTintHex",@"bubbleDarkGlassTintHex"),
+                 WXGSlider3(@"色彩材质覆盖比例",@"darkGlassVeil",@"dockDarkGlassVeil",@"bubbleDarkGlassVeil",0,1,@"%.3f"),
                  WXGSlider3(@"背景饱和度",@"darkGlassSaturation",@"dockDarkGlassSaturation",@"bubbleDarkGlassSaturation",0,3,@"%.2f"),
                  WXGSlider3(@"背景亮度",@"darkGlassBrightness",@"dockDarkGlassBrightness",@"bubbleDarkGlassBrightness",-.3,.3,@"%+.2f")],
-                 @"深色：黑色 60.5%、饱和度 1.67、亮度 +0.18（直接从系统导出的参数换算）。系统的玻璃还会随底下内容的明暗自动换参数，这里取的是常见底色下的那一套，不会跟着变。"),@[@"lens",@"segmentLens",@"finder"]),
-        WXGNotIn(WXGGroup(@"阴影",nil,@[WXGSlider3(@"浓度（浅色模式）",@"glassShadow",@"dockGlassShadow",@"bubbleGlassShadow",0,.6,@"%.2f"),
+                 @"深色模式下的自定义色彩材质颜色与覆盖比例。视频号范围默认覆盖比例为 0（透明视频背景），可按需调高或着色。"),@[@"lens",@"segmentLens"]),
+        WXGNotIn(WXGGroup(@"阴影",nil,@[
+                 WXGSwitch(@"全局启用玻璃阴影",@"glassShadowOn",nil),
+                 WXGSlider3(@"浓度（浅色模式）",@"glassShadow",@"dockGlassShadow",@"bubbleGlassShadow",0,.6,@"%.2f"),
                  WXGSlider3(@"浓度（深色模式）",@"darkGlassShadow",@"dockDarkGlassShadow",@"bubbleDarkGlassShadow",0,.6,@"%.2f"),
                  WXGSlider3(@"柔和度",@"glassShadowBlur",@"dockGlassShadowBlur",@"bubbleGlassShadowBlur",.5,40,@"%.1f pt"),
                  WXGSlider3(@"向下偏移",@"glassShadowOffset",@"dockGlassShadowOffset",@"bubbleGlassShadowOffset",-10,30,@"%.1f pt")],
-                 @"系统的是一片很淡、很散的阴影：高斯模糊 18 pt、整体下移 8 pt；浅色约 25%，深色约 5%。气泡和设置页的卡片默认没有（浓度 0）。"),@[@"lens",@"segmentLens",@"finder"]),
+                 @"阴影已自动裁剪避开下方相邻的玻璃，不会再盖到另一块玻璃上；关闭「全局启用玻璃阴影」可一键关闭所有玻璃阴影。"),@[@"lens",@"segmentLens"]),
         WXGGroup(@"边框样式",nil,@[WXGBare(WXGChoiceValues(WXGChoice3(@"样式",@"rimStyle",@"dockRimStyle",@"bubbleRimStyle",@[@"iOS 26",@"iOS 27"],YES),@[@3,@2]))],
-                 @"每个范围各选各的。iOS 26：盖在玻璃上的一层高光，右下一盏主光、左上一盏补光，颜色取自玻璃底下的内容。iOS 27：从轮廓往里渐隐的两道高光。下面只显示所选样式的设置。以前的“普通”“取自背景”两种样式已经去掉，原来用它们的范围改用 iOS 26。"),
+                 @"每个范围（包含底栏透镜、分组透镜与视频号）可独立选择 iOS 26 或 iOS 27 边框样式。"),
         WXGStyled(WXGGroup(@"iOS 26 · 形状",nil,@[WXGSlider3(@"高度（往里多宽）",@"edge26Height",@"dockEdge26Height",@"bubbleEdge26Height",.3,4,@"%.2f pt"),
                                  WXGSlider3(@"往里变暗",@"edge26Curve",@"dockEdge26Curve",@"bubbleEdge26Curve",0,1,@"%.2f"),
                                  WXGSlider3(@"主光方向",@"edge26Angle",@"dockEdge26Angle",@"bubbleEdge26Angle",0,180,@"%.0f°"),
@@ -169,19 +155,19 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                  WXGSlider3(@"补光（左上）",@"edge26Fill",@"dockEdge26Fill",@"bubbleEdge26Fill",0,1.5,@"%.2f"),
                                  WXGSlider3(@"收拢",@"edge26Spread",@"dockEdge26Spread",@"bubbleEdge26Spread",.3,6,@"%.2f"),
                                  WXGSlider3(@"最暗处保留",@"edge26Floor",@"dockEdge26Floor",@"bubbleEdge26Floor",0,1,@"%.2f")],
-                 @"FIX123：这套不是看截图猜的，是在 iOS 26.6 真机上用探针把系统玻璃的图层和参数导出来、再用 8 倍放大的截图逐像素核对过的。系统的边框是盖在玻璃上的一层“高光”：右下一盏主光、左上一盏补光。默认值就是系统的：高度 1 pt；紧贴轮廓处最亮，往里按直线变暗，到 1 pt 处还剩 30%（“往里变暗”0.70），然后一刀切断，里面什么都没有（系统没有内阴影）。沿轮廓的亮度是 |cos(方向 − 主光方向)|：左上、右下最亮，右上、左下几乎消失，宽度不变；实测右下比左上亮约 5%（主光 1.05、补光 1.00；超过 1 的部分在最外沿封顶）。“主光方向”45° 是右下 / 左上（0° 上下最亮，90° 两端最亮）；“收拢”越大，亮的那两段越短。整条边是按这套公式逐像素算好的一张图，算一次就缓存，玻璃不动时不再计算。\n\n最暗处保留（FIX132）：系统的两盏灯在左下和右上正好都照不到，边框在那两处降到 0（这是系统真机上量到的，不是插件的毛病）；但那里玻璃的面会一直铺到轮廓最外圈，比别处有边框盖着的地方往外多出约 1 pt，压在比玻璃亮的背景上看起来像鼓出一个角。这一项让边框在整圈上都至少保留这么多（占它最亮处的比例），并且绕过最暗处时走一条圆弧：0.30（默认）时那一圈大致和背景一样亮，轮廓就圆了；0 = 系统原样。"),@[@3]),
+                 @"iOS 26 系统高光边框：右下一盏主光、左上一盏补光，颜色取自玻璃底下的内容。"),@[@3]),
         WXGStyled(WXGGroup(@"iOS 26 · 浅色模式",nil,@[WXGSlider3(@"强度",@"edge26Opacity",@"dockEdge26Opacity",@"bubbleEdge26Opacity",0,1,nil),
                                  WXGSlider3(@"亮度增益",@"edge26Gain",@"dockEdge26Gain",@"bubbleEdge26Gain",0,4,@"%.3f"),
                                  WXGSlider3(@"色彩增益",@"edge26Chroma",@"dockEdge26Chroma",@"bubbleEdge26Chroma",0,8,@"%.3f"),
                                  WXGSlider3(@"提亮",@"edge26Lift",@"dockEdge26Lift",@"bubbleEdge26Lift",0,1,@"%.3f"),
                                  WXGSlider3(@"环绕微光",@"edge26Ring",@"dockEdge26Ring",@"bubbleEdge26Ring",0,1,@"%.2f")],
-                 @"边框的颜色不是白色，也不是固定色：系统把边框底下那一点玻璃的颜色过一个颜色矩阵，再按边框的亮度混回去。矩阵 = 提亮 + 亮度增益 × 明度 + 色彩增益 ×（颜色 − 明度）。浅色玻璃（系统导出的数据里没有，从八种底色的截图拟合，误差不到 1 个色阶）：亮度增益 0.174、色彩增益 1.51、提亮 0.847——也就是接近白色、只带一点底下的颜色。“环绕微光”是四周都有的一圈很淡的线（右上、左下也不会完全没有），浅色 0.13。"),@[@3]),
+                 nil),@[@3]),
         WXGStyled(WXGGroup(@"iOS 26 · 深色模式",nil,@[WXGSlider3(@"强度",@"darkEdge26Opacity",@"dockDarkEdge26Opacity",@"bubbleDarkEdge26Opacity",0,1,nil),
                                  WXGSlider3(@"亮度增益",@"darkEdge26Gain",@"dockDarkEdge26Gain",@"bubbleDarkEdge26Gain",0,4,@"%.3f"),
                                  WXGSlider3(@"色彩增益",@"darkEdge26Chroma",@"dockDarkEdge26Chroma",@"bubbleDarkEdge26Chroma",0,8,@"%.3f"),
                                  WXGSlider3(@"提亮",@"darkEdge26Lift",@"dockDarkEdge26Lift",@"bubbleDarkEdge26Lift",0,1,@"%.3f"),
                                  WXGSlider3(@"环绕微光",@"darkEdge26Ring",@"dockDarkEdge26Ring",@"bubbleDarkEdge26Ring",0,1,@"%.2f")],
-                 @"深色玻璃（直接从系统导出的矩阵）：亮度增益 1.35、色彩增益 3.0、提亮 0.15——把底下的颜色提亮 1.35 倍、颜色加浓到 2.2 倍、再整体抬亮一点，所以深色下边框是“底色的加亮加艳版”。环绕微光 0.04。"),@[@3]),
+                 nil),@[@3]),
         WXGStyled(WXGGroup(@"iOS 27 · 浅色模式 · 高光一",nil,@[WXGColor3(@"颜色",@"rim27Hex",@"dockRim27Hex",@"bubbleRim27Hex"),
                                  WXGSlider3(@"不透明度",@"rim27Opacity",@"dockRim27Opacity",@"bubbleRim27Opacity",0,1,nil),
                                  WXGSlider3(@"渐隐宽度",@"rim27Width",@"dockRim27Width",@"bubbleRim27Width",.3,8,@"%.1f pt"),
@@ -189,7 +175,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                  WXGSlider3(@"高光方向",@"rim27Angle",@"dockRim27Angle",@"bubbleRim27Angle",0,180,@"%.0f°"),
                                  WXGSlider3(@"最暗处亮度",@"rim27EndLevel",@"dockRim27EndLevel",@"bubbleRim27EndLevel",0,1,nil),
                                  WXGSlider3(@"过渡速度",@"rim27Sharpness",@"dockRim27Sharpness",@"bubbleRim27Sharpness",0.5,6,nil)],
-                 @"iOS 27 的边框是两道同时存在的光，各有自己的颜色和方向（比如一道白的在上下边、一道深色的在两端），浅色模式、深色模式各一套（每套两道），系统是哪种外观就画哪套的两道（FIX113 Z；以前两种外观共用一套），深色模式那套第一次打开时和浅色模式这套一样。每一道都是从玻璃轮廓往里渐渐消失的光：最外圈最亮，往里在“渐隐宽度”内淡到没有；四周宽度处处一样（圆角处和上下一样宽），外边就是玻璃自己的轮廓（系统的连续圆角）。向内渐隐曲线：1 是均匀变淡，越大越快变淡（光贴着轮廓更细），小于 1 则亮的部分往里更宽。高光方向：这一道哪里最亮。0° 上下边最亮、往左右两端减弱；90° 左右两端最亮、往上下减弱；45° 左上和右下最亮，135° 右上和左下最亮。最暗处亮度：这一道最暗的地方减弱到这个比例（0 完全没有，1 一圈一样亮）。过渡速度：从最亮处往最暗处减弱的快慢，越大亮的部分越集中；1 随角度均匀减弱。只要一道时把另一道的不透明度调到 0。高光二画在高光一上面。升级后高光一是原来“浅色模式”那组的设置，高光二是原来“深色模式”那组的。底栏透镜里看到的底栏轮廓也按这两道画。"),@[@2]),
+                 @"iOS 27 双高光渐隐边框，浅色模式与深色模式各两道，支持在底栏、分组栏、视频号与透镜上独立调节。"),@[@2]),
         WXGStyled(WXGGroup(@"iOS 27 · 浅色模式 · 高光二",nil,@[WXGColor3(@"颜色",@"darkRim27Hex",@"dockDarkRim27Hex",@"bubbleDarkRim27Hex"),
                                  WXGSlider3(@"不透明度",@"darkRim27Opacity",@"dockDarkRim27Opacity",@"bubbleDarkRim27Opacity",0,1,nil),
                                  WXGSlider3(@"渐隐宽度",@"darkRim27Width",@"dockDarkRim27Width",@"bubbleDarkRim27Width",.3,8,@"%.1f pt"),
@@ -205,7 +191,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                  WXGSlider3(@"高光方向",@"rim27DarkModeAngle",@"dockRim27DarkModeAngle",@"bubbleRim27DarkModeAngle",0,180,@"%.0f°"),
                                  WXGSlider3(@"最暗处亮度",@"rim27DarkModeEndLevel",@"dockRim27DarkModeEndLevel",@"bubbleRim27DarkModeEndLevel",0,1,nil),
                                  WXGSlider3(@"过渡速度",@"rim27DarkModeSharpness",@"dockRim27DarkModeSharpness",@"bubbleRim27DarkModeSharpness",0.5,6,nil)],
-                 @"FIX113 Z：深色模式自己的两道，参数的意思和浅色模式那两组一样。第一次打开时每一项都是浅色模式那组当时的值，之后各调各的。（视频号第一页的胶囊从 FIX115 S 起用自己的“视频号”范围。）"),@[@2]),
+                 nil),@[@2]),
         WXGStyled(WXGGroup(@"iOS 27 · 深色模式 · 高光二",nil,@[WXGColor3(@"颜色",@"darkRim27DarkModeHex",@"dockDarkRim27DarkModeHex",@"bubbleDarkRim27DarkModeHex"),
                                  WXGSlider3(@"不透明度",@"darkRim27DarkModeOpacity",@"dockDarkRim27DarkModeOpacity",@"bubbleDarkRim27DarkModeOpacity",0,1,nil),
                                  WXGSlider3(@"渐隐宽度",@"darkRim27DarkModeWidth",@"dockDarkRim27DarkModeWidth",@"bubbleDarkRim27DarkModeWidth",.3,8,@"%.1f pt"),
@@ -214,74 +200,9 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                  WXGSlider3(@"最暗处亮度",@"darkRim27DarkModeEndLevel",@"dockDarkRim27DarkModeEndLevel",@"bubbleDarkRim27DarkModeEndLevel",0,1,nil),
                                  WXGSlider3(@"过渡速度",@"darkRim27DarkModeSharpness",@"dockDarkRim27DarkModeSharpness",@"bubbleDarkRim27DarkModeSharpness",0.5,6,nil)],
                  nil),@[@2]),
-        WXGDockKyantGroup(@"dock"),
-        WXGGroup(@"原版透镜 · 折射",@"dock",@[WXGSlider(@"折射带宽（透镜高度的比例）",@"lensCurveBand",nil,.02,.5,@"%.3f"),
-                 WXGSlider(@"边缘取样深度（透镜高度的比例）",@"lensCurveDepth",nil,0,.8,@"%.3f"),
-                 WXGSlider(@"色散强度",@"lensCurveDispersion",nil,0,3,@"%.2f"),
-                 WXGSlider(@"最外圈最大压缩（0 = 不限制）",@"lensCurveSqueeze",nil,0,20,@"%.1f 倍")],
-                 @"关闭 Kyant 折射或使用原版渲染时，这些数值控制按压透镜。带宽和深度按透镜高度的比例设置。"),
-        WXGGroup(@"按压透镜 · 尺寸与模糊",@"dock",@[WXGSlider(@"透镜内容放大倍数",@"lensZoom",nil,1,1.5,nil),
-                 WXGSlider(@"按压透镜外扩倍数",@"lensGrowth",nil,1.08,1.5,nil),
-                 WXGSlider(@"按压底栏整体放大",@"barGrowth",nil,1,1.08,@"%.3f"),
-                 WXGSlider(@"首尾透镜外包距离",@"endWrap",nil,2,10,@"%.1f pt"),
-                 WXGSlider(@"镜内底栏统一内收",@"bodyPinch",nil,0,.30,@"%.3f"),
-                 WXGSlider(@"透镜模糊半径",@"lensBlur",nil,0,12,@"%.2f pt")],
-                 @"这组数值控制两种透镜的尺寸、镜内底栏内收和模糊。"),
-        WXGGroup(@"原版透镜 · 图标和文字",@"dock",@[WXGSlider(@"图标和文字的折射强度",@"lensIconRefraction",nil,0,20,nil),
-                 WXGSlider(@"图标和文字的折射宽度",@"lensIconEdgeWidth",nil,1,60,@"%.1f pt"),
-                 WXGSlider(@"图标和文字的上下宽度比例",@"lensIconTopEdgeRatio",nil,.1,1,nil),
-                 WXGSlider(@"图标和文字的上下收窄曲线",@"lensIconEdgeSharpness",nil,1,6,nil),
-                 WXGSlider(@"图标和文字的色散",@"lensDispersion",nil,0,8,nil)],
-                 @"透镜里放大的图标和标题由底栏自己那层单独画，折射用它自己的一组：强度、宽度（两端），上下边的宽度是两端的多少、离开两端收窄得多快，以及它们的色散。"),
-        WXGGroup(@"透镜形变",@"dock",@[WXGSwitch(@"跟随滑动速度形变",@"lensElasticOn",nil),
-                 WXGSlider(@"强度",@"lensFlexStrength",nil,0,3,@"%.2f 倍"),
-                 WXGSlider(@"回弹快慢",@"lensFlexSlow",nil,3,20,@"%.1f"),
-                 WXGSlider(@"回弹阻尼",@"lensFlexDamping",nil,.15,1.2,@"%.2f"),
-                 WXGSlider(@"变宽变扁那一下的幅度",@"lensFlexFlatten",nil,0,1.5,@"%.2f"),
-                 WXGSlider(@"落下后最扁（占原高度）",@"lensFlexRestFloor",nil,.5,1,@"%.2f"),
-                 WXGSlider(@"变窄变高那一下的幅度",@"lensFlexSqueeze",nil,0,1.5,@"%.2f"),
-                 WXGSwitch(@"左右对称",@"lensFlexSymmetric",nil),
-                 WXGSlider(@"形变时保持里面上下那条的宽度",@"lensElasticKeepStrip",nil,0,1,@"%.2f")],
-                 @"透镜移动时的形变，按 iOS 26 系统底栏录下来的规律：往右走变宽变扁，往左走变窄变高；匀速时几乎不变，起步时长出来，停下时摆到相反的形状再平滑消失。强度 1 = 系统的幅度；回弹快慢越小摆得越慢越软；回弹阻尼越小停下时反向摆得越多；左右对称 = 两个方向都变宽变扁。强度、回弹这几项底栏和分组栏共用，开关各自一个。系统“减弱动态效果”打开时不形变。\n\n形变有两半（FIX133 / FIX135）——变宽变扁（往左走的落下、往右走的起步）和变窄变高（往右走的落下、往左走的起步），各有一个幅度：1 = 系统原样，调小只减那一半，0 = 没有；“强度”是两半一起减。\n落下后最扁：选中胶囊落回底栏以后，高度最多被压到原高度的这么多（默认 0.82：系统录到的落下后最扁的样子，往左连跨三格，1.13 × 0.82；再扁就压到图标和文字了）。只管落下之后；抬起的透镜（70 pt 高，有余量）不受限，可以到 0.72。想让落下后完全不扁，拖到 1。形变是按比例算的（走了几格 → 透镜自己宽高的百分之几），所以底栏改宽改高后幅度的比例不变。"),
-        WXGGroup(@"透镜滤镜色",@"dock",@[WXGSwitch(@"透镜滤镜色",@"lensTintOn",nil),
-                 WXGColorRow(@"浅色模式颜色",@"lensTintHex",nil),
-                 WXGSlider(@"浅色模式浓度",@"lensTintOpacity",nil,0,1,nil),
-                 WXGColorRow(@"深色模式颜色",@"darkLensTintHex",nil),
-                 WXGSlider(@"深色模式浓度",@"darkLensTintOpacity",nil,0,1,nil)],
-                 @"关闭（默认）时透镜里就是它下面的东西，不加任何颜色。打开后抬起的透镜整片盖一层这里的颜色，随透镜抬起出现；静止的选中胶囊不受影响。"),
-        WXGGroup(@"手指下的光",@"dock",@[WXGSwitch(@"按住底栏时发光",@"dockTouchGlow",nil),
-                 WXGSlider(@"手指处光斑",@"dockTouchGlowSpot",nil,0,.5,@"%.2f"),
-                 WXGSlider(@"整条底栏提亮",@"dockTouchGlowBar",nil,0,.2,@"%.3f")],
-                 @"iOS 26 的底栏在手指按下时有两层光（FIX131，从探针的轻点录制和结构导出里读出来的）：整条底栏微微亮一点；手指底下一团柔和的光斑（直径约 93 pt，边缘很软），跟着手指走。松手时光斑放大到 4 倍、两层一起在约 0.45 秒里淡出；轻点一下也会完整地亮一次。默认关；“底栏功能 → iOS 26 系统底栏 → 套用”会打开。两个强度是叠上去的白色的浓度：系统在深色下大约把手指处提亮一倍多，在接近白色的页面上几乎看不出来——这里也是这样。"),
-        WXGGroup(@"透镜（按住时）",@"segment",@[WXGSlider(@"折射带宽（透镜高度的比例）",@"segmentLensCurveBand",nil,.02,.5,@"%.3f"),
-                 WXGSlider(@"边缘取样深度（透镜高度的比例）",@"segmentLensCurveDepth",nil,0,.8,@"%.3f"),
-                 WXGSlider(@"色散强度",@"segmentLensCurveDispersion",nil,0,3,@"%.2f"),
-                 WXGSlider(@"最外圈最大压缩（0 = 不限制）",@"segmentLensCurveSqueeze",nil,0,20,@"%.1f 倍"),
-                 WXGSlider(@"透镜内容放大倍数",@"segmentLensZoom",nil,1,1.5,nil),
-                 WXGSlider(@"按住透镜外扩倍数",@"segmentLensGrowth",nil,1.08,1.5,nil),
-                 WXGSlider(@"按住分组栏整体放大",@"segmentBarGrowth",nil,1,1.08,@"%.3f"),
-                 WXGSlider(@"首尾透镜外包距离",@"segmentEndWrap",nil,2,10,@"%.1f pt"),
-                 WXGSlider(@"镜内分组栏统一内收",@"segmentBodyPinch",nil,0,.30,@"%.3f"),
-                 WXGSlider(@"透镜模糊半径",@"segmentLensBlur",nil,0,12,@"%.2f pt")],
-                 @"分组栏按住时的透镜，和底栏的透镜同一套（第一次用时和底栏的值一样）。"),
-        WXGGroup(@"透镜里的文字",@"segment",@[WXGSlider(@"文字的折射强度",@"segmentLensIconRefraction",nil,0,20,nil),
-                 WXGSlider(@"文字的折射宽度",@"segmentLensIconEdgeWidth",nil,1,60,@"%.1f pt"),
-                 WXGSlider(@"文字的上下宽度比例",@"segmentLensIconTopEdgeRatio",nil,.1,1,nil),
-                 WXGSlider(@"文字的上下收窄曲线",@"segmentLensIconEdgeSharpness",nil,1,6,nil),
-                 WXGSlider(@"文字的色散",@"segmentLensDispersion",nil,0,8,nil)],
-                 nil),
-        WXGGroup(@"透镜形变",@"segment",@[WXGSwitch(@"跟随滑动速度形变",@"segmentLensElasticOn",nil),
-                 WXGSlider(@"形变时保持里面上下那条的宽度",@"segmentLensElasticKeepStrip",nil,0,1,@"%.2f")],
-                 @"形变的强度、回弹快慢和阻尼用“底栏”范围里的那一组。"),
-        WXGGroup(@"透镜滤镜色",@"segment",@[WXGSwitch(@"透镜滤镜色",@"segmentLensTintOn",nil),
-                 WXGColorRow(@"浅色模式颜色",@"segmentLensTintHex",nil),
-                 WXGSlider(@"浅色模式浓度",@"segmentLensTintOpacity",nil,0,1,nil),
-                 WXGColorRow(@"深色模式颜色",@"segmentDarkLensTintHex",nil),
-                 WXGSlider(@"深色模式浓度",@"segmentDarkLensTintOpacity",nil,0,1,nil)],
-                 nil),
         WXGCopyGroup(),
         WXGGroup(@"恢复",nil,@[WXGAction(@"恢复本页默认",@"resetPage",YES)],
-                 @"这一页的全部设置（每个范围、浅色和深色）回到默认值，也就是 iOS 26 系统的数；其它页不变。")]};
+                 @"这一页的全部设置（每个范围、浅色和深色）回到默认值；其它页不变。")]};
     if([module isEqual:@"chat"])return @{@"title":@"聊天页",@"groups":@[
         WXGGroup(@"输入栏",nil,@[WXGSwitch(@"聊天悬浮输入栏",@"pref.input",nil),
                  WXGSwitch(@"原生宽度三端输入（测试）",@"pref.nativeInputTest",nil),
@@ -326,26 +247,36 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
         WXGGroup(@"恢复",nil,@[WXGAction(@"恢复本页默认",@"resetPage",YES)],
                  nil)]};
     if([module isEqual:@"home"])return @{@"title":@"首页",@"groups":@[
-        WXGGroup(@"分组栏",nil,@[WXGSwitch(@"分组栏取代聊天列表搜索框",@"chatSegments",nil),WXGSwitch(@"悬浮，不随列表滚走",@"searchFloat",nil)],
-                 @"聊天列表顶部的搜索框换成分组栏，默认 全部 / 未读（有未读或 @ 的）/ 单聊（个人聊天，不含公众号、服务通知这类）/ 群聊（含折叠的群聊），在上面的“管理分组”里可以新建、改名、排序，或做自己选聊天的分组。点哪个分组，聊天列表就只显示那一组（置顶的照样在前），“全部”就是微信原来的列表；每次重新打开微信从第一个“全部”开始。万一这台微信的会话列表结构对不上，会自动回到“全部”并在诊断里写明原因，不会动列表。FIX113 P 起它就是一条小底栏：玻璃、边框、选中胶囊、文字颜色、透镜都从底栏的参数开始，再在这里和各玻璃页的“分组”范围里微调。位置和大小（FIX114 E）：分组栏就在微信搜索框原来的位置、和它一样大（以前的宽度、加高、与标题胶囊的间距三项去掉了），下拉时也跟着微信的搜索框走；只有“顶部按钮往下移”大于 0 时跟着标题行往下挪同样多。悬浮：分组栏（以及首页、通讯录的搜索框）和标题胶囊在同一层，列表往上滚时停在标题栏下面，不跟着滚走；首页、通讯录的搜索框停住后点它，列表会回到顶部再打开微信自己的搜索。只在同步渲染模式下生效。"),
+        WXGGroup(@"首页标题分组栏",nil,@[
+                 WXGSwitch(@"首页标题拓展为分组栏（全部 / 未读）",@"homeTitleSegments",nil),
+                 WXGSwitch(@"标题分组显示英文（All / Unread）",@"homeTitleSegmentsEnglish",nil)],
+                 @"直接按现有首页标题大小拓展为分组栏（默认 全部 / 未读，支持英文 All / Unread），复用与底栏等比同步的选中胶囊与按压透镜，点击即可筛选聊天列表。"),
+        WXGGroup(@"分组栏与搜索框尺寸",nil,@[
+                 WXGSwitch(@"分组栏取代聊天列表搜索框",@"chatSegments",nil),
+                 WXGSwitch(@"悬浮，不随列表滚走",@"searchFloat",nil),
+                 WXGSlider(@"宽度占比（0 = 原生）",@"homeSearchWidthPct",nil,0,98,@"%.0f%%"),
+                 WXGSlider(@"高度（0 = 原生）",@"homeSearchHeight",nil,0,64,@"%.1f pt"),
+                 WXGSlider(@"与顶部标题的距离（-1 = 原生）",@"homeSearchTopGap",nil,-1,32,@"%.1f pt")],
+                 @"分组栏与底栏同步样式（按比例缩放 R8 极光透镜与选中胶囊），并已优化下拉上滑性能（transform 零布局追踪 + 跳过隐藏重复玻璃）。宽、高与距顶部标题距离对「分组栏」和「原搜索框」同时生效：增大高度或间距时列表自动向下避让不重叠，原搜索框的放大镜与「搜索」字样始终居中。"),
         WXGGroup(@"分组列表",nil,@[WXGAction(@"管理分组（新建 / 改名 / 选聊天 / 排序）",@"manageGroups",NO)],
                  @"分组是你自己的：最多 6 个，每个可以是 全部 / 未读 / 单聊 / 群聊，或者“自定义”——自己选里面有哪些聊天。分组栏上从左到右就是这里的顺序。"),
         WXGGroup(@"选中胶囊",nil,@[WXGSlider(@"内边距",@"segmentSelectionInset",nil,2,14,@"%.1f pt"),WXGSwitch(@"用页面的背景色",@"segmentPillAuto",nil),
                                  WXGColorRow(@"浅色模式颜色",@"segmentPillHex",nil),WXGSlider(@"浅色模式不透明度",@"segmentPillOpacity",nil,0,1,nil),
                                  WXGColorRow(@"深色模式颜色",@"segmentDarkPillHex",nil),WXGSlider(@"深色模式不透明度",@"segmentDarkPillOpacity",nil,0,1,nil),
                                  WXGSlider(@"按住时不透明度",@"segmentPillPressedOpacity",nil,0,1,nil)],
-                 @"默认和底栏的选中胶囊一样（颜色、不透明度，按住变透镜时淡到“按住时不透明度”）。内边距是选中胶囊到分组栏边缘的距离（上下最多到分组栏高度的 30%）。打开“用页面的背景色”时颜色取自搜索框后面的页面，下面两个颜色不用；不透明度照样生效。"),
+                 @"开启 R8 透镜引擎时直接同步底栏的选中胶囊；关闭后可在这里单独调整传统选中胶囊颜色。"),
         WXGGroup(@"选中胶囊边框",nil,@[WXGSlider(@"静止时也显示",@"segmentPillRimAtRest",nil,0,1,nil)],
-                 @"选中胶囊（按住时就是透镜）自己的一圈边框。按住时随按压出现；“静止时也显示”大于 0 时，松手停在那一段时也有这么多。边框的样式、颜色、宽度这些在“边框与渐隐”的“分组透镜”范围里（FIX114 C 起和底栏的透镜分开，三种样式都能用；第一次打开时和底栏透镜一样）。"),
+                 @"选中胶囊（按住时就是透镜）自己的一圈边框，可在「效果调整 → 分组透镜的边框」里单独调节。"),
         WXGGroup(@"文字",nil,@[WXGSlider(@"字号",@"segmentTitleSize",nil,10,18,@"%.1f pt"),WXGSlider(@"字重（细 → 粗）",@"segmentTitleWeight",nil,0,4,@"%.0f"),
                              WXGColorRow(@"浅色模式颜色",@"segmentInkHex",nil),WXGColorRow(@"深色模式颜色",@"segmentDarkInkHex",nil),
                              WXGSwitch(@"选中的用强调色",@"segmentAccentOn",nil),WXGColorRow(@"强调色",@"segmentAccentHex",nil)],
-                 @"和底栏一样：没选中的是深灰（深色模式浅灰），选中的那一段用强调色（默认底栏的绿色），字重自动加一级。关掉强调色时选中的也用上面的颜色。"),
+                 @"和底栏一样：没选中的是深灰（深色模式浅灰），选中的那一段用强调色，字重自动加一级。"),
         WXGGroup(@"首页加号菜单",nil,@[WXGSwitch(@"左侧玻璃胶囊 + 右侧圆形图标",@"homeMenuCapsules",nil),
                                   WXGSlider(@"图标大小",@"homeMenuIconSize",nil,34,56,@"%.0f pt"),
                                   WXGSlider(@"逐项出现的间隔",@"homeMenuStagger",nil,0,80,@"%.0f ms"),
-                                  WXGSlider(@"动画速度",@"homeMenuSpeed",nil,.5,2,@"%.2f 倍")],
-                 @"R19 墨滴粒子五轨动效：首页右上角玻璃加号按钮带 270° 外环实线弧与底部 5 颗圆点，菜单每一项保持左侧液态玻璃文字胶囊 + 右侧圆形液态玻璃图标，图标与加号垂直对齐，点按与动作全部保留微信原生。展开（约 0.60 秒）：外环逆时针回缩，中心 + 缩至波谷后瞬切为 × 并平滑恢复，底部 5 点化作墨滴粒子流沿微摆路径下坠，依次释放右侧圆形图标（平滑就位，无展开后跳动回弹），约 100 ms 后左侧文字胶囊水平横向滑出。收起（约 0.35 秒）：左侧所有胶囊优先在 100 ms 内同步速隐，右侧图标集体加速上吸入加号中心，墨滴粒子自底端逆向飞回并精准嵌回底部 5 点，外环顺时针闭合。图标大小默认 44 pt；间隔默认 45 ms；系统开启“减弱动态效果”时改为简洁淡入淡出。"),
+                                  WXGSlider(@"动画速度",@"homeMenuSpeed",nil,.5,2,@"%.2f 倍"),
+                                  WXGSlider(@"展开后自动收回（0 = 关闭）",@"homeMenuAutoClose",nil,0,30,@"%.0f s")],
+                 @"R20 流畅直飞模糊变形动效：按钮保持原有尺寸并收紧内部环与图标比例，5 颗小点与圆弧两端等距分布。展开时圆弧自右向左按圆弧轨迹回缩，+ 收缩切换为 ×，小点沿平滑曲线直接飞往菜单图标位置并通过高斯模糊自然变形为液态玻璃图标（展开后无跳动）；收起时精确倒放回弹。设置「展开后自动收回」秒数后，无操作到期自动收起。"),
         WXGGroup(@"搜索框",nil,@[WXGSwitch(@"搜索框换成玻璃胶囊",@"pref.localSearch",nil),
                  WXGSwitch(@"搜索框让主题优先",@"pref.localSearchThemeFirst",nil),
                  WXGSwitch(@"隐藏聊天列表顶部搜索栏",@"pref.hideTopSearch",nil)],
@@ -353,7 +284,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
         WXGGroup(@"朋友圈",nil,@[WXGSwitch(@"朋友圈新消息横幅和 ·· 按钮",@"localMoments",nil)],
                  nil),
         WXGGroup(@"恢复",nil,@[WXGAction(@"恢复本页默认",@"resetPage",YES)],
-                 @"分组栏的折射、模糊、材质、边框和透镜在“效果调整”的“分组栏”范围里。")]};
+                 @"分组栏的色彩材质、阴影与边框在「效果调整 → 分组栏」里，按压透镜与形变在「底栏透镜与形变」里。")]};
     if([module isEqual:@"me"])return @{@"title":@"个人页",@"groups":@[
         WXGGroup(@"“我”页头部",nil,@[WXGSwitch(@"Telegram 式头部（头像收进灵动岛）",@"meHeader",nil),
                                  WXGSwitch(@"下拉展开头像横幅（替换微信的下拉状态）",@"meBanner",nil),
@@ -377,8 +308,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                              WXGSlider(@"松手后透镜停留",@"dockLensHang",nil,0,.5,@"%.2f s"),
                              WXGSwitch(@"切换时用系统的位置弹簧",@"dockMoveSpring",nil),
                              WXGSlider(@"位置弹簧：响应",@"dockMoveResponse",nil,.2,.8,@"%.2f s"),WXGSlider(@"位置弹簧：阻尼比",@"dockMoveDamping",nil,.5,1.2,@"%.2f")],
-                 @"把 iOS 26.6 真机底栏上量出来的数值整套搬进这条底栏。\n\n套用 iOS 26 实测数值：一次把下面这些都改成系统的数（改的就是各页里原有的滑块和开关，套用后都还能自己再调）——\n· 尺寸：宽度 = 屏幕宽 − 左右各 21 pt，高度 62 pt，选中胶囊内边距 4 pt；\n· 格子：每格加宽 10 pt（系统四个格子各 107.5 pt 宽，比四等分宽 10 pt，相邻两格互相重叠，所以图标比四等分略往中间靠，静止的选中胶囊就是一整格 107.5 × 54）；\n· 按下的透镜：宽高各加 16 pt（123.5 × 70，上下各比底栏多出 4 pt），到最左 / 最右时伸出底栏约 8.4 pt，整条底栏放大 3.55%，镜内图标放大 1.16 倍，镜内底栏内收 0.12；\n· 透镜玻璃（“效果调整”的底栏范围）：折射带宽 0.10、取样深度 0.30，透镜模糊 0，滤镜色关，透镜的边框用 iOS 26（高光曲率 0.8）；\n· 形变：打开，强度 1、回弹快慢 8、回弹阻尼 0.5、不对称（这几项分组栏也在用）；\n· 动作：松手后透镜先停 0.18 秒再落下；切换标签时透镜走系统的位置弹簧（响应 0.4 秒、阻尼比 0.86）；轻点时透镜 0.245 秒长满、0.23 秒落下，起落都是一上来就快、收尾软（走弹簧时自动用这条曲线）；\n· 底栏这块玻璃自己（FIX131，对着静止的系统底栏量的；“效果调整”的底栏范围）：折射、模糊和按钮同一条规律（实测折射带 0.248、深度 0.79、模糊 3.15 pt，都对得上）；浅色的面比按钮通透一点（白色面纱 0.585、提亮 0）；阴影比按钮淡得多（0.065、模糊 15 pt）；边框 iOS 26；\n· 选中胶囊：浅色 = 黑 7%，深色 = 白 14%，按住时消失；\n· 手指下的光：打开（光斑 0.15、整条 0.04）；\n· 图标和文字（FIX135）：图标高 26 pt、间距 1、整体上移 1 pt、文字 10 pt 中等；形变两半的幅度 1、落下后最扁 0.82。\n\n还原套用前的数值：第一次套用前，这些项原来的值会存一份；点这里全部放回去（只动上面这些项）。\n\n下面四项默认都是 0 / 关：\n· 每格加宽：0 = 四等分。\n· 按压时透镜加宽：0 = 至少 1.2 格宽；大于 0 时按下的透镜 = 一格 + 这么多，高度仍由“按压透镜外扩倍数”决定。\n· 松手后透镜停留：手指离开后透镜保持抬起的时间，之后再落回胶囊。\n· 切换时用系统的位置弹簧：点别的标签、拖到别的标签松手、松手回到原标签时，透镜按这条弹簧滑过去（起步快、收尾软、过头约 0.5%），这时“点按滑动时长”不起作用；手指按着拖动时的跟手还是原来的。系统“减弱动态效果”打开时这两项不生效。"),
-        WXGDockKyantGroup(nil),
+                 @"把 iOS 26.6 真机底栏上量出来的尺寸与节奏套用到当前底栏；透镜折射与色散统一在「底栏透镜与形变」中调节。"),
         WXGGroup(@"离散样式",nil,@[WXGSwitch(@"离散底栏",@"dockDiscrete",nil),
                                  WXGSwitch(@"未选中的小球连成一体",@"dockDiscreteConnected",nil),
                                  WXGSlider(@"相连时图标向中间收拢",@"dockDiscreteGather",nil,0,.45,@"%.2f"),
@@ -1157,14 +1087,14 @@ static NSString *WXGLastScope=@"dock";
 }
 // What the range chosen covers (only that one: the list of all was long).
 - (NSString *)descriptionOfScope:(NSString *)scope {
-    NSDictionary *texts=@{@"dock":@"悬浮标签栏本体，以及按住时浮起的透镜（透镜的几组设置在这一范围的下面）。",
+    NSDictionary *texts=@{@"dock":@"悬浮标签栏本体的色彩材质、阴影与边框（按压透镜与形变在「底栏透镜与形变」中调节）。",
                           @"other":@"导航按钮、标题胶囊、输入栏、搜索框、菜单、面板等。",
-                          @"bubble":@"聊天里的液态气泡（“气泡用完整玻璃”开着时才有折射和模糊）。",
-                          @"segment":@"聊天列表顶部的分组栏，以及它按住时的透镜。",
+                          @"bubble":@"聊天里的液态气泡（“气泡用完整玻璃”开着时生效）。",
+                          @"segment":@"聊天列表顶部的分组栏及首页标题分组栏的色彩材质、阴影与边框。",
                           @"card":@"这几页设置的卡片和按钮，调节时可直接看到。",
-                          @"lens":@"底栏按住时浮起的透镜自己的边框，按住时随按压出现。只有边框。",
-                          @"segmentLens":@"分组栏按住时的透镜和选中胶囊自己的边框。只有边框。",
-                          @"finder":@"视频号第一页顶部按钮下面那几个胶囊自己的边框（只有边框；折射、模糊、材质跟其余玻璃）。"};
+                          @"lens":@"底栏按住时浮起的透镜自己的边框，支持 iOS 26 / iOS 27。",
+                          @"segmentLens":@"分组栏与标题分组栏按住时的透镜和选中胶囊边框，支持 iOS 26 / iOS 27。",
+                          @"finder":@"视频号视频页与作品页顶部按钮胶囊的完整玻璃设置（色彩材质覆盖、阴影与 iOS 27 边框）。"};
     return texts[scope]?:@"";
 }
 - (void)showScope {

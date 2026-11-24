@@ -155,31 +155,36 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
     [super layoutSubviews];
     CGSize sz=self.bounds.size;
     if(sz.width<4 || sz.height<4)return;
-    if(CGSizeEqualToSize(sz,_builtSize))return;
+    CGFloat screenScale=self.traitCollection.displayScale>0?self.traitCollection.displayScale:UIScreen.mainScreen.scale;
+    if(CGSizeEqualToSize(sz,_builtSize) && fabs(_arcLayer.contentsScale-screenScale)<.01)return;
     _builtSize=sz;
     CGFloat side=MIN(sz.width,sz.height);
     CGPoint center=CGPointMake(sz.width*.5,sz.height*.5);
     CGFloat ringR=(CGFloat)WXGMenuRingRadius(side);
-    CGFloat dotD=(CGFloat)WXGMenuRingDotDiameter();
-    CGFloat arm=round(side*.165*2)/2;
+    CGFloat dotD=(CGFloat)WXGMenuRingDotDiameterFor(side);
+    CGFloat arm=(CGFloat)WXGMenuSymbolArmLength(side);
     [CATransaction begin];[CATransaction setDisableActions:YES];
+    _arcLayer.contentsScale=screenScale;
     _arcLayer.frame=self.bounds;
     // 135 deg (7:30) clockwise to 45 deg (4:30) = 270 deg solid arc.
     UIBezierPath *arc=[UIBezierPath bezierPathWithArcCenter:center radius:ringR
         startAngle:(CGFloat)(135.*M_PI/180.) endAngle:(CGFloat)(45.*M_PI/180.) clockwise:YES];
     _arcLayer.path=arc.CGPath;
-    _arcLayer.lineWidth=MAX(1.6,MIN(2.0,side*.041));
+    _arcLayer.lineWidth=(CGFloat)WXGMenuRingLineWidth(side);
     for(int i=0;i<WXGMenuParticleCount;i++) {
-        double a=WXGMenuRingDotAngle(i);
+        double a=WXGMenuRingDotAngleForSize(i,side);
         CALayer *dot=_dots[i];
+        dot.contentsScale=screenScale;
         dot.bounds=CGRectMake(0,0,dotD,dotD);
         dot.cornerRadius=dotD*.5;
         dot.position=CGPointMake(center.x+ringR*(CGFloat)cos(a),center.y+ringR*(CGFloat)sin(a));
         dot.hidden=_dotsHidden;
     }
-    CGRect symBounds=CGRectMake(0,0,arm*2+4,arm*2+4);
+    CGRect symBounds=CGRectMake(0,0,arm*2+6,arm*2+6);
+    _symbolRotLayer.contentsScale=screenScale;
     _symbolRotLayer.bounds=symBounds;
     _symbolRotLayer.position=center;
+    _symbolLayer.contentsScale=screenScale;
     _symbolLayer.bounds=symBounds;
     _symbolLayer.position=CGPointMake(symBounds.size.width*.5,symBounds.size.height*.5);
     CGPoint sc=CGPointMake(symBounds.size.width*.5,symBounds.size.height*.5);
@@ -187,7 +192,7 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
     [plus moveToPoint:CGPointMake(sc.x-arm,sc.y)];[plus addLineToPoint:CGPointMake(sc.x+arm,sc.y)];
     [plus moveToPoint:CGPointMake(sc.x,sc.y-arm)];[plus addLineToPoint:CGPointMake(sc.x,sc.y+arm)];
     _symbolLayer.path=plus.CGPath;
-    _symbolLayer.lineWidth=MAX(1.7,MIN(2.1,side*.043));
+    _symbolLayer.lineWidth=(CGFloat)WXGMenuSymbolLineWidth(side);
     [CATransaction commit];
     [self updateInkColor];
 }
@@ -208,43 +213,57 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
     CGFloat curStroke=arcNow.strokeEnd;
     CATransform3D rt=rotNow.transform,st=scaleNow.transform;
     double curRot=atan2(rt.m12,rt.m11);if(!isfinite(curRot))curRot=0.;
-    double curScale=hypot(st.m11,st.m12);if(curScale<.1 || !isfinite(curScale))curScale=1.;
+    double curScale=hypot(st.m11,st.m12);if(curScale<.02 || !isfinite(curScale))curScale=.05;
+    float curOpacity=scaleNow.opacity;
     double targetRot=open?M_PI_4:0.;
     [CATransaction begin];[CATransaction setDisableActions:YES];
     [_arcLayer removeAnimationForKey:@"wxg.plus.arc"];
     [_symbolRotLayer removeAnimationForKey:@"wxg.plus.rot"];
     [_symbolLayer removeAnimationForKey:@"wxg.plus.scale"];
+    [_symbolLayer removeAnimationForKey:@"wxg.plus.alpha"];
     _arcLayer.strokeEnd=open?0.:1.;
     _symbolRotLayer.transform=open?CATransform3DMakeRotation((CGFloat)M_PI_4,0,0,1):CATransform3DIdentity;
     _symbolLayer.transform=CATransform3DIdentity;
+    _symbolLayer.opacity=1.f;
     if(animated) {
         CFTimeInterval now=CACurrentMediaTime();
-        // Track 1: 270 deg arc trim
+        // Arc: CCW retract 0..150ms on open; CW grow 150..360ms on close (as dots dock back).
         CABasicAnimation *arcAnim=[CABasicAnimation animationWithKeyPath:@"strokeEnd"];
         arcAnim.fromValue=@(curStroke);arcAnim.toValue=@(open?0.:1.);
-        arcAnim.duration=(open?.150:.220)/v;
-        arcAnim.beginTime=[_arcLayer convertTime:now+(open?0.:.030/v) fromLayer:nil];
-        arcAnim.timingFunction=open?[CAMediaTimingFunction functionWithControlPoints:.4f :0.f :1.f :1.f]
+        arcAnim.duration=(open?.150:.210)/v;
+        arcAnim.beginTime=[_arcLayer convertTime:now+(open?0.:.150/v) fromLayer:nil];
+        arcAnim.timingFunction=open?[CAMediaTimingFunction functionWithControlPoints:.38f :0.f :.85f :1.f]
                                    :[CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f];
         arcAnim.fillMode=kCAFillModeBackwards;arcAnim.removedOnCompletion=YES;
         [_arcLayer addAnimation:arcAnim forKey:@"wxg.plus.arc"];
 
-        // Track 2: two-stage scale swap (+ <-> x) with zero-overshoot smooth recovery (no bounce)
+        // Center glyph: shrinks & fades to 0 as dots detach (150ms open / 170ms close),
+        // swaps instantaneously to shrunken x / +, then grows smoothly to 1.0 (zero bounce).
         if(fabs(curRot-targetRot)>.05) {
-            double total=(open?.400:.350)/v;
-            double midFrac=open?(.250/.400):(.180/.350);
+            double total=.360/v;
+            double midFrac=open?(.150/.360):(.170/.360);
             CAKeyframeAnimation *scaleAnim=[CAKeyframeAnimation animationWithKeyPath:@"transform.scale"];
-            scaleAnim.values=@[@(curScale),@0.45,@1.0];
+            scaleAnim.values=@[@(curScale),@0.05,@1.0];
             scaleAnim.keyTimes=@[@0.0,@(midFrac),@1.0];
             scaleAnim.timingFunctions=@[
-                [CAMediaTimingFunction functionWithControlPoints:.4f :0.f :.6f :1.f],
+                [CAMediaTimingFunction functionWithControlPoints:.4f :0.f :.8f :1.f],
                 [CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f]
             ];
             scaleAnim.duration=total;
             scaleAnim.fillMode=kCAFillModeBackwards;scaleAnim.removedOnCompletion=YES;
             [_symbolLayer addAnimation:scaleAnim forKey:@"wxg.plus.scale"];
 
-            // Discrete mode requires keyTimes.count == values.count + 1 ([0, midFrac, 1]).
+            CAKeyframeAnimation *alphaAnim=[CAKeyframeAnimation animationWithKeyPath:@"opacity"];
+            alphaAnim.values=@[@(curOpacity),@0.0,@1.0];
+            alphaAnim.keyTimes=@[@0.0,@(midFrac),@1.0];
+            alphaAnim.timingFunctions=@[
+                [CAMediaTimingFunction functionWithControlPoints:.4f :0.f :.8f :1.f],
+                [CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f]
+            ];
+            alphaAnim.duration=total;
+            alphaAnim.fillMode=kCAFillModeBackwards;alphaAnim.removedOnCompletion=YES;
+            [_symbolLayer addAnimation:alphaAnim forKey:@"wxg.plus.alpha"];
+
             CAKeyframeAnimation *rotAnim=[CAKeyframeAnimation animationWithKeyPath:@"transform.rotation.z"];
             rotAnim.calculationMode=kCAAnimationDiscrete;
             rotAnim.values=@[@(curRot),@(targetRot)];
@@ -252,14 +271,20 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
             rotAnim.duration=total;
             rotAnim.fillMode=kCAFillModeBackwards;rotAnim.removedOnCompletion=YES;
             [_symbolRotLayer addAnimation:rotAnim forKey:@"wxg.plus.rot"];
-        }else if(fabs(curScale-1.)>.01) {
-            // Interrupted before the midpoint swap: recover smoothly to 1.0 without dipping again.
+        }else if(fabs(curScale-1.)>.01 || curOpacity<.98f) {
             CABasicAnimation *recover=[CABasicAnimation animationWithKeyPath:@"transform.scale"];
             recover.fromValue=@(curScale);recover.toValue=@1.0;
-            recover.duration=.170/v;
+            recover.duration=.180/v;
             recover.timingFunction=[CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f];
             recover.fillMode=kCAFillModeBackwards;recover.removedOnCompletion=YES;
             [_symbolLayer addAnimation:recover forKey:@"wxg.plus.scale"];
+
+            CABasicAnimation *alphaRec=[CABasicAnimation animationWithKeyPath:@"opacity"];
+            alphaRec.fromValue=@(curOpacity);alphaRec.toValue=@1.0;
+            alphaRec.duration=.180/v;
+            alphaRec.timingFunction=[CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f];
+            alphaRec.fillMode=kCAFillModeBackwards;alphaRec.removedOnCompletion=YES;
+            [_symbolLayer addAnimation:alphaRec forKey:@"wxg.plus.alpha"];
         }
     }
     [CATransaction commit];
@@ -578,12 +603,15 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     self.layer.shadowOpacity=0;
     double h=_materialRect.size.height,w=_materialRect.size.width;
     CGFloat iconMax=MIN(26,h*.50);
+    if([_role isEqual:@"homeMenuIcon"])iconMax=MIN(21,h*.44);
     if([_role isEqual:@"dictation"])iconMax=MIN(20,h*.48);
     if([_role isEqual:@"send"])iconMax=MIN(28,h*.80);
     // FIX88: the (filled) smiley about the microphone's height beside it (it
     // was a 26 pt disc next to a 17 pt microphone).
     if([_role isEqual:@"emoji"])iconMax=MIN(19,h*.67);
     if([_role isEqual:@"avatar"])iconMax=MAX(24,h-10);
+    _iconView.layer.minificationFilter=kCAFilterTrilinear;
+    _iconView.layer.magnificationFilter=kCAFilterLinear;
     BOOL photo=[_role isEqual:@"avatar"] && _plain;
     if([_role isEqual:@"chatAvatarButton"] && _iconView.image) {
         // FIX109: the chat's avatar in the button's glass, a circle inset by
@@ -810,8 +838,9 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     WXGConfig *c=WXGConfig.shared;
     [_glass applyStyle];[_glass invalidateBackdrop];
     BOOL dark=self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark;
-    UIColor *t=WXGColor([c materialHexForScope:WXGGlassScopeOther dark:dark]);
-    CGFloat opacity=CGColorGetAlpha(t.CGColor)*[c materialOpacityForScope:WXGGlassScopeOther dark:dark];
+    WXGGlassScope scope=self.glass.glassScope;
+    UIColor *t=WXGColor([c materialHexForScope:scope dark:dark]);
+    CGFloat opacity=CGColorGetAlpha(t.CGColor)*[c materialOpacityForScope:scope dark:dark];
     _fallback.contentView.backgroundColor=[t colorWithAlphaComponent:WXGClamp(opacity,0,1)];
     _fallback.layer.borderWidth=0; // The shared TEST9 directional rim owns the border.
     _fallback.hidden=_plain || (_glass.ready && _glass.hasPresentedFrame) || !WXGFallbackAllowed();

@@ -949,7 +949,42 @@ static BOOL WXGLocalFieldCandidate(UIView *v,UIView *bar,BOOL emptied) {
     CGRect r=[v convertRect:v.bounds toView:bar];
     return r.size.height>=24 && r.size.height<=(emptied?44:60) && r.size.width>=bar.bounds.size.width*.4 && (!emptied || r.size.width<=bar.bounds.size.width-6);
 }
+static char WXGLocalHomeHeaderHKey;
+static UITableView *WXGLocalHomeTableFor(UIView *view) {
+    static Class mainTable;static dispatch_once_t once;
+    dispatch_once(&once,^{mainTable=NSClassFromString(@"MainFrameTableView");});
+    if(!mainTable || !view)return nil;
+    for(UIView *v=view.superview;v;v=v.superview)if([v isKindOfClass:mainTable]) {
+        UITableView *t=(UITableView *)v;
+        return t.tableHeaderView && [view isDescendantOfView:t.tableHeaderView]?t:nil;
+    }
+    return nil;
+}
+static UIView *WXGLocalSearchContentHost(UIView *host,UIView *paint) {
+    CGRect box=[paint convertRect:paint.bounds toView:host];
+    UILabel *label=nil;
+    for(UIView *v in WXGLocalViews(host,120)) {
+        if(WXGIsPluginView(v) || v.hidden || v.alpha<.01 || ![v isKindOfClass:UILabel.class])continue;
+        UILabel *l=(UILabel *)v;if(!l.text.length)continue;
+        CGRect r=[l convertRect:l.bounds toView:host];
+        if(CGRectContainsPoint(CGRectInset(box,-6,-6),CGPointMake(CGRectGetMidX(r),CGRectGetMidY(r)))){label=l;break;}
+    }
+    if(!label)return nil;
+    // Prefer the highest container under `host` that wraps the icon+label pair
+    // without containing `paint` (so shifting it never shifts `paint`'s glass).
+    UIView *best=nil;
+    for(UIView *a=label.superview;a && a!=host;a=a.superview) {
+        if(a==paint || [paint isDescendantOfView:a])break;
+        best=a;
+    }
+    return best?:paint;
+}
 - (void)searchBar:(UIView *)bar {
+    // R20: when the home segment bar replaces the home search bar, unmount any
+    // hidden local.search glass so no duplicate CABackdropLayer / display link runs.
+    if(WXGLocalHomeTableFor(bar) && [WXGChatSegments.shared wanted]) {
+        [self skip:bar because:@"首页分组栏已接管搜索框"];return;
+    }
     WXGLocalEntry *known=objc_getAssociatedObject(bar,&WXGLocalHostKey);
     UIView *paint=known.host==bar && [known.anchor isDescendantOfView:bar]?known.anchor:nil;
     BOOL themeFirst=WXGPreferences.shared.localSearchThemeFirst;
@@ -964,21 +999,12 @@ static BOOL WXGLocalFieldCandidate(UIView *v,UIView *bar,BOOL emptied) {
         }
     }
     if(!paint){[self skip:bar because:themeFirst?@"没有找到搜索框底色（主题优先时，主题清空了底色就不加玻璃）":@"没有找到搜索框底色" retry:YES];return;}
-    // FIX109: a theme's picture of the field: hidden under the glass (default),
-    // or the field left to the theme (主题优先). Only in WeChat's own search
-    // bars (a text field's own background picture is not a theme's).
-    // Looked for again only when the bar's views changed (reassert notices).
     NSArray<UIView *> *skins=known.mounted && known.anchor==paint && known.skinViews && WXGLocalSubviewShape(bar)==known.hostShape?
         known.skinViews.allObjects:WXGLocalFieldSkins(bar,paint);
     if(skins.count && themeFirst){[self skip:bar because:@"搜索框主题优先：主题换了搜索框的图"];return;}
     [self field:paint host:bar skins:skins];
 }
 - (void)field:(UIView *)paint host:(UIView *)host {[self field:paint host:host skins:@[]];}
-// FIX109 E: one search glass per field: another one already over most of this
-// rectangle (two hosts finding two different views for one field) — the
-// smaller, the field's own size, stays; the larger goes or is not made.
-// Only within one page (its controller or one holding the other): two pages'
-// bars at the same place while one is pushed over the other are two fields.
 static UIViewController *WXGLocalOwner(UIView *view) {
     for(UIResponder *r=view;r;r=r.nextResponder)if([r isKindOfClass:UIViewController.class])return (UIViewController *)r;
     return nil;
@@ -1006,13 +1032,81 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
     return NO;
 }
 - (void)field:(UIView *)paint host:(UIView *)host skins:(NSArray<UIView *> *)skins {
-    // FIX113 O: one glass per field: one this host mounted on another view
-    // before (its paint chosen differently then) goes.
     for(WXGLocalEntry *other in _entries.allObjects)
         if(other.mounted && other.kind==WXGLocalSearch && other.host==host && other.anchor && other.anchor!=paint)[self unmount:other];
-    if([self searchGlassClashes:paint material:paint.bounds host:host])return;
-    [self mount:WXGLocalSearch host:host anchor:paint paint:paint below:nil measure:paint radius:0 button:nil
-        prepare:^(WXGStateBag *states){[states clear:paint];[states allowOverflow:paint];for(UIView *skin in skins)[states hide:skin];}];
+    UITableView *homeTable=WXGLocalHomeTableFor(host);
+    if(homeTable && [WXGChatSegments.shared wanted]) {
+        [self skip:host because:@"首页分组栏已接管搜索框"];return;
+    }
+    WXGConfig *cfg=WXGConfig.shared;
+    BOOL customHome=homeTable && (cfg.homeSearchWidthPct>.5 || cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
+    UIView *homeHeader=homeTable.tableHeaderView;
+    if(homeHeader) {
+        NSNumber *savedH=objc_getAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey);
+        if(!savedH && homeHeader.frame.size.height>10) {
+            savedH=@(homeHeader.frame.size.height);
+            objc_setAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey,savedH,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        }
+        CGFloat nativeH=savedH?savedH.doubleValue:homeHeader.frame.size.height;
+        if(!customHome && savedH && fabs(homeHeader.frame.size.height-nativeH)>.5) {
+            [UIView performWithoutAnimation:^{
+                CGRect hf=homeHeader.frame;hf.size.height=nativeH;homeHeader.frame=hf;
+                if(homeTable.tableHeaderView==homeHeader)homeTable.tableHeaderView=homeHeader;
+            }];
+        }
+    }
+    if(customHome && homeHeader) {
+        NSNumber *savedH=objc_getAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey);
+        CGFloat nativeH=savedH?savedH.doubleValue:homeHeader.frame.size.height;
+        CGRect nat=[paint convertRect:paint.bounds toView:homeHeader];
+        CGFloat wPct=cfg.homeSearchWidthPct,customH=cfg.homeSearchHeight,topGap=cfg.homeSearchTopGap;
+        CGFloat w=wPct>.5?WXGClamp(homeHeader.bounds.size.width*(wPct/100.),120,MAX(120,homeHeader.bounds.size.width-4)):nat.size.width;
+        CGFloat h=customH>.5?WXGClamp(customH,24,64):nat.size.height;
+        CGFloat x=wPct>.5?(homeHeader.bounds.size.width-w)*.5:nat.origin.x;
+        CGFloat y=topGap>=0?topGap:nat.origin.y;
+        CGFloat bottomPad=MAX(4,nativeH-CGRectGetMaxY(nat));
+        CGFloat neededH=MAX(nativeH,y+h+bottomPad);
+        if(fabs(homeHeader.frame.size.height-neededH)>.5) {
+            [UIView performWithoutAnimation:^{
+                CGRect hf=homeHeader.frame;hf.size.height=neededH;homeHeader.frame=hf;
+                if(homeTable.tableHeaderView==homeHeader)homeTable.tableHeaderView=homeHeader;
+            }];
+        }
+        CGRect targetInPaint=[homeHeader convertRect:CGRectMake(x,y,w,h) toView:paint];
+        CGFloat dx=CGRectGetMidX(targetInPaint)-CGRectGetMidX(paint.bounds);
+        CGFloat dy=CGRectGetMidY(targetInPaint)-CGRectGetMidY(paint.bounds);
+        UIView *contentHost=WXGLocalSearchContentHost(host,paint);
+        BOOL shiftSelf=(contentHost==paint);
+        CGRect surfaceRect=shiftSelf?CGRectOffset(targetInPaint,-dx,-dy):targetInPaint;
+        if([self searchGlassClashes:paint material:targetInPaint host:host])return;
+        __weak UIView *weakPaint=paint,*weakHeader=homeHeader;
+        [self mount:WXGLocalSearch host:host anchor:paint paint:paint below:nil measure:nil
+            frame:^CGRect{
+                UIView *p=weakPaint,*hdr=weakHeader;if(!p || !hdr)return CGRectNull;
+                WXGConfig *c=WXGConfig.shared;
+                CGRect n=[p convertRect:p.bounds toView:hdr];
+                CGFloat wp=c.homeSearchWidthPct,ch=c.homeSearchHeight,tg=c.homeSearchTopGap;
+                CGFloat tw=wp>.5?WXGClamp(hdr.bounds.size.width*(wp/100.),120,MAX(120,hdr.bounds.size.width-4)):n.size.width;
+                CGFloat th=ch>.5?WXGClamp(ch,24,64):n.size.height;
+                CGFloat tx=wp>.5?(hdr.bounds.size.width-tw)*.5:n.origin.x;
+                CGFloat ty=tg>=0?tg:n.origin.y;
+                CGRect tp=[hdr convertRect:CGRectMake(tx,ty,tw,th) toView:p];
+                if(shiftSelf)return CGRectOffset(tp,-(CGRectGetMidX(tp)-CGRectGetMidX(p.bounds)),-(CGRectGetMidY(tp)-CGRectGetMidY(p.bounds)));
+                return tp;
+            }
+            radius:0 button:nil
+            prepare:^(WXGStateBag *states){
+                [states clear:paint];
+                for(UIView *a=paint;a && a!=homeTable;a=a.superview){[states allowOverflow:a];if(a==homeHeader)break;}
+                if(contentHost && (fabs(dx)>.1 || fabs(dy)>.1))[states shiftContents:contentHost x:dx y:dy];
+                for(UIView *skin in skins)[states hide:skin];
+            }];
+        (void)surfaceRect;
+    }else {
+        if([self searchGlassClashes:paint material:paint.bounds host:host])return;
+        [self mount:WXGLocalSearch host:host anchor:paint paint:paint below:nil measure:paint radius:0 button:nil
+            prepare:^(WXGStateBag *states){[states clear:paint];[states allowOverflow:paint];for(UIView *skin in skins)[states hide:skin];}];
+    }
     WXGLocalEntry *entry=WXGLocalEntryOfAnchor(paint);
     if(entry.mounted) {
         entry.hostShape=WXGLocalSubviewShape(host);entry.skins=skins.count;
@@ -1514,6 +1608,10 @@ static CGRect WXGLocalTitleFrame(UIView *view,UIColor **ink,CGFloat *visibility)
 }
 // The title in WeChat's title view (首页 MFTitleView, the others' MMTitleView).
 - (void)titleView:(UIView *)view {
+    if(_homeTitle && [view isKindOfClass:_homeTitle] && [WXGChatSegments.shared titleModeWanted]) {
+        WXGLocalEntry *was=WXGLocalEntryOfAnchor(view);if(was.mounted && was.kind==WXGLocalTitle)[self unmount:was];
+        [self skip:view because:@"首页标题已拓展为分组栏"];return;
+    }
     // FIX114 V (user's screenshot, 23:46: a capsule with the chat's name and no
     // avatar in a swipe back): WeChat's new title view for the chat got a
     // capsule here; a chat title the plugin draws is hidden, never glassed.

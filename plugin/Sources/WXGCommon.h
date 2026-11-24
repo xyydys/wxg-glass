@@ -257,6 +257,13 @@ enum { WXGRimGlowCount=2 };
 - (NSString *)lensTintHexForScope:(WXGGlassScope)scope dark:(BOOL)dark;
 - (BOOL)knowsKey:(NSString *)key;
 - (BOOL)bubbleFullGlass;
+- (BOOL)glassShadowOn;
+- (CGFloat)homeMenuAutoClose;
+- (BOOL)homeTitleSegments;
+- (BOOL)homeTitleSegmentsEnglish;
+- (CGFloat)homeSearchWidthPct;
+- (CGFloat)homeSearchHeight;
+- (CGFloat)homeSearchTopGap;
 // FIX89: the dock's icons and titles: the gap between them (pt, from the
 // icon's box to the title's top; 5 as before) and both moved together (+ down).
 - (CGFloat)dockIconTitleGap;

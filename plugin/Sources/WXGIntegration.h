@@ -380,7 +380,10 @@ FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我
 @interface WXGChatSegments : NSObject
 + (instancetype)shared;
 - (BOOL)wanted;   // the switch, the plugin on and authorised, render-server mode
+- (BOOL)titleModeWanted;   // R20: expand home title capsule into compact All/Unread group bar
 - (void)updateOnPage:(UIViewController *)page;   // the host's refresh on the chat list
+- (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect alpha:(CGFloat)alpha englishHint:(BOOL)englishHint;
+- (void)hideTitleBar;
 - (void)searchBarLaidOut:(UIView *)view;         // a search bar laid out (follows the field)
 // FIX113 O: every host frame: the floating search (the segment bar, WeChat's
 // home / 通讯录 search bars) below the title row, in the navigation overlay.

@@ -1190,6 +1190,7 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
 }
 @implementation WXGGlassView {
     CALayer *_dropShadow;NSString *_dropShadowKey;   // FIX114 K
+    CAShapeLayer *_dropShadowMask;NSString *_dropShadowMaskKey;   // R20: punch out overlapping sibling glasses so shadows never paint over nearby glass
     NSHashTable<UIView *> *_shadowClips;              // FIX114 L: ancestors opened for the shadow
     CGRect _shadowNeed;BOOL _shadowNeedValid;         // FIX114 M: what of the shadow shows (this view's coordinates)
     BOOL _shadowParked;                               // FIX114 M (review): hidden: its views let go until it shows
@@ -1406,11 +1407,12 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
     return _dockSurface?WXGGlassScopeDock:_bubbleSurface?WXGGlassScopeBubble:WXGGlassScopeOther;
 }
 - (BOOL)pureDockBodyStyle {
-    return _mainDockOptics && _dockSurface && self.glassScope==WXGGlassScopeDock &&
+    WXGGlassScope sc=self.glassScope;
+    return _mainDockOptics && _dockSurface && (sc==WXGGlassScopeDock || sc==WXGGlassScopeSegment) &&
         !_shapeAnimating && !_deferShapeField && WXGConfig.shared.dockPureGlassMode;
 }
 - (WXGGlassScope)effectiveBodyScope {
-    return [self pureDockBodyStyle]?WXGGlassScopeOther:self.glassScope;
+    return self.glassScope;
 }
 - (WXGScopeOptics)scopedOptics {
     WXGGlassScope scope=[self effectiveBodyScope];
@@ -1435,7 +1437,6 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
 // FIX114 C (user: the segment bar's lens border set apart from the dock's
 // icons-and-titles lens): the 边框与渐隐 range of this glass's lens border.
 - (WXGGlassScope)lensRimScope {
-    if([self pureDockBodyStyle])return WXGGlassScopeOther;
     return self.glassScope==WXGGlassScopeSegment?WXGGlassScopeSegmentLens:WXGGlassScopeLens;
 }
 - (WXGLensSettings)lensSettings {return [WXGConfig.shared lensSettingsForScope:[self lensScope] dark:[self darkAppearance] || _rimAlwaysDark];}
@@ -1492,8 +1493,7 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
         [WXGConfig.shared extraNumber:@"dockKyantOptics"]>.5;
 }
 - (WXGRimStyle)effectiveLensRimStyle {
-    if([self pureDockBodyStyle])return WXGRimStyle26;
-    return [self kyantOpticsActive]?WXGRimStyle26:[WXGConfig.shared rimStyleForScope:[self lensRimScope]];
+    return [WXGConfig.shared rimStyleForScope:[self lensRimScope]];
 }
 - (UIColor *)veilColor {return _veilFallback.backgroundColor?[UIColor colorWithCGColor:_veilFallback.backgroundColor]:nil;}
 - (NSArray<UIColor *> *)lensOutlineColors {return _lensOutlineColors?:@[];}
@@ -1570,6 +1570,7 @@ static NSMapTable<UIView *,NSHashTable *> *WXGShadowClipHolders;   // view -> th
 static NSMapTable<UIView *,NSNumber *> *WXGShadowClipOriginal;    // view -> whether it clips without them
 static NSHashTable<CALayer *> *WXGShadowHeldLayers;               // their layers (the setter's quick test)
 static NSHashTable<WXGGlassView *> *WXGShadowGlasses;             // glasses whose shadow shows
+static NSHashTable<WXGGlassView *> *WXGAllLiveGlasses;            // R20: all mounted glasses (for shadow-under-glass cutouts)
 static NSUInteger WXGShadowClipsOpened,WXGShadowReclips,WXGShadowRechecks;
 static BOOL WXGShadowRecheckWanted,WXGShadowWriting;
 static CFTimeInterval WXGShadowLastRecheck;
@@ -1593,6 +1594,7 @@ static void WXGShadowInstall(void) {
         WXGShadowClipOriginal=[NSMapTable mapTableWithKeyOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality valueOptions:NSPointerFunctionsStrongMemory];
         WXGShadowHeldLayers=[NSHashTable hashTableWithOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality];
         WXGShadowGlasses=[NSHashTable hashTableWithOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality];
+        WXGAllLiveGlasses=[NSHashTable hashTableWithOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality];
         Method m=class_getInstanceMethod(CALayer.class,@selector(setMasksToBounds:));
         // The original is kept before the swap (another thread may set a layer meanwhile).
         if(m){WXGShadowSetMasksOriginal=(void (*)(id,SEL,BOOL))method_getImplementation(m);method_setImplementation(m,(IMP)WXGShadowSetMasks);}
@@ -1642,6 +1644,7 @@ void WXGReleaseClipHolds(id holder) {
 }
 - (void)releaseShadowClips {
     [WXGShadowGlasses removeObject:self];_shadowNeedValid=NO;
+    _dropShadow.mask=nil;_dropShadowMaskKey=nil;
     if(!_shadowClips.count)return;
     for(UIView *v in _shadowClips.allObjects)[[WXGShadowClipHolders objectForKey:v] removeObject:self];
     [_shadowClips removeAllObjects];
@@ -1731,6 +1734,52 @@ static BOOL WXGShadowGlassShownIgnoringAlpha(UIView *glass) {
     _shadowClips=now;
     if(dropped)WXGShadowClipSweep();
 }
+// R20: keep every glass's drop shadow strictly below any nearby/lower glass in
+// visual priority by punching out overlapping visible glass silhouettes via an
+// even-odd CAShapeLayer mask on _dropShadow (prevents both overpainting on top
+// of a lower glass and darkening that lower glass's CABackdropLayer).
+- (void)updateShadowCutout {
+    UIWindow *w=self.window;
+    if(_dropShadow.hidden || !w || !WXGAllLiveGlasses.count || CGRectIsEmpty(_dropShadow.bounds)) {
+        if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}
+        return;
+    }
+    CGRect shadowWin=[self.layer convertRect:_dropShadow.frame toLayer:w.layer];
+    if(CGRectIsEmpty(shadowWin)){if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}return;}
+    NSMutableString *key=nil;
+    UIBezierPath *path=nil;
+    for(WXGGlassView *other in WXGAllLiveGlasses.allObjects) {
+        if(other==self || other.window!=w || !WXGShadowGlassShown(other))continue;
+        CGRect otherLocal=[other drawnBarRect];
+        if(otherLocal.size.width<2 || otherLocal.size.height<2)continue;
+        CGRect otherWin=[other convertRect:otherLocal toView:w];
+        if(!CGRectIntersectsRect(shadowWin,otherWin))continue;
+        CGRect hole=[w.layer convertRect:otherWin toLayer:_dropShadow];
+        if(CGRectIsEmpty(hole))continue;
+        CGFloat rad=[other radiusForRect:otherLocal scale:other.barScale];
+        if(!path) {
+            path=[UIBezierPath bezierPathWithRect:_dropShadow.bounds];
+            key=[NSMutableString stringWithFormat:@"%.0fx%.0f",round(_dropShadow.bounds.size.width),round(_dropShadow.bounds.size.height)];
+        }
+        [path appendPath:[UIBezierPath bezierPathWithRoundedRect:hole cornerRadius:MIN(rad,MIN(hole.size.width,hole.size.height)*.5)]];
+        [key appendFormat:@"|%.0f,%.0f,%.0f,%.0f,%.0f",round(hole.origin.x),round(hole.origin.y),round(hole.size.width),round(hole.size.height),round(rad)];
+    }
+    if(!path) {
+        if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}
+        return;
+    }
+    if(!_dropShadowMask) {
+        _dropShadowMask=[CAShapeLayer layer];
+        _dropShadowMask.fillRule=kCAFillRuleEvenOdd;
+        _dropShadowMask.actions=@{@"path":NSNull.null,@"bounds":NSNull.null,@"position":NSNull.null};
+    }
+    if(![key isEqualToString:_dropShadowMaskKey]) {
+        _dropShadowMask.frame=_dropShadow.bounds;
+        _dropShadowMask.path=path.CGPath;
+        _dropShadowMaskKey=key;
+    }
+    if(_dropShadow.mask!=_dropShadowMask)_dropShadow.mask=_dropShadowMask;
+}
 // Before Core Animation's commit (its observer runs at 2000000).
 static void WXGShadowObserve(void) {
     static dispatch_once_t once;dispatch_once(&once,^{
@@ -1743,7 +1792,7 @@ static void WXGShadowObserve(void) {
                     for(WXGGlassView *glass in WXGShadowGlasses.allObjects)if([glass shadowParkedNowShown]){WXGShadowRecheckWanted=YES;break;}
                 if(!WXGShadowRecheckWanted && !periodic)return;
                 WXGShadowRecheckWanted=NO;if(periodic)WXGShadowLastRecheck=now;++WXGShadowRechecks;
-                for(WXGGlassView *glass in WXGShadowGlasses.allObjects)[glass holdShadowClips];
+                for(WXGGlassView *glass in WXGShadowGlasses.allObjects){[glass holdShadowClips];[glass updateShadowCutout];}
                 if(periodic)WXGShadowClipSweep();   // glasses gone without a word (their weak entries)
             });
         if(o){CFRunLoopAddObserver(CFRunLoopGetMain(),o,kCFRunLoopCommonModes);CFRelease(o);}
@@ -1768,7 +1817,8 @@ NSDictionary *WXGDropShadowEvidence(void) {
 - (void)didMoveToWindow {
     [super didMoveToWindow];
     // FIX114 M: leaving the window keeps the views open (see above).
-    if(!self.window){[self dropShadowClipsNotAbove];return;}
+    if(!self.window){[WXGAllLiveGlasses removeObject:self];[self dropShadowClipsNotAbove];return;}
+    WXGShadowInstall();[WXGAllLiveGlasses addObject:self];
     WXGShadowRecheckWanted=YES;[self setNeedsLayout];   // FIX114 L
 }
 - (void)didMoveToSuperview {
@@ -1813,6 +1863,7 @@ NSDictionary *WXGDropShadowEvidence(void) {
     // FIX114 L: what of it shows (2.5 sigma past the grown shape, moved down).
     CGFloat reach=2.5*s.blur+MAX(0,s.spread);
     [self openShadowClipsFor:CGRectMake(drawn.origin.x-reach,drawn.origin.y-reach+s.offset,drawn.size.width+2*reach,drawn.size.height+2*reach)];
+    [self updateShadowCutout];
 }
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
     [super traitCollectionDidChange:previous];
@@ -2220,7 +2271,10 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         size.height=moving?round(size.height):round(size.height*2)/2;
         float radius=(float)(_maximumCornerRadius*_lensRect.size.height/MAX(1,_glassRect.size.height));
         float shortSide=(float)MIN(size.width,size.height);
-        float r8Band=(float)[c pureDockR8Band],r8Depth=(float)[c pureDockR8Depth],r8Disp=(float)[c pureDockR8Dispersion];
+        CGRect bar=[self drawnBarRect];
+        CGFloat barH=MAX(1.,bar.size.height);
+        CGFloat dockScale=self.glassScope==WXGGlassScopeSegment?WXGClamp(barH/62.,.35,1.):1.;
+        float r8Band=(float)([c pureDockR8Band]*dockScale),r8Depth=(float)([c pureDockR8Depth]*dockScale),r8Disp=(float)[c pureDockR8Dispersion];
         lensOptics=(WXGMeshOptics){(float)size.width,(float)size.height,1.f,radius,MAX(.5f,r8Band*press),0.f,1.f,
             1.f,1.f,r8Disp,0.f,0.f,0.f};
         lensOptics.kyantMode=1.f;
@@ -2233,9 +2287,9 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         lensSplit=NO;
         CGFloat pad=0;
         if(seesBar && _dockSurface && press>0.f && lensMesh) {
-            CGRect bar=[self drawnBarRect];
-            CGFloat barH=MAX(1.,bar.size.height),innerH=[c pureDockInnerBarHeight];
-            CGFloat pinch=WXGClamp((barH-innerH)/barH,0.,.58);
+            CGFloat innerH=[c pureDockInnerBarHeight]*dockScale;
+            CGFloat refBarH=self.glassScope==WXGGlassScopeSegment?(62.*dockScale):barH;
+            CGFloat pinch=WXGClamp((refBarH-innerH)/MAX(1.,refBarH),0.,.58);
             CGFloat full=barH*.5*pinch;
             CGFloat refShort=MIN((CGFloat)shortSide,_lensRestHeight>1?_lensRestHeight*.82:(CGFloat)shortSide);
             CGFloat spectralDisp=r8Disp>0.f && WXGFilterFactoryAvailable()?r8Disp:0.;
@@ -2669,15 +2723,18 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             u.style=_dockTabCenters;
             u.extra2.x=(float)_dockTabTile.width;u.extra2.y=(float)_dockTabTile.height;
             float press=roundf((float)WXGClamp(_pressAmount,0,1)*32.f)/32.f;
+            CGFloat barH=MAX(1.,[self drawnBarRect].size.height);
+            CGFloat dockScale=self.glassScope==WXGGlassScopeSegment?WXGClamp(barH/62.,.35,1.):1.;
             u.material.x=press;
-            u.lensOptics.x=(float)[c pureDockR8Depth]*press;
+            u.lensOptics.x=(float)([c pureDockR8Depth]*dockScale)*press;
             u.lensOptics.y=(float)[c pureDockR8Dispersion];
-            u.lensOptics.z=(float)[c pureDockR8Band]*press;
+            u.lensOptics.z=(float)([c pureDockR8Band]*dockScale)*press;
             CGFloat heightDelta=_lensRestHeight>1?(_lensRestHeight-_lensRect.size.height)*.5:0.;
             u.lensOptics.w=(float)(round(heightDelta*4)/4);
             u.optics.x=(float)[c pureDockIconZoom];
-            CGFloat barH=MAX(1.,[self drawnBarRect].size.height);
-            CGFloat pinch=WXGClamp((barH-[c pureDockInnerBarHeight])/barH,0.,.58);
+            CGFloat innerH=[c pureDockInnerBarHeight]*dockScale;
+            CGFloat refBarH=self.glassScope==WXGGlassScopeSegment?(62.*dockScale):barH;
+            CGFloat pinch=WXGClamp((refBarH-innerH)/MAX(1.,refBarH),0.,.58);
             u.optics.z=(float)(round(pinch*1000.)/1000.);
             u.extra.w=[c pureDockInnerFlat]?WXG_LENS_KYANT_FLAT:WXG_LENS_KYANT;
         }else if(dockLens) {
