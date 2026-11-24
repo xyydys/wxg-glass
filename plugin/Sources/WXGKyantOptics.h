@@ -136,6 +136,11 @@ static inline WXGShapeSample WXGKyantBarField(float dx, float dy, float bw, floa
    collapses the inset ramp during fast horizontal drags;
    `flat > 0.5` skips the along-bar ramp for a strictly uniform inner bar;
    `flat < -0.5` preserves legacy R4 WXGMeshShrinkBar parity for KyantSceneMapTests. */
+static inline float WXGKyantEase(float x) {
+    x=WXG_K_SATURATE(x);
+    return x*x*(3.f-2.f*x);
+}
+
 /* Single-source-of-truth inner-bar inset dz shared by WXGKyantSceneSourceDepthFlat,
    Metal wxgKyantLensOverlay, and WXGBuildContourMesh's 7-tap precomp cache. */
 static inline float WXGKyantSceneDz(WXG_K_F2 centralRay,
@@ -154,7 +159,8 @@ static inline float WXGKyantSceneDz(WXG_K_F2 centralRay,
     if(!(flat>.5f)) {
         WXGShapeSample l=lensRadius>0.f?WXGRoundedOpticalField(ox-lensCenter.x,oy-lensCenter.y,lensSize.x,lensSize.y,lensRadius)
             :WXGCapsuleOpticalField(ox-lensCenter.x,oy-lensCenter.y,lensSize.x,lensSize.y);
-        float along=WXGLensDepthAlongBar(l.distance-depthPad,-b.ny,b.nx,l.nx,l.ny);
+        float pad=flat<-.5f?depthPad:WXG_K_MAX(0.f,depthPad);
+        float along=WXGLensDepthAlongBar(l.distance-pad,-b.ny,b.nx,l.nx,l.ny);
         if(flat<-.5f) {
             float u=absFull>1e-4f?WXGOClamp(along/(2.f*absFull),0.f,1.f):0.f;
             inset=full*u*(2.f-u);
@@ -168,13 +174,23 @@ static inline float WXGKyantSceneDz(WXG_K_F2 centralRay,
             inset=full*ramp;
         }
     }
-    /* At the bar's semicircular left/right ends (|b.nx| > 0), keep the
-       horizontal inset at 35% of the vertical pinch (completely independent of
-       live elastic lensSize.x / lensSize.y flex) so the shrunk inner bar's end
-       cap stays concentric with the lens corner with generous clearance past
-       hCrown and never oscillates long -> short -> long when braking at ends. */
+    /* At the bar's semicircular left/right ends (|b.nx| > 0), solve directly
+       for exact concentric radial gap:
+         gapX = overEnd + insetX == restOverhangY + full = gapY
+       using flex-invariant restLensH = lensSize.y + 2*depthPad and end-pinned
+       overEnd so left/right spacing matches top/bottom for every user slider
+       combination with zero elastic bounce. */
     if(!(flat<-.5f) && WXG_K_ABS(b.nx)>.02f && absFull>1e-4f) {
-        inset-=full*.65f*(b.nx*b.nx)*(inset/full);
+        float restLensH=lensSize.y+2.f*depthPad;
+        float restOverhangY=WXG_K_MAX(0.f,(restLensH-barSize.y)*.5f);
+        float lensLeft=lensCenter.x-lensSize.x*.5f,lensRight=lensCenter.x+lensSize.x*.5f;
+        float overEnd=b.nx<0.f?(barOrigin.x-lensLeft):(lensRight-(barOrigin.x+barSize.x));
+        float wrapBlend=WXGKyantEase((overEnd+2.f)/4.f);
+        if(wrapBlend>0.f) {
+            float targetInsetX=WXGOClamp(full+(restOverhangY-overEnd),0.f,WXG_K_MIN(barHalf*.65f,full+restOverhangY));
+            float delta=(targetInsetX-full)*(inset/full);
+            inset+=delta*(b.nx*b.nx)*wrapBlend;
+        }
     }
     float h=(ox-lensCenter.x)*b.nx+(oy-lensCenter.y)*b.ny;
     return WXGOClamp(h-(h-inset)/WXG_K_MAX(zoom,.01f),extra<0.f?-barHalf*.5f:0.f,barHalf*.9f);
@@ -207,11 +223,6 @@ static inline WXG_K_F2 WXGKyantSceneSource(WXG_K_F2 source,WXG_K_F2 centralRay,
     float press,float pinch,float extra,float zoom) {
     return WXGKyantSceneSourceDepthFlat(source,centralRay,lensCenter,lensSize,lensRadius,
         barOrigin,barSize,barRadius,press,pinch,extra,extra,zoom,-1.f);
-}
-
-static inline float WXGKyantEase(float x) {
-    x=WXG_K_SATURATE(x);
-    return x*x*(3.f-2.f*x);
 }
 
 /* iOS 26 measured crown target (band ~0.105*height, depth ~0.30*height),

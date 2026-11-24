@@ -347,6 +347,7 @@ static void testR13AuroraSymmetryAndEndRoundness(void) {
         fo.dispersion = 5.f; fo.kyantMode = 1.f;
         fo.kyantHeight = 21.14f; fo.kyantAmount = 26.08f;
         fo.shrinkFlat = 1.f; fo.shrinkPress = 1.f; fo.shrinkPinch = 0.146f;
+        fo.shrinkExtra = (81.5f - fh) * .5f;
         fo.sbLeft = fpad + fw - 7.055f - 398.9f; fo.sbRight = fpad + fw - 7.055f;
         fo.sbTop = fpad + (fh - 72.14f) * .5f; fo.sbBottom = fo.sbTop + 72.14f;
         int fc = 0, vc = WXGBuildContourMesh(fo, (WXGMeshQuality){.20f, .12f, 16.f}, mPts, 20000, mQuads, 20000, &fc);
@@ -367,8 +368,12 @@ static void testR13AuroraSymmetryAndEndRoundness(void) {
         float tipRelBar = .5f * (flo + fhi) - fo.sbRight;
         if (f == 0) tipRef = tipRelBar;
         else assert(fabsf(tipRelBar - tipRef) < 0.05f);
+        /* Concentric check: right gap from lens outer edge matches rest top gap (9.96 pt). */
+        float flexRightGap = (fpad + fw) - .5f * (flo + fhi);
+        assert(fabsf(flexRightGap - 9.96f) < 0.25f);
     }
-    printf("PASS: R17 aurora symmetry, concentric end gap (right=%.2f vs top=%.2f pt), extreme-slider end detach (hEff=%.2f pt), flex-invariant end tip (%.2f pt).\n",
+    assert(fabsf(rightGap - topGap) < 0.25f);
+    printf("PASS: R18 aurora symmetry, exact concentric end gap (right=%.2f vs top=%.2f pt), extreme-slider detach (hEff=%.2f pt), flex-invariant concentric tip (%.2f pt).\n",
            rightGap, topGap, trHEff, tipRef);
 }
 

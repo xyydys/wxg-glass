@@ -245,7 +245,7 @@ static inline void WXGMeshSource(WXGMeshOptics o,float px,float py,float *sx,flo
                                  center.y+(ray.y-center.y)/zoom);
         src=WXGKyantSceneSourceDepthFlat(src,central,center,WXG_K_MAKE2(shapeW,shapeH),o.radius,
             WXG_K_MAKE2(o.sbLeft,o.sbTop),WXG_K_MAKE2(o.sbRight-o.sbLeft,o.sbBottom-o.sbTop),o.sbRadius,
-            o.shrinkPress,o.shrinkPinch,0.f,WXG_K_MAX(0.f,o.shrinkExtra),zoom,o.shrinkFlat);
+            o.shrinkPress,o.shrinkPinch,0.f,o.shrinkExtra,zoom,o.shrinkFlat);
         *sx=src.x;*sy=src.y;return;
     }
     if(o.curveHeight>0.f || o.shrinkFlat>.5f){WXGMeshCurveSource(o,px,py,sx,sy);return;}
@@ -590,7 +590,7 @@ static inline int WXGBuildContourMesh(WXGMeshOptics o,WXGMeshQuality q,WXGMeshPo
         }
         float bw=o.sbRight-o.sbLeft,bh=o.sbBottom-o.sbTop;
         float bx=o.sbLeft+bw*.5f,by=o.sbTop+bh*.5f,barHalf=WXG_K_MIN(bw,bh)*.5f;
-        float depthPad=WXG_K_MAX(0.f,o.shrinkExtra);
+        float depthPad=o.shrinkExtra;
         float zoom=o.zoomAfter>0.f?o.zoomAfter:1.f;
         WXG_K_F2 lensCenter=WXG_K_MAKE2(lx,ly),lensSz=WXG_K_MAKE2(shapeW,shapeH);
         WXG_K_F2 barOrg=WXG_K_MAKE2(o.sbLeft,o.sbTop),barSz=WXG_K_MAKE2(bw,bh);

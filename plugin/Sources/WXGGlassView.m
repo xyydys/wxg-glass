@@ -2251,8 +2251,8 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             lensOptics.sbRadius=0;
             lensOptics.shrinkPress=press;
             lensOptics.shrinkPinch=(float)(round(pinch*1000.)/1000.);
-            CGFloat squash=_lensRestHeight>1?MAX(0.,(_lensRestHeight-_lensRect.size.height)*.5):0.;
-            lensOptics.shrinkExtra=(float)(moving?round(squash):round(squash*4)/4);
+            CGFloat restH=_lensRestHeight>1?round(_lensRestHeight*2)/2:size.height;
+            lensOptics.shrinkExtra=(float)((restH-size.height)*.5);
             lensOptics.padX=lensOptics.padY=(float)pad;lensOptics.width+=(float)(2*pad);lensOptics.height+=(float)(2*pad);
             lensOptics.sbLeft+=(float)pad;lensOptics.sbRight+=(float)pad;lensOptics.sbTop+=(float)pad;lensOptics.sbBottom+=(float)pad;
         }
@@ -2673,8 +2673,8 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             u.lensOptics.x=(float)[c pureDockR8Depth]*press;
             u.lensOptics.y=(float)[c pureDockR8Dispersion];
             u.lensOptics.z=(float)[c pureDockR8Band]*press;
-            CGFloat squash=_lensRestHeight>1?MAX(0.,(_lensRestHeight-_lensRect.size.height)*.5):0.;
-            u.lensOptics.w=(float)(round(squash*4)/4);
+            CGFloat heightDelta=_lensRestHeight>1?(_lensRestHeight-_lensRect.size.height)*.5:0.;
+            u.lensOptics.w=(float)(round(heightDelta*4)/4);
             u.optics.x=(float)[c pureDockIconZoom];
             CGFloat barH=MAX(1.,[self drawnBarRect].size.height);
             CGFloat pinch=WXGClamp((barH-[c pureDockInnerBarHeight])/barH,0.,.58);
@@ -2691,8 +2691,8 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             u.lensOptics.x=(float)[c extraNumber:@"dockKyantLensRefractionAmount"]*press;
             u.lensOptics.y=c.syncDispersion?(float)[c extraNumber:@"dockKyantDispersion"]:0.f;
             u.lensOptics.z=(float)[c extraNumber:@"dockKyantLensRefractionHeight"]*press;
-            CGFloat squash=_lensRestHeight>1?MAX(0.,(_lensRestHeight-_lensRect.size.height)*.5):0.;
-            u.lensOptics.w=(float)(round(squash*4)/4);
+            CGFloat heightDelta=_lensRestHeight>1?(_lensRestHeight-_lensRect.size.height)*.5:0.;
+            u.lensOptics.w=(float)(round(heightDelta*4)/4);
             u.optics.z=(float)(round(WXGClamp(L.pinch,0,.30)*1000)/1000);
             u.extra.w=WXG_LENS_KYANT;
         }

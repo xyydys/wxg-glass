@@ -279,7 +279,7 @@ float4 wxgKyantLensOverlay(float2 p,constant WXGUniforms &u,texture2d<float> ico
             u.lensOptics.z,u.lensOptics.x,0.f,endLeft,endRight,&bD0,&bG0,&bCrown0,&bSd0);
         barDisp=WXGKyantAuroraDispersionVec(c0,halfSize,u.lensOptics.z,u.lensOptics.x,u.lensOptics.y,bD0,bG0,bCrown0,bSd0);
         float2 src0=WXGKyantSceneSourceDepthFlat(barC0,barC0,center,u.lens.zw,radius,barOrigin,barSize,0.f,
-                                                 press,u.optics.z,0.f,max(0.f,u.lensOptics.w),1.f,flat);
+                                                 press,u.optics.z,0.f,u.lensOptics.w,1.f,flat);
         WXGShapeSample f0=wxgShape(src0,float4(barOrigin,barSize),0.f);
         selAA=max(selAA,fwidth(f0.distance)*.75f);
         if(!disperse && dot(barDisp,barDisp)<=1e-8f) {
@@ -298,7 +298,7 @@ float4 wxgKyantLensOverlay(float2 p,constant WXGUniforms &u,texture2d<float> ico
         if(selWeight>1e-5f) {
             float2 barRay=barC0+barDisp*st;
             float2 src=WXGKyantSceneSourceDepthFlat(barRay,barC0,center,u.lens.zw,radius,barOrigin,barSize,0.f,
-                                                    press,u.optics.z,0.f,max(0.f,u.lensOptics.w),1.f,flat);
+                                                    press,u.optics.z,0.f,u.lensOptics.w,1.f,flat);
             WXGShapeSample field=wxgShape(src,float4(barOrigin,barSize),0.f);
             a=selWeight*wxgMask(field.distance,selAA);
         }
