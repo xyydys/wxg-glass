@@ -207,7 +207,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // of it), the gap between two rows' starts (ms) and the speed of it all.
     {"homeMenuCapsules",'b',1,0,1,NULL,NULL},
     {"homeMenuIconSize",'n',44,34,56,NULL,NULL},
-    {"homeMenuStagger",'n',34,0,80,NULL,NULL},
+    {"homeMenuStagger",'n',45,0,80,NULL,NULL},
     {"homeMenuSpeed",'n',1,.5,2,NULL,NULL},
     // FIX118 A (user, 11-04: the 我 page as Telegram's profile, the avatar
     // melting into the Dynamic Island; "给这次要做的功能加一个开关，关掉开关的话就只做

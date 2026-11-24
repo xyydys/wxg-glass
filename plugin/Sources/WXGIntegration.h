@@ -310,6 +310,10 @@ void WXGInstallNativeIconGuard(void);
 @property(nonatomic,strong) UIImage *trailingSymbol;
 @property(nonatomic) CGFloat trailingSymbolHeight,trailingGap;
 @property(nonatomic) CGFloat trailingBias;   // FIX114 O: the text and symbol moved right (less room after the symbol)
+// Ink-drop home "+" trigger button: 270 deg solid arc + 5 bottom dots + two-stage +/x swap.
+@property(nonatomic) BOOL homePlusTrigger;
+- (void)setHomePlusMenuOpen:(BOOL)open animated:(BOOL)animated speed:(double)speed;
+- (void)setHomePlusDotsHidden:(BOOL)hidden;
 - (void)placeMaterial:(CGRect)rect inParent:(UIView *)parent;
 - (void)setImage:(UIImage *)image title:(NSString *)title count:(NSString *)count;
 - (void)setNativeIconSource:(UIView *)source preservingColors:(BOOL)preserve;
@@ -462,6 +466,7 @@ FOUNDATION_EXPORT NSString *WXGChatNameSummary(void);   // FIX113 Z: where the n
 // FIX116 A: the glass of the home page's "+" in `window` (CGRectNull: the
 // plugin has none there); the plus menu's icons are put in line with it.
 - (CGRect)homePlusRectInWindow:(UIWindow *)window;
+- (WXGSurface *)homePlusSurfaceInWindow:(UIWindow *)window;
 // FIX118 A: the user's own photo (HD, from the contact's address; kept on disk); nil while it downloads.
 - (UIImage *)selfAvatarPhoto;
 @end

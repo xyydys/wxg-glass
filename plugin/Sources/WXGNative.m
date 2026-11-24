@@ -150,12 +150,12 @@ id WXGRead(id object,NSString *key) {
 // scan of a tab page (FIX59 diagnostics, treeScanMS): the first request for a
 // Swift class's name demangles it. Our own views are recognised by class.
 BOOL WXGIsPluginView(UIView *view) {
-    static Class classes[20];static NSUInteger count;static dispatch_once_t once;
+    static Class classes[24];static NSUInteger count;static dispatch_once_t once;
     dispatch_once(&once,^{
         for(NSString *name in @[@"WXGGlassView",@"WXGSurface",@"WXGDemoBar",@"WXGDockSearch",@"WXGOverlay",@"WXGRimView",@"WXGMetalSurface",
                                 @"WXGSyncBackdropView",@"WXGSettingsCard",@"WXGSettingsRow",@"WXGSettingsScrollView",@"WXGEdgeBlurView",@"WXGEdgeCoverView",@"WXGEdgePlateView",
-                                @"WXGBubbleGlass",@"WXGPerfHUDView",@"WXGSegmentBar"]) {
-            Class cls=NSClassFromString(name);if(cls && count<20)classes[count++]=cls;
+                                @"WXGBubbleGlass",@"WXGPerfHUDView",@"WXGSegmentBar",@"WXGHomePlusTriggerView",@"WXGMenuInkOverlayView"]) {
+            Class cls=NSClassFromString(name);if(cls && count<24)classes[count++]=cls;
         }
     });
     for(NSUInteger i=0;i<count;i++)if([view isKindOfClass:classes[i]])return YES;

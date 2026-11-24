@@ -2,6 +2,7 @@
 #import "WXGPresentationMath.h"
 #import "WXGButtonPress.h"
 #import "WXGPressStretch.h"
+#import "WXGMenuCascade.h"
 #import <UIKit/UIGestureRecognizerSubclass.h>
 // FIX80: the stretch settings (WXGPressStretch.h).
 static WXGStretchStyle WXGCurrentStretchStyle(void) {
@@ -94,6 +95,177 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
     a.fillMode=kCAFillModeForwards;a.removedOnCompletion=NO;
     [layer addAnimation:a forKey:WXGFollowKey];
 }
+
+// Track 1 (270 deg solid arc + 5 bottom dots) & Track 2 (two-stage + <-> x swap, zero bounce)
+// drawn crisply inside the home "+" glass button.
+@interface WXGHomePlusTriggerView : UIView
+- (void)setMenuOpen:(BOOL)open animated:(BOOL)animated speed:(double)speed;
+- (void)setDotsHidden:(BOOL)hidden;
+- (void)updateInkColor;
+@end
+@implementation WXGHomePlusTriggerView {
+    CAShapeLayer *_arcLayer;
+    CALayer *_symbolRotLayer;
+    CAShapeLayer *_symbolLayer;
+    CALayer *_dots[WXGMenuParticleCount];
+    CGSize _builtSize;
+    BOOL _menuOpen;
+    BOOL _dotsHidden;
+}
+- (instancetype)initWithFrame:(CGRect)frame {
+    if((self=[super initWithFrame:frame])) {
+        self.userInteractionEnabled=NO;self.backgroundColor=UIColor.clearColor;self.opaque=NO;
+        _arcLayer=[CAShapeLayer layer];
+        _arcLayer.fillColor=UIColor.clearColor.CGColor;
+        _arcLayer.lineCap=kCALineCapRound;
+        _arcLayer.lineWidth=1.8;
+        _arcLayer.strokeStart=0;
+        _arcLayer.strokeEnd=1;
+        [self.layer addSublayer:_arcLayer];
+        for(int i=0;i<WXGMenuParticleCount;i++) {
+            CALayer *dot=[CALayer layer];
+            _dots[i]=dot;
+            [self.layer addSublayer:dot];
+        }
+        _symbolRotLayer=[CALayer layer];
+        [self.layer addSublayer:_symbolRotLayer];
+        _symbolLayer=[CAShapeLayer layer];
+        _symbolLayer.fillColor=UIColor.clearColor.CGColor;
+        _symbolLayer.lineCap=kCALineCapRound;
+        _symbolLayer.lineWidth=1.85;
+        [_symbolRotLayer addSublayer:_symbolLayer];
+        [self updateInkColor];
+    }
+    return self;
+}
+- (void)updateInkColor {
+    UIColor *ink=[UIColor.labelColor resolvedColorWithTraitCollection:self.traitCollection];
+    CGColorRef cg=ink.CGColor;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    _arcLayer.strokeColor=cg;
+    _symbolLayer.strokeColor=cg;
+    for(int i=0;i<WXGMenuParticleCount;i++)_dots[i].backgroundColor=cg;
+    [CATransaction commit];
+}
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+    [super traitCollectionDidChange:previous];
+    if(!previous || [self.traitCollection hasDifferentColorAppearanceComparedToTraitCollection:previous])[self updateInkColor];
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGSize sz=self.bounds.size;
+    if(sz.width<4 || sz.height<4)return;
+    if(CGSizeEqualToSize(sz,_builtSize))return;
+    _builtSize=sz;
+    CGFloat side=MIN(sz.width,sz.height);
+    CGPoint center=CGPointMake(sz.width*.5,sz.height*.5);
+    CGFloat ringR=(CGFloat)WXGMenuRingRadius(side);
+    CGFloat dotD=(CGFloat)WXGMenuRingDotDiameter();
+    CGFloat arm=round(side*.165*2)/2;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    _arcLayer.frame=self.bounds;
+    // 135 deg (7:30) clockwise to 45 deg (4:30) = 270 deg solid arc.
+    UIBezierPath *arc=[UIBezierPath bezierPathWithArcCenter:center radius:ringR
+        startAngle:(CGFloat)(135.*M_PI/180.) endAngle:(CGFloat)(45.*M_PI/180.) clockwise:YES];
+    _arcLayer.path=arc.CGPath;
+    _arcLayer.lineWidth=MAX(1.6,MIN(2.0,side*.041));
+    for(int i=0;i<WXGMenuParticleCount;i++) {
+        double a=WXGMenuRingDotAngle(i);
+        CALayer *dot=_dots[i];
+        dot.bounds=CGRectMake(0,0,dotD,dotD);
+        dot.cornerRadius=dotD*.5;
+        dot.position=CGPointMake(center.x+ringR*(CGFloat)cos(a),center.y+ringR*(CGFloat)sin(a));
+        dot.hidden=_dotsHidden;
+    }
+    CGRect symBounds=CGRectMake(0,0,arm*2+4,arm*2+4);
+    _symbolRotLayer.bounds=symBounds;
+    _symbolRotLayer.position=center;
+    _symbolLayer.bounds=symBounds;
+    _symbolLayer.position=CGPointMake(symBounds.size.width*.5,symBounds.size.height*.5);
+    CGPoint sc=CGPointMake(symBounds.size.width*.5,symBounds.size.height*.5);
+    UIBezierPath *plus=[UIBezierPath bezierPath];
+    [plus moveToPoint:CGPointMake(sc.x-arm,sc.y)];[plus addLineToPoint:CGPointMake(sc.x+arm,sc.y)];
+    [plus moveToPoint:CGPointMake(sc.x,sc.y-arm)];[plus addLineToPoint:CGPointMake(sc.x,sc.y+arm)];
+    _symbolLayer.path=plus.CGPath;
+    _symbolLayer.lineWidth=MAX(1.7,MIN(2.1,side*.043));
+    [CATransaction commit];
+    [self updateInkColor];
+}
+- (void)setDotsHidden:(BOOL)hidden {
+    if(_dotsHidden==hidden)return;
+    _dotsHidden=hidden;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    for(int i=0;i<WXGMenuParticleCount;i++)_dots[i].hidden=hidden;
+    [CATransaction commit];
+}
+- (void)setMenuOpen:(BOOL)open animated:(BOOL)animated speed:(double)speed {
+    if(animated && _menuOpen==open)return;
+    _menuOpen=open;
+    double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
+    CAShapeLayer *arcNow=(CAShapeLayer *)_arcLayer.presentationLayer?:_arcLayer;
+    CALayer *rotNow=_symbolRotLayer.presentationLayer?:_symbolRotLayer;
+    CALayer *scaleNow=_symbolLayer.presentationLayer?:_symbolLayer;
+    CGFloat curStroke=arcNow.strokeEnd;
+    CATransform3D rt=rotNow.transform,st=scaleNow.transform;
+    double curRot=atan2(rt.m12,rt.m11);if(!isfinite(curRot))curRot=0.;
+    double curScale=hypot(st.m11,st.m12);if(curScale<.1 || !isfinite(curScale))curScale=1.;
+    double targetRot=open?M_PI_4:0.;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    [_arcLayer removeAnimationForKey:@"wxg.plus.arc"];
+    [_symbolRotLayer removeAnimationForKey:@"wxg.plus.rot"];
+    [_symbolLayer removeAnimationForKey:@"wxg.plus.scale"];
+    _arcLayer.strokeEnd=open?0.:1.;
+    _symbolRotLayer.transform=open?CATransform3DMakeRotation((CGFloat)M_PI_4,0,0,1):CATransform3DIdentity;
+    _symbolLayer.transform=CATransform3DIdentity;
+    if(animated) {
+        CFTimeInterval now=CACurrentMediaTime();
+        // Track 1: 270 deg arc trim
+        CABasicAnimation *arcAnim=[CABasicAnimation animationWithKeyPath:@"strokeEnd"];
+        arcAnim.fromValue=@(curStroke);arcAnim.toValue=@(open?0.:1.);
+        arcAnim.duration=(open?.150:.220)/v;
+        arcAnim.beginTime=[_arcLayer convertTime:now+(open?0.:.030/v) fromLayer:nil];
+        arcAnim.timingFunction=open?[CAMediaTimingFunction functionWithControlPoints:.4f :0.f :1.f :1.f]
+                                   :[CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f];
+        arcAnim.fillMode=kCAFillModeBackwards;arcAnim.removedOnCompletion=YES;
+        [_arcLayer addAnimation:arcAnim forKey:@"wxg.plus.arc"];
+
+        // Track 2: two-stage scale swap (+ <-> x) with zero-overshoot smooth recovery (no bounce)
+        if(fabs(curRot-targetRot)>.05) {
+            double total=(open?.400:.350)/v;
+            double midFrac=open?(.250/.400):(.180/.350);
+            CAKeyframeAnimation *scaleAnim=[CAKeyframeAnimation animationWithKeyPath:@"transform.scale"];
+            scaleAnim.values=@[@(curScale),@0.45,@1.0];
+            scaleAnim.keyTimes=@[@0.0,@(midFrac),@1.0];
+            scaleAnim.timingFunctions=@[
+                [CAMediaTimingFunction functionWithControlPoints:.4f :0.f :.6f :1.f],
+                [CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f]
+            ];
+            scaleAnim.duration=total;
+            scaleAnim.fillMode=kCAFillModeBackwards;scaleAnim.removedOnCompletion=YES;
+            [_symbolLayer addAnimation:scaleAnim forKey:@"wxg.plus.scale"];
+
+            // Discrete mode requires keyTimes.count == values.count + 1 ([0, midFrac, 1]).
+            CAKeyframeAnimation *rotAnim=[CAKeyframeAnimation animationWithKeyPath:@"transform.rotation.z"];
+            rotAnim.calculationMode=kCAAnimationDiscrete;
+            rotAnim.values=@[@(curRot),@(targetRot)];
+            rotAnim.keyTimes=@[@0.0,@(midFrac),@1.0];
+            rotAnim.duration=total;
+            rotAnim.fillMode=kCAFillModeBackwards;rotAnim.removedOnCompletion=YES;
+            [_symbolRotLayer addAnimation:rotAnim forKey:@"wxg.plus.rot"];
+        }else if(fabs(curScale-1.)>.01) {
+            // Interrupted before the midpoint swap: recover smoothly to 1.0 without dipping again.
+            CABasicAnimation *recover=[CABasicAnimation animationWithKeyPath:@"transform.scale"];
+            recover.fromValue=@(curScale);recover.toValue=@1.0;
+            recover.duration=.170/v;
+            recover.timingFunction=[CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f];
+            recover.fillMode=kCAFillModeBackwards;recover.removedOnCompletion=YES;
+            [_symbolLayer addAnimation:recover forKey:@"wxg.plus.scale"];
+        }
+    }
+    [CATransaction commit];
+}
+@end
+
 @implementation WXGSurface {
     WXGStretchState _stretch;
     WXGTouchObserver *_touchObserver;
@@ -107,13 +279,34 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
     NSString *_resolvedRole;
     BOOL _resolvedPreserve;
     UIImageView *_trailingView;           // FIX114 M: trailingSymbol
+    WXGHomePlusTriggerView *_plusTriggerView;
     CFTimeInterval _lastFollow;           // FIX114 T: holdsPlace's fade
     CFTimeInterval _hostAwaySince;        // FIX114 U: holdsPlace: the native view out of the window since
+}
+- (void)setHomePlusTrigger:(BOOL)trigger {
+    if(_homePlusTrigger==trigger)return;
+    _homePlusTrigger=trigger;
+    if(trigger && !_plusTriggerView) {
+        _plusTriggerView=[WXGHomePlusTriggerView new];
+        [self addSubview:_plusTriggerView];
+    }
+    _plusTriggerView.hidden=!trigger;
+    if(trigger){_iconView.hidden=YES;if(_nativeContent)_nativeContent.hidden=YES;}
+    else{_iconView.hidden=!_sourceImage;if(_nativeContent)_nativeContent.hidden=NO;[_plusTriggerView setMenuOpen:NO animated:NO speed:1.];[_plusTriggerView setDotsHidden:NO];}
+    [self setNeedsLayout];
+}
+- (void)setHomePlusMenuOpen:(BOOL)open animated:(BOOL)animated speed:(double)speed {
+    if(!_homePlusTrigger || !_plusTriggerView)return;
+    [_plusTriggerView setMenuOpen:open animated:animated speed:speed];
+}
+- (void)setHomePlusDotsHidden:(BOOL)hidden {
+    if(!_plusTriggerView)return;
+    [_plusTriggerView setDotsHidden:hidden];
 }
 - (void)setNativeContent:(UIView *)content {   // FIX114 V
     if(content==_nativeContent)return;
     [_nativeContent removeFromSuperview];_nativeContent=content;
-    if(content){content.userInteractionEnabled=NO;content.isAccessibilityElement=NO;content.accessibilityElementsHidden=YES;[self addSubview:content];}
+    if(content){content.userInteractionEnabled=NO;content.isAccessibilityElement=NO;content.accessibilityElementsHidden=YES;content.hidden=_homePlusTrigger;[self addSubview:content];}
     [self setNeedsLayout];
 }
 - (void)setNativeContentOrigin:(CGPoint)origin {
@@ -294,10 +487,11 @@ static BOOL WXGSameArtwork(UIImage *a,UIImage *b) {
     if(image && _sourceImage && image!=_sourceImage && WXGSameArtwork(_sourceImage,image))image=_sourceImage;
     BOOL imageChanged=_sourceImage!=image || _sourceStyle!=self.traitCollection.userInterfaceStyle;
     if(imageChanged){_sourceImage=image;[self resolveSourceImage];}
-    if(!imageChanged && [_label.text?:@"" isEqual:title?:@""] && [_countLabel.text?:@"" isEqual:count?:@""] && _iconView.hidden==!image)return;
+    BOOL hideIcon=_homePlusTrigger || !image;
+    if(!imageChanged && [_label.text?:@"" isEqual:title?:@""] && [_countLabel.text?:@"" isEqual:count?:@""] && _iconView.hidden==hideIcon)return;
     if(![_label.text isEqual:title]){_label.text=title;_textLayoutKey=nil;_textCorrection=CGPointZero;}
     if(![_countLabel.text isEqual:count])_countLabel.text=count;
-    _iconView.hidden=!image;_label.hidden=!title.length;_countLabel.hidden=!count.length;
+    _iconView.hidden=hideIcon;_label.hidden=!title.length;_countLabel.hidden=!count.length;
     self.accessibilityLabel=count.length?[NSString stringWithFormat:@"返回，%@ 条未读",count]:title.length?title:self.role;
     [self setNeedsLayout];
 }
@@ -358,13 +552,13 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     // FIX114 M (crash): out of a window the traits are not the page's; the
     // work is done once it is back in one.
     if(!self.window){_traitsPending=YES;return;}
-    _traitsPending=NO;[self resolveSourceImage];[self applyConfig];
+    _traitsPending=NO;[self resolveSourceImage];[self applyConfig];[_plusTriggerView updateInkColor];
 }
 - (void)didMoveToWindow {
     [super didMoveToWindow];
     if(!self.window || !_traitsPending)return;
     _traitsPending=NO;
-    if(_sourceStyle!=self.traitCollection.userInterfaceStyle){[self resolveSourceImage];[self applyConfig];}
+    if(_sourceStyle!=self.traitCollection.userInterfaceStyle){[self resolveSourceImage];[self applyConfig];[_plusTriggerView updateInkColor];}
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -373,6 +567,7 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _iconView.transform=_label.transform=_countLabel.transform=CGAffineTransformIdentity;
     if(_trailingView)_trailingView.transform=CGAffineTransformIdentity;   // FIX114 M
+    if(_plusTriggerView){_plusTriggerView.transform=CGAffineTransformIdentity;_plusTriggerView.frame=_materialRect;}
     _glass.transform=CGAffineTransformIdentity;
     _glass.frame=self.bounds;_glass.glassRect=_materialRect;
     CGFloat radius=MIN(_materialRect.size.width,_materialRect.size.height)*.5;
@@ -508,6 +703,7 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
         [CATransaction begin];[CATransaction setDisableActions:YES];
         NSMutableArray<UIView *> *children=[@[self.glass,self.fallback,self.iconView,self.label,self.countLabel] mutableCopy];
         if(_trailingView)[children addObject:_trailingView];
+        if(_plusTriggerView && !_plusTriggerView.hidden)[children addObject:_plusTriggerView];
         if(_nativeContent)[children addObject:_nativeContent];   // FIX114 V: pressed and stretched with the glass
         for(UIView *child in children) {
             CGPoint centre=child.center;double tx=0,ty=0;

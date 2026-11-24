@@ -3398,7 +3398,8 @@ static UIView *WXGNativeClone(UIView *control) {
         // FIX108 C: the home "+": the artwork WeChat hands the button there (a
         // 20 pt ring drawn edge to edge) is cut off on its sides; drawn in the
         // glass, the ring showed flat sides. The same shape as a symbol then.
-        if(home && image && [WXGActionNames(b) containsObject:@"showRightTopMenuBtn"] && WXGInkTouchesEdges(image))image=WXGHomePlusSymbol();
+        BOOL homePlusBtn=home && [WXGActionNames(b) containsObject:@"showRightTopMenuBtn"];
+        if(homePlusBtn && image && WXGInkTouchesEdges(image))image=WXGHomePlusSymbol();
         if(back && !image)image=[UIImage systemImageNamed:@"chevron.left"];
         BOOL avatarButton=b==avatarControl && chatAvatar;
         if(avatarButton){image=chatAvatar;title=nil;}
@@ -3420,6 +3421,7 @@ static UIView *WXGNativeClone(UIView *control) {
             }
             s.nativeContentOrigin=CGPointMake(-lookGlass.origin.x,-lookGlass.origin.y);
         }else if(s.nativeContent){s.nativeContent=nil;s.nativeContentSource=nil;s.nativeContentSignature=0;}
+        s.homePlusTrigger=homePlusBtn && [WXGConfig.shared extraNumber:@"homeMenuCapsules"]>.5;
         s.accessibilityLabel=b.accessibilityLabel.length?b.accessibilityLabel:back?@"返回":title.length?title:WXGActionNames(b).firstObject;
         s.enabled=b.enabled;s.glass.sourceView=_route.leaf.view;s.glass.backdropExclusions=_inputAdapter.tool?@[_inputAdapter.tool,bar]:@[bar];
         CGFloat width=m.button,height=m.button;
@@ -3454,6 +3456,7 @@ static UIView *WXGNativeClone(UIView *control) {
         if(!icon && [native isKindOfClass:UIControl.class])icon=WXGButtonImage((id)native);
         [surface setNativeIconSource:native preservingColors:WXGFinderFeed(_route.leaf)];
         [surface setImage:icon title:icon?nil:item.title count:nil];
+        surface.homePlusTrigger=home && [WXGConfig.shared extraNumber:@"homeMenuCapsules"]>.5 && [(item.action?NSStringFromSelector(item.action):@"") isEqual:@"showRightTopMenuBtn"];
         CGFloat width=icon?m.button:WXGCapsuleWidth([item.title sizeWithAttributes:@{NSFontAttributeName:surface.label.font}].width,0,m.button,14*m.scale,w.bounds.size.width*.32);
         CGRect bounds=CGRectMake(0,0,width+2*WXGCanvasPaddingX,m.button+2*WXGCanvasPaddingY);
         if(!CGRectEqualToRect(surface.bounds,bounds))surface.bounds=bounds;
@@ -5564,14 +5567,19 @@ BOOL WXGHomeTopBarInList(UIView *list) {
 - (NSString *)versionString {return @WXG_BUILD_DISPLAY_VERSION;}
 // FIX116 A: the glass the plugin draws for the home page's "+" (the button whose
 // action is showRightTopMenuBtn), in window points; null when there is none.
-- (CGRect)homePlusRectInWindow:(UIWindow *)window {
-    if(!window)return CGRectNull;
+- (WXGSurface *)homePlusSurfaceInWindow:(UIWindow *)window {
+    if(!window)return nil;
     for(WXGSurface *s in _buttons) {
-        if(s.window!=window || s.hidden || !s.original || ![WXGActionNames(s.original) containsObject:@"showRightTopMenuBtn"])continue;
-        CGRect r=[s convertRect:s.materialRect toView:window];
-        if(!CGRectIsNull(r) && !CGRectIsEmpty(r))return r;
+        if(s.window!=window || s.hidden)continue;
+        if(s.homePlusTrigger || (s.original && [WXGActionNames(s.original) containsObject:@"showRightTopMenuBtn"]))return s;
     }
-    return CGRectNull;
+    return nil;
+}
+- (CGRect)homePlusRectInWindow:(UIWindow *)window {
+    WXGSurface *s=[self homePlusSurfaceInWindow:window];
+    if(!s)return CGRectNull;
+    CGRect r=[s convertRect:s.materialRect toView:window];
+    return (!CGRectIsNull(r) && !CGRectIsEmpty(r))?r:CGRectNull;
 }
 - (void)openSettingsFrom:(UIViewController *)controller {
     UINavigationController *nav=controller.navigationController;
