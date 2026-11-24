@@ -1188,7 +1188,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 // end of the bar out with a rubber band; the other end stays (WXGPressStretch.h).
 - (void)followEndStretch:(CGFloat)x {
     WXGConfig *c=WXGConfig.shared;
-    if(!c.dockEndStretch || UIAccessibilityIsReduceMotionEnabled() || _searchMode || _morphing || !_fingerDown){[self releaseEndStretch];return;}
+    if(c.dockPureGlassMode || !c.dockEndStretch || UIAccessibilityIsReduceMotionEnabled() || _searchMode || _morphing || !_fingerDown){[self releaseEndStretch];return;}
     CGFloat lo=[self centerForIndex:0],hi=[self centerForIndex:3],dead=8;
     int side=x>hi?1:-1;
     CGFloat over=side>0?x-hi-dead:lo-x-dead;
@@ -1987,7 +1987,15 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         if(fc.dockPureGlassMode)WXGLensFlexAdaptiveStep(&_flex,_velocityX,pitch,fc.pureDockFlexParams,dt);
         else WXGLensFlexStep(&_flex,_velocityX,pitch,fc.lensFlexParams,dt);
     }else _flex=(WXGLensFlex){0};
-    if(WXGStretchStep(&_endStretch,dt) || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];   // FIX68
+    BOOL endMoved=NO;
+    if(_endStretch.tracking)endMoved=WXGStretchStep(&_endStretch,dt)!=0;
+    else if(fabs(_endStretch.x)>1e-4 || fabs(_endStretch.vx)>1e-4) {
+        double ox=_endStretch.x;
+        WXGSpring(&_endStretch.x,&_endStretch.vx,0,320,36,dt);   // critically damped: no negative squeeze bounce
+        if(_endStretch.x<0){_endStretch.x=0;_endStretch.vx=0;}
+        endMoved=fabs(ox-_endStretch.x)>1e-4;
+    }
+    if(endMoved || !CGAffineTransformIsIdentity(_glass.transform))[self applyEndStretch];   // FIX68
     [self updateGeometry]; [self layoutBadges]; [_glass tick:link.timestamp];
 }
 - (void)updateGeometry {

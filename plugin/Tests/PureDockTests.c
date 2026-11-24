@@ -321,8 +321,17 @@ static void testR13AuroraSymmetryAndEndRoundness(void) {
     float rightGap = (pad + w) - .5f * (lo + hi);
     float topGap = (h - innerH) * .5f; /* 9.5 pt */
     assert(fabsf(rightGap - topGap) < 1.2f);
-    printf("PASS: R13 4-quadrant aurora symmetry, zero TR/BL pinch, concentric end-cap gap (right=%.2f vs top=%.2f pt).\n",
-           rightGap, topGap);
+
+    /* 4. R15: even at extreme max sliders (band=40pt, depth=50pt) on the right
+       dock end (endRight=1), top-right and bottom-right corners stay cleanly
+       detached (crownW == 1.0, hEff < 7.5 pt < 9.5 pt inner-bar gap). */
+    wxg_kf2_t endHalf = WXG_K_MAKE2(w * .5f, h * .5f);
+    float trHEff = 0.f, trAEff = 0.f, trCrown = 0.f;
+    WXGKyantCrownBands(WXG_K_MAKE2(0.35f * endHalf.x, -0.75f * endHalf.y), endHalf, 40.f, 50.f, 0.f, 1.f,
+                       &trHEff, &trAEff, &trCrown);
+    assert(trCrown > 0.999f && trHEff < 7.5f);
+    printf("PASS: R15 4-quadrant aurora symmetry, concentric end-cap gap (right=%.2f vs top=%.2f pt), extreme-slider end detach (hEff=%.2f pt).\n",
+           rightGap, topGap, trHEff);
 }
 
 int main(void) {

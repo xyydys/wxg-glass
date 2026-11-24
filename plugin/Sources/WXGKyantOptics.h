@@ -152,10 +152,10 @@ static inline WXG_K_F2 WXGKyantSceneSourceDepthFlat(WXG_K_F2 source,WXG_K_F2 cen
             float u=absFull>1e-4f?WXGOClamp(along/(2.f*absFull),0.f,1.f):0.f;
             inset=full*u*(2.f-u);
         } else {
-            /* C2-smooth cubic ramp over 2.25*full: eliminates the second-derivative
-               knee at the four shoulders so the top/bottom transition is round and
-               continuous while hitting 1.000 at x = 0 even under extreme squash. */
-            float u=absFull>1e-4f?WXGOClamp(along/(2.25f*absFull),0.f,1.f):0.f;
+            /* C2-smooth cubic ramp over 1.80*full: slims down the solid refracted
+               neck at the four crossings to open more translucent aurora space
+               while remaining round, continuous, and hitting 1.000 at x = 0. */
+            float u=absFull>1e-4f?WXGOClamp(along/(1.80f*absFull),0.f,1.f):0.f;
             float om=1.f-u;
             float ramp=1.f-om*om*(1.f-.35f*u);
             inset=full*ramp;
@@ -201,8 +201,9 @@ static inline float WXGKyantEase(float x) {
 }
 
 /* iOS 26 measured crown target (band ~0.105*height, depth ~0.30*height),
-   scaled softly with the user's refraction sliders and capped so the top/bottom
-   mirrored outer lip stays crisp without folding back to swallow the gap. */
+   conservatively capped below the physical inner-bar gap (~9.5 pt) so even at
+   extreme max refraction sliders (40 pt band / 50 pt depth) the outer lip and
+   end wrap cleanly detach from the inner bar without bridging. */
 static inline void WXGKyantCrownTarget(
     float minHalf,
     float refractionHeight,
@@ -210,17 +211,18 @@ static inline void WXGKyantCrownTarget(
     WXG_K_OUT float *outH,
     WXG_K_OUT float *outA
 ) {
-    float hScale = WXGOClamp(refractionHeight / 18.f, 0.f, 1.6f);
-    float aScale = WXGOClamp(refractionAmount / 26.f, 0.f, 1.6f);
-    float hCrown = WXG_K_MIN(refractionHeight, 0.215f * minHalf * (0.55f + 0.45f * hScale));
-    float aCrown = WXG_K_MIN(refractionAmount, 0.60f * minHalf * (0.55f + 0.45f * aScale));
+    float hScale = WXGOClamp(refractionHeight / 18.f, 0.f, 1.20f);
+    float aScale = WXGOClamp(refractionAmount / 26.f, 0.f, 1.35f);
+    float hCrown = WXG_K_MIN(refractionHeight, 0.195f * minHalf * (0.60f + 0.40f * hScale));
+    float aCrown = WXG_K_MIN(refractionAmount, 0.56f * minHalf * (0.58f + 0.42f * aScale));
     if (outH) *outH = hCrown;
     if (outA) *outA = aCrown;
 }
 
 /* Smooth elliptical taper from the four Kyant shoulders/ends (crownW -> 0)
    to the iOS 26 top/bottom apex (crownW -> 1, zero horizontal slope at x = 0),
-   plus end-tab relaxation when the lens wraps around the bar's left/right end. */
+   plus full end-tab wrap relaxation starting at sx = -0.08 so the top/bottom
+   corners on the dock's end side never dip and bridge back to the bar. */
 static inline void WXGKyantCrownBands(
     WXG_K_F2 centered,
     WXG_K_F2 halfSize,
@@ -239,10 +241,11 @@ static inline void WXGKyantCrownBands(
     float ellipH = ex / WXG_K_MAX(WXG_K_SQRT(ex * ex + ey * ey), 1e-4f);
     float shoulder = ellipH * ellipH;
     float sx = centered.x / WXG_K_MAX(halfSize.x, 1.f);
-    /* Start end-cap relaxation after |sx| = 0.12 so x = 0 stays C2-smooth and
-       top/bottom corners stay rounded when the lens reaches either dock end. */
-    float endW = WXG_K_MAX(endLeft * WXGKyantEase((-sx - 0.12f) / 0.42f),
-                           endRight * WXGKyantEase((sx - 0.12f) / 0.42f));
+    /* Reach crownW = 1.0 by |sx| = 0.24 on the wrapped end side so the
+       top-right / bottom-right (or top-left / bottom-left) corners stay
+       cleanly detached from the bar even at extreme refraction sliders. */
+    float endW = WXG_K_MAX(endLeft * WXGKyantEase((-sx + 0.08f) / 0.32f),
+                           endRight * WXGKyantEase((sx + 0.08f) / 0.32f));
     float crownW = WXG_K_MAX(elongated * (1.f - shoulder), endW);
     float hCrown = refractionHeight, aCrown = refractionAmount;
     WXGKyantCrownTarget(minHalf, refractionHeight, refractionAmount, &hCrown, &aCrown);
@@ -325,16 +328,16 @@ static inline WXG_K_F2 WXGKyantAuroraDispersionVec(
     if (depth0 >= hEff) return WXG_K_MAKE2(0.f, 0.f);
 
     float pressScale = WXG_K_SATURATE(WXG_K_MIN(refractionHeight / 4.f, refractionAmount / 6.f));
-    float dispNorm = (chromaticAberration / (1.f + 0.18f * WXG_K_ABS(chromaticAberration))) * pressScale;
+    float dispNorm = (chromaticAberration / (1.f + 0.14f * WXG_K_ABS(chromaticAberration))) * pressScale;
     float bandU = WXG_K_SATURATE(1.f - depth0 / hEff);
-    float bandEnv = bandU * bandU * (3.f - 2.f * bandU);
+    float bandEnv = WXG_K_SQRT(bandU) * (0.55f + 0.45f * bandU);
     float denom = WXG_K_MAX(halfSize.x * halfSize.y, 1.f);
     float cornerMag = (WXG_K_ABS(centered.x) * WXG_K_ABS(centered.y)) / denom;
     float shoulderFactor = 1.f - crown0;
 
-    float cauchyShift = (-d0) * (0.135f * dispNorm) * (0.45f + 0.55f * shoulderFactor + 0.50f * cornerMag);
-    float ringShift = 0.82f * dispNorm * bandEnv * (0.65f + 0.35f * shoulderFactor + 0.85f * cornerMag);
-    float totalShift = WXG_K_MIN(cauchyShift + ringShift, 0.40f * WXG_K_MAX(WXG_K_ABS(d0), 1.5f));
+    float cauchyShift = (-d0) * (0.195f * dispNorm) * (0.50f + 0.70f * shoulderFactor + 0.65f * cornerMag);
+    float ringShift = 1.25f * dispNorm * bandEnv * (0.70f + 0.50f * shoulderFactor + 1.05f * cornerMag);
+    float totalShift = WXG_K_MIN(cauchyShift + ringShift, 0.56f * WXG_K_MAX(WXG_K_ABS(d0), 2.0f));
     return WXG_K_MAKE2(-g0.x * totalShift, -g0.y * totalShift);
 }
 
@@ -398,16 +401,17 @@ static inline float WXGKyantSpectralOffset(int k) {
     return 1.f - (float)k / 3.f;
 }
 
-/* Smooth overlapping Gaussian-bell aurora RGB weights for the 7-tap backdrop
-   (eliminates hard step-function band edges; each channel sums strictly to 1.0). */
+/* Smooth overlapping Gaussian-bell aurora RGB weights (sigma=0.32) for the 7-tap
+   backdrop: richer translucent aurora hues without hard step-function band edges;
+   each channel sums strictly to 1.0 so the un-dispersed interior stays neutral. */
 static inline WXG_K_F3 WXGKyantSpectralRGBWeight(int k) {
-    if (k == 0) return WXG_K_MAKE3(0.214602f, 0.022251f, 0.000063f); /* deep red */
-    if (k == 1) return WXG_K_MAKE3(0.321445f, 0.105088f, 0.001550f); /* warm amber-orange */
-    if (k == 2) return WXG_K_MAKE3(0.230961f, 0.256362f, 0.018291f); /* golden yellow-lime */
-    if (k == 3) return WXG_K_MAKE3(0.079660f, 0.323046f, 0.103554f); /* aurora emerald-mint */
-    if (k == 4) return WXG_K_MAKE3(0.017202f, 0.210274f, 0.281230f); /* turquoise-cyan */
-    if (k == 5) return WXG_K_MAKE3(0.047823f, 0.070700f, 0.366368f); /* sapphire-blue */
-    return WXG_K_MAKE3(0.088307f, 0.012279f, 0.228945f);             /* violet-magenta */
+    if (k == 0) return WXG_K_MAKE3(0.185904f, 0.003149f, 0.000001f); /* deep red */
+    if (k == 1) return WXG_K_MAKE3(0.372290f, 0.047448f, 0.000133f); /* warm amber-gold */
+    if (k == 2) return WXG_K_MAKE3(0.251905f, 0.241591f, 0.005100f); /* golden lime */
+    if (k == 3) return WXG_K_MAKE3(0.057670f, 0.415624f, 0.066025f); /* aurora emerald-mint */
+    if (k == 4) return WXG_K_MAKE3(0.007862f, 0.241591f, 0.288797f); /* turquoise-cyan */
+    if (k == 5) return WXG_K_MAKE3(0.035493f, 0.047448f, 0.426814f); /* sapphire-blue */
+    return WXG_K_MAKE3(0.088877f, 0.003149f, 0.213130f);             /* violet-magenta */
 }
 
 /* 15-wavelength continuous aurora tap offsets & neutral RGB weights for the
