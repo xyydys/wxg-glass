@@ -3647,31 +3647,16 @@ static UIView *WXGNativeClone(UIView *control) {
             if(surface)[alive addObject:surface];if(home)break;
         }
     }
-    // R20: Home title expanded into compact All / Unread group bar.
+    // R21: Replace Home's MFTitleView directly (follows pull-down natively, never leaks onto pushed pages/chats/official accounts).
     if(home && [WXGChatSegments.shared titleModeWanted]) {
         UIView *homeTitle=_route.leaf.navigationItem.titleView?:_homeTitleView;
-        if(homeTitle)[_navStates conceal:homeTitle];
-        NSString *titleTxt=[self fullTitleFromView:homeTitle fallback:_route.leaf.navigationItem.title?:_route.leaf.title];
-        BOOL enHint=titleTxt && [titleTxt.lowercaseString containsString:@"wechat"];
-        CGFloat leftBound=w.safeAreaInsets.left+edge,rightBound=w.bounds.size.width-w.safeAreaInsets.right-edge;
-        for(WXGSurface *s in alive) {
-            if(!s.window || s.hidden || [s.role isEqual:@"chatTitle"] || [s.role isEqual:@"avatar"])continue;
-            CGRect sr=[s convertRect:s.materialRect toView:w];
-            if(CGRectIsEmpty(sr))continue;
-            if(CGRectGetMidX(sr)<midX)leftBound=MAX(leftBound,CGRectGetMaxX(sr)+m.gap);
-            else rightBound=MIN(rightBound,CGRectGetMinX(sr)-m.gap);
+        if(homeTitle) {
+            [_navStates restoreView:homeTitle];
+            [WXGChatSegments.shared syncTitleView:homeTitle onPage:_route.leaf];
         }
-        CGFloat avail=2.*MAX(0,MIN(midX-leftBound,rightBound-midX));
-        BOOL en=WXGConfig.shared.homeTitleSegmentsEnglish || enHint;
-        CGFloat desiredW=en?MAX(m.button*2.9,132*m.scale):MAX(m.button*2.55,114*m.scale);
-        CGFloat tw=avail>=m.button*1.8?MIN(desiredW,avail):0;
-        if(tw>=m.button*1.8) {
-            CGRect tr=CGRectMake(round(midX-tw*.5),round(centerY-m.button*.5),round(tw),round(m.button));
-            [WXGChatSegments.shared updateTitleBarOnPage:_route.leaf inOverlay:_navigationOverlay rect:tr alpha:WXGClamp(1-_homePanel,0,1) englishHint:enHint];
-        }else [WXGChatSegments.shared hideTitleBar];
     }else {
-        [WXGChatSegments.shared hideTitleBar];
-        if(home && _homeTitleView && ![_route.chat ? _route.leaf : nil isEqual:_route.leaf])[_navStates restoreView:_homeTitleView];
+        if(![WXGChatSegments.shared titleModeWanted])[WXGChatSegments.shared hideTitleBar];
+        if(home && _homeTitleView)[_navStates restoreView:_homeTitleView];
     }
     for(WXGSurface *s in _buttons.copy)if(![alive containsObject:s]) {
         BOOL temporary=s.motionHost.window==w && s.motionOwner==_route.leaf &&
@@ -6185,7 +6170,7 @@ __attribute__((constructor)) static void WXGInitialize(void) {
         for(NSString *name in WXGLocalGlass.hostClassNames)
             for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToWindow"])
                 WXGHookVoid(NSClassFromString(name),NSSelectorFromString(selectorName),^(UIView *view){
-                    WXGPerfTimePluginWorkAs("localGlass+segments",^{[WXGLocalGlass.shared hostLaidOut:view];[WXGChatSegments.shared searchBarLaidOut:view];});   // FIX113 N: the segment bar follows its search bar
+                    WXGPerfTimePluginWorkAs("localGlass+segments",^{[WXGLocalGlass.shared hostLaidOut:view];[WXGChatSegments.shared searchBarLaidOut:view];[WXGChatSegments.shared homeTitleViewLaidOut:view];});   // FIX113 N / R21
                 });
         // FIX82: liquid chat bubbles (WXGBubbles.m).
         for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToWindow"])

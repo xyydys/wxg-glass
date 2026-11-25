@@ -99,9 +99,9 @@ static id WXGMenuMakeBlurFilter(double radius) {
 }
 @end
 @implementation WXGMenuInkOverlayView {
-    CALayer *_dots[WXGMenuParticleCount];
-    BOOL _dotBlurred[WXGMenuParticleCount];
-    CGPoint _targets[WXGMenuParticleCount];
+    CAShapeLayer *_dots[WXGMenuMaxParticles];
+    BOOL _dotBlurred[WXGMenuMaxParticles];
+    CGPoint _targets[WXGMenuMaxParticles];
     int _count;
     CADisplayLink *_link;
     BOOL _opening;
@@ -115,8 +115,13 @@ static id WXGMenuMakeBlurFilter(double radius) {
         self.backgroundColor=UIColor.clearColor;self.opaque=NO;self.hidden=YES;
         self.layer.zPosition=20000;
         CGFloat scale=UIScreen.mainScreen.scale;
-        for(int i=0;i<WXGMenuParticleCount;i++) {
-            CALayer *dot=[CALayer layer];dot.hidden=YES;dot.contentsScale=scale;
+        for(int i=0;i<WXGMenuMaxParticles;i++) {
+            CAShapeLayer *dot=[CAShapeLayer layer];
+            dot.hidden=YES;dot.contentsScale=scale;
+            dot.bounds=CGRectMake(0,0,60,60);
+            dot.strokeColor=NULL;
+            dot.allowsEdgeAntialiasing=YES;
+            dot.edgeAntialiasingMask=kCALayerLeftEdge|kCALayerRightEdge|kCALayerTopEdge|kCALayerBottomEdge;
             _dots[i]=dot;[self.layer addSublayer:dot];
         }
         [self updateInkColor];
@@ -127,7 +132,7 @@ static id WXGMenuMakeBlurFilter(double radius) {
     UIColor *ink=[UIColor.labelColor resolvedColorWithTraitCollection:self.traitCollection];
     CGColorRef cg=ink.CGColor;
     [CATransaction begin];[CATransaction setDisableActions:YES];
-    for(int i=0;i<WXGMenuParticleCount;i++)_dots[i].backgroundColor=cg;
+    for(int i=0;i<WXGMenuMaxParticles;i++)_dots[i].fillColor=cg;
     [CATransaction commit];
 }
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
@@ -137,7 +142,7 @@ static id WXGMenuMakeBlurFilter(double radius) {
 - (void)stop {
     [_link invalidate];_link=nil;_onFinish=nil;
     [CATransaction begin];[CATransaction setDisableActions:YES];
-    for(int i=0;i<WXGMenuParticleCount;i++) {
+    for(int i=0;i<WXGMenuMaxParticles;i++) {
         _dots[i].hidden=YES;
         if(_dotBlurred[i]){_dots[i].filters=nil;_dotBlurred[i]=NO;}
     }
@@ -149,13 +154,18 @@ static id WXGMenuMakeBlurFilter(double radius) {
 }
 - (void)renderAt:(double)t {
     CGFloat screenScale=self.traitCollection.displayScale>0?self.traitCollection.displayScale:UIScreen.mainScreen.scale;
+    int n=_count>0?_count:WXGMenuParticleCount;
     [CATransaction begin];[CATransaction setDisableActions:YES];
-    for(int i=0;i<WXGMenuParticleCount;i++) {
-        int ti=i<_count?i:(_count>0?_count-1:0);
-        CGPoint dst=_targets[ti];
-        WXGMenuParticle p=WXGMenuDotMorphPoseAt(i,_count>0?_count:WXGMenuParticleCount,_opening?1:0,t,_speed,_stagger,
+    for(int i=0;i<WXGMenuMaxParticles;i++) {
+        CAShapeLayer *dot=_dots[i];
+        if(i>=n) {
+            dot.hidden=YES;
+            if(_dotBlurred[i]){dot.filters=nil;_dotBlurred[i]=NO;}
+            continue;
+        }
+        CGPoint dst=_targets[i];
+        WXGMenuParticle p=WXGMenuDotMorphPoseAt(i,n,_opening?1:0,t,_speed,_stagger,
                                                 _plusMidX,_plusMidY,_buttonSize,dst.x,dst.y);
-        CALayer *dot=_dots[i];
         if(p.diameter<=.15 || p.alpha<=.005) {
             dot.hidden=YES;
             if(_dotBlurred[i]){dot.filters=nil;_dotBlurred[i]=NO;}
@@ -163,8 +173,11 @@ static id WXGMenuMakeBlurFilter(double radius) {
         }
         dot.hidden=NO;
         dot.contentsScale=screenScale;
-        dot.bounds=CGRectMake(0,0,(CGFloat)p.diameter,(CGFloat)p.diameter);
-        dot.cornerRadius=(CGFloat)(p.diameter*.5);
+        CGFloat d=(CGFloat)p.diameter;
+        CGRect circle=CGRectMake(30.-d*.5,30.-d*.5,d,d);
+        CGPathRef circlePath=CGPathCreateWithEllipseInRect(circle,NULL);
+        dot.path=circlePath;
+        CGPathRelease(circlePath);
         dot.position=CGPointMake((CGFloat)p.x,(CGFloat)p.y);
         dot.opacity=(float)p.alpha;
         if(p.blurRadius>.15) {
@@ -189,14 +202,15 @@ static id WXGMenuMakeBlurFilter(double radius) {
     _plusMidY=CGRectGetMidY(plusRect);
     _buttonSize=MIN(plusRect.size.width,plusRect.size.height);
     if(_buttonSize<20.)_buttonSize=44.;
-    _count=(int)MIN((NSUInteger)WXGMenuParticleCount,targets.count);
-    for(int i=0;i<WXGMenuParticleCount;i++) {
+    _count=(int)MIN((NSUInteger)WXGMenuMaxParticles,targets.count);
+    for(int i=0;i<WXGMenuMaxParticles;i++) {
         if(i<_count)_targets[i]=targets[(NSUInteger)i].CGPointValue;
         else if(_count>0)_targets[i]=_targets[_count-1];
         else _targets[i]=CGPointMake(_plusMidX,_plusMidY+56.*(i+1));
     }
+    int n=_count>0?_count:WXGMenuParticleCount;
     if(open) {
-        double lastArr=WXGMenuDotArriveAt((_count>0?_count:WXGMenuParticleCount)-1,_count>0?_count:WXGMenuParticleCount,_stagger);
+        double lastArr=WXGMenuDotArriveAt(n-1,n,_stagger);
         _duration=(lastArr+.105)/_speed;
     }else {
         _duration=.365/_speed;
@@ -820,7 +834,9 @@ static void WXGMenuAnimateGlyphBlur(CALayer *glyphLayer,double fromRadius,double
     entry.plusSurface=plus;
     [plus setHomePlusMenuOpen:NO animated:!calm speed:speed];
     NSArray<NSValue *> *targets=[self drawnIconTargets:entry];
-    if(!calm && parent && targets.count) {
+    int drawnCount=(int)targets.count;
+    if(drawnCount>=1 && drawnCount<=WXGMenuMaxParticles)[plus setHomePlusDotCount:drawnCount];
+    if(!calm && parent && drawnCount>0) {
         CGRect plusRect=[self plusRectFor:entry parent:parent];
         [plus setHomePlusDotsHidden:YES];
         WXGMenuInkOverlayView *ink=[self ensureInkOverlay:entry inParent:parent];
@@ -989,9 +1005,14 @@ static void WXGMenuAnimateGlyphBlur(CALayer *glyphLayer,double fromRadius,double
     WXGSurface *plus=[WXGIntegrationHost.shared homePlusSurfaceInWindow:entry.host.window?:parent.window];
     entry.plusSurface=plus;
     [plus setHomePlusDotsHidden:YES];
-    [plus setHomePlusMenuOpen:YES animated:!calm speed:speed];
     NSArray<NSValue *> *targets=[self drawnIconTargets:entry];
     int drawnCount=(int)targets.count;
+    if(drawnCount>=1 && drawnCount<=WXGMenuMaxParticles) {
+        [plus setHomePlusDotCount:drawnCount];
+        NSUserDefaults *ud=NSUserDefaults.standardUserDefaults;
+        if([ud integerForKey:@"WXGHomeMenuLastItemCount"]!=drawnCount)[ud setInteger:drawnCount forKey:@"WXGHomeMenuLastItemCount"];
+    }
+    [plus setHomePlusMenuOpen:YES animated:!calm speed:speed];
     if(!calm && parent && drawnCount>0) {
         CGRect plusRect=[self plusRectFor:entry parent:parent];
         WXGMenuInkOverlayView *ink=[self ensureInkOverlay:entry inParent:parent];
@@ -1005,7 +1026,7 @@ static void WXGMenuAnimateGlyphBlur(CALayer *glyphLayer,double fromRadius,double
     [CATransaction begin];[CATransaction setDisableActions:YES];
     for(WXGMenuRow *row in entry.rows) {
         if(!row.drawn)continue;
-        WXGMenuEntrance e=WXGMenuEntranceForCount(index++,drawnCount>0?drawnCount:5,row.slotDistance,stagger,speed);
+        WXGMenuEntrance e=WXGMenuEntranceForCount(index++,drawnCount>0?drawnCount:WXGMenuParticleCount,row.slotDistance,stagger,speed);
         // Circular glass icon: materializes via Gaussian-blur morph directly where dot arrives (ZERO bounce!).
         if(!row.icon.hidden) {
             CALayer *layer=row.icon.layer;
@@ -1117,6 +1138,11 @@ static void WXGMenuAnimateGlyphBlur(CALayer *glyphLayer,double fromRadius,double
         @"capsuleMode":@(entry.capsuleMode),@"phase":@(entry.phase),@"rowsReady":@(entry.rowsReady),@"entrances":@(entry.entrances),@"exits":@(entry.exits),
         @"blockReopen":@(entry.blockReopen),@"menuParent":entry.menuParent?NSStringFromClass(entry.menuParent.class):@"",
         @"rows":[self rowEvidence:entry]}];
-    return @{@"mounts":@(_mounts),@"reuses":@(_reuses),@"hosts":rows,@"lastMenus":_dumps?:@{}};   // FIX114 Z
+    WXGSurface *plus=nil;
+    for(WXGDecoration *entry in _entries)if(entry.plusSurface){plus=entry.plusSurface;break;}
+    if(!plus && _source.window)plus=[WXGIntegrationHost.shared homePlusSurfaceInWindow:_source.window];
+    NSInteger savedCount=[NSUserDefaults.standardUserDefaults integerForKey:@"WXGHomeMenuLastItemCount"];
+    return @{@"mounts":@(_mounts),@"reuses":@(_reuses),@"hosts":rows,@"lastMenus":_dumps?:@{},
+             @"plusDotCountSaved":@(savedCount),@"plusTrigger":plus?[plus evidence][@"plusTrigger"]?:@{}:@{}};   // FIX114 Z
 }
 @end

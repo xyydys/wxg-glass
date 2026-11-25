@@ -81,8 +81,8 @@ static inline double WXGMenuEaseInOut(double u) {
     return u*u*(3.-2.*u);
 }
 
-/* ---- Trigger button proportions & equal-gap 5-dot ring geometry -------- */
-enum { WXGMenuParticleCount = 5 };
+/* ---- Trigger button proportions & dynamic N-dot equal-gap ring geometry - */
+enum { WXGMenuMaxParticles = 6, WXGMenuParticleCount = 4 };
 
 /* Outer ring radius (~15.0pt at 44pt button, matching screenshot proportion). */
 static inline double WXGMenuRingRadius(double size) {
@@ -95,7 +95,7 @@ static inline double WXGMenuRingLineWidth(double size) {
 }
 static inline double WXGMenuRingDotDiameterFor(double size) {
     double s=isfinite(size)&&size>0?size:44.;
-    return WXGMenuClamp(s*.060,2.2,2.9);
+    return WXGMenuClamp(s*.066,2.4,3.1);
 }
 static inline double WXGMenuRingDotDiameter(void) { return WXGMenuRingDotDiameterFor(44.); }
 static inline double WXGMenuSymbolArmLength(double size) {
@@ -107,23 +107,33 @@ static inline double WXGMenuSymbolLineWidth(double size) {
     return WXGMenuClamp(s*.044,1.7,2.2);
 }
 
-/* Bottom 5 dot angles (radians, UIKit y-down where pi/2 = 6:00) inside the
+static inline int WXGMenuClampCount(int count) {
+    if(count<1)return WXGMenuParticleCount;
+    if(count>WXGMenuMaxParticles)return WXGMenuMaxParticles;
+    return count;
+}
+
+/* Bottom N dot angles (radians, UIKit y-down where pi/2 = 6:00) inside the
    90-deg bottom opening (45..135 deg) with EXACTLY EQUAL clear edge-to-edge
    gaps between: (arc cap at 45 deg <-> dot 0), (dot i <-> dot i+1), and
-   (dot 4 <-> arc cap at 135 deg). */
-static inline double WXGMenuRingDotAngleForSize(int idx,double size) {
+   (dot N-1 <-> arc cap at 135 deg). */
+static inline double WXGMenuRingDotAngleForCount(int idx,int count,double size) {
     const double pi=3.14159265358979323846;
+    int n=WXGMenuClampCount(count);
     if(idx<0)idx=0;
-    if(idx>=WXGMenuParticleCount)idx=WXGMenuParticleCount-1;
+    if(idx>=n)idx=n-1;
     double r=WXGMenuRingRadius(size);
     double capHalf=(WXGMenuRingLineWidth(size)*.5)/r;
     double dotHalf=(WXGMenuRingDotDiameterFor(size)*.5)/r;
     double clearSpan=(pi*.5)-2.*capHalf;
-    double gap=(clearSpan-(double)WXGMenuParticleCount*2.*dotHalf)/(double)(WXGMenuParticleCount+1);
+    double gap=(clearSpan-(double)n*2.*dotHalf)/(double)(n+1);
     if(gap<0.)gap=0.;
     return (pi*.25)+capHalf+gap+dotHalf+(double)idx*(2.*dotHalf+gap);
 }
-static inline double WXGMenuRingDotAngle(int idx) { return WXGMenuRingDotAngleForSize(idx,44.); }
+static inline double WXGMenuRingDotAngleForSize(int idx,double size) {
+    return WXGMenuRingDotAngleForCount(idx,WXGMenuParticleCount,size);
+}
+static inline double WXGMenuRingDotAngle(int idx) { return WXGMenuRingDotAngleForCount(idx,WXGMenuParticleCount,44.); }
 
 /* Track 1 strokeEnd at `t` seconds:
    open:  1.0 -> 0.0 over 0..150ms (CCW from right 45 deg to left 135 deg)
@@ -194,20 +204,21 @@ static inline WXGMenuParticle WXGMenuDotMorphPoseAt(int idx,int count,int open,d
     double plusMidX,double plusMidY,double buttonSize,double targetX,double targetY) {
     double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
     double ts=t*v;
-    int dotSlot=idx<0?0:(idx>=WXGMenuParticleCount?WXGMenuParticleCount-1:idx);
+    int n=WXGMenuClampCount(count);
+    int dotSlot=idx<0?0:(idx>=n?n-1:idx);
     double ringR=WXGMenuRingRadius(buttonSize);
     double dotDiam=WXGMenuRingDotDiameterFor(buttonSize);
-    double angle=WXGMenuRingDotAngleForSize(dotSlot,buttonSize);
+    double angle=WXGMenuRingDotAngleForCount(dotSlot,n,buttonSize);
     double anchorX=plusMidX+ringR*cos(angle);
     double anchorY=plusMidY+ringR*sin(angle);
 
-    double tDetach=WXGMenuDotDetachAt(idx,count,stagger);
-    double tArrive=WXGMenuDotArriveAt(idx,count,stagger);
+    double tDetach=WXGMenuDotDetachAt(idx,n,stagger);
+    double tArrive=WXGMenuDotArriveAt(idx,n,stagger);
     double tMorphEnd=tArrive+.095;
     double flightDur=fmax(tArrive-tDetach,.06);
 
     /* Gentle organic curve bowing slightly outward on the way from anchor to icon center. */
-    double ctrlX=.5*(anchorX+targetX)+((dotSlot-2)*2.5-5.0);
+    double ctrlX=.5*(anchorX+targetX)+((dotSlot-(n-1)*.5)*2.5-4.0);
     double ctrlY=.42*anchorY+.58*targetY;
 
     if(open) {
@@ -236,11 +247,12 @@ static inline WXGMenuParticle WXGMenuDotMorphPoseAt(int idx,int count,int open,d
 
     /* Collapse (0..360ms): exact reversed morph + flight back to anchor!
        Bottom rows lift slightly earlier so they arrive back at the ring smoothly together. */
-    int revOrd=(count>1?(count-1-idx):0);
+    int revOrd=(n>1?(n-1-idx):0);
     if(revOrd<0)revOrd=0;
     double cStart=.030+.014*(double)revOrd;
     double cUnblur=cStart+.085;
-    double cDock=.275+.016*(double)(dotSlot);
+    double dockStep=n>1?fmin(.016,.064/(double)(n-1)):0.;
+    double cDock=.275+dockStep*(double)(dotSlot);
     if(cDock>.355)cDock=.355;
 
     if(ts<=cStart) {
@@ -297,7 +309,7 @@ static inline WXGMenuEntrance WXGMenuEntranceForCount(int index,int count,double
     double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
     double gap=WXGMenuClamp(isfinite(stagger)?stagger:.045,0.,.080);
     int i=index<0?0:index;
-    double arrive=WXGMenuDotArriveAt(i,count>0?count:5,gap);
+    double arrive=WXGMenuDotArriveAt(i,count>0?count:WXGMenuParticleCount,gap);
     WXGMenuEntrance e;
     e.iconDelay=fmax(0.,arrive-.030)/v;
     e.iconDuration=.160/v;
@@ -313,13 +325,13 @@ static inline WXGMenuEntrance WXGMenuEntranceForCount(int index,int count,double
     e.iconScale=.62;
     e.capsuleScaleX=.94;
     e.capsuleScaleY=.94;
-    e.travel=10.;
+    e.travel=0.;
     e.capsuleShift=12.;
     e.textShift=0.;
     return e;
 }
 static inline WXGMenuEntrance WXGMenuEntranceFor(int index,double slotDistance,double stagger,double speed) {
-    return WXGMenuEntranceForCount(index,5,slotDistance,stagger,speed);
+    return WXGMenuEntranceForCount(index,WXGMenuParticleCount,slotDistance,stagger,speed);
 }
 
 /* Kept for backwards compatibility with tools/tests. */
@@ -363,7 +375,7 @@ static inline WXGMenuPose WXGMenuCapsulePoseAt(const WXGMenuEntrance *e,double t
     return (WXGMenuPose){a,s,s,dx,0.,a,0.};
 }
 
-/* Total expand duration across all tracks (~0.52s for 5 rows at default stagger/speed). */
+/* Total expand duration across all tracks (~0.52s at default stagger/speed). */
 static inline double WXGMenuTotalDuration(int count,double rowPitch,double stagger,double speed) {
     double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
     double end=.380/v;
@@ -383,7 +395,7 @@ typedef struct {
     double iconFade,capsuleFade;
     double iconBlurEnd;
     double iconScale,capsuleScaleX,capsuleScaleY;
-    double travel;          /* subtle 10pt reverse lift as icon blur-morphs back into its dot */
+    double travel;          /* subtle reverse lift as icon blur-morphs back into its dot */
     double capsuleShift;    /* +10pt right retract during 100ms fast vanish */
     double textShift;
 } WXGMenuExit;
@@ -407,7 +419,7 @@ static inline WXGMenuExit WXGMenuExitFor(int order,double slotDistance,double st
     e.iconScale=.62;
     e.capsuleScaleX=.94;
     e.capsuleScaleY=.94;
-    e.travel=10.;
+    e.travel=0.;
     e.capsuleShift=10.;
     e.textShift=0.;
     return e;

@@ -98,23 +98,53 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
 
 // Track 1 (270 deg solid arc + 5 bottom dots) & Track 2 (two-stage + <-> x swap, zero bounce)
 // drawn crisply inside the home "+" glass button.
+static NSString *const WXGHomeMenuDotCountKey=@"WXGHomeMenuLastItemCount";
+static NSInteger WXGLoadMenuDotCount(void) {
+    NSInteger saved=[NSUserDefaults.standardUserDefaults integerForKey:WXGHomeMenuDotCountKey];
+    return (saved>=1 && saved<=WXGMenuMaxParticles)?saved:WXGMenuParticleCount;
+}
+
 @interface WXGHomePlusTriggerView : UIView
 - (void)setMenuOpen:(BOOL)open animated:(BOOL)animated speed:(double)speed;
 - (void)setDotsHidden:(BOOL)hidden;
+- (void)setDotCount:(NSInteger)count;
 - (void)updateInkColor;
+- (NSDictionary *)diagnostics;
 @end
+
+@interface WXGHomePlusTicker : NSObject
+@property(nonatomic,weak) WXGHomePlusTriggerView *owner;
+- (void)tick:(CADisplayLink *)link;
+@end
+
+@interface WXGHomePlusTriggerView ()
+- (void)tickAnimation;
+@end
+
+@implementation WXGHomePlusTicker
+- (void)tick:(CADisplayLink *)link {[self.owner tickAnimation];}
+@end
+
 @implementation WXGHomePlusTriggerView {
     CAShapeLayer *_arcLayer;
     CALayer *_symbolRotLayer;
     CAShapeLayer *_symbolLayer;
-    CALayer *_dots[WXGMenuParticleCount];
+    CAShapeLayer *_dots[WXGMenuMaxParticles];
+    NSInteger _dotCount;
     CGSize _builtSize;
     BOOL _menuOpen;
     BOOL _dotsHidden;
+    BOOL _animating;
+    double _animSpeed;
+    CFTimeInterval _animStart;
+    CADisplayLink *_link;
+    WXGHomePlusTicker *_ticker;
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if((self=[super initWithFrame:frame])) {
         self.userInteractionEnabled=NO;self.backgroundColor=UIColor.clearColor;self.opaque=NO;
+        _dotCount=WXGLoadMenuDotCount();
+        _animSpeed=1.;
         _arcLayer=[CAShapeLayer layer];
         _arcLayer.fillColor=UIColor.clearColor.CGColor;
         _arcLayer.lineCap=kCALineCapRound;
@@ -122,8 +152,11 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
         _arcLayer.strokeStart=0;
         _arcLayer.strokeEnd=1;
         [self.layer addSublayer:_arcLayer];
-        for(int i=0;i<WXGMenuParticleCount;i++) {
-            CALayer *dot=[CALayer layer];
+        for(int i=0;i<WXGMenuMaxParticles;i++) {
+            CAShapeLayer *dot=[CAShapeLayer layer];
+            dot.strokeColor=NULL;
+            dot.allowsEdgeAntialiasing=YES;
+            dot.edgeAntialiasingMask=kCALayerLeftEdge|kCALayerRightEdge|kCALayerTopEdge|kCALayerBottomEdge;
             _dots[i]=dot;
             [self.layer addSublayer:dot];
         }
@@ -138,18 +171,78 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
     }
     return self;
 }
+- (void)dealloc {
+    [_link invalidate];_link=nil;
+}
 - (void)updateInkColor {
     UIColor *ink=[UIColor.labelColor resolvedColorWithTraitCollection:self.traitCollection];
     CGColorRef cg=ink.CGColor;
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _arcLayer.strokeColor=cg;
     _symbolLayer.strokeColor=cg;
-    for(int i=0;i<WXGMenuParticleCount;i++)_dots[i].backgroundColor=cg;
+    for(int i=0;i<WXGMenuMaxParticles;i++)_dots[i].fillColor=cg;
     [CATransaction commit];
 }
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {
     [super traitCollectionDidChange:previous];
     if(!previous || [self.traitCollection hasDifferentColorAppearanceComparedToTraitCollection:previous])[self updateInkColor];
+}
+- (void)setDotCount:(NSInteger)count {
+    NSInteger clamped=WXGMenuClampCount((int)count);
+    if(_dotCount==clamped)return;
+    _dotCount=clamped;
+    _builtSize=CGSizeZero;
+    [self setNeedsLayout];
+    [self layoutIfNeeded];
+}
+- (void)stopDisplayLink {
+    if(_link){[_link invalidate];_link=nil;}
+}
+- (void)ensureDisplayLink {
+    if(_link)return;
+    if(!_ticker){_ticker=[WXGHomePlusTicker new];_ticker.owner=self;}
+    _link=[CADisplayLink displayLinkWithTarget:_ticker selector:@selector(tick:)];
+    if([_link respondsToSelector:@selector(setPreferredFrameRateRange:)]) {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wunguarded-availability-new"
+        _link.preferredFrameRateRange=CAFrameRateRangeMake(60,120,120);
+#pragma clang diagnostic pop
+    }
+    [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
+}
+- (void)applyPoseAtElapsed:(double)t {
+    int openFlag=_menuOpen?1:0;
+    double stroke=WXGMenuRingStrokeAt(openFlag,t,_animSpeed);
+    WXGMenuSymbolPose sym=WXGMenuSymbolPoseAt(openFlag,t,_animSpeed);
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    _arcLayer.strokeEnd=(CGFloat)stroke;
+    _symbolRotLayer.transform=CATransform3DMakeRotation((CGFloat)sym.rotationRad,0,0,1);
+    _symbolLayer.transform=CATransform3DMakeScale((CGFloat)sym.scale,(CGFloat)sym.scale,1.);
+    _symbolLayer.opacity=(float)sym.alpha;
+    [CATransaction commit];
+}
+- (void)tickAnimation {
+    if(!_animating || !self.window) {
+        if(!self.window && _animating){_animating=NO;[self applyPoseAtElapsed:1.];}
+        [self stopDisplayLink];
+        return;
+    }
+    double v=WXGMenuClamp(isfinite(_animSpeed)?_animSpeed:1.,.5,2.);
+    double total=.360/v;
+    double elapsed=MAX(0.,CACurrentMediaTime()-_animStart);
+    if(elapsed>=total) {
+        _animating=NO;
+        [self applyPoseAtElapsed:total+.02];
+        [self stopDisplayLink];
+        return;
+    }
+    [self applyPoseAtElapsed:elapsed];
+}
+- (void)didMoveToWindow {
+    [super didMoveToWindow];
+    if(!self.window && _animating) {
+        _animating=NO;[self applyPoseAtElapsed:1.];[self stopDisplayLink];
+    }
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -171,15 +264,22 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
         startAngle:(CGFloat)(135.*M_PI/180.) endAngle:(CGFloat)(45.*M_PI/180.) clockwise:YES];
     _arcLayer.path=arc.CGPath;
     _arcLayer.lineWidth=(CGFloat)WXGMenuRingLineWidth(side);
-    for(int i=0;i<WXGMenuParticleCount;i++) {
-        double a=WXGMenuRingDotAngleForSize(i,side);
-        CALayer *dot=_dots[i];
+    CGRect dotBounds=CGRectMake(0,0,dotD,dotD);
+    CGPathRef circlePath=CGPathCreateWithEllipseInRect(dotBounds,NULL);
+    for(int i=0;i<WXGMenuMaxParticles;i++) {
+        CAShapeLayer *dot=_dots[i];
         dot.contentsScale=screenScale;
-        dot.bounds=CGRectMake(0,0,dotD,dotD);
-        dot.cornerRadius=dotD*.5;
-        dot.position=CGPointMake(center.x+ringR*(CGFloat)cos(a),center.y+ringR*(CGFloat)sin(a));
-        dot.hidden=_dotsHidden;
+        if(i<_dotCount) {
+            double a=WXGMenuRingDotAngleForCount(i,(int)_dotCount,side);
+            dot.bounds=dotBounds;
+            dot.path=circlePath;
+            dot.position=CGPointMake(center.x+ringR*(CGFloat)cos(a),center.y+ringR*(CGFloat)sin(a));
+            dot.hidden=_dotsHidden;
+        }else {
+            dot.hidden=YES;
+        }
     }
+    CGPathRelease(circlePath);
     CGRect symBounds=CGRectMake(0,0,arm*2+6,arm*2+6);
     _symbolRotLayer.contentsScale=screenScale;
     _symbolRotLayer.bounds=symBounds;
@@ -195,99 +295,38 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
     _symbolLayer.lineWidth=(CGFloat)WXGMenuSymbolLineWidth(side);
     [CATransaction commit];
     [self updateInkColor];
+    if(_animating)[self applyPoseAtElapsed:MAX(0.,CACurrentMediaTime()-_animStart)];
+    else [self applyPoseAtElapsed:1.];
 }
 - (void)setDotsHidden:(BOOL)hidden {
     if(_dotsHidden==hidden)return;
     _dotsHidden=hidden;
     [CATransaction begin];[CATransaction setDisableActions:YES];
-    for(int i=0;i<WXGMenuParticleCount;i++)_dots[i].hidden=hidden;
+    for(int i=0;i<WXGMenuMaxParticles;i++)_dots[i].hidden=hidden || i>=_dotCount;
     [CATransaction commit];
 }
 - (void)setMenuOpen:(BOOL)open animated:(BOOL)animated speed:(double)speed {
-    if(animated && _menuOpen==open)return;
-    _menuOpen=open;
     double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
-    CAShapeLayer *arcNow=(CAShapeLayer *)_arcLayer.presentationLayer?:_arcLayer;
-    CALayer *rotNow=_symbolRotLayer.presentationLayer?:_symbolRotLayer;
-    CALayer *scaleNow=_symbolLayer.presentationLayer?:_symbolLayer;
-    CGFloat curStroke=arcNow.strokeEnd;
-    CATransform3D rt=rotNow.transform,st=scaleNow.transform;
-    double curRot=atan2(rt.m12,rt.m11);if(!isfinite(curRot))curRot=0.;
-    double curScale=hypot(st.m11,st.m12);if(curScale<.02 || !isfinite(curScale))curScale=.05;
-    float curOpacity=scaleNow.opacity;
-    double targetRot=open?M_PI_4:0.;
-    [CATransaction begin];[CATransaction setDisableActions:YES];
-    [_arcLayer removeAnimationForKey:@"wxg.plus.arc"];
-    [_symbolRotLayer removeAnimationForKey:@"wxg.plus.rot"];
-    [_symbolLayer removeAnimationForKey:@"wxg.plus.scale"];
-    [_symbolLayer removeAnimationForKey:@"wxg.plus.alpha"];
-    _arcLayer.strokeEnd=open?0.:1.;
-    _symbolRotLayer.transform=open?CATransform3DMakeRotation((CGFloat)M_PI_4,0,0,1):CATransform3DIdentity;
-    _symbolLayer.transform=CATransform3DIdentity;
-    _symbolLayer.opacity=1.f;
-    if(animated) {
-        CFTimeInterval now=CACurrentMediaTime();
-        // Arc: CCW retract 0..150ms on open; CW grow 150..360ms on close (as dots dock back).
-        CABasicAnimation *arcAnim=[CABasicAnimation animationWithKeyPath:@"strokeEnd"];
-        arcAnim.fromValue=@(curStroke);arcAnim.toValue=@(open?0.:1.);
-        arcAnim.duration=(open?.150:.210)/v;
-        arcAnim.beginTime=[_arcLayer convertTime:now+(open?0.:.150/v) fromLayer:nil];
-        arcAnim.timingFunction=open?[CAMediaTimingFunction functionWithControlPoints:.38f :0.f :.85f :1.f]
-                                   :[CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f];
-        arcAnim.fillMode=kCAFillModeBackwards;arcAnim.removedOnCompletion=YES;
-        [_arcLayer addAnimation:arcAnim forKey:@"wxg.plus.arc"];
-
-        // Center glyph: shrinks & fades to 0 as dots detach (150ms open / 170ms close),
-        // swaps instantaneously to shrunken x / +, then grows smoothly to 1.0 (zero bounce).
-        if(fabs(curRot-targetRot)>.05) {
-            double total=.360/v;
-            double midFrac=open?(.150/.360):(.170/.360);
-            CAKeyframeAnimation *scaleAnim=[CAKeyframeAnimation animationWithKeyPath:@"transform.scale"];
-            scaleAnim.values=@[@(curScale),@0.05,@1.0];
-            scaleAnim.keyTimes=@[@0.0,@(midFrac),@1.0];
-            scaleAnim.timingFunctions=@[
-                [CAMediaTimingFunction functionWithControlPoints:.4f :0.f :.8f :1.f],
-                [CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f]
-            ];
-            scaleAnim.duration=total;
-            scaleAnim.fillMode=kCAFillModeBackwards;scaleAnim.removedOnCompletion=YES;
-            [_symbolLayer addAnimation:scaleAnim forKey:@"wxg.plus.scale"];
-
-            CAKeyframeAnimation *alphaAnim=[CAKeyframeAnimation animationWithKeyPath:@"opacity"];
-            alphaAnim.values=@[@(curOpacity),@0.0,@1.0];
-            alphaAnim.keyTimes=@[@0.0,@(midFrac),@1.0];
-            alphaAnim.timingFunctions=@[
-                [CAMediaTimingFunction functionWithControlPoints:.4f :0.f :.8f :1.f],
-                [CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f]
-            ];
-            alphaAnim.duration=total;
-            alphaAnim.fillMode=kCAFillModeBackwards;alphaAnim.removedOnCompletion=YES;
-            [_symbolLayer addAnimation:alphaAnim forKey:@"wxg.plus.alpha"];
-
-            CAKeyframeAnimation *rotAnim=[CAKeyframeAnimation animationWithKeyPath:@"transform.rotation.z"];
-            rotAnim.calculationMode=kCAAnimationDiscrete;
-            rotAnim.values=@[@(curRot),@(targetRot)];
-            rotAnim.keyTimes=@[@0.0,@(midFrac),@1.0];
-            rotAnim.duration=total;
-            rotAnim.fillMode=kCAFillModeBackwards;rotAnim.removedOnCompletion=YES;
-            [_symbolRotLayer addAnimation:rotAnim forKey:@"wxg.plus.rot"];
-        }else if(fabs(curScale-1.)>.01 || curOpacity<.98f) {
-            CABasicAnimation *recover=[CABasicAnimation animationWithKeyPath:@"transform.scale"];
-            recover.fromValue=@(curScale);recover.toValue=@1.0;
-            recover.duration=.180/v;
-            recover.timingFunction=[CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f];
-            recover.fillMode=kCAFillModeBackwards;recover.removedOnCompletion=YES;
-            [_symbolLayer addAnimation:recover forKey:@"wxg.plus.scale"];
-
-            CABasicAnimation *alphaRec=[CABasicAnimation animationWithKeyPath:@"opacity"];
-            alphaRec.fromValue=@(curOpacity);alphaRec.toValue=@1.0;
-            alphaRec.duration=.180/v;
-            alphaRec.timingFunction=[CAMediaTimingFunction functionWithControlPoints:.22f :1.f :.36f :1.f];
-            alphaRec.fillMode=kCAFillModeBackwards;alphaRec.removedOnCompletion=YES;
-            [_symbolLayer addAnimation:alphaRec forKey:@"wxg.plus.alpha"];
-        }
+    if(animated && _menuOpen==open && _animating)return;
+    if(!animated) {
+        _menuOpen=open;_animating=NO;_animSpeed=v;
+        [self stopDisplayLink];
+        [self applyPoseAtElapsed:1.];
+        return;
     }
-    [CATransaction commit];
+    CFTimeInterval now=CACurrentMediaTime();
+    if(_menuOpen==open && !_animating) {
+        double expectedStroke=open?0.:1.;
+        if(fabs(_arcLayer.strokeEnd-expectedStroke)<.01 && fabs(_symbolLayer.opacity-1.f)<.02)return;
+    }
+    _menuOpen=open;_animating=YES;_animSpeed=v;_animStart=now;
+    [self applyPoseAtElapsed:0.];
+    if(self.window)[self ensureDisplayLink];
+    else { _animating=NO;[self applyPoseAtElapsed:1.]; }
+}
+- (NSDictionary *)diagnostics {
+    return @{@"dotCount":@(_dotCount),@"menuOpen":@(_menuOpen),@"dotsHidden":@(_dotsHidden),
+             @"animating":@(_animating),@"arcStroke":@(_arcLayer.strokeEnd),@"symOpacity":@(_symbolLayer.opacity)};
 }
 @end
 
@@ -327,6 +366,10 @@ static void WXGFollowPose(CALayer *layer,CGAffineTransform t) {
 - (void)setHomePlusDotsHidden:(BOOL)hidden {
     if(!_plusTriggerView)return;
     [_plusTriggerView setDotsHidden:hidden];
+}
+- (void)setHomePlusDotCount:(NSInteger)count {
+    if(!_plusTriggerView)return;
+    [_plusTriggerView setDotCount:count];
 }
 - (void)setNativeContent:(UIView *)content {   // FIX114 V
     if(content==_nativeContent)return;
@@ -954,6 +997,7 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
              @"materialLayers":_glass.layerEvidence,@"fallbackVisible":@(!_fallback.hidden),
              @"originalClass":_original?NSStringFromClass(_original.class):@"none",
              @"actions":WXGActionNames(_original),@"forwardedTaps":@(_forwardedTaps),@"metalFirstFrame":@(_glass.hasPresentedFrame),
-             @"renderer":_glass.diagnostics,@"stretchFollowers":_followerNames?:@[],@"stretchClip":clipEvidence,@"textLength":@(_label.text.length),@"countDigits":@(_countLabel.text.length)};
+             @"renderer":_glass.diagnostics,@"stretchFollowers":_followerNames?:@[],@"stretchClip":clipEvidence,@"textLength":@(_label.text.length),@"countDigits":@(_countLabel.text.length),
+             @"plusTrigger":(_homePlusTrigger && _plusTriggerView)?[_plusTriggerView diagnostics]:@{}};
 }
 @end

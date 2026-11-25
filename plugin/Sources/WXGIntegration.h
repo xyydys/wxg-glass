@@ -314,6 +314,7 @@ void WXGInstallNativeIconGuard(void);
 @property(nonatomic) BOOL homePlusTrigger;
 - (void)setHomePlusMenuOpen:(BOOL)open animated:(BOOL)animated speed:(double)speed;
 - (void)setHomePlusDotsHidden:(BOOL)hidden;
+- (void)setHomePlusDotCount:(NSInteger)count;
 - (void)placeMaterial:(CGRect)rect inParent:(UIView *)parent;
 - (void)setImage:(UIImage *)image title:(NSString *)title count:(NSString *)count;
 - (void)setNativeIconSource:(UIView *)source preservingColors:(BOOL)preserve;
@@ -382,6 +383,8 @@ FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我
 - (BOOL)wanted;   // the switch, the plugin on and authorised, render-server mode
 - (BOOL)titleModeWanted;   // R20: expand home title capsule into compact All/Unread group bar
 - (void)updateOnPage:(UIViewController *)page;   // the host's refresh on the chat list
+- (void)syncTitleView:(UIView *)titleView onPage:(UIViewController *)page;
+- (void)homeTitleViewLaidOut:(UIView *)view;
 - (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect alpha:(CGFloat)alpha englishHint:(BOOL)englishHint;
 - (void)hideTitleBar;
 - (void)searchBarLaidOut:(UIView *)view;         // a search bar laid out (follows the field)

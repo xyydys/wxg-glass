@@ -190,7 +190,8 @@ static void testAdaptiveFlexTiming(void) {
 }
 
 static void testR8PureDockModelAndMotionTier(void) {
-    float w = 123.5f, h = 70.f, barH = 62.f, innerH = 51.f, pad = 20.f;
+    float w = 123.5f, h = 70.f, barGrow = 1.035f, restBarH = 62.f, barH = restBarH * barGrow;
+    float shrinkRatio = 0.18f, innerH = barH * (1.f - shrinkRatio), pad = 20.f;
     WXGMeshOptics r8 = {0};
     r8.width = w + 2.f * pad;
     r8.height = h + 2.f * pad;
@@ -207,11 +208,23 @@ static void testR8PureDockModelAndMotionTier(void) {
     r8.sbTop = pad + (h - barH) * .5f;
     r8.sbBottom = pad + (h + barH) * .5f;
     r8.shrinkPress = 1.f;
-    r8.shrinkPinch = (barH - innerH) / barH;
+    r8.shrinkPinch = shrinkRatio;
     r8.kyantMode = 1.f;
     r8.kyantHeight = 18.f;
     r8.kyantAmount = 26.f;
     r8.shrinkFlat = 0.f;
+
+    /* 0. Proportional inner-bar shrink preserves innerH / barH == (1 - shrinkRatio) across Dock (69.7), Segment (40.0), and TitleBar (36.0) with barGrowth. */
+    float barHeights[3] = { 69.70f * barGrow, 40.0f * barGrow, 36.0f * barGrow };
+    for (int bi = 0; bi < 3; bi++) {
+        float bh = barHeights[bi];
+        float dz = WXGKyantSceneDz(WXG_K_MAKE2(pad + w * .5f, pad + h * .5f - bh * .5f * (1.f - shrinkRatio)),
+            WXG_K_MAKE2(pad + w * .5f, pad + h * .5f), WXG_K_MAKE2(w, h), 0.f,
+            WXG_K_MAKE2(-10000.f + pad, pad + (h - bh) * .5f), WXG_K_MAKE2(20000.f, bh), 0.f,
+            1.f, shrinkRatio, 0.f, 0.f, 1.f, 1.f);
+        float contractedH = bh - 2.f * dz;
+        assert(fabsf(contractedH / bh - (1.f - shrinkRatio)) < 1e-4f);
+    }
 
     /* 1. R8 7-tap shoulder dispersion is strong and center stays neutral. */
     WXGMeshOptics tapRed = r8, tapViolet = r8;

@@ -23,23 +23,29 @@ static void testProportionsAndEqualDotGaps(void) {
     CHECK(r >= 14.0 && r <= 16.0, "ring radius %.2f should match screenshot (~15pt at 44pt)", r);
     CHECK(arm >= 4.5 && arm <= 5.5, "symbol arm %.2f should match screenshot (~5pt at 44pt)", arm);
 
-    // Clear edge-to-edge gap between arc round cap and outer dots MUST equal clear gap between adjacent dots!
+    // Clear edge-to-edge gap between arc round cap and outer dots MUST equal clear gap between adjacent dots for 4, 5, and 6 dots!
     double capHalf = (lw * 0.5) / r;
     double dotHalf = (dd * 0.5) / r;
-    double a0 = WXGMenuRingDotAngleForSize(0, size);
-    double a4 = WXGMenuRingDotAngleForSize(4, size);
-    double gapArcLeft = (a0 - dotHalf) - (kPi * 0.25 + capHalf);
-    double gapArcRight = (kPi * 0.75 - capHalf) - (a4 + dotHalf);
-    CHECK(gapArcLeft > 0.04, "arc-to-dot0 gap too small: %.4f rad", gapArcLeft);
-    CHECK(fabs(gapArcLeft - gapArcRight) < 1e-9, "arc gaps asymmetric");
-    for (int i = 0; i < WXGMenuParticleCount - 1; i++) {
-        double ai = WXGMenuRingDotAngleForSize(i, size);
-        double aj = WXGMenuRingDotAngleForSize(i + 1, size);
-        double gapDot = (aj - dotHalf) - (ai + dotHalf);
-        CHECK(fabs(gapDot - gapArcLeft) < 1e-9,
-              "dot gap %d (%.5f) != arc-to-dot gap (%.5f)", i, gapDot, gapArcLeft);
+    int counts[3] = { 4, 5, 6 };
+    for (int ci = 0; ci < 3; ci++) {
+        int n = counts[ci];
+        double a0 = WXGMenuRingDotAngleForCount(0, n, size);
+        double aLast = WXGMenuRingDotAngleForCount(n - 1, n, size);
+        double gapArcLeft = (a0 - dotHalf) - (kPi * 0.25 + capHalf);
+        double gapArcRight = (kPi * 0.75 - capHalf) - (aLast + dotHalf);
+        CHECK(gapArcLeft > 0.04, "count %d arc-to-dot0 gap too small: %.4f rad", n, gapArcLeft);
+        CHECK(fabs(gapArcLeft - gapArcRight) < 1e-9, "count %d arc gaps asymmetric", n);
+        for (int i = 0; i < n - 1; i++) {
+            double ai = WXGMenuRingDotAngleForCount(i, n, size);
+            double aj = WXGMenuRingDotAngleForCount(i + 1, n, size);
+            double gapDot = (aj - dotHalf) - (ai + dotHalf);
+            CHECK(fabs(gapDot - gapArcLeft) < 1e-9,
+                  "count %d dot gap %d (%.5f) != arc-to-dot gap (%.5f)", n, i, gapDot, gapArcLeft);
+        }
     }
-    CHECK(fabs(WXGMenuRingDotAngleForSize(2, size) - kPi * 0.5) < 1e-9, "center dot not at 6:00");
+    CHECK(fabs(WXGMenuRingDotAngleForCount(2, 5, size) - kPi * 0.5) < 1e-9, "5-dot center dot not at 6:00");
+    CHECK(fabs(WXGMenuRingDotAngleForCount(0, 4, size) + WXGMenuRingDotAngleForCount(3, 4, size) - kPi) < 1e-9, "4-dot outer pair asymmetric");
+    CHECK(fabs(WXGMenuRingDotAngleForCount(1, 4, size) + WXGMenuRingDotAngleForCount(2, 4, size) - kPi) < 1e-9, "4-dot inner pair asymmetric");
 }
 
 static void testArcAndSymbolSwap(void) {
@@ -71,34 +77,35 @@ static void testArcAndSymbolSwap(void) {
 static void testDotBlurMorphAndReverse(void) {
     const double plusX = 350.0, plusY = 80.0, size = 44.0, r = WXGMenuRingRadius(size);
     const double dd = WXGMenuRingDotDiameterFor(size);
-    for (int i = 0; i < 5; i++) {
+    int n = 4;
+    for (int i = 0; i < n; i++) {
         double ty = plusY + 56.0 * (i + 1);
-        double a = WXGMenuRingDotAngleForSize(i, size);
+        double a = WXGMenuRingDotAngleForCount(i, n, size);
         double ax = plusX + r * cos(a), ay = plusY + r * sin(a);
 
         // Detach finishes by 150ms (right when arc finishes).
-        double tDet = WXGMenuDotDetachAt(i, 5, 0.045);
-        double tArr = WXGMenuDotArriveAt(i, 5, 0.045);
+        double tDet = WXGMenuDotDetachAt(i, n, 0.045);
+        double tArr = WXGMenuDotArriveAt(i, n, 0.045);
         CHECK(tDet <= 0.150 + 1e-6, "dot %d detached after arc finished (%.3f)", i, tDet);
 
         // Open t=0: at exact bottom-ring anchor with 0 blur.
-        WXGMenuParticle p0 = WXGMenuDotMorphPoseAt(i, 5, 1, 0.0, 1.0, 0.045, plusX, plusY, size, plusX, ty);
+        WXGMenuParticle p0 = WXGMenuDotMorphPoseAt(i, n, 1, 0.0, 1.0, 0.045, plusX, plusY, size, plusX, ty);
         CHECK(fabs(p0.x - ax) < 1e-6 && fabs(p0.y - ay) < 1e-6 && fabs(p0.diameter - dd) < 1e-6 && fabs(p0.blurRadius) < 1e-6,
               "open dot %d start wrong", i);
 
         // Open at arrival: reaches exact icon center and enters Gaussian blur morph!
-        WXGMenuParticle pArr = WXGMenuDotMorphPoseAt(i, 5, 1, tArr, 1.0, 0.045, plusX, plusY, size, plusX, ty);
+        WXGMenuParticle pArr = WXGMenuDotMorphPoseAt(i, n, 1, tArr, 1.0, 0.045, plusX, plusY, size, plusX, ty);
         CHECK(fabs(pArr.x - plusX) < 1e-5 && fabs(pArr.y - ty) < 1e-5 && pArr.blurRadius >= 3.0,
               "open dot %d arrival morph wrong (pos=%.1f,%.1f blur=%.2f)", i, pArr.x, pArr.y, pArr.blurRadius);
 
         // Open after morph: cleanly dissolved into icon.
-        WXGMenuParticle pEnd = WXGMenuDotMorphPoseAt(i, 5, 1, tArr + 0.100, 1.0, 0.045, plusX, plusY, size, plusX, ty);
+        WXGMenuParticle pEnd = WXGMenuDotMorphPoseAt(i, n, 1, tArr + 0.100, 1.0, 0.045, plusX, plusY, size, plusX, ty);
         CHECK(pEnd.alpha <= 1e-6 && pEnd.diameter <= 1e-6, "open dot %d did not finish dissolve", i);
 
         // Collapse: starts hidden at icon center, blurs/condenses back into dot, docks precisely at anchor at 360ms with 0 blur!
-        WXGMenuParticle c0 = WXGMenuDotMorphPoseAt(i, 5, 0, 0.0, 1.0, 0.045, plusX, plusY, size, plusX, ty);
+        WXGMenuParticle c0 = WXGMenuDotMorphPoseAt(i, n, 0, 0.0, 1.0, 0.045, plusX, plusY, size, plusX, ty);
         CHECK(c0.alpha <= 1e-6, "close dot %d should start hidden", i);
-        WXGMenuParticle cDock = WXGMenuDotMorphPoseAt(i, 5, 0, 0.360, 1.0, 0.045, plusX, plusY, size, plusX, ty);
+        WXGMenuParticle cDock = WXGMenuDotMorphPoseAt(i, n, 0, 0.360, 1.0, 0.045, plusX, plusY, size, plusX, ty);
         CHECK(fabs(cDock.x - ax) < 1e-6 && fabs(cDock.y - ay) < 1e-6 && fabs(cDock.diameter - dd) < 1e-6 && fabs(cDock.alpha - 1.0) < 1e-6 && fabs(cDock.blurRadius) < 1e-6,
               "close dot %d dock mismatch", i);
     }
@@ -106,8 +113,8 @@ static void testDotBlurMorphAndReverse(void) {
 
 static void testZeroBounceIconsAndCapsules(void) {
     const double pitch = 56.0, halfW = 55.0, stagger = 0.045;
-    for (int k = 0; k < 5; k++) {
-        WXGMenuEntrance e = WXGMenuEntranceForCount(k, 5, (k + 1) * pitch, stagger, 1.0);
+    for (int k = 0; k < 4; k++) {
+        WXGMenuEntrance e = WXGMenuEntranceForCount(k, 4, (k + 1) * pitch, stagger, 1.0);
         double prevS = 0.0, prevDy = -100.0, prevA = 0.0;
         double prevCs = 0.0, prevCdx = 1e6, prevCa = 0.0;
         for (int ms = 0; ms <= 600; ms++) {
@@ -125,7 +132,7 @@ static void testZeroBounceIconsAndCapsules(void) {
             CHECK(cp.alpha >= prevCa - 1e-9 && cp.alpha <= 1.0 + 1e-9, "row %d capsule alpha non-monotonic", k);
             prevCs = cp.scaleX; prevCdx = cp.dx; prevCa = cp.alpha;
         }
-        WXGMenuExit x = WXGMenuExitFor(4 - k, (k + 1) * pitch, stagger, 1.0);
+        WXGMenuExit x = WXGMenuExitFor(3 - k, (k + 1) * pitch, stagger, 1.0);
         CHECK(fabs(x.capsuleDelay) < 1e-9 && fabs(x.capsuleDuration - 0.100) < 1e-6, "capsule exit not synchronous 100ms");
     }
 }

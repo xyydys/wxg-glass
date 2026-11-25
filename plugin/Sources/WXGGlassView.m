@@ -2287,9 +2287,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         lensSplit=NO;
         CGFloat pad=0;
         if(seesBar && _dockSurface && press>0.f && lensMesh) {
-            CGFloat innerH=[c pureDockInnerBarHeight]*dockScale;
-            CGFloat refBarH=self.glassScope==WXGGlassScopeSegment?(62.*dockScale):barH;
-            CGFloat pinch=WXGClamp((refBarH-innerH)/MAX(1.,refBarH),0.,.58);
+            CGFloat pinch=WXGClamp([c pureDockInnerBarShrink],0.,.55);
             CGFloat full=barH*.5*pinch;
             CGFloat refShort=MIN((CGFloat)shortSide,_lensRestHeight>1?_lensRestHeight*.82:(CGFloat)shortSide);
             CGFloat spectralDisp=r8Disp>0.f && WXGFilterFactoryAvailable()?r8Disp:0.;
@@ -2732,9 +2730,7 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
             CGFloat heightDelta=_lensRestHeight>1?(_lensRestHeight-_lensRect.size.height)*.5:0.;
             u.lensOptics.w=(float)(round(heightDelta*4)/4);
             u.optics.x=(float)[c pureDockIconZoom];
-            CGFloat innerH=[c pureDockInnerBarHeight]*dockScale;
-            CGFloat refBarH=self.glassScope==WXGGlassScopeSegment?(62.*dockScale):barH;
-            CGFloat pinch=WXGClamp((refBarH-innerH)/MAX(1.,refBarH),0.,.58);
+            CGFloat pinch=WXGClamp([c pureDockInnerBarShrink],0.,.55);
             u.optics.z=(float)(round(pinch*1000.)/1000.);
             u.extra.w=[c pureDockInnerFlat]?WXG_LENS_KYANT_FLAT:WXG_LENS_KYANT;
         }else if(dockLens) {
@@ -2934,7 +2930,9 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         @"lensKyantBandPt":@([self pureDockActive]?[WXGConfig.shared pureDockR8Band]:[WXGConfig.shared extraNumber:@"dockKyantLensRefractionHeight"]),
         @"lensKyantDepthPt":@([self pureDockActive]?[WXGConfig.shared pureDockR8Depth]:[WXGConfig.shared extraNumber:@"dockKyantLensRefractionAmount"]),
         @"lensKyantDispersion":@([self pureDockActive]?[WXGConfig.shared pureDockR8Dispersion]:[WXGConfig.shared extraNumber:@"dockKyantDispersion"]),
-        @"pureDockInnerFlat":@([WXGConfig.shared pureDockInnerFlat]),
+        @"pureDockInnerFlat":@([WXGConfig.shared pureDockInnerFlat]),@"pureDockInnerBarShrink":@([WXGConfig.shared pureDockInnerBarShrink]),
+        @"pureDockBarScale":@(_barScale),@"pureDockBarHeight":@([self drawnBarRect].size.height),
+        @"pureDockInnerBarExpected":@([self drawnBarRect].size.height*(1.-[WXGConfig.shared pureDockInnerBarShrink])),
         @"lensMeshVertices":@(_lensBackdrop.meshVertices),@"endReach":@[@(_endReachLeft),@(_endReachRight)],@"meshBuilder":@"contour_zipper_FIX57",@"meshCacheHits":@(WXGMeshCacheHits),@"meshCacheMisses":@(WXGMeshCacheMisses),
         @"backdropDefaultScale":@(_bodyBackdrop.defaultCaptureScale),@"backdropAppliedScale":@(_bodyBackdrop.appliedCaptureScale),
         @"backdropRequestedScale":@(_bodyBackdrop.requestedCaptureScale),

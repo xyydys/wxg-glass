@@ -94,10 +94,10 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
             WXGSlider(@"透镜连续极光色散",@"dockPureR8Dispersion",nil,0,5,@"%.2f")],
             @"默认：带宽 18.0 pt、深度 26.0 pt、色散 2.40。首页分组栏与标题分组栏会自动按自身高度相对底栏等比缩放。"),
         WXGGroup(@"透镜内缩窄底栏与图标放大",nil,@[
-            WXGSlider(@"透镜内底栏高度（上下边框间距）",@"dockPureInnerBarHeight",nil,24,80,@"%.1f pt"),
+            WXGSlider(@"透镜内底栏收缩比例",@"dockPureInnerBarShrink",nil,0,.55,@"%.2f"),
             WXGSwitch(@"内底栏纯平无颈部斜坡（对比开关）",@"dockPureInnerFlat",nil),
             WXGSlider(@"透镜内图标与标题放大",@"dockPureIconZoom",nil,1,1.4,@"%.2f 倍")],
-            @"内底栏高度直接控制透镜内部底栏的上下边框间距（默认 51.0 pt），快速滑动形变时高度严格锁定并保持连续圆角。"),
+            @"按当前底栏实际高度（包含按压时底栏放大倍数）的比例向内收缩并保持不变（默认 0.18，即保留 82% 高度）；底栏、分组栏与标题分组栏完全同步。"),
         WXGGroup(@"按压尺寸与底栏本体",nil,@[
             WXGSlider(@"按压时底栏放大",@"dockPureBarGrowth",nil,1,1.08,@"%.3f 倍"),
             WXGSlider(@"按压时透镜高度放大",@"dockPureLensGrowth",nil,1,1.4,@"%.2f 倍"),
@@ -276,7 +276,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                   WXGSlider(@"逐项出现的间隔",@"homeMenuStagger",nil,0,80,@"%.0f ms"),
                                   WXGSlider(@"动画速度",@"homeMenuSpeed",nil,.5,2,@"%.2f 倍"),
                                   WXGSlider(@"展开后自动收回（0 = 关闭）",@"homeMenuAutoClose",nil,0,30,@"%.0f s")],
-                 @"R20 流畅直飞模糊变形动效：按钮保持原有尺寸并收紧内部环与图标比例，5 颗小点与圆弧两端等距分布。展开时圆弧自右向左按圆弧轨迹回缩，+ 收缩切换为 ×，小点沿平滑曲线直接飞往菜单图标位置并通过高斯模糊自然变形为液态玻璃图标（展开后无跳动）；收起时精确倒放回弹。设置「展开后自动收回」秒数后，无操作到期自动收起。"),
+                 @"流畅直飞模糊变形动效：圆点数量随菜单实际条目数（如 4 项对应 4 点）动态等距分布，展开时圆弧自右向左收回，+ 收缩切换为 ×，小点沿平滑曲线 1:1 飞往对应菜单图标并用模糊自然过渡，收起时同步倒放。"),
         WXGGroup(@"搜索框",nil,@[WXGSwitch(@"搜索框换成玻璃胶囊",@"pref.localSearch",nil),
                  WXGSwitch(@"搜索框让主题优先",@"pref.localSearchThemeFirst",nil),
                  WXGSwitch(@"隐藏聊天列表顶部搜索栏",@"pref.hideTopSearch",nil)],
@@ -370,6 +370,8 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
     if([module isEqual:@"general"])return @{@"title":@"通用",@"groups":@[
         WXGGroup(@"顶部按钮",nil,@[WXGSwitch(@"顶部按钮与背景适配",@"pref.nav",nil),
                  WXGSwitch(@"标题换成玻璃胶囊",@"pref.localTitle",nil),
+                 WXGSwitch(@"通讯录标题覆盖胶囊",@"contactsTitleCapsule",nil),
+                 WXGSwitch(@"发现标题覆盖胶囊",@"discoverTitleCapsule",nil),
                  WXGSwitch(@"网页、弹出页面的顶部按钮",@"pref.localNavButtons",nil),
                  WXGSwitch(@"带颜色的按钮（如绿色“完成”）",@"localColorButtons",nil),
                  WXGSwitch(@"其它页面顶部按钮也保持微信原生",@"navNativeButtons",nil),

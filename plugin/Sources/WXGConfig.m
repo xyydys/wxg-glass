@@ -141,7 +141,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockPureR8Band",'n',18,0,40,NULL,NULL},
     {"dockPureR8Depth",'n',26,0,50,NULL,NULL},
     {"dockPureR8Dispersion",'n',2.4,0,5,NULL,NULL},
-    {"dockPureInnerBarHeight",'n',51,24,80,NULL,NULL},
+    {"dockPureInnerBarShrink",'n',.18,0,.55,NULL,NULL},
     {"dockPureInnerFlat",'b',0,0,1,NULL,NULL},
     {"dockPureIconZoom",'n',1.16,1,1.4,NULL,NULL},
     {"dockPureBarGrowth",'n',1.035,1,1.08,NULL,NULL},
@@ -215,6 +215,8 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"homeSearchWidthPct",'n',0,0,98,NULL,NULL},
     {"homeSearchHeight",'n',0,0,64,NULL,NULL},
     {"homeSearchTopGap",'n',-1,-1,32,NULL,NULL},
+    {"contactsTitleCapsule",'b',1,0,1,NULL,NULL},
+    {"discoverTitleCapsule",'b',1,0,1,NULL,NULL},
     // FIX118 A (user, 11-04: the 我 page as Telegram's profile, the avatar
     // melting into the Dynamic Island; "给这次要做的功能加一个开关，关掉开关的话就只做
     // 头像上收，打开开关的话就完全替换掉状态"; WXGMeHeader.m): the header itself, the
@@ -1183,6 +1185,13 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
                 _extra[@"pressStretchRatio"]=@3;
             _extra[@"pressStretchRatioBack"]=@1;
         }
+        if(local && ![local[@"dockPureInnerBarShrink"] isKindOfClass:NSNumber.class] && [local[@"dockPureInnerBarHeight"] isKindOfClass:NSNumber.class]) {
+            double legacyInner=[local[@"dockPureInnerBarHeight"] doubleValue];
+            double baseH=WXGClamp([local[@"height"] isKindOfClass:NSNumber.class]?[local[@"height"] doubleValue]:62.,32.,96.);
+            double barG=WXGClamp([local[@"dockPureBarGrowth"] isKindOfClass:NSNumber.class]?[local[@"dockPureBarGrowth"] doubleValue]:1.035,1.,1.08);
+            double refH=baseH*barG;
+            _extra[@"dockPureInnerBarShrink"]=@(WXGClamp((refH-legacyInner)/MAX(1.,refH),0.,.55));
+        }
         if(!local)[self loadDefaults];   // FIX81: a fresh install is exactly 恢复默认 (this build's defaults as they are)
         [self normalize];
     } return self;
@@ -1364,6 +1373,8 @@ NSUInteger WXGConfigRevision(void) {return WXGConfigRevisionCounter;}
 - (CGFloat)homeSearchWidthPct {return WXGClamp([self extraNumber:@"homeSearchWidthPct"],0,98);}
 - (CGFloat)homeSearchHeight {return WXGClamp([self extraNumber:@"homeSearchHeight"],0,64);}
 - (CGFloat)homeSearchTopGap {return WXGClamp([self extraNumber:@"homeSearchTopGap"],-1,32);}
+- (BOOL)contactsTitleCapsule {return [self extraNumber:@"contactsTitleCapsule"]>.5;}
+- (BOOL)discoverTitleCapsule {return [self extraNumber:@"discoverTitleCapsule"]>.5;}
 #pragma mark FIX130 one glass for every range
 // The row of a range's glass values: 其余玻璃, dock, bubble, segment, card, 视频号.
 static NSInteger WXGGlassRow(WXGGlassScope scope) {
@@ -1538,7 +1549,7 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
 - (CGFloat)pureDockR8Band {return WXGClamp([self extraNumber:@"dockPureR8Band"],0,40);}
 - (CGFloat)pureDockR8Depth {return WXGClamp([self extraNumber:@"dockPureR8Depth"],0,50);}
 - (CGFloat)pureDockR8Dispersion {return WXGClamp([self extraNumber:@"dockPureR8Dispersion"],0,5);}
-- (CGFloat)pureDockInnerBarHeight {return WXGClamp([self extraNumber:@"dockPureInnerBarHeight"],24,80);}
+- (CGFloat)pureDockInnerBarShrink {return WXGClamp([self extraNumber:@"dockPureInnerBarShrink"],0,.55);}
 - (BOOL)pureDockInnerFlat {return [self extraNumber:@"dockPureInnerFlat"]>.5;}
 - (CGFloat)pureDockIconZoom {return WXGClamp([self extraNumber:@"dockPureIconZoom"],1,1.4);}
 - (CGFloat)pureDockBarGrowth {return WXGClamp([self extraNumber:@"dockPureBarGrowth"],1,1.08);}

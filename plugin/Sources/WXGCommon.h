@@ -236,7 +236,7 @@ enum { WXGRimGlowCount=2 };
 - (CGFloat)pureDockR8Band;
 - (CGFloat)pureDockR8Depth;
 - (CGFloat)pureDockR8Dispersion;
-- (CGFloat)pureDockInnerBarHeight;
+- (CGFloat)pureDockInnerBarShrink;
 - (BOOL)pureDockInnerFlat;
 - (CGFloat)pureDockIconZoom;
 - (CGFloat)pureDockBarGrowth;
@@ -264,6 +264,8 @@ enum { WXGRimGlowCount=2 };
 - (CGFloat)homeSearchWidthPct;
 - (CGFloat)homeSearchHeight;
 - (CGFloat)homeSearchTopGap;
+- (BOOL)contactsTitleCapsule;
+- (BOOL)discoverTitleCapsule;
 // FIX89: the dock's icons and titles: the gap between them (pt, from the
 // icon's box to the title's top; 5 as before) and both moved together (+ down).
 - (CGFloat)dockIconTitleGap;

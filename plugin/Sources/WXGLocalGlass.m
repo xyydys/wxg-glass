@@ -298,6 +298,7 @@ static BOOL WXGLocalOwnPaint(UIView *v) {
     NSUInteger _mounts,_unmounts,_ticks,_layouts;
     NSMutableDictionary<NSString *,NSString *> *_lastSkip;
     NSDictionary *_lastSearchBand;   // FIX113 F: the emoji search field's surroundings, last looked at
+    NSDictionary *_lastSearchAlign;  // R21: custom home search icon+title centering diagnostics
     NSDictionary *_emojiQuickJump;   // FIX113 Q: the quick jump's field, its capsule and band, last seen
     NSHashTable<UIViewController *> *_emojiPagesSeen;   // FIX113 N: each 表情搜索 page captured once
     NSMutableArray<NSDictionary *> *_emojiCaptures;
@@ -960,24 +961,97 @@ static UITableView *WXGLocalHomeTableFor(UIView *view) {
     }
     return nil;
 }
-static UIView *WXGLocalSearchContentHost(UIView *host,UIView *paint) {
-    CGRect box=[paint convertRect:paint.bounds toView:host];
-    UILabel *label=nil;
-    for(UIView *v in WXGLocalViews(host,120)) {
-        if(WXGIsPluginView(v) || v.hidden || v.alpha<.01 || ![v isKindOfClass:UILabel.class])continue;
-        UILabel *l=(UILabel *)v;if(!l.text.length)continue;
-        CGRect r=[l convertRect:l.bounds toView:host];
-        if(CGRectContainsPoint(CGRectInset(box,-6,-6),CGPointMake(CGRectGetMidX(r),CGRectGetMidY(r)))){label=l;break;}
-    }
-    if(!label)return nil;
-    // Prefer the highest container under `host` that wraps the icon+label pair
-    // without containing `paint` (so shifting it never shifts `paint`'s glass).
-    UIView *best=nil;
-    for(UIView *a=label.superview;a && a!=host;a=a.superview) {
-        if(a==paint || [paint isDescendantOfView:a])break;
+static CGRect WXGLocalFrameIn(UIView *v,UIView *ancestor,CGRect r);
+static CGRect WXGLocalTextRect(UILabel *label);
+static UIView *WXGLocalSearchWrapUnder(UIView *v,UIView *paint,UIView *host) {
+    UIView *best=v;
+    for(UIView *a=v.superview;a && a!=host && a!=paint;a=a.superview) {
+        if([paint isDescendantOfView:a])break;
         best=a;
     }
-    return best?:paint;
+    return best;
+}
+static BOOL WXGLocalSearchCollectContent(UIView *host,UIView *paint,NSHashTable<UIView *> *skins,CGRect *outBox,NSArray<UIView *> **outTargets) {
+    if(outBox)*outBox=CGRectNull;
+    if(outTargets)*outTargets=@[];
+    if(!host || !paint)return NO;
+    for(UIView *v in WXGLocalViews(host,120)) {
+        if([v isKindOfClass:UITextField.class]) {
+            UITextField *tf=(UITextField *)v;
+            if(tf.isFirstResponder || tf.text.length>0)return NO;
+        }
+    }
+    CGRect paintInHost=[paint convertRect:paint.bounds toView:host];
+    CGRect searchZone=CGRectInset(paintInHost,-24,-24);
+    UILabel *bestLabel=nil;CGRect bestLabelRect=CGRectNull;
+    for(UIView *v in WXGLocalViews(host,140)) {
+        if(WXGIsPluginView(v) || [skins containsObject:v] || !WXGLocalShownIn(v,host) || ![v isKindOfClass:UILabel.class])continue;
+        UILabel *l=(UILabel *)v;NSString *txt=l.text?:l.attributedText.string;
+        if(!txt.length || txt.length>24)continue;
+        CGRect tr=WXGLocalFrameIn(l,paint,WXGLocalTextRect(l));
+        if(CGRectIsNull(tr) || tr.size.width<4 || tr.size.height<4)continue;
+        CGRect inHost=[paint convertRect:tr toView:host];
+        if(!CGRectContainsPoint(searchZone,CGPointMake(CGRectGetMidX(inHost),CGRectGetMidY(inHost))))continue;
+        bestLabel=l;bestLabelRect=tr;break;
+    }
+    UIImageView *bestIcon=nil;CGRect bestIconRect=CGRectNull;CGFloat bestScore=CGFLOAT_MAX;
+    for(UIView *v in WXGLocalViews(host,140)) {
+        if(WXGIsPluginView(v) || [skins containsObject:v] || !WXGLocalShownIn(v,host) || ![v isKindOfClass:UIImageView.class])continue;
+        UIImageView *iv=(UIImageView *)v;if(!iv.image || iv.bounds.size.width<6 || iv.bounds.size.height<6 || iv.bounds.size.width>36 || iv.bounds.size.height>36)continue;
+        CGRect ir=WXGLocalFrameIn(iv,paint,iv.bounds);
+        if(CGRectIsNull(ir) || ir.size.width<4 || ir.size.height<4)continue;
+        CGRect inHost=[paint convertRect:ir toView:host];
+        if(!CGRectContainsPoint(searchZone,CGPointMake(CGRectGetMidX(inHost),CGRectGetMidY(inHost))))continue;
+        if(bestLabel) {
+            CGFloat dy=fabs(CGRectGetMidY(ir)-CGRectGetMidY(bestLabelRect));
+            if(dy>20)continue;
+            CGFloat dx=fabs(CGRectGetMaxX(ir)-CGRectGetMinX(bestLabelRect))+dy*2.;
+            if(dx<bestScore){bestScore=dx;bestIcon=iv;bestIconRect=ir;}
+        }else {bestIcon=iv;bestIconRect=ir;break;}
+    }
+    if(!bestLabel && !bestIcon)return NO;
+    CGRect box=(!CGRectIsNull(bestIconRect) && !CGRectIsNull(bestLabelRect))?CGRectUnion(bestIconRect,bestLabelRect):(bestLabel?bestLabelRect:bestIconRect);
+    if(outBox)*outBox=box;
+    if(outTargets) {
+        UIView *wIcon=bestIcon?WXGLocalSearchWrapUnder(bestIcon,paint,host):nil;
+        UIView *wLabel=bestLabel?WXGLocalSearchWrapUnder(bestLabel,paint,host):nil;
+        NSMutableArray<UIView *> *targets=[NSMutableArray array];
+        if(wIcon)[targets addObject:wIcon];
+        if(wLabel && ![targets containsObject:wLabel])[targets addObject:wLabel];
+        *outTargets=targets;
+    }
+    return YES;
+}
+static char WXGLocalSearchShiftedKey;
+- (void)syncSearchAlignment:(WXGLocalEntry *)entry material:(CGRect)material {
+    if(!entry || entry.kind!=WXGLocalSearch || !entry.host || !entry.anchor)return;
+    UIView *host=entry.host,*paint=entry.anchor;
+    NSHashTable<UIView *> *prev=objc_getAssociatedObject(entry,&WXGLocalSearchShiftedKey);
+    BOOL isHome=WXGLocalHomeTableFor(host)!=nil;
+    WXGConfig *cfg=WXGConfig.shared;
+    BOOL customHome=isHome && (cfg.homeSearchWidthPct>.5 || cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
+    CGRect contentBox=CGRectNull;NSArray<UIView *> *targets=@[];
+    BOOL hasContent=customHome && !CGRectIsNull(material) && !CGRectIsEmpty(material) &&
+        WXGLocalSearchCollectContent(host,paint,entry.skinViews,&contentBox,&targets);
+    if(!hasContent || !targets.count) {
+        for(UIView *v in prev.allObjects)[entry.states shiftContents:v x:0 y:0];
+        objc_setAssociatedObject(entry,&WXGLocalSearchShiftedKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        return;
+    }
+    CGFloat dx=CGRectGetMidX(material)-CGRectGetMidX(contentBox);
+    CGFloat dy=CGRectGetMidY(material)-CGRectGetMidY(contentBox);
+    if(fabs(dx)<.1)dx=0;
+    if(fabs(dy)<.1)dy=0;
+    NSHashTable<UIView *> *next=[NSHashTable weakObjectsHashTable];
+    for(UIView *v in targets) {
+        [next addObject:v];
+        [entry.states shiftContents:v x:dx y:dy];
+    }
+    for(UIView *v in prev.allObjects)if(![next containsObject:v])[entry.states shiftContents:v x:0 y:0];
+    objc_setAssociatedObject(entry,&WXGLocalSearchShiftedKey,next,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    _lastSearchAlign=@{@"dx":@(round(dx*10)/10),@"dy":@(round(dy*10)/10),
+                       @"contentBox":NSStringFromCGRect(contentBox),@"material":NSStringFromCGRect(material),
+                       @"targets":@(targets.count)};
 }
 - (void)searchBar:(UIView *)bar {
     // R20: when the home segment bar replaces the home search bar, unmount any
@@ -1073,11 +1147,6 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
             }];
         }
         CGRect targetInPaint=[homeHeader convertRect:CGRectMake(x,y,w,h) toView:paint];
-        CGFloat dx=CGRectGetMidX(targetInPaint)-CGRectGetMidX(paint.bounds);
-        CGFloat dy=CGRectGetMidY(targetInPaint)-CGRectGetMidY(paint.bounds);
-        UIView *contentHost=WXGLocalSearchContentHost(host,paint);
-        BOOL shiftSelf=(contentHost==paint);
-        CGRect surfaceRect=shiftSelf?CGRectOffset(targetInPaint,-dx,-dy):targetInPaint;
         if([self searchGlassClashes:paint material:targetInPaint host:host])return;
         __weak UIView *weakPaint=paint,*weakHeader=homeHeader;
         [self mount:WXGLocalSearch host:host anchor:paint paint:paint below:nil measure:nil
@@ -1090,18 +1159,14 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
                 CGFloat th=ch>.5?WXGClamp(ch,24,64):n.size.height;
                 CGFloat tx=wp>.5?(hdr.bounds.size.width-tw)*.5:n.origin.x;
                 CGFloat ty=tg>=0?tg:n.origin.y;
-                CGRect tp=[hdr convertRect:CGRectMake(tx,ty,tw,th) toView:p];
-                if(shiftSelf)return CGRectOffset(tp,-(CGRectGetMidX(tp)-CGRectGetMidX(p.bounds)),-(CGRectGetMidY(tp)-CGRectGetMidY(p.bounds)));
-                return tp;
+                return [hdr convertRect:CGRectMake(tx,ty,tw,th) toView:p];
             }
             radius:0 button:nil
             prepare:^(WXGStateBag *states){
                 [states clear:paint];
                 for(UIView *a=paint;a && a!=homeTable;a=a.superview){[states allowOverflow:a];if(a==homeHeader)break;}
-                if(contentHost && (fabs(dx)>.1 || fabs(dy)>.1))[states shiftContents:contentHost x:dx y:dy];
                 for(UIView *skin in skins)[states hide:skin];
             }];
-        (void)surfaceRect;
     }else {
         if([self searchGlassClashes:paint material:paint.bounds host:host])return;
         [self mount:WXGLocalSearch host:host anchor:paint paint:paint below:nil measure:paint radius:0 button:nil
@@ -1112,6 +1177,7 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
         entry.hostShape=WXGLocalSubviewShape(host);entry.skins=skins.count;
         NSHashTable *table=[NSHashTable weakObjectsHashTable];for(UIView *skin in skins)[table addObject:skin];entry.skinViews=table;
         [self clearSearchBandAround:entry];
+        [self syncSearchAlignment:entry material:WXGLocalEntryMaterial(entry)];
     }
 }
 // FIX113 F: 表情搜索 opened from the text in the input bar (its quick jump,
@@ -1606,11 +1672,39 @@ static CGRect WXGLocalTitleFrame(UIView *view,UIColor **ink,CGFloat *visibility)
     ++_titleWatchFollows;
     @try {[self followShown:entry immediately:NO];} @catch(__unused NSException *error) {}
 }
+static UIViewController *WXGLocalPageController(UIView *view) {
+    UIViewController *owner=WXGLocalOwner(view);
+    if([owner isKindOfClass:UINavigationController.class]) {
+        UINavigationController *nav=(UINavigationController *)owner;
+        for(UIViewController *vc in nav.viewControllers) {
+            if(vc.isViewLoaded && (vc.navigationItem.titleView==view || [view isDescendantOfView:vc.view]))return vc;
+        }
+        return nav.topViewController?:nav.visibleViewController;
+    }
+    return owner;
+}
+static BOOL WXGLocalTitleAllowedForView(UIView *view) {
+    static Class contactsCls,discoverCls;static dispatch_once_t once;
+    dispatch_once(&once,^{
+        contactsCls=NSClassFromString(@"ContactsViewController");
+        discoverCls=NSClassFromString(@"FindFriendEntryViewController");
+    });
+    UIViewController *page=WXGLocalPageController(view);
+    if(!page)return YES;
+    if(contactsCls && [page isKindOfClass:contactsCls])return WXGConfig.shared.contactsTitleCapsule;
+    if(discoverCls && [page isKindOfClass:discoverCls])return WXGConfig.shared.discoverTitleCapsule;
+    return YES;
+}
 // The title in WeChat's title view (首页 MFTitleView, the others' MMTitleView).
 - (void)titleView:(UIView *)view {
     if(_homeTitle && [view isKindOfClass:_homeTitle] && [WXGChatSegments.shared titleModeWanted]) {
         WXGLocalEntry *was=WXGLocalEntryOfAnchor(view);if(was.mounted && was.kind==WXGLocalTitle)[self unmount:was];
+        [WXGChatSegments.shared syncTitleView:view onPage:nil];
         [self skip:view because:@"首页标题已拓展为分组栏"];return;
+    }
+    if(!WXGLocalTitleAllowedForView(view)) {
+        WXGLocalEntry *was=WXGLocalEntryOfAnchor(view);if(was.mounted && was.kind==WXGLocalTitle)[self unmount:was];
+        [self skip:view because:@"当前页面标题胶囊开关已关闭"];return;
     }
     // FIX114 V (user's screenshot, 23:46: a capsule with the chat's name and no
     // avatar in a swipe back): WeChat's new title view for the chat got a
@@ -1703,6 +1797,10 @@ CGRect WXGLocalTitleCapsuleRect(UINavigationBar *bar,UIView *titleView,UIWindow 
     return CGRectNull;
 }
 - (void)systemTitle:(UIView *)content {
+    if(!WXGLocalTitleAllowedForView(content)) {
+        WXGLocalEntry *was=WXGLocalEntryOfAnchor(content);if(was.mounted && was.kind==WXGLocalTitle)[self unmount:was];
+        [self skip:content because:@"当前页面标题胶囊开关已关闭"];return;
+    }
     if(content.layer.mask){[self skip:content because:@"导航栏内容被遮住（宿主接管）"];return;}   // reassert would take it off again
     BOOL wasMounted=WXGLocalEntryOfAnchor(content).mounted;
     if(CGRectIsNull(WXGLocalSystemTitleFrame(content,NULL,NULL)) && !wasMounted){[self skip:content because:@"导航栏没有自己的标题文字（用的是标题视图）"];return;}
@@ -2551,7 +2649,7 @@ static BOOL WXGLocalCovering(CGRect r,CGRect b) {
                 if(faded>.01 && faded<.99)wake=YES;   // looked at every frame until it is gone
                 continue;
             }
-            if(entry.kind==WXGLocalTitle && !entry.paint && anchor.layer.mask){[self unmount:entry];continue;}
+            if(entry.kind==WXGLocalTitle && ((!entry.paint && anchor.layer.mask) || !WXGLocalTitleAllowedForView(anchor) || (_homeTitle && [anchor isKindOfClass:_homeTitle] && [WXGChatSegments.shared titleModeWanted]))){[self unmount:entry];continue;}
             [entry.states reapply];
             if(entry.kind==WXGLocalTint)[self hideCoversOn:entry];   // FIX115 M: a press cover put on since
             WXGSurface *surface=entry.surface;
@@ -2575,6 +2673,7 @@ static BOOL WXGLocalCovering(CGRect r,CGRect b) {
                     entry.dirty=MAX(entry.dirty,12);++_remeasures;wake=YES;
                 }
             }
+            if(entry.kind==WXGLocalSearch)[self syncSearchAlignment:entry material:material];
             // FIX114 B: a native title-bar button drawn at the title row's margin.
             if(entry.kind==WXGLocalNavButton && [entry.button isKindOfClass:UIButton.class]) {
                 CGFloat was=[entry.states contentShiftOf:anchor],to=WXGLocalKeptShift(entry,(UIButton *)entry.button);   // FIX114 T
@@ -2677,13 +2776,13 @@ static NSArray<NSString *> *WXGLocalClipChain(UIView *anchor) {
             @"glassReady":@(entry.surface.glass.ready),@"firstFrame":@(entry.surface.glass.hasPresentedFrame),@"hidden":@(entry.surface.hidden),@"themeSkins":@(entry.skins),@"bandsCleared":entry.bands?:@[],
             @"openedClips":@(entry.openedClips),@"chain":WXGLocalClipChain(anchor)}];
     }
-    WXGPreferences *p=WXGPreferences.shared;
-    return @{@"switches":@{@"search":@(p.localSearch),@"searchThemeFirst":@(p.localSearchThemeFirst),@"panel":@(p.localPanel),@"emoji":@(p.localEmoji),@"sheet":@(p.localSheet),@"title":@(p.localTitle),@"navButtons":@(p.localNavButtons),@"colorButtons":@([WXGConfig.shared extraNumber:@"localColorButtons"]>.5)},
+    WXGPreferences *p=WXGPreferences.shared;WXGConfig *cfg=WXGConfig.shared;
+    return @{@"switches":@{@"search":@(p.localSearch),@"searchThemeFirst":@(p.localSearchThemeFirst),@"panel":@(p.localPanel),@"emoji":@(p.localEmoji),@"sheet":@(p.localSheet),@"title":@(p.localTitle),@"contactsTitle":@(cfg.contactsTitleCapsule),@"discoverTitle":@(cfg.discoverTitleCapsule),@"navButtons":@(p.localNavButtons),@"colorButtons":@([cfg extraNumber:@"localColorButtons"]>.5)},
              @"renderMode":@(WXGEffectiveRenderMode()),@"mounted":counts,@"mounts":@(_mounts),@"unmounts":@(_unmounts),@"layouts":@(_layouts),
              @"remeasures":@(_remeasures),@"tintChanges":@(_tintChanges),@"orderFights":@(_orderFights),@"loopStops":@(_loopStops),@"pressCovers":_pressCovers?:@[],@"titleWatches":@(_titleWatches),@"titleWatchFollows":@(_titleWatchFollows),@"retries":@(_retries),@"wakes":@(_wakes),@"departHides":@(_departHides),@"lastCountPill":WXGLocalLastPill?:@{},
              @"transientKeeps":@(_transientKeeps),@"sideShiftChanges":_shiftLog?:@[],@"adoptions":@(_adoptions),@"poolReuses":@(_poolReuses),@"pooled":@(_navSurfacePool.count),@"transitionVeils":@(_veils),@"transitionReveals":@(_reveals),@"reclaimedGlass":@(_reclaimed),
              @"slotBuilds":@(WXGLocalSlotBuilds),@"nativeMargins":WXGLocalMargins?:@{},   // FIX114 O
-             @"ticks":@(_ticks),@"foregroundRedraws":@(_foregroundRedraws),@"inactiveTicks":@(_inactiveTicks),@"linkRunning":@(_link && !_link.paused),@"skipped":_lastSkip.copy,@"onScreen":rows,@"emojiSearchBand":_lastSearchBand?:@{},@"emojiQuickJump":_emojiQuickJump?:@{},@"emojiSearchCaptures":_emojiCaptures?:@[],
+             @"ticks":@(_ticks),@"foregroundRedraws":@(_foregroundRedraws),@"inactiveTicks":@(_inactiveTicks),@"linkRunning":@(_link && !_link.paused),@"skipped":_lastSkip.copy,@"onScreen":rows,@"homeSearchAlign":_lastSearchAlign?:@{},@"emojiSearchBand":_lastSearchBand?:@{},@"emojiQuickJump":_emojiQuickJump?:@{},@"emojiSearchCaptures":_emojiCaptures?:@[],
              @"classes":@{@"WCSearchBar":@(_wcSearchBar!=nil),@"WCWebSearchBar":@(_webSearchBar!=nil),@"FavSearchBar":@(_favSearchBar!=nil),
                           @"WCSearchTextField":@(_swiftField!=nil),@"AttachmentButton":@(_tile!=nil),@"EmoticonBoardView":@(_board!=nil),
                           @"QQEmojiPageCell":@(_qqPage!=nil),@"TabBarCell":@(_tabCell!=nil),@"ActionSheet":@(_sheet!=nil),
