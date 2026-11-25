@@ -384,14 +384,13 @@ FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我
 - (BOOL)wanted;   // the switch, the plugin on and authorised, render-server mode
 - (BOOL)titleModeWanted;   // R20: expand home title capsule into compact All/Unread group bar
 - (void)updateOnPage:(UIViewController *)page;   // the host's refresh on the chat list
-- (void)syncTitleView:(UIView *)titleView onPage:(UIViewController *)page;
-- (void)homeTitleViewLaidOut:(UIView *)view;
-- (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect alpha:(CGFloat)alpha englishHint:(BOOL)englishHint;
-- (void)hideTitleBar;
+- (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect navTitle:(UIView *)navTitle pullTitle:(UIView *)pullTitle englishHint:(BOOL)englishHint;
+- (void)hideTitleBar;      // visually hides the title group bar (keeps MFTitleView concealed while titleModeWanted is on)
+- (void)releaseTitleBar;   // hides the title group bar and restores MFTitleView (when titleModeWanted is off or plugin disabled)
 - (void)searchBarLaidOut:(UIView *)view;         // a search bar laid out (follows the field)
 // FIX113 O: every host frame: the floating search (the segment bar, WeChat's
-// home / 通讯录 search bars) below the title row, in the navigation overlay.
-- (void)hostTick:(CFTimeInterval)time page:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning;
+// home / 通讯录 search bars) and home title group bar in the navigation overlay.
+- (void)hostTick:(CFTimeInterval)time page:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome homePanel:(CGFloat)homePanel rowOffset:(CGFloat)rowOffset;
 - (void)suspendFloating;   // a page this host leaves native: nothing left floating, WeChat's bars back
 - (void)restore;           // the segment bar (WeChat's search bar back)
 - (void)restoreAll;        // the segment bar and the floating capsules (the plugin off)

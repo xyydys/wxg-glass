@@ -1,7 +1,7 @@
 #ifndef WXG_BUILD_IDENTITY_H
 #define WXG_BUILD_IDENTITY_H
 /* One source of truth for the startup log, UI and every diagnostic snapshot. */
-#define WXG_BUILD_PACKAGE_VERSION "0.4.120-test4fix135v3r22"
-#define WXG_BUILD_DISPLAY_VERSION "0.4.120 · FIX135 Pure Dock R8-Aurora R22"
-#define WXG_BUILD_DIAGNOSTIC_REVISION "FIX135_PureDock_R8_Aurora_R22"
+#define WXG_BUILD_PACKAGE_VERSION "0.4.120-test4fix135v3r23"
+#define WXG_BUILD_DISPLAY_VERSION "0.4.120 · FIX135 Pure Dock R8-Aurora R23"
+#define WXG_BUILD_DIAGNOSTIC_REVISION "FIX135_PureDock_R8_Aurora_R23"
 #endif

@@ -295,6 +295,7 @@ static BOOL WXGLocalOwnPaint(UIView *v) {
 @property(nonatomic) NSUInteger hostShape;
 @property(nonatomic) CGRect material,paintBounds;
 @property(nonatomic) CGFloat dx,dy;
+@property(nonatomic) CFTimeInterval scannedAt;
 @property(nonatomic,weak) UITextField *textField;
 @property(nonatomic,strong) NSHashTable<UIView *> *targets;
 @end
@@ -1063,6 +1064,7 @@ static char WXGLocalSearchShiftedKey,WXGLocalSearchAlignCacheKey;
     WXGLocalSearchAlignCache *cache=objc_getAssociatedObject(entry,&WXGLocalSearchAlignCacheKey);
     UITextField *cachedTF=cache.textField;
     BOOL cachedEditing=cachedTF && (cachedTF.isFirstResponder || cachedTF.text.length>0);
+    CFTimeInterval now=CACurrentMediaTime();
     if(!force && cache && cache.valid && cache.customHome==customHome && cache.hostShape==entry.hostShape &&
        CGRectEqualToRect(cache.material,material) && CGRectEqualToRect(cache.paintBounds,paint.bounds) &&
        cachedEditing==cache.editing) {
@@ -1072,7 +1074,7 @@ static char WXGLocalSearchShiftedKey,WXGLocalSearchAlignCacheKey;
                 if(!v.superview || ![v isDescendantOfView:host]){alive=NO;break;}
             }
         }
-        if(alive && (cache.hasContent || !customHome || cachedEditing)) {
+        if(alive && (cache.hasContent || !customHome || cachedEditing || now-cache.scannedAt<.25)) {
             CGFloat dx=cache.hasContent?cache.dx:0,dy=cache.hasContent?cache.dy:0;
             for(UIView *v in cache.targets.allObjects)[entry.states shiftView:v x:dx y:dy];
             return;
@@ -1084,7 +1086,7 @@ static char WXGLocalSearchShiftedKey,WXGLocalSearchAlignCacheKey;
     BOOL hasContent=customHome && !CGRectIsNull(material) && !CGRectIsEmpty(material) && !CGRectIsNull(paintInHost) &&
         WXGLocalSearchCollectContent(host,paint,entry.skinViews,paintInHost,&contentBoxInHost,&targets,&tf,&editing);
     if(!cache){cache=[WXGLocalSearchAlignCache new];objc_setAssociatedObject(entry,&WXGLocalSearchAlignCacheKey,cache,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
-    cache.valid=YES;cache.customHome=customHome;cache.hostShape=entry.hostShape;
+    cache.valid=YES;cache.scannedAt=now;cache.customHome=customHome;cache.hostShape=entry.hostShape;
     cache.material=material;cache.paintBounds=paint.bounds;cache.textField=tf;cache.editing=editing;cache.hasContent=hasContent && targets.count>0;
     if(!hasContent || !targets.count) {
         cache.dx=0;cache.dy=0;cache.targets=nil;
@@ -1095,13 +1097,13 @@ static char WXGLocalSearchShiftedKey,WXGLocalSearchAlignCacheKey;
     CGRect matInHost=CGRectOffset(material,paintInHost.origin.x-paint.bounds.origin.x,paintInHost.origin.y-paint.bounds.origin.y);
     CGFloat dx=CGRectGetMidX(matInHost)-CGRectGetMidX(contentBoxInHost);
     CGFloat dy=CGRectGetMidY(matInHost)-CGRectGetMidY(contentBoxInHost);
-    if(fabs(dx)<.1)dx=0;
-    if(fabs(dy)<.1)dy=0;
+    if(fabs(dx)<.25)dx=0;
+    if(fabs(dy)<.25)dy=0;
     cache.dx=dx;cache.dy=dy;
     NSHashTable<UIView *> *next=[NSHashTable weakObjectsHashTable];
     for(UIView *v in targets) {
         [next addObject:v];
-        [entry.states shiftView:v x:dx y:dy];
+        if(dx!=0 || dy!=0 || [prev containsObject:v])[entry.states shiftView:v x:dx y:dy];
     }
     cache.targets=next;
     for(UIView *v in prev.allObjects)if(![next containsObject:v])[entry.states shiftView:v x:0 y:0];
@@ -1779,7 +1781,6 @@ static BOOL WXGLocalTitleAllowedForView(UIView *view) {
 - (void)titleView:(UIView *)view {
     if(_homeTitle && [view isKindOfClass:_homeTitle] && [WXGChatSegments.shared titleModeWanted]) {
         WXGLocalEntry *was=WXGLocalEntryOfAnchor(view);if(was.mounted && was.kind==WXGLocalTitle)[self unmount:was];
-        [WXGChatSegments.shared syncTitleView:view onPage:nil];
         [self skip:view because:@"首页标题已拓展为分组栏"];return;
     }
     if(!WXGLocalTitleAllowedForView(view)) {

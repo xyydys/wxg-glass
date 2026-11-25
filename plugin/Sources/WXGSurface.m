@@ -264,8 +264,9 @@ static NSInteger WXGLoadMenuDotCount(void) {
         startAngle:(CGFloat)(135.*M_PI/180.) endAngle:(CGFloat)(45.*M_PI/180.) clockwise:YES];
     _arcLayer.path=arc.CGPath;
     _arcLayer.lineWidth=(CGFloat)WXGMenuRingLineWidth(side);
-    CGRect dotBounds=CGRectMake(0,0,dotD,dotD);
-    CGPathRef circlePath=CGPathCreateWithEllipseInRect(dotBounds,NULL);
+    CGFloat dotPad=2.;
+    CGRect dotBounds=CGRectMake(0,0,dotD+dotPad*2.,dotD+dotPad*2.);
+    CGPathRef circlePath=CGPathCreateWithEllipseInRect(CGRectMake(dotPad,dotPad,dotD,dotD),NULL);
     for(int i=0;i<WXGMenuMaxParticles;i++) {
         CAShapeLayer *dot=_dots[i];
         dot.contentsScale=screenScale;

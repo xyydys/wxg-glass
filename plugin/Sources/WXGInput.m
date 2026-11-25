@@ -79,7 +79,7 @@ static BOOL WXGInputDictationNativeActive(UIView *icon,UIControl *button) {
 /* R20/R21: forward touches inside repositioned native MMGrowDictationIconView when
    it extends right of MMGrowTextView's narrowed bounds (no reparenting), and
    notify WXGInputAdapter immediately so state transitions never flash back to voice. */
-static char WXGDictationTouchTargetKey,WXGDictationTouchAdapterKey;
+static char WXGDictationTouchTargetKey;
 @interface WXGWeakBox : NSObject
 @property(nonatomic,weak) UIView *view;
 @property(nonatomic,weak) id adapter;
@@ -91,25 +91,26 @@ static char WXGDictationTouchTargetKey,WXGDictationTouchAdapterKey;
 @end
 static void WXGSetDictationTouchTarget(UIView *host,UIView *target,id adapter) {
     if(!host)return;
-    if(!target){objc_setAssociatedObject(host,&WXGDictationTouchTargetKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);objc_setAssociatedObject(host,&WXGDictationTouchAdapterKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);return;}
+    if(!target){objc_setAssociatedObject(host,&WXGDictationTouchTargetKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);return;}
     WXGWeakBox *box=objc_getAssociatedObject(host,&WXGDictationTouchTargetKey);
     if(!box){box=[WXGWeakBox new];objc_setAssociatedObject(host,&WXGDictationTouchTargetKey,box,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     box.view=target;
     box.adapter=adapter;
 }
 static BOOL WXGInstallDictationTouchHook(UIView *host) {
-    if(!host)return NO;
+    if(!host || WXGIsPluginView(host))return NO;
     static NSMutableSet<NSString *> *hooked;static dispatch_once_t once;
     dispatch_once(&once,^{hooked=[NSMutableSet set];});
-    Class cls=object_getClass(host);
+    Class cls=[host class];
     NSString *key=NSStringFromClass(cls);
-    if(!cls || !key || [hooked containsObject:key])return cls!=Nil;
+    if(!cls || !key || cls==UIView.class || cls==UIControl.class || cls==UIResponder.class || [key hasPrefix:@"NSKVONotifying_"])return NO;
+    if([hooked containsObject:key])return YES;
     SEL sel=@selector(pointInside:withEvent:);
     Method m=class_getInstanceMethod(cls,sel);
     if(!m)return NO;
-    BOOL (*orig)(id,SEL,CGPoint,UIEvent *)=(void *)method_getImplementation(m);
+    IMP own=WXGCapturedImplementation(cls,sel);Class superclass=class_getSuperclass(cls);
     IMP rep=imp_implementationWithBlock(^BOOL(UIView *self,CGPoint p,UIEvent *ev) {
-        BOOL hit=orig(self,sel,p,ev);
+        BOOL hit=((BOOL (*)(id,SEL,CGPoint,UIEvent *))WXGThrough(own,superclass,sel))(self,sel,p,ev);
         WXGWeakBox *box=objc_getAssociatedObject(self,&WXGDictationTouchTargetKey);
         UIView *target=box.view;
         BOOL matched=hit;
@@ -126,7 +127,7 @@ static BOOL WXGInstallDictationTouchHook(UIView *host) {
         }
         return matched;
     });
-    if(!class_addMethod(cls,sel,rep,method_getTypeEncoding(m)))method_setImplementation(m,rep);
+    WXGInstallOverride(cls,sel,rep,method_getTypeEncoding(m));
     [hooked addObject:key];
     return YES;
 }

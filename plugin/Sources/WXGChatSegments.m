@@ -1633,143 +1633,73 @@ static BOOL WXGPushedOver(UIViewController *below,UIViewController *leaf) {
 
 #pragma mark - The manager
 
-static UIViewController *WXGSegTitlePageForView(UIView *view) {
-    UIViewController *owner=nil;
-    for(UIResponder *r=view;r;r=r.nextResponder)if([r isKindOfClass:UIViewController.class]){owner=(UIViewController *)r;break;}
-    if([owner isKindOfClass:UINavigationController.class]) {
-        UINavigationController *nav=(UINavigationController *)owner;
-        for(UIViewController *vc in nav.viewControllers) {
-            if(vc.isViewLoaded && (vc.navigationItem.titleView==view || [view isDescendantOfView:vc.view]))return vc;
+// R23: read real live presentation-layer opacity of MFTitleView and its labels
+// without installing KVO, swizzling UIKit wrappers, or mounting subviews inside MFTitleView.
+static CGFloat WXGPresentedChainAlpha(UIView *v,UIWindow *w) {
+    if(!v || !w || v.window!=w)return 0.;
+    CGFloat a=1.;
+    for(UIView *p=v;p && p!=w;p=p.superview) {
+        if(p.hidden)return 0.;
+        CALayer *l=p.layer.presentationLayer?:p.layer;
+        if(l.hidden)return 0.;
+        a*=l.opacity;
+        if(a<.005)return 0.;
+    }
+    return WXGClamp(a,0.,1.);
+}
+static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
+    if(!tv)return 0.;
+    BOOL hasLabel=NO;CGFloat maxAlpha=0.;
+    NSUInteger n=0;
+    for(UIView *c in tv.subviews) {
+        if(WXGIsPluginView(c))continue;
+        if(++n>16)break;
+        if([c isKindOfClass:UILabel.class]) {
+            UILabel *lb=(UILabel *)c;
+            if(!lb.text.length && !lb.attributedText.length)continue;
+            hasLabel=YES;
+            if(!lb.hidden) {
+                CALayer *l=lb.layer.presentationLayer?:lb.layer;
+                if(!l.hidden)maxAlpha=MAX(maxAlpha,l.opacity);
+            }
+        }else if([c isKindOfClass:UIActivityIndicatorView.class] && ((UIActivityIndicatorView *)c).isAnimating) {
+            if(!c.hidden) {
+                CALayer *l=c.layer.presentationLayer?:c.layer;
+                if(!l.hidden)maxAlpha=MAX(maxAlpha,l.opacity);
+            }
+        }else {
+            NSUInteger m=0;
+            for(UIView *d in c.subviews) {
+                if(WXGIsPluginView(d))continue;
+                if(++m>8)break;
+                if([d isKindOfClass:UILabel.class]) {
+                    UILabel *lb=(UILabel *)d;
+                    if(!lb.text.length && !lb.attributedText.length)continue;
+                    hasLabel=YES;
+                    if(!c.hidden && !lb.hidden) {
+                        CALayer *cl=c.layer.presentationLayer?:c.layer;
+                        CALayer *dl=lb.layer.presentationLayer?:lb.layer;
+                        if(!cl.hidden && !dl.hidden)maxAlpha=MAX(maxAlpha,cl.opacity*dl.opacity);
+                    }
+                }
+            }
         }
-        return nav.topViewController?:nav.visibleViewController;
     }
-    return owner;
+    return hasLabel?WXGClamp(maxAlpha,0.,1.):1.;
 }
-static CGRect WXGSegTextRect(UILabel *label) {
-    CGRect b=label.bounds,t=[label textRectForBounds:b limitedToNumberOfLines:label.numberOfLines];
-    CGFloat w=MIN(t.size.width,b.size.width),h=MIN(t.size.height,b.size.height),x=0;
-    NSTextAlignment alignment=label.textAlignment;
-    if(alignment==NSTextAlignmentNatural)alignment=label.effectiveUserInterfaceLayoutDirection==UIUserInterfaceLayoutDirectionRightToLeft?NSTextAlignmentRight:NSTextAlignmentLeft;
-    if(alignment==NSTextAlignmentCenter)x=(b.size.width-w)*.5;else if(alignment==NSTextAlignmentRight)x=b.size.width-w;
-    return CGRectMake(b.origin.x+x,b.origin.y+(b.size.height-h)*.5,w,h);
-}
-static CGRect WXGSegFrameIn(UIView *v,UIView *ancestor,CGRect r) {
-    for(UIView *p=v;p && p!=ancestor;p=p.superview) {
-        if(!p.superview)return CGRectNull;
-        r.origin.x+=p.frame.origin.x-p.bounds.origin.x;
-        r.origin.y+=p.frame.origin.y-p.bounds.origin.y;
-    }
-    return r;
-}
-static CGFloat WXGSegAlphaIn(UIView *v,UIView *root) {
-    CGFloat a=1;
-    for(UIView *p=v;p && p!=root;p=p.superview){if(p.hidden)return 0;a*=p.alpha;}
-    return a;
-}
-static UINavigationBar *WXGSegNavBarOf(UIView *view) {
-    for(UIView *p=view;p;p=p.superview)if([p isKindOfClass:UINavigationBar.class])return (UINavigationBar *)p;
-    return nil;
-}
-static char WXGSegTitleTouchKey,WXGSegTitleWatchKey,WXGSegTitleWatchCtx;
-@interface WXGSegWeakView : NSObject
-@property(nonatomic,weak) UIView *view;
+
+@interface WXGChatSegments ()
+- (void)followTitleBarInOverlay:(UIView *)overlay page:(UIViewController *)leaf transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome homePanel:(CGFloat)homePanel rowOffset:(CGFloat)rowOffset;
 @end
-@implementation WXGSegWeakView
-@end
-@class WXGChatSegments;
-@interface WXGChatSegments (WXGTitleInternal)
-- (BOOL)isSyncingTitle;
-- (void)noteTitleContentChange:(UIView *)titleView;
-- (void)noteTitleSubviewAdded:(UIView *)titleView;
-- (void)unwatchTitleSubview:(UIView *)sub;
-@end
-@interface WXGSegTitleWatch : NSObject
-@property(nonatomic,weak) UIView *titleView;
-@end
-@implementation WXGSegTitleWatch
-- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context {
-    if(context!=&WXGSegTitleWatchCtx){[super observeValueForKeyPath:keyPath ofObject:object change:change context:context];return;}
-    UIView *tv=_titleView;if(!tv || !NSThread.isMainThread)return;
-    [WXGChatSegments.shared noteTitleContentChange:tv];
-}
-@end
-static void WXGSetSegTitleTouchTarget(UIView *host,UIView *target) {
-    if(!host)return;
-    if(!target){objc_setAssociatedObject(host,&WXGSegTitleTouchKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);return;}
-    WXGSegWeakView *box=objc_getAssociatedObject(host,&WXGSegTitleTouchKey);
-    if(!box){box=[WXGSegWeakView new];objc_setAssociatedObject(host,&WXGSegTitleTouchKey,box,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
-    box.view=target;
-}
-static BOOL WXGSegHookableViewClass(Class cls) {
-    if(!cls)return NO;
-    return cls!=UIView.class && cls!=UIControl.class && cls!=UIResponder.class && cls!=UINavigationBar.class && ![NSStringFromClass(cls) hasPrefix:@"NSKVONotifying_"];
-}
-static void WXGInstallSegTitleTouchHook(UIView *host) {
-    if(!host || WXGIsPluginView(host))return;
-    static NSMutableSet<NSString *> *hooked;static dispatch_once_t once;
-    dispatch_once(&once,^{hooked=[NSMutableSet set];});
-    Class cls=[host class];NSString *key=NSStringFromClass(cls);
-    if(!WXGSegHookableViewClass(cls) || !key || [hooked containsObject:key])return;
-    SEL sel=@selector(pointInside:withEvent:);
-    Method m=class_getInstanceMethod(cls,sel);
-    if(!m)return;
-    BOOL (*orig)(id,SEL,CGPoint,UIEvent *)=(void *)method_getImplementation(m);
-    IMP rep=imp_implementationWithBlock(^BOOL(UIView *self,CGPoint p,UIEvent *ev) {
-        if(orig(self,sel,p,ev))return YES;
-        WXGSegWeakView *box=objc_getAssociatedObject(self,&WXGSegTitleTouchKey);
-        UIView *t=box.view;
-        if(t && !t.hidden && t.alpha>.01 && [t isDescendantOfView:self]) {
-            CGRect r=([t isKindOfClass:WXGSegmentBar.class])?[(WXGSegmentBar *)t convertRect:((WXGSegmentBar *)t).materialRect toView:self]:[t convertRect:t.bounds toView:self];
-            if(CGRectContainsPoint(CGRectInset(r,-4,-4),p))return YES;
-        }
-        return NO;
-    });
-    if(!class_addMethod(cls,sel,rep,method_getTypeEncoding(m)))method_setImplementation(m,rep);
-    [hooked addObject:key];
-}
-static void WXGInstallMFTitleDidAddSubviewHook(Class cls) {
-    if(!WXGSegHookableViewClass(cls))return;
-    static NSMutableSet<NSString *> *hooked;static dispatch_once_t once;
-    dispatch_once(&once,^{hooked=[NSMutableSet set];});
-    NSString *key=NSStringFromClass(cls);
-    if(!key || [hooked containsObject:key])return;
-    SEL addSel=@selector(didAddSubview:);
-    Method addM=class_getInstanceMethod(cls,addSel);
-    if(addM) {
-        void (*origAdd)(id,SEL,UIView *)=(void *)method_getImplementation(addM);
-        IMP repAdd=imp_implementationWithBlock(^(UIView *self,UIView *sub) {
-            origAdd(self,addSel,sub);
-            if(![sub isKindOfClass:WXGSegmentBar.class] && !WXGIsPluginView(sub))
-                [WXGChatSegments.shared noteTitleSubviewAdded:self];
-        });
-        if(!class_addMethod(cls,addSel,repAdd,method_getTypeEncoding(addM)))method_setImplementation(addM,repAdd);
-    }
-    SEL remSel=@selector(willRemoveSubview:);
-    Method remM=class_getInstanceMethod(cls,remSel);
-    if(remM) {
-        void (*origRem)(id,SEL,UIView *)=(void *)method_getImplementation(remM);
-        IMP repRem=imp_implementationWithBlock(^(UIView *self,UIView *sub) {
-            [WXGChatSegments.shared unwatchTitleSubview:sub];
-            origRem(self,remSel,sub);
-        });
-        if(!class_addMethod(cls,remSel,repRem,method_getTypeEncoding(remM)))method_setImplementation(remM,repRem);
-    }
-    [hooked addObject:key];
-}
 
 @implementation WXGChatSegments {
     WXGSegmentBar *_bar;
-    WXGSegmentBar *_titleBar;    // R21: replaces Home MFTitleView directly
-    __weak UIView *_titleHostView;
-    WXGStateBag *_titleStates;
-    NSHashTable<UIView *> *_titleWatchedViews;
-    CGRect _lastTitleBox;
+    WXGSegmentBar *_titleBar;    // R23: overlay All/Unread group bar tracking native MFTitleView presentation 1:1
+    __weak UIView *_titleNavView,*_titlePullView;
+    __weak UIView *_titleOverlay;
+    WXGStateBag *_titleConceal;  // dedicated conceal bag: never wiped on push to chat -> zero flash on return
+    CGRect _titleRestRect;
     BOOL _titleEnglishHint;
-    BOOL _syncingTitle,_titleSyncPending;
-    NSUInteger _titleTurn,_titleLoopTurn,_titleLoopChanges,_titleLoopUntilTurn,_titleLoopTrips;
-    CFTimeInterval _lastTitleSyncAt;
-    NSString *_lastTitleSyncKey,*_lastTitleHintText;
-    BOOL _lastTitleHintValue;
     NSMutableArray<NSString *> *_titleTrace;
     NSInteger _titleSelected;
     __weak UIView *_searchBar,*_container;__weak UITableView *_table;__weak UIViewController *_page;
@@ -1834,7 +1764,6 @@ static void WXGInstallMFTitleDidAddSubviewHook(Class cls) {
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(groupsChanged:) name:WXGChatGroupsChanged object:nil];   // FIX113 R
 }
 - (void)beforeCommit {
-    ++_titleTurn;
     if(WXGBackdropCaptureInProgress())return;
     @try {
         if(_bar && _bar.superview) {
@@ -1842,10 +1771,6 @@ static void WXGInstallMFTitleDidAddSubviewHook(Class cls) {
             if(hidden && !_nativeSearching && hidden.alpha>.01 && _states){[_states hide:hidden];++_rehides;}
             UIView *host=_floatHost;
             if(_segmentFloating && host && host.window && _table.superview==host){[self placeSegmentIn:host];++_commitPlacements;}
-        }
-        if(_titleSyncPending && !_syncingTitle && _titleTurn>=_titleLoopUntilTurn && _titleHostView && _titleHostView.window && [self titleModeWanted]) {
-            _titleSyncPending=NO;
-            [self syncTitleView:_titleHostView onPage:nil];
         }
     } @catch(__unused NSException *error) {}
 }
@@ -1856,12 +1781,16 @@ static void WXGInstallMFTitleDidAddSubviewHook(Class cls) {
         [_bar refreshLook];
     }
     if(![self titleModeWanted]) {
-        [self hideTitleBar];
+        [self releaseTitleBar];
         if(![self wanted] && atomic_load(&WXGFilterIndex)>0)[self applyRule:0 members:nil name:nil];
     }else {
-        _lastTitleSyncKey=nil;_titleLoopUntilTurn=0;_titleLoopTrips=0;
-        if(_titleHostView)[self syncTitleView:_titleHostView onPage:_page];
-        [_titleBar refreshLook];
+        if(_titleBar) {
+            BOOL en=WXGConfig.shared.homeTitleSegmentsEnglish || _titleEnglishHint;
+            NSArray<NSString *> *titles=en?@[@"All",@"Unread"]:@[@"全部",@"未读"];
+            if(![_titleBar.titles isEqualToArray:titles])_titleBar.titles=titles;
+            if(_titleOverlay)[self applyColorsToBar:_titleBar from:_titleOverlay];
+            [_titleBar refreshLook];
+        }
     }
     for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects)[slot.clone.surface applyConfig];
 }
@@ -2166,319 +2095,129 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
     stamped[@"since"]=@(round(WXGSecondsSinceLoad()*10)/10);
     _probe=stamped;_probeAt=CACurrentMediaTime();
 }
-// R20: compact All / Unread group switcher replacing Home's MFTitleView.
-// R21: Direct MFTitleView replacement for Home's All/Unread group bar.
-- (BOOL)isSyncingTitle {return _syncingTitle;}
-- (void)unwatchTitleSubview:(UIView *)sub {
-    if(!sub)return;
-    WXGSegTitleWatch *w=objc_getAssociatedObject(sub,&WXGSegTitleWatchKey);
-    if(!w)return;
-    @try{[sub removeObserver:w forKeyPath:@"hidden" context:&WXGSegTitleWatchCtx];}@catch(__unused NSException *e){}
-    @try{[sub removeObserver:w forKeyPath:@"alpha" context:&WXGSegTitleWatchCtx];}@catch(__unused NSException *e){}
-    w.titleView=nil;
-    objc_setAssociatedObject(sub,&WXGSegTitleWatchKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    [_titleWatchedViews removeObject:sub];
+// R23: Home All/Unread title group bar mounted cleanly in _navigationOverlay
+// (zero swizzles, zero KVO, zero subviews inside MFTitleView) while concealing
+// native MFTitleView(s) via a dedicated bag (zero flash on return from chat)
+// and tracking MFTitleView's live presentationLayer position & opacity 1:1
+// across pull-down, push, pop, and interactive swipe-back.
+- (void)concealHomeTitlesNav:(UIView *)navTitle pull:(UIView *)pullTitle {
+    if(![self titleModeWanted])return;
+    if(!_titleConceal)_titleConceal=[WXGStateBag new];
+    if(navTitle)[_titleConceal conceal:navTitle];
+    if(pullTitle && pullTitle!=navTitle)[_titleConceal conceal:pullTitle];
+    [_titleConceal reapply];
 }
-- (void)unwatchAllTitleSubviews {
-    if(!_titleWatchedViews)return;
-    for(UIView *v in _titleWatchedViews.allObjects)[self unwatchTitleSubview:v];
-    [_titleWatchedViews removeAllObjects];
+- (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect navTitle:(UIView *)navTitle pullTitle:(UIView *)pullTitle englishHint:(BOOL)englishHint {
+    if(!NSThread.isMainThread)return;
+    if(![self titleModeWanted]) {[self releaseTitleBar];return;}
+    if(!page || !overlay || CGRectIsEmpty(rect) || rect.size.width<40 || rect.size.height<20) {
+        [self hideTitleBar];return;
+    }
+    [self observe];
+    if(page.isViewLoaded && page.view.window) {
+        _page=page;
+        if(!_table || ![_table isDescendantOfView:page.view])_table=[self tableIn:page.view];
+        WXGInstallFilterHook();WXGFilterWatching=YES;
+    }
+    if(englishHint)_titleEnglishHint=YES;
+    if(navTitle)_titleNavView=navTitle;
+    if(pullTitle && pullTitle!=navTitle)_titlePullView=pullTitle;
+    _titleOverlay=overlay;
+    _titleRestRect=rect;
+    [self concealHomeTitlesNav:_titleNavView pull:_titlePullView];
+
+    if(!_titleBar) {
+        _titleBar=[[WXGSegmentBar alloc] initWithFrame:CGRectZero];
+        _titleBar.autoresizingMask=UIViewAutoresizingNone;
+        [_titleBar addTarget:self action:@selector(titleSegmentChanged:) forControlEvents:UIControlEventValueChanged];
+    }
+    BOOL en=WXGConfig.shared.homeTitleSegmentsEnglish || _titleEnglishHint;
+    NSArray<NSString *> *titles=en?@[@"All",@"Unread"]:@[@"全部",@"未读"];
+    if(![_titleBar.titles isEqualToArray:titles])_titleBar.titles=titles;
+    NSInteger liveIdx=atomic_load(&WXGFilterIndex)==1?1:0;
+    if(_titleSelected!=liveIdx){_titleSelected=liveIdx;_titleBar.selectedIndex=liveIdx;}
+    [self applyColorsToBar:_titleBar from:overlay];
+    [self followTitleBarInOverlay:overlay page:page transitioning:NO transitionInvolvesHome:YES homePanel:0 rowOffset:0];
 }
-- (void)watchTitleSubview:(UIView *)sub forTitleView:(UIView *)tv {
-    if(!sub || !tv)return;
-    WXGSegTitleWatch *existing=objc_getAssociatedObject(sub,&WXGSegTitleWatchKey);
-    if(existing) {
-        existing.titleView=tv;
-        if(!_titleWatchedViews)_titleWatchedViews=[NSHashTable weakObjectsHashTable];
-        [_titleWatchedViews addObject:sub];
+- (void)followTitleBarInOverlay:(UIView *)overlay page:(UIViewController *)leaf transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome homePanel:(CGFloat)homePanel rowOffset:(CGFloat)rowOffset {
+    (void)rowOffset;
+    if(!_titleBar && !_titleConceal)return;
+    if(![self titleModeWanted]) {[self releaseTitleBar];return;}
+    static Class homeClass;static dispatch_once_t homeOnce;
+    dispatch_once(&homeOnce,^{homeClass=NSClassFromString(@"NewMainFrameViewController");});
+    BOOL onHome=homeClass && [leaf isKindOfClass:homeClass];
+    BOOL allowShow=overlay && overlay.window && !CGRectIsEmpty(_titleRestRect) && (onHome || (transitioning && transitionInvolvesHome));
+    if(_titleConceal && (onHome || (transitioning && transitionInvolvesHome)))[_titleConceal reapply];
+    if(!allowShow) {
+        [self hideTitleBar];
         return;
     }
-    WXGSegTitleWatch *w=[WXGSegTitleWatch new];w.titleView=tv;
-    objc_setAssociatedObject(sub,&WXGSegTitleWatchKey,w,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-    if(!_titleWatchedViews)_titleWatchedViews=[NSHashTable weakObjectsHashTable];
-    [_titleWatchedViews addObject:sub];
-    @try {
-        [sub addObserver:w forKeyPath:@"hidden" options:0 context:&WXGSegTitleWatchCtx];
-        [sub addObserver:w forKeyPath:@"alpha" options:0 context:&WXGSegTitleWatchCtx];
-    } @catch(__unused NSException *e) {}
-}
-- (void)syncTitleVisibilityForView:(UIView *)titleView {
-    if(_syncingTitle || !titleView || titleView!=_titleHostView || !_titleBar)return;
-    if(![self titleModeWanted]){[self hideTitleBar];return;}
-    CGFloat maxAlpha=0;BOOL hasAnyLabel=NO,hiddenLabel=NO;
-    for(UIView *v in WXGViews(titleView,40)) {
-        if(v==titleView || v==_titleBar || WXGIsPluginView(v) || [v isKindOfClass:WXGSegmentBar.class])continue;
-        if([v isKindOfClass:UILabel.class]) {
-            UILabel *l=(UILabel *)v;
-            if(!l.text.length && !l.attributedText.length)continue;
-            hasAnyLabel=YES;
-            CGFloat a=WXGSegAlphaIn(l,titleView);
-            if(a<.01){hiddenLabel=YES;continue;}
-            maxAlpha=MAX(maxAlpha,a);
-        }else if([v isKindOfClass:UIActivityIndicatorView.class] && ((UIActivityIndicatorView *)v).isAnimating) {
-            CGFloat a=WXGSegAlphaIn(v,titleView);if(a<.01)continue;
-            maxAlpha=MAX(maxAlpha,a);
+    if(!_titleBar)return;
+    UIWindow *w=overlay.window;
+    UIView *navTitle=_titleNavView,*pullTitle=_titlePullView;
+    // Lazily discover WeChat's secondary pull-down MFTitleView inside MainFrameTableView once if missing.
+    if((!pullTitle || pullTitle.window!=w) && onHome && _table && _table.window==w) {
+        static Class mfTitleCls;static dispatch_once_t mfOnce;
+        dispatch_once(&mfOnce,^{mfTitleCls=NSClassFromString(@"MFTitleView");});
+        if(mfTitleCls) {
+            for(UIView *v in WXGViews(_table,90)) {
+                if(v!=navTitle && [v isKindOfClass:mfTitleCls]) {
+                    pullTitle=v;_titlePullView=v;
+                    [self concealHomeTitlesNav:navTitle pull:pullTitle];
+                    break;
+                }
+            }
         }
     }
-    CGFloat shownAlpha=hasAnyLabel?(maxAlpha>=.01?WXGClamp(maxAlpha,0,1):(hiddenLabel?0.:1.)):(titleView.window?1.:0.);
-    UIWindow *w=titleView.window;
+    CGFloat navAlpha=navTitle?WXGPresentedChainAlpha(navTitle,w)*WXGTitleContentPresentedAlpha(navTitle):0.;
+    CGFloat pullAlpha=pullTitle?WXGPresentedChainAlpha(pullTitle,w)*WXGTitleContentPresentedAlpha(pullTitle):0.;
+    UIView *activeHost=nil;CGFloat shownAlpha=0.;
+    if(pullTitle && pullAlpha>navAlpha+.02) {
+        activeHost=pullTitle;shownAlpha=pullAlpha;
+    }else if(navTitle && navAlpha>.005) {
+        activeHost=navTitle;shownAlpha=navAlpha;
+    }else if(pullTitle && pullAlpha>.005) {
+        activeHost=pullTitle;shownAlpha=pullAlpha;
+    }else if(!navTitle && !pullTitle && onHome && !transitioning) {
+        shownAlpha=1.;
+    }
+    if(homePanel>.005)shownAlpha=MIN(shownAlpha,WXGClamp(1.-homePanel,0.,1.));
+    BOOL visible=shownAlpha>=.01;
+    CGRect rect=_titleRestRect;
+    if(activeHost && visible) {
+        CALayer *pl=activeHost.layer.presentationLayer?:activeHost.layer;
+        CGPoint c=[pl convertPoint:CGPointMake(CGRectGetMidX(pl.bounds),CGRectGetMidY(pl.bounds)) toLayer:overlay.layer];
+        if(isfinite(c.x) && isfinite(c.y) && (fabs(c.x)>1. || fabs(c.y)>1.) && c.y>-rect.size.height && c.y<w.bounds.size.height+rect.size.height) {
+            CGFloat sc=w.screen.scale?:3.;
+            CGFloat rx=round((c.x-rect.size.width*.5)*sc)/sc;
+            CGFloat ry=round((c.y-rect.size.height*.5)*sc)/sc;
+            rect=CGRectMake(rx,ry,round(rect.size.width),round(rect.size.height));
+        }
+    }
+    CGRect target=CGRectInset(rect,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
+        if(visible && self->_titleBar.superview!=overlay)[overlay addSubview:self->_titleBar];
+        if(visible) {
+            CGRect cur=self->_titleBar.frame;
+            if(fabs(cur.origin.x-target.origin.x)>.25 || fabs(cur.origin.y-target.origin.y)>.25 ||
+               fabs(cur.size.width-target.size.width)>.25 || fabs(cur.size.height-target.size.height)>.25) {
+                self->_titleBar.frame=target;
+            }
+        }
         if(fabs(self->_titleBar.alpha-shownAlpha)>.005)self->_titleBar.alpha=shownAlpha;
-        BOOL hideBar=(w==nil);
-        if(self->_titleBar.hidden!=hideBar)self->_titleBar.hidden=hideBar;
+        BOOL hide=!visible;
+        if(self->_titleBar.hidden!=hide)self->_titleBar.hidden=hide;
         [CATransaction commit];
     }];
-    BOOL active=shownAlpha>=.01 && w!=nil;
-    _titleBar.userInteractionEnabled=active;
-    _titleBar.active=active;
-}
-- (void)noteTitleContentChange:(UIView *)titleView {
-    if(!NSThread.isMainThread || _syncingTitle || !titleView || titleView!=_titleHostView)return;
-    if(![self titleModeWanted]){[self hideTitleBar];return;}
-    [self syncTitleVisibilityForView:titleView];
-    _titleSyncPending=YES;
-}
-- (void)noteTitleSubviewAdded:(UIView *)titleView {
-    if(!NSThread.isMainThread || _syncingTitle || !titleView)return;
-    if(titleView==_titleHostView)_titleSyncPending=YES;
-}
-- (void)homeTitleViewLaidOut:(UIView *)view {
-    if(!NSThread.isMainThread || _syncingTitle)return;
-    static Class homeTitleCls;static dispatch_once_t once;
-    dispatch_once(&once,^{homeTitleCls=NSClassFromString(@"MFTitleView");});
-    if(!homeTitleCls || ![view isKindOfClass:homeTitleCls])return;
-    if(![self titleModeWanted]) {
-        if(_titleHostView==view)[self hideTitleBar];
-        return;
+    _titleBar.userInteractionEnabled=visible && !transitioning;
+    _titleBar.active=visible && overlay.window!=nil;
+    if(!_titleTrace)_titleTrace=[NSMutableArray array];
+    NSString *entry=[NSString stringWithFormat:@"%.2f h:%d t:%d a:%.2f y:%.1f",WXGSecondsSinceLoad(),onHome,transitioning,shownAlpha,rect.origin.y];
+    if(![_titleTrace.lastObject isEqualToString:entry]) {
+        if(_titleTrace.count>=16)[_titleTrace removeObjectAtIndex:0];
+        [_titleTrace addObject:entry];
     }
-    [self syncTitleView:view onPage:nil];
-}
-- (void)syncTitleView:(UIView *)titleView onPage:(UIViewController *)page {
-    if(!NSThread.isMainThread || !titleView || _syncingTitle)return;
-    static Class homeTitleCls,homePageCls;static dispatch_once_t once;
-    dispatch_once(&once,^{
-        homeTitleCls=NSClassFromString(@"MFTitleView");
-        homePageCls=NSClassFromString(@"NewMainFrameViewController");
-    });
-    if(![self titleModeWanted]){[self hideTitleBar];return;}
-    if(!homeTitleCls || !homePageCls || ![titleView isKindOfClass:homeTitleCls])return;
-    UIViewController *owner=page?:WXGSegTitlePageForView(titleView);
-    if(owner && ![owner isKindOfClass:homePageCls])return;
-    if(!owner && _titleHostView && _titleHostView!=titleView)return;
-    _syncingTitle=YES;
-    @try {
-        WXGInstallMFTitleDidAddSubviewHook([titleView class]);
-        [self observe];
-        if(owner && owner.isViewLoaded && owner.view.window) {
-            _page=owner;
-            if(!_table || ![_table isDescendantOfView:owner.view])_table=[self tableIn:owner.view];
-            WXGInstallFilterHook();WXGFilterWatching=YES;
-        }
-        if(_titleHostView && _titleHostView!=titleView) {
-            [self unwatchAllTitleSubviews];
-            if(_titleStates)[_titleStates restore];
-            UINavigationBar *oldBar=WXGSegNavBarOf(_titleHostView);
-            for(UIView *a=_titleHostView;a && a!=oldBar;a=a.superview)WXGSetSegTitleTouchTarget(a,nil);
-            if(_titleBar)WXGReleaseClipHolds(_titleBar);
-            _lastTitleSyncKey=nil;
-        }
-        _titleHostView=titleView;
-        if(!_titleStates)_titleStates=[WXGStateBag new];
-        static NSRegularExpression *cjkRe;static dispatch_once_t reOnce;
-        dispatch_once(&reOnce,^{cjkRe=[NSRegularExpression regularExpressionWithPattern:@"[\\u4e00-\\u9fff]" options:0 error:nil];});
-        // Measure native label/spinner visibility & bounding box inside MFTitleView BEFORE concealing masks
-        // (wxg.conceal only masks pixels, leaving WeChat's pull-down alpha/hidden signals intact).
-        CGRect box=CGRectNull;CGFloat maxAlpha=0;BOOL hasAnyLabel=NO,hiddenLabel=NO,needsConceal=NO;
-        for(UIView *v in WXGViews(titleView,40)) {
-            if(v==titleView || v==_titleBar || WXGIsPluginView(v) || [v isKindOfClass:WXGSegmentBar.class])continue;
-            if([v isKindOfClass:UILabel.class] || [v isKindOfClass:UIImageView.class] || [v isKindOfClass:UIActivityIndicatorView.class]) {
-                if(!v.layer.mask)needsConceal=YES;
-                [_titleStates conceal:v];
-                if(v.superview && v.superview!=titleView)WXGInstallMFTitleDidAddSubviewHook([v.superview class]);
-                [self watchTitleSubview:v forTitleView:titleView];
-            }
-            if([v isKindOfClass:UILabel.class]) {
-                UILabel *l=(UILabel *)v;NSString *txt=l.text?:l.attributedText.string;
-                if(!txt.length)continue;
-                hasAnyLabel=YES;
-                if(![txt isEqualToString:_lastTitleHintText]) {
-                    _lastTitleHintText=[txt copy];
-                    NSString *lower=txt.lowercaseString;
-                    if([lower containsString:@"wechat"])_titleEnglishHint=YES;
-                    else if(cjkRe && [cjkRe rangeOfFirstMatchInString:txt options:0 range:NSMakeRange(0,txt.length)].location!=NSNotFound)_titleEnglishHint=NO;
-                    _lastTitleHintValue=_titleEnglishHint;
-                }else _titleEnglishHint=_lastTitleHintValue;
-                CGFloat a=WXGSegAlphaIn(l,titleView);
-                if(a<.01){hiddenLabel=YES;continue;}
-                maxAlpha=MAX(maxAlpha,a);
-                CGRect r=WXGSegFrameIn(l,titleView,WXGSegTextRect(l));
-                if(!CGRectIsNull(r) && r.size.width>=2)box=CGRectIsNull(box)?r:CGRectUnion(box,r);
-            }else if([v isKindOfClass:UIActivityIndicatorView.class] && ((UIActivityIndicatorView *)v).isAnimating) {
-                CGFloat a=WXGSegAlphaIn(v,titleView);if(a<.01)continue;
-                maxAlpha=MAX(maxAlpha,a);
-                CGRect r=WXGSegFrameIn(v,titleView,v.bounds);
-                if(!CGRectIsNull(r))box=CGRectIsNull(box)?r:CGRectUnion(box,r);
-            }
-        }
-        for(UIView *sub in titleView.subviews) {
-            if(sub==_titleBar || WXGIsPluginView(sub) || [sub isKindOfClass:WXGSegmentBar.class])continue;
-            if(!sub.layer.mask)needsConceal=YES;
-            [_titleStates conceal:sub];
-            [self watchTitleSubview:sub forTitleView:titleView];
-        }
-        if(needsConceal)[_titleStates reapply];
-        if(!CGRectIsNull(box))_lastTitleBox=box;
-        else if(!CGRectIsNull(_lastTitleBox))box=_lastTitleBox;
-
-        CGFloat shownAlpha=hasAnyLabel?(maxAlpha>=.01?WXGClamp(maxAlpha,0,1):(hiddenLabel?0.:1.)):(titleView.window?1.:0.);
-        UIWindow *w=titleView.window;
-        if(!_titleBar) {
-            _titleBar=[[WXGSegmentBar alloc] initWithFrame:CGRectZero];
-            _titleBar.autoresizingMask=UIViewAutoresizingNone;
-            [_titleBar addTarget:self action:@selector(titleSegmentChanged:) forControlEvents:UIControlEventValueChanged];
-            _lastTitleSyncKey=nil;
-        }
-        BOOL en=WXGConfig.shared.homeTitleSegmentsEnglish || _titleEnglishHint;
-        NSArray<NSString *> *titles=en?@[@"All",@"Unread"]:@[@"全部",@"未读"];
-        if(![_titleBar.titles isEqualToArray:titles]){_titleBar.titles=titles;_lastTitleSyncKey=nil;}
-        NSInteger liveIdx=atomic_load(&WXGFilterIndex)==1?1:0;
-        if(_titleSelected!=liveIdx){_titleSelected=liveIdx;_titleBar.selectedIndex=liveIdx;}
-
-        CGFloat winW=w?w.bounds.size.width-w.safeAreaInsets.left-w.safeAreaInsets.right:390.;
-        WXGMetrics m=WXGMeasure(winW,WXGPreferences.shared.sizeScale);
-        CGFloat barH=m.button;
-        CGFloat cx=!CGRectIsNull(box)?CGRectGetMidX(box):CGRectGetMidX(titleView.bounds);
-        CGFloat cy=!CGRectIsNull(box)?CGRectGetMidY(box):CGRectGetMidY(titleView.bounds);
-        UINavigationBar *bar=WXGSegNavBarOf(titleView);
-        CGFloat edge=WXGClamp([WXGConfig.shared extraNumber:@"navEdge"],8,36);
-        CGPoint midWin=(w && bar)?[titleView convertPoint:CGPointMake(cx,cy) toView:w]:CGPointZero;
-        CGFloat topInBar=bar?WXGSegFrameIn(titleView,bar,CGRectZero).origin.y:0;
-        NSInteger style=(NSInteger)titleView.traitCollection.userInterfaceStyle;
-        WXGConfig *cfg=WXGConfig.shared;
-        NSString *syncKey=[NSString stringWithFormat:@"%p:%@:%@:%p:%@:%lu:%lu:%.1f,%.1f:%.1f:%.1f:%.2f:%.1f:%d:%d:%ld:%d:%d:%d",
-            titleView,NSStringFromCGRect(titleView.bounds),CGRectIsNull(box)?@"-":NSStringFromCGRect(box),
-            bar,bar?NSStringFromCGRect(bar.bounds):@"-",(unsigned long)(bar?bar.subviews.count:0),(unsigned long)titleView.subviews.count,
-            midWin.x,midWin.y,topInBar,winW,m.scale,edge,w!=nil,en,(long)style,
-            (int)cfg.dockPureGlassMode,(int)([cfg extraNumber:@"segmentPillAuto"]>.5),(int)(_titleBar.superview==titleView)];
-        if([_lastTitleSyncKey isEqualToString:syncKey] && _titleBar.superview==titleView) {
-            [UIView performWithoutAnimation:^{
-                [CATransaction begin];[CATransaction setDisableActions:YES];
-                if(fabs(self->_titleBar.alpha-shownAlpha)>.005)self->_titleBar.alpha=shownAlpha;
-                BOOL hideBar=(w==nil);
-                if(self->_titleBar.hidden!=hideBar)self->_titleBar.hidden=hideBar;
-                [CATransaction commit];
-            }];
-            BOOL active=shownAlpha>=.01 && w!=nil;
-            _titleBar.userInteractionEnabled=active;
-            _titleBar.active=active;
-            return;
-        }
-        [self applyColorsToBar:_titleBar from:titleView];
-
-        if(w && bar) {
-            CGFloat leftBound=w.safeAreaInsets.left+edge,rightBound=w.bounds.size.width-w.safeAreaInsets.right-edge;
-            for(UIView *v in WXGViews(bar,100)) {
-                if(v==_titleBar || v==titleView || [v isDescendantOfView:titleView] || [titleView isDescendantOfView:v])continue;
-                if(![v isKindOfClass:UIControl.class] && ![v isKindOfClass:WXGSurface.class])continue;
-                if(v.hidden || v.alpha<.01)continue;
-                if(v.bounds.size.width<16 || v.bounds.size.width>120 || v.bounds.size.height<16 || v.bounds.size.height>64)continue;
-                CGRect vr=[v convertRect:v.bounds toView:w];
-                if(CGRectGetMidX(vr)<midWin.x)leftBound=MAX(leftBound,CGRectGetMaxX(vr)+m.gap);
-                else rightBound=MIN(rightBound,CGRectGetMinX(vr)-m.gap);
-            }
-            CGFloat avail=2.*MAX(0,MIN(midWin.x-leftBound,rightBound-midWin.x));
-            CGFloat desiredW=en?MAX(m.button*2.9,132*m.scale):MAX(m.button*2.55,114*m.scale);
-            CGFloat tw=avail>=m.button*1.8?MIN(desiredW,avail):desiredW;
-            // Clamp vertically strictly inside bar when delta <= 2pt, matching WXGLocalInsideBar.
-            CGFloat barLo=CGRectGetMinY(bar.bounds)-topInBar,barHi=CGRectGetMaxY(bar.bounds)-topInBar;
-            CGFloat ry=round(cy-barH*.5);
-            if(barHi-barLo>=barH-.01) {
-                CGFloat clampedY=WXGClamp(ry,barLo,barHi-barH);
-                if(fabs(clampedY-ry)<=2.)ry=clampedY;
-            }
-            CGRect rect=CGRectMake(round(cx-tw*.5),ry,round(tw),round(barH));
-            CGRect target=CGRectInset(rect,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
-            BOOL needAdd=_titleBar.superview!=titleView;
-            BOOL needFrame=!CGRectEqualToRect(_titleBar.frame,target);
-            if(needAdd || needFrame) {
-                if(_titleTurn<_titleLoopUntilTurn) {
-                    [UIView performWithoutAnimation:^{
-                        [CATransaction begin];[CATransaction setDisableActions:YES];
-                        self->_titleBar.alpha=shownAlpha;
-                        self->_titleBar.hidden=(w==nil);
-                        [CATransaction commit];
-                    }];
-                    BOOL active=shownAlpha>=.01 && w!=nil;
-                    _titleBar.userInteractionEnabled=active;_titleBar.active=active;
-                    return;
-                }
-                if(_titleLoopTurn!=_titleTurn){_titleLoopTurn=_titleTurn;_titleLoopChanges=0;}
-                if(++_titleLoopChanges>20) {
-                    NSUInteger shift=MIN(_titleLoopTrips,5);
-                    _titleLoopUntilTurn=_titleTurn+(60UL<<shift);
-                    ++_titleLoopTrips;
-                    return;
-                }
-            }
-            [UIView performWithoutAnimation:^{
-                [CATransaction begin];[CATransaction setDisableActions:YES];
-                if(needAdd)[titleView addSubview:self->_titleBar];
-                if(needFrame)self->_titleBar.frame=target;
-                if(fabs(self->_titleBar.alpha-shownAlpha)>.005)self->_titleBar.alpha=shownAlpha;
-                if(self->_titleBar.hidden)self->_titleBar.hidden=NO;
-                [CATransaction commit];
-            }];
-            for(UIView *a=titleView;a && a!=bar;a=a.superview) {
-                if(a.bounds.size.width<bar.bounds.size.width*.8)WXGHoldClipOpen(a,_titleBar);
-                WXGInstallSegTitleTouchHook(a);
-                WXGSetSegTitleTouchTarget(a,_titleBar);
-            }
-            _lastTitleSyncKey=syncKey;
-            if(!_titleTrace)_titleTrace=[NSMutableArray array];
-            NSString *entry=[NSString stringWithFormat:@"%.2f host:%@ w:%d a:%.2f %@",WXGSecondsSinceLoad(),NSStringFromClass(titleView.class),w!=nil,shownAlpha,NSStringFromCGRect(rect)];
-            if(![_titleTrace.lastObject isEqualToString:entry]) {
-                if(_titleTrace.count>=16)[_titleTrace removeObjectAtIndex:0];
-                [_titleTrace addObject:entry];
-            }
-            BOOL active=shownAlpha>=.01 && titleView.window!=nil;
-            _titleBar.userInteractionEnabled=active;
-            _titleBar.active=active;
-        }else {
-            if(_titleBar.superview!=titleView) {
-                if(_titleTurn<_titleLoopUntilTurn) {_titleBar.userInteractionEnabled=NO;_titleBar.active=NO;return;}
-                if(_titleLoopTurn!=_titleTurn){_titleLoopTurn=_titleTurn;_titleLoopChanges=0;}
-                if(++_titleLoopChanges>20) {
-                    NSUInteger shift=MIN(_titleLoopTrips,5);
-                    _titleLoopUntilTurn=_titleTurn+(60UL<<shift);
-                    ++_titleLoopTrips;
-                    return;
-                }
-                CGFloat tw=en?MAX(m.button*2.9,132*m.scale):MAX(m.button*2.55,114*m.scale);
-                CGRect target=CGRectInset(CGRectMake(round(cx-tw*.5),round(cy-barH*.5),round(tw),round(barH)),-WXGCanvasPaddingX,-WXGCanvasPaddingY);
-                [UIView performWithoutAnimation:^{
-                    [CATransaction begin];[CATransaction setDisableActions:YES];
-                    [titleView addSubview:self->_titleBar];
-                    self->_titleBar.frame=target;
-                    self->_titleBar.alpha=shownAlpha;
-                    self->_titleBar.hidden=(w==nil);
-                    [CATransaction commit];
-                }];
-            }
-            _lastTitleSyncKey=nil;
-            _titleBar.userInteractionEnabled=NO;
-            _titleBar.active=NO;
-        }
-    } @finally {
-        _syncingTitle=NO;
-    }
-}
-- (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect alpha:(CGFloat)alpha englishHint:(BOOL)englishHint {
-    (void)overlay;(void)rect;(void)alpha;
-    if(englishHint)_titleEnglishHint=YES;
-    UIView *tv=page.navigationItem.titleView?:_titleHostView;
-    if(tv)[self syncTitleView:tv onPage:page];
-    else [self hideTitleBar];
 }
 - (void)titleSegmentChanged:(WXGSegmentBar *)bar {
     NSInteger idx=(NSInteger)WXGClamp(bar.selectedIndex,0,1);
@@ -2499,21 +2238,16 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
     }
 }
 - (void)hideTitleBar {
-    [self unwatchAllTitleSubviews];
-    if(_titleHostView) {
-        UINavigationBar *bar=WXGSegNavBarOf(_titleHostView);
-        for(UIView *a=_titleHostView;a && a!=bar;a=a.superview)WXGSetSegTitleTouchTarget(a,nil);
-    }
-    if(_titleBar) {
-        WXGReleaseClipHolds(_titleBar);
-        _titleBar.userInteractionEnabled=NO;
-        _titleBar.active=NO;_titleBar.hidden=YES;
-        [_titleBar removeFromSuperview];
-    }
-    [_titleStates restore];
-    _titleHostView=nil;
-    _lastTitleSyncKey=nil;
-    _titleSyncPending=NO;
+    if(!_titleBar)return;
+    _titleBar.userInteractionEnabled=NO;
+    _titleBar.active=NO;_titleBar.hidden=YES;
+    [_titleBar removeFromSuperview];
+}
+- (void)releaseTitleBar {
+    [self hideTitleBar];
+    [_titleConceal restore];
+    _titleConceal=nil;
+    _titleNavView=nil;_titlePullView=nil;_titleOverlay=nil;_titleRestRect=CGRectZero;
 }
 - (void)segmentChanged:(WXGSegmentBar *)bar {
     NSArray<NSDictionary *> *groups=WXGChatGroupList();
@@ -2900,7 +2634,7 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
 // FIX113 O: every frame of the host (before Core Animation's commit, so the
 // floating views move with the list in the same frame). FIX113 T: in the
 // page itself, so also through a push / pop (the page carries them).
-- (void)hostTick:(CFTimeInterval)time page:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning {
+- (void)hostTick:(CFTimeInterval)time page:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome homePanel:(CGFloat)homePanel rowOffset:(CGFloat)rowOffset {
     BOOL floatOn=[self floatWanted];
     [self updateGapOn:leaf overlay:overlay transitioning:transitioning];   // FIX113 Q
     UITableView *table=_table;UIView *host=table.superview;
@@ -2919,21 +2653,7 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
         if(!CGRectIsNull(WXGVisibleSearchBox(_searchBar)))[self searchBarLaidOut:_searchBar];
     }
     if(_bar && _bar.superview)[self placeSegmentIn:floatHost];
-    if(_titleBar && (_titleHostView || _titleBar.superview)) {
-        if(![self titleModeWanted]) {
-            [self hideTitleBar];
-        }else {
-            BOOL onHome=!homeClass || [leaf isKindOfClass:homeClass];
-            if(_titleHostView && onHome && !transitioning && (arrived || _titleSyncPending || time-_lastTitleSyncAt>.25)) {
-                _titleSyncPending=NO;_lastTitleSyncAt=time;
-                [self syncTitleView:_titleHostView onPage:leaf];
-            }else {
-                BOOL active=onHome && _titleHostView && !_titleBar.hidden && _titleBar.alpha>=.01 && _titleHostView.window!=nil;
-                _titleBar.active=active;
-                _titleBar.userInteractionEnabled=active;
-            }
-        }
-    }
+    [self followTitleBarInOverlay:overlay page:leaf transitioning:transitioning transitionInvolvesHome:transitionInvolvesHome homePanel:homePanel rowOffset:rowOffset];
     if(_bar.window && _returnTrace && time-_returnedAt<1.2 && _returnTrace.count<90) {
         CGRect r=[_bar convertRect:_bar.bounds toView:nil];UIView *field=_searchBar;
         NSString *line=[NSString stringWithFormat:@"y%.1f h%.1f %@%@ field y%.1f",r.origin.y+WXGCanvasPaddingY,r.size.height-2*WXGCanvasPaddingY,
@@ -2975,8 +2695,9 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
 - (void)suspendFloating {
     for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects)[self unpin:slot];
     if(_segmentFloating)[self placeSegmentIn:nil];
+    [self hideTitleBar];
 }
-- (void)restoreAll {[self restoreFloats];[self hideTitleBar];[self restore];}
+- (void)restoreAll {[self restoreFloats];[self releaseTitleBar];[self restore];}
 - (void)restore {
     if(![self titleModeWanted] && atomic_load(&WXGFilterIndex)>0)[self applyRule:0 members:nil name:nil];
     _selected=0;_selectedGroupID=nil;
@@ -3008,8 +2729,8 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
              @"customSearch":@{@"widthPct":@(cfg.homeSearchWidthPct),@"height":@(cfg.homeSearchHeight),@"topGap":@(cfg.homeSearchTopGap),
                                @"nativeHeaderH":@(_nativeHeaderHeight),@"resizedHeaderH":@(_resizedHeader?_resizedHeader.frame.size.height:0)},
              @"titleBar":@{@"wanted":@([self titleModeWanted]),@"mounted":@(_titleBar.superview!=nil),@"selected":@(_titleSelected),
-                           @"hostClass":_titleHostView?NSStringFromClass(_titleHostView.class):@"",
-                           @"hostInWindow":@(_titleHostView.window!=nil),
+                           @"navTitleInWindow":@(_titleNavView.window!=nil),
+                           @"pullTitleInWindow":@(_titlePullView.window!=nil),
                            @"alpha":@(_titleBar?_titleBar.alpha:0),@"hidden":@(_titleBar?_titleBar.hidden:YES),
                            @"frame":_titleBar?NSStringFromCGRect(_titleBar.frame):@"",@"trace":_titleTrace?:@[],@"bar":_titleBar?[_titleBar evidence]:@{}},
              @"selected":@(_selected),@"groups":[self groupsEvidence],@"switchLog":_switchLog?:@[],
