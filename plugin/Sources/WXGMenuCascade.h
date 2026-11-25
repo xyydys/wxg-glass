@@ -135,75 +135,78 @@ static inline double WXGMenuRingDotAngleForSize(int idx,double size) {
 }
 static inline double WXGMenuRingDotAngle(int idx) { return WXGMenuRingDotAngleForCount(idx,WXGMenuParticleCount,44.); }
 
-/* Track 1 strokeEnd at `t` seconds:
-   open:  1.0 -> 0.0 over 0..150ms (CCW from right 45 deg to left 135 deg)
-   close: 0.0 -> 1.0 over 150..360ms (CW reverse as dots dock back into ring) */
-static inline double WXGMenuRingStrokeAt(int open,double t,double speed) {
+/* ---- Unified Normalized-Progress (0.0 -> 1.0) Choreography Engine -------
+   Every track (arc, +/x symbol, N flying dots, N circular glass icons, and
+   N text capsules) is a pure deterministic function of a single progress `p`
+   in [0.0, 1.0]. Expanding drives p: 0 -> 1; collapsing drives p: current -> 0.
+   This guarantees exact reverse playback, seamless mid-flight reversal, and
+   makes it structurally impossible for the trigger button or menu icons to
+   desync or freeze. */
+
+static inline double WXGMenuOpenDuration(double speed) {
     double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
-    double ts=t*v;
-    if(open) {
-        if(ts<=0.)return 1.;
-        if(ts>=.150)return 0.;
-        return 1.-WXGMenuCubicBezier(ts/.150,.38,0.,.85,1.);
-    }
-    if(ts<=.150)return 0.;
-    if(ts>=.360)return 1.;
-    return WXGMenuEaseOut((ts-.150)/.210);
+    return .620/v;
+}
+static inline double WXGMenuCloseDuration(double speed) {
+    double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
+    return .560/v;
 }
 
-/* Track 2 center glyph (+ <-> x) pose at `t` seconds (zero overshoot / no bounce):
-   open:  0..150ms + shrinks 1.0 -> 0.05 & fades 1 -> 0; instant swap to x at 150ms;
-          150..360ms x grows 0.05 -> 1.0 & fades 0 -> 1.
-   close: 0..170ms x shrinks 1.0 -> 0.05 & fades 1 -> 0; instant swap to + at 170ms;
-          170..360ms + grows 0.05 -> 1.0 & fades 0 -> 1. */
+/* Split point where the arc finishes retracting, all dots have detached from
+   the button, and the center + reaches 0 and swaps cleanly to x. */
+static inline double WXGMenuHandoffProgress(void) { return .44; }
+
+/* Track 1: 270-deg arc strokeEnd as a function of p in [0, 1].
+   p = 0.00 -> 0.44 (~273ms at 1x open, ~246ms at 1x close): smooth CCW sweep 1 -> 0. */
+static inline double WXGMenuArcStrokeForProgress(double p) {
+    double h=WXGMenuHandoffProgress();
+    if(p<=0.)return 1.;
+    if(p>=h)return 0.;
+    return 1.-WXGMenuEaseInOut(p/h);
+}
+
+/* Track 2: center glyph (+ <-> x) as a function of p in [0, 1] (zero bounce). */
 typedef struct { double scale,alpha,rotationRad; int isClose; } WXGMenuSymbolPose;
-static inline WXGMenuSymbolPose WXGMenuSymbolPoseAt(int open,double t,double speed) {
-    double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
-    double ts=t*v;
+static inline WXGMenuSymbolPose WXGMenuSymbolForProgress(double p) {
     const double pi4=0.78539816339744830962;
-    if(open) {
-        if(ts<.150) {
-            double u=WXGMenuCubicBezier(WXGMenuClamp(ts/.150,0.,1.),.4,0.,.8,1.);
-            return (WXGMenuSymbolPose){1.-.95*u,WXGMenuClamp(1.-u,0.,1.),0.,0};
-        }
-        double u=WXGMenuEaseOut((ts-.150)/.210);
-        return (WXGMenuSymbolPose){.05+.95*u,WXGMenuClamp(u,0.,1.),pi4,1};
+    double h=WXGMenuHandoffProgress();
+    p=WXGMenuClamp(p,0.,1.);
+    if(p<h) {
+        double u=WXGMenuEaseInOut(p/h);
+        return (WXGMenuSymbolPose){1.-.95*u,WXGMenuClamp(1.-u,0.,1.),0.,0};
     }
-    if(ts<.170) {
-        double u=WXGMenuCubicBezier(WXGMenuClamp(ts/.170,0.,1.),.4,0.,.8,1.);
-        return (WXGMenuSymbolPose){1.-.95*u,WXGMenuClamp(1.-u,0.,1.),pi4,1};
-    }
-    double u=WXGMenuEaseOut((ts-.170)/.190);
-    return (WXGMenuSymbolPose){.05+.95*u,WXGMenuClamp(u,0.,1.),0.,0};
+    double u=WXGMenuEaseOut(WXGMenuClamp((p-h)/(.92-h),0.,1.));
+    return (WXGMenuSymbolPose){.05+.95*u,WXGMenuClamp(u,0.,1.),pi4,1};
 }
 
-/* ---- Dot-to-Icon Blur-Morph Particle Trajectory (Direct 1:1 per row) --- */
+/* Dot detach & arrival points in normalized progress p in [0, 1].
+   All dots detach sequentially as the arc sweeps past them (0.06..0.36 < 0.44). */
+static inline double WXGMenuDotDetachProgress(int idx,int count) {
+    int n=WXGMenuClampCount(count);
+    int i=idx<0?0:(idx>=n?n-1:idx);
+    double step=n>1?fmin(.095,.30/(double)(n-1)):0.;
+    return .06+step*(double)i;
+}
+static inline double WXGMenuDotArriveProgress(int idx,int count,double stagger) {
+    int n=WXGMenuClampCount(count);
+    int i=idx<0?0:(idx>=n?n-1:idx);
+    double g=WXGMenuClamp(isfinite(stagger)?stagger:.045,0.,.080);
+    double det=WXGMenuDotDetachProgress(i,n);
+    double extra=n>1?fmin(g*.55,.040)*(double)i:0.;
+    double arr=det+.26+extra;
+    return arr>.72?.72:arr;
+}
+
 typedef struct { double x,y,diameter,alpha,blurRadius; } WXGMenuParticle;
 
-/* Dot detach & arrival timings (unscaled seconds at speed=1.0).
-   Row k (0..count-1) pairs with dot idx = k (mapped right-to-left along bottom arc
-   as the arc sweeps CCW from 45 deg to 135 deg). All dots leave by ~150ms. */
-static inline double WXGMenuDotDetachAt(int idx,int count,double stagger) {
-    double g=WXGMenuClamp(isfinite(stagger)?stagger:.045,0.,.080);
-    int n=count>0?count:1;
-    double step=n>1?fmin(.028,.110/(double)(n-1)):0.;
-    (void)g;
-    return .035+step*(double)(idx<0?0:idx);
-}
-static inline double WXGMenuDotArriveAt(int idx,int count,double stagger) {
-    double g=WXGMenuClamp(isfinite(stagger)?stagger:.045,0.,.080);
-    double det=WXGMenuDotDetachAt(idx,count,stagger);
-    double flight=.125+fmin(g*.55,.028)*(double)(idx<0?0:idx);
-    return det+flight;
-}
-
-/* Evaluates dot `idx` flying between its static bottom-arc anchor and `targetX, targetY`
-   (row `idx`'s circular glass icon centre) with Gaussian-blur morph at the icon end.
-   Collapse (`open == 0`) is the exact time-reversed trajectory over `0..360ms`! */
-static inline WXGMenuParticle WXGMenuDotMorphPoseAt(int idx,int count,int open,double t,double speed,double stagger,
+/* Track 3: dot `idx` pose at normalized progress `p` in [0, 1].
+   p <= pDetach: resting at bottom-arc anchor (0 blur).
+   pDetach..pArrive: curved flight to icon center, softly pre-blurring near arrival.
+   pArrive..pArrive+0.16: Gaussian-blur morph (3.5 -> 10pt) dissolving into icon.
+   Reverse (p: 1 -> 0): exact reverse playback! */
+static inline WXGMenuParticle WXGMenuDotForProgress(int idx,int count,double p,double stagger,
     double plusMidX,double plusMidY,double buttonSize,double targetX,double targetY) {
-    double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
-    double ts=t*v;
+    p=WXGMenuClamp(p,0.,1.);
     int n=WXGMenuClampCount(count);
     int dotSlot=idx<0?0:(idx>=n?n-1:idx);
     double ringR=WXGMenuRingRadius(buttonSize);
@@ -212,74 +215,93 @@ static inline WXGMenuParticle WXGMenuDotMorphPoseAt(int idx,int count,int open,d
     double anchorX=plusMidX+ringR*cos(angle);
     double anchorY=plusMidY+ringR*sin(angle);
 
-    double tDetach=WXGMenuDotDetachAt(idx,n,stagger);
-    double tArrive=WXGMenuDotArriveAt(idx,n,stagger);
-    double tMorphEnd=tArrive+.095;
-    double flightDur=fmax(tArrive-tDetach,.06);
+    double pDet=WXGMenuDotDetachProgress(dotSlot,n);
+    double pArr=WXGMenuDotArriveProgress(dotSlot,n,stagger);
+    double pMorphEnd=fmin(.90,pArr+.16);
+    double flightSpan=fmax(pArr-pDet,.08);
 
-    /* Gentle organic curve bowing slightly outward on the way from anchor to icon center. */
     double ctrlX=.5*(anchorX+targetX)+((dotSlot-(n-1)*.5)*2.5-4.0);
     double ctrlY=.42*anchorY+.58*targetY;
 
-    if(open) {
-        if(ts<=tDetach) {
-            return (WXGMenuParticle){anchorX,anchorY,dotDiam,1.,0.};
-        }
-        if(ts<tArrive) {
-            double u=WXGMenuCubicBezier((ts-tDetach)/flightDur,.25,.05,.35,1.);
-            double om=1.-u;
-            double x=om*om*anchorX+2.*om*u*ctrlX+u*u*targetX;
-            double y=om*om*anchorY+2.*om*u*ctrlY+u*u*targetY;
-            double diam=dotDiam+(11.5-dotDiam)*WXGMenuEaseInOut(u);
-            /* Begin softening slightly during the final 25% of flight into the morph. */
-            double preBlur=u>.75?((u-.75)/.25)*3.5:0.;
-            return (WXGMenuParticle){x,y,diam,1.,preBlur};
-        }
-        if(ts<tMorphEnd) {
-            double m=WXGMenuEaseOut((ts-tArrive)/(tMorphEnd-tArrive));
-            double diam=11.5+10.5*m;
-            double blur=3.5+6.5*m;
-            double alpha=WXGMenuClamp(1.-m,0.,1.);
-            return (WXGMenuParticle){targetX,targetY,diam,alpha,blur};
-        }
-        return (WXGMenuParticle){targetX,targetY,0.,0.,10.};
+    if(p<=pDet) {
+        return (WXGMenuParticle){anchorX,anchorY,dotDiam,1.,0.};
     }
-
-    /* Collapse (0..360ms): exact reversed morph + flight back to anchor!
-       Bottom rows lift slightly earlier so they arrive back at the ring smoothly together. */
-    int revOrd=(n>1?(n-1-idx):0);
-    if(revOrd<0)revOrd=0;
-    double cStart=.030+.014*(double)revOrd;
-    double cUnblur=cStart+.085;
-    double dockStep=n>1?fmin(.016,.064/(double)(n-1)):0.;
-    double cDock=.275+dockStep*(double)(dotSlot);
-    if(cDock>.355)cDock=.355;
-
-    if(ts<=cStart) {
-        return (WXGMenuParticle){targetX,targetY,0.,0.,10.};
+    if(p<pArr) {
+        double u=WXGMenuCubicBezier((p-pDet)/flightSpan,.25,.05,.35,1.);
+        double om=1.-u;
+        double x=om*om*anchorX+2.*om*u*ctrlX+u*u*targetX;
+        double y=om*om*anchorY+2.*om*u*ctrlY+u*u*targetY;
+        double diam=dotDiam+(12.0-dotDiam)*WXGMenuEaseInOut(u);
+        double preBlur=u>.75?((u-.75)/.25)*3.5:0.;
+        return (WXGMenuParticle){x,y,diam,1.,preBlur};
     }
-    if(ts<cUnblur) {
-        /* Icon blurs & condenses back into the dot at icon center. */
-        double m=WXGMenuEaseOut((ts-cStart)/(cUnblur-cStart));
-        double diam=22.0-10.5*m;
-        double blur=10.0-6.5*m;
-        double alpha=WXGMenuClamp(m,0.,1.);
+    if(p<pMorphEnd) {
+        double m=WXGMenuEaseOut((p-pArr)/fmax(pMorphEnd-pArr,.04));
+        double diam=12.0+10.0*m;
+        double blur=3.5+6.5*m;
+        double alpha=WXGMenuClamp(1.-m,0.,1.);
         return (WXGMenuParticle){targetX,targetY,diam,alpha,blur};
     }
-    if(ts<cDock) {
-        /* Exact reversed Bezier path back to the dot's bottom-arc anchor. */
-        double u=WXGMenuCubicBezier((ts-cUnblur)/fmax(cDock-cUnblur,.06),.45,0.,.25,1.);
-        double om=1.-u;
-        double x=om*om*targetX+2.*om*u*ctrlX+u*u*anchorX;
-        double y=om*om*targetY+2.*om*u*ctrlY+u*u*anchorY;
-        double diam=11.5+(dotDiam-11.5)*WXGMenuEaseInOut(u);
-        double blur=u<.25?3.5*(1.-u/.25):0.;
-        return (WXGMenuParticle){x,y,diam,1.,blur};
-    }
-    return (WXGMenuParticle){anchorX,anchorY,dotDiam,1.,0.};
+    return (WXGMenuParticle){targetX,targetY,0.,0.,10.};
 }
 
-/* Backwards-compatible wrapper for legacy callers. */
+typedef struct { double alpha,scaleX,scaleY,dx,dy,blurRadius; } WXGMenuRowPose;
+
+/* Track 4: circular glass icon pose at normalized progress `p` in [0, 1].
+   Materializes via Gaussian-blur unblur directly at dot arrival (zero bounce!). */
+static inline WXGMenuRowPose WXGMenuRowIconForProgress(int idx,int count,double p,double stagger) {
+    p=WXGMenuClamp(p,0.,1.);
+    double pArr=WXGMenuDotArriveProgress(idx,count,stagger);
+    double pStart=fmax(0.,pArr-.04);
+    double pDur=.22;
+    if(p<=pStart)return (WXGMenuRowPose){0.,.62,.62,0.,0.,9.0};
+    double u=WXGMenuEaseOut(WXGMenuClamp((p-pStart)/pDur,0.,1.));
+    double s=.62+.38*u;
+    return (WXGMenuRowPose){u,s,s,0.,0.,9.0*(1.-u)};
+}
+
+/* Track 5: left text glass capsule pose at normalized progress `p` in [0, 1].
+   Pure horizontal slide from right (dy = 0, zero bounce!). On collapse (p: 1->0),
+   capsules naturally retract first before icons blur back into dots. */
+static inline WXGMenuRowPose WXGMenuRowCapsuleForProgress(int idx,int count,double p,double stagger,double halfWidth) {
+    p=WXGMenuClamp(p,0.,1.);
+    double pArr=WXGMenuDotArriveProgress(idx,count,stagger);
+    double pStart=fmin(.76,pArr+.06);
+    double pDur=.22;
+    if(p<=pStart) {
+        double s=.94;
+        return (WXGMenuRowPose){0.,s,s,(1.-s)*halfWidth+12.0,0.,0.};
+    }
+    double u=WXGMenuEaseOut(WXGMenuClamp((p-pStart)/pDur,0.,1.));
+    double s=.94+.06*u;
+    double dx=(1.-s)*halfWidth+12.0*(1.-u);
+    return (WXGMenuRowPose){u,s,s,dx,0.,0.};
+}
+
+/* ---- Legacy Time-Based Wrappers (synced to the unified progress engine) - */
+static inline double WXGMenuRingStrokeAt(int open,double t,double speed) {
+    double dur=open?WXGMenuOpenDuration(speed):WXGMenuCloseDuration(speed);
+    double p=WXGMenuClamp(t/fmax(dur,1e-4),0.,1.);
+    return WXGMenuArcStrokeForProgress(open?p:(1.-p));
+}
+static inline WXGMenuSymbolPose WXGMenuSymbolPoseAt(int open,double t,double speed) {
+    double dur=open?WXGMenuOpenDuration(speed):WXGMenuCloseDuration(speed);
+    double p=WXGMenuClamp(t/fmax(dur,1e-4),0.,1.);
+    return WXGMenuSymbolForProgress(open?p:(1.-p));
+}
+static inline double WXGMenuDotDetachAt(int idx,int count,double stagger) {
+    (void)stagger;
+    return WXGMenuDotDetachProgress(idx,count)*WXGMenuOpenDuration(1.);
+}
+static inline double WXGMenuDotArriveAt(int idx,int count,double stagger) {
+    return WXGMenuDotArriveProgress(idx,count,stagger)*WXGMenuOpenDuration(1.);
+}
+static inline WXGMenuParticle WXGMenuDotMorphPoseAt(int idx,int count,int open,double t,double speed,double stagger,
+    double plusMidX,double plusMidY,double buttonSize,double targetX,double targetY) {
+    double dur=open?WXGMenuOpenDuration(speed):WXGMenuCloseDuration(speed);
+    double p=WXGMenuClamp(t/fmax(dur,1e-4),0.,1.);
+    return WXGMenuDotForProgress(idx,count,open?p:(1.-p),stagger,plusMidX,plusMidY,buttonSize,targetX,targetY);
+}
 static inline WXGMenuParticle WXGMenuParticlePoseAt(int idx,int open,double t,double speed,
     double plusMidX,double plusMidY,double ringRadius,double lastRowMidY) {
     double size=WXGMenuClamp(ringRadius/.340,30.,60.);
@@ -288,38 +310,35 @@ static inline WXGMenuParticle WXGMenuParticlePoseAt(int idx,int open,double t,do
     return WXGMenuDotMorphPoseAt(idx,WXGMenuParticleCount,open,t,speed,.045,plusMidX,plusMidY,size,plusMidX,rowY);
 }
 
-/* ---- Glass Icon Blur-Morph Reveal & Left Glass Capsule Reveal ---------- */
+/* ---- Legacy Entrance/Exit Structs (for dump.c / tools compatibility) ---- */
 typedef struct { double stiffness,damping,mass; } WXGMenuSpring;
 typedef struct {
     double iconDelay,capsuleDelay,textDelay;
     double iconDuration,capsuleDuration;
     double iconFade,capsuleFade,textFade;
-    double iconBlurStart;                       /* Gaussian blur radius at morph handoff (pt) */
-    WXGMenuSpring iconSpring,capsuleSpring;     /* ABI compat */
+    double iconBlurStart;
+    WXGMenuSpring iconSpring,capsuleSpring;
     double iconScale,capsuleScaleX,capsuleScaleY;
-    double travel;                              /* subtle 10pt settle during blur-morph */
-    double capsuleShift;                        /* +12pt horizontal slide from right -> 0 */
+    double travel;
+    double capsuleShift;
     double textShift;
 } WXGMenuEntrance;
 
-/* Row `index` (0 = top). Icon materializes directly where its dot arrives via
-   Gaussian-blur morph (zero bounce!); capsule glides horizontally out beside it. */
 static inline WXGMenuEntrance WXGMenuEntranceForCount(int index,int count,double slotDistance,double stagger,double speed) {
     (void)slotDistance;
     double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
-    double gap=WXGMenuClamp(isfinite(stagger)?stagger:.045,0.,.080);
-    int i=index<0?0:index;
-    double arrive=WXGMenuDotArriveAt(i,count>0?count:WXGMenuParticleCount,gap);
+    double dur=WXGMenuOpenDuration(v);
+    double pArr=WXGMenuDotArriveProgress(index,count>0?count:WXGMenuParticleCount,stagger);
     WXGMenuEntrance e;
-    e.iconDelay=fmax(0.,arrive-.030)/v;
-    e.iconDuration=.160/v;
-    e.iconFade=.135/v;
+    e.iconDelay=fmax(0.,pArr-.04)*dur;
+    e.iconDuration=.22*dur;
+    e.iconFade=e.iconDuration;
     e.iconBlurStart=9.0;
-    e.capsuleDelay=(arrive+.025)/v;
+    e.capsuleDelay=fmin(.76,pArr+.06)*dur;
     e.textDelay=e.capsuleDelay;
-    e.capsuleDuration=.150/v;
-    e.capsuleFade=.140/v;
-    e.textFade=.140/v;
+    e.capsuleDuration=.22*dur;
+    e.capsuleFade=e.capsuleDuration;
+    e.textFade=e.capsuleDuration;
     e.iconSpring=(WXGMenuSpring){400.*v*v,40.*v,1.};
     e.capsuleSpring=(WXGMenuSpring){480.*v*v,44.*v,1.};
     e.iconScale=.62;
@@ -334,7 +353,6 @@ static inline WXGMenuEntrance WXGMenuEntranceFor(int index,double slotDistance,d
     return WXGMenuEntranceForCount(index,WXGMenuParticleCount,slotDistance,stagger,speed);
 }
 
-/* Kept for backwards compatibility with tools/tests. */
 static inline double WXGMenuSpringProgress(WXGMenuSpring s,double t) {
     if(!(t>0.))return 0.;
     double m=fmax(s.mass,1e-6),k=fmax(s.stiffness,1e-6),c=fmax(s.damping,0.);
@@ -358,7 +376,6 @@ static inline double WXGMenuSpringSettle(WXGMenuSpring s,double threshold) {
 
 typedef struct { double alpha,scaleX,scaleY,dx,dy,textAlpha,textDx; } WXGMenuPose;
 
-/* Icon pose at `t` seconds during expand: strictly monotonic ease-out, ZERO bounce! */
 static inline WXGMenuPose WXGMenuIconPoseAt(const WXGMenuEntrance *e,double t) {
     double p=WXGMenuEaseOut((t-e->iconDelay)/fmax(e->iconDuration,1e-4));
     double a=WXGMenuEaseOut((t-e->iconDelay)/fmax(e->iconFade,1e-4));
@@ -366,7 +383,6 @@ static inline WXGMenuPose WXGMenuIconPoseAt(const WXGMenuEntrance *e,double t) {
     return (WXGMenuPose){a,s,s,0.,-e->travel*(1.-p),0.,0.};
 }
 
-/* Capsule pose at `t` seconds during expand: zero vertical travel, horizontal slide from right! */
 static inline WXGMenuPose WXGMenuCapsulePoseAt(const WXGMenuEntrance *e,double t,double halfWidth) {
     double p=WXGMenuEaseOut((t-e->capsuleDelay)/fmax(e->capsuleDuration,1e-4));
     double a=WXGMenuEaseOut((t-e->capsuleDelay)/fmax(e->capsuleFade,1e-4));
@@ -375,52 +391,41 @@ static inline WXGMenuPose WXGMenuCapsulePoseAt(const WXGMenuEntrance *e,double t
     return (WXGMenuPose){a,s,s,dx,0.,a,0.};
 }
 
-/* Total expand duration across all tracks (~0.52s at default stagger/speed). */
 static inline double WXGMenuTotalDuration(int count,double rowPitch,double stagger,double speed) {
-    double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
-    double end=.380/v;
-    for(int i=0;i<count;i++) {
-        WXGMenuEntrance e=WXGMenuEntranceForCount(i,count,(i+1)*rowPitch,stagger,speed);
-        double a=e.iconDelay+e.iconDuration;
-        double b=e.capsuleDelay+e.capsuleDuration;
-        end=fmax(end,fmax(a,b));
-    }
-    return end;
+    (void)count;(void)rowPitch;(void)stagger;
+    return WXGMenuOpenDuration(speed);
 }
 
-/* ---- Collapse (380ms total — Exact Reverse of Expand) ------------------ */
 typedef struct {
     double iconDelay,capsuleDelay,textDelay;
     double iconDuration,capsuleDuration,textDuration;
     double iconFade,capsuleFade;
     double iconBlurEnd;
     double iconScale,capsuleScaleX,capsuleScaleY;
-    double travel;          /* subtle reverse lift as icon blur-morphs back into its dot */
-    double capsuleShift;    /* +10pt right retract during 100ms fast vanish */
+    double travel;
+    double capsuleShift;
     double textShift;
 } WXGMenuExit;
 
-/* `order` 0 is the lowest row (starts blur-morphing back into its dot first). */
 static inline WXGMenuExit WXGMenuExitFor(int order,double slotDistance,double stagger,double speed) {
-    (void)slotDistance;
-    (void)stagger;
-    double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
+    (void)slotDistance;(void)stagger;
+    double dur=WXGMenuCloseDuration(speed);
     int o=order<0?0:order;
     WXGMenuExit e;
     e.capsuleDelay=0.;
     e.textDelay=0.;
-    e.capsuleDuration=.100/v;
-    e.capsuleFade=.095/v;
-    e.textDuration=.100/v;
-    e.iconDelay=(.020+.014*(double)o)/v;
-    e.iconDuration=.115/v;
-    e.iconFade=.105/v;
+    e.capsuleDuration=.22*dur;
+    e.capsuleFade=e.capsuleDuration;
+    e.textDuration=e.capsuleDuration;
+    e.iconDelay=(.06+.04*(double)o)*dur;
+    e.iconDuration=.22*dur;
+    e.iconFade=e.iconDuration;
     e.iconBlurEnd=9.0;
     e.iconScale=.62;
     e.capsuleScaleX=.94;
     e.capsuleScaleY=.94;
     e.travel=0.;
-    e.capsuleShift=10.;
+    e.capsuleShift=12.;
     e.textShift=0.;
     return e;
 }
@@ -440,14 +445,8 @@ static inline WXGMenuPose WXGMenuExitCapsulePoseAt(const WXGMenuExit *e,double t
     return (WXGMenuPose){1.-f,s,s,dx,0.,1.-f,0.};
 }
 
-/* Total collapse duration across all tracks (0.36s at speed=1.0). */
 static inline double WXGMenuExitDuration(int count,double rowPitch,double stagger,double speed) {
-    double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
-    double end=.360/v; /* arc close + + recovery + dot dock */
-    for(int i=0;i<count;i++) {
-        WXGMenuExit e=WXGMenuExitFor(i,(count-i)*rowPitch,stagger,speed);
-        end=fmax(end,fmax(e.iconDelay+e.iconDuration,e.capsuleDelay+e.capsuleDuration));
-    }
-    return end;
+    (void)count;(void)rowPitch;(void)stagger;
+    return WXGMenuCloseDuration(speed);
 }
 #endif

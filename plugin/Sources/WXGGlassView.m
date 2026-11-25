@@ -1190,7 +1190,7 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
 }
 @implementation WXGGlassView {
     CALayer *_dropShadow;NSString *_dropShadowKey;   // FIX114 K
-    CAShapeLayer *_dropShadowMask;NSString *_dropShadowMaskKey;   // R20: punch out overlapping sibling glasses so shadows never paint over nearby glass
+    CALayer *_dropShadowMask;NSString *_dropShadowMaskKey;   // R20/R24: boolean alpha mask punching out overlapping sibling glasses so shadows never paint over nearby glass
     NSHashTable<UIView *> *_shadowClips;              // FIX114 L: ancestors opened for the shadow
     CGRect _shadowNeed;BOOL _shadowNeedValid;         // FIX114 M: what of the shadow shows (this view's coordinates)
     BOOL _shadowParked;                               // FIX114 M (review): hidden: its views let go until it shows
@@ -1734,10 +1734,29 @@ static BOOL WXGShadowGlassShownIgnoringAlpha(UIView *glass) {
     _shadowClips=now;
     if(dropped)WXGShadowClipSweep();
 }
-// R20: keep every glass's drop shadow strictly below any nearby/lower glass in
-// visual priority by punching out overlapping visible glass silhouettes via an
-// even-odd CAShapeLayer mask on _dropShadow (prevents both overpainting on top
-// of a lower glass and darkening that lower glass's CABackdropLayer).
+// R24: ignore glasses belonging to a pushed-away / non-top view controller (e.g.
+// Home's WCSearchBar sitting at x=-132 during/right after push into Chat) so
+// departing pages can never punch holes into the active page's shadows.
+static BOOL WXGShadowGlassOnActivePage(UIView *glass) {
+    UIViewController *vc=nil;
+    for(UIResponder *r=glass;r;r=r.nextResponder)if([r isKindOfClass:UIViewController.class]){vc=(UIViewController *)r;break;}
+    if(!vc)return YES;
+    for(UIViewController *c=vc;c;c=c.parentViewController) {
+        UIViewController *p=c.parentViewController;
+        if([p isKindOfClass:UINavigationController.class]) {
+            UIViewController *top=((UINavigationController *)p).topViewController;
+            if(top && top!=c)return NO;
+        }else if([p isKindOfClass:UITabBarController.class]) {
+            UIViewController *sel=((UITabBarController *)p).selectedViewController;
+            if(sel && sel!=c)return NO;
+        }
+    }
+    return YES;
+}
+// R20/R24: keep every glass's drop shadow strictly below any nearby/lower glass in
+// visual priority by punching out overlapping visible glass silhouettes via a true
+// boolean alpha mask (kCGBlendModeClear). Never use kCAFillRuleEvenOdd, which
+// inverts the intersection of two overlapping holes back into an opaque shadow.
 - (void)updateShadowCutout {
     UIWindow *w=self.window;
     if(_dropShadow.hidden || !w || !WXGAllLiveGlasses.count || CGRectIsEmpty(_dropShadow.bounds)) {
@@ -1746,37 +1765,64 @@ static BOOL WXGShadowGlassShownIgnoringAlpha(UIView *glass) {
     }
     CGRect shadowWin=[self.layer convertRect:_dropShadow.frame toLayer:w.layer];
     if(CGRectIsEmpty(shadowWin)){if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}return;}
+    typedef struct { CGRect rect; CGFloat radius; } WXGShadowHole;
+    WXGShadowHole holes[16];NSUInteger holeCount=0;
     NSMutableString *key=nil;
-    UIBezierPath *path=nil;
     for(WXGGlassView *other in WXGAllLiveGlasses.allObjects) {
-        if(other==self || other.window!=w || !WXGShadowGlassShown(other))continue;
+        if(holeCount>=16)break;
+        if(other==self || other.window!=w || !WXGShadowGlassShown(other) || !WXGShadowGlassOnActivePage(other))continue;
         CGRect otherLocal=[other drawnBarRect];
         if(otherLocal.size.width<2 || otherLocal.size.height<2)continue;
         CGRect otherWin=[other convertRect:otherLocal toView:w];
-        if(!CGRectIntersectsRect(shadowWin,otherWin))continue;
+        if(!CGRectIntersectsRect(otherWin,w.bounds) || !CGRectIntersectsRect(shadowWin,otherWin))continue;
         CGRect hole=[w.layer convertRect:otherWin toLayer:_dropShadow];
         if(CGRectIsEmpty(hole))continue;
-        CGFloat rad=[other radiusForRect:otherLocal scale:other.barScale];
-        if(!path) {
-            path=[UIBezierPath bezierPathWithRect:_dropShadow.bounds];
-            key=[NSMutableString stringWithFormat:@"%.0fx%.0f",round(_dropShadow.bounds.size.width),round(_dropShadow.bounds.size.height)];
-        }
-        [path appendPath:[UIBezierPath bezierPathWithRoundedRect:hole cornerRadius:MIN(rad,MIN(hole.size.width,hole.size.height)*.5)]];
+        CGFloat rad=MIN([other radiusForRect:otherLocal scale:other.barScale],MIN(hole.size.width,hole.size.height)*.5);
+        if(!key)key=[NSMutableString stringWithFormat:@"%.0fx%.0f",round(_dropShadow.bounds.size.width),round(_dropShadow.bounds.size.height)];
+        holes[holeCount++]=(WXGShadowHole){hole,MAX(0.,rad)};
         [key appendFormat:@"|%.0f,%.0f,%.0f,%.0f,%.0f",round(hole.origin.x),round(hole.origin.y),round(hole.size.width),round(hole.size.height),round(rad)];
     }
-    if(!path) {
+    if(!holeCount) {
         if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}
         return;
     }
     if(!_dropShadowMask) {
-        _dropShadowMask=[CAShapeLayer layer];
-        _dropShadowMask.fillRule=kCAFillRuleEvenOdd;
-        _dropShadowMask.actions=@{@"path":NSNull.null,@"bounds":NSNull.null,@"position":NSNull.null};
+        _dropShadowMask=[CALayer layer];
+        _dropShadowMask.actions=@{@"contents":NSNull.null,@"bounds":NSNull.null,@"position":NSNull.null,@"contentsScale":NSNull.null};
     }
     if(![key isEqualToString:_dropShadowMaskKey]) {
-        _dropShadowMask.frame=_dropShadow.bounds;
-        _dropShadowMask.path=path.CGPath;
-        _dropShadowMaskKey=key;
+        CGSize sz=_dropShadow.bounds.size;
+        CGFloat scale=2.;
+        if(sz.width*scale>1024. || sz.height*scale>1024.)scale=1.;
+        size_t pw=(size_t)MAX(1.,ceil(sz.width*scale)),ph=(size_t)MAX(1.,ceil(sz.height*scale));
+        CGContextRef ctx=CGBitmapContextCreate(NULL,pw,ph,8,pw,NULL,(CGBitmapInfo)kCGImageAlphaOnly);
+        if(ctx) {
+            CGContextTranslateCTM(ctx,0,(CGFloat)ph);
+            CGContextScaleCTM(ctx,scale,-scale);
+            CGContextSetAlpha(ctx,1.);
+            CGContextFillRect(ctx,CGRectMake(0,0,sz.width,sz.height));
+            CGContextSetBlendMode(ctx,kCGBlendModeClear);
+            for(NSUInteger i=0;i<holeCount;i++) {
+                CGRect hr=CGRectStandardize(holes[i].rect);
+                if(hr.size.width<.5 || hr.size.height<.5)continue;
+                CGFloat r=WXGClamp(holes[i].radius,0.,MIN(hr.size.width,hr.size.height)*.5);
+                if(r>=.5) {
+                    CGPathRef rp=CGPathCreateWithRoundedRect(hr,r,r,NULL);
+                    CGContextAddPath(ctx,rp);CGContextFillPath(ctx);CGPathRelease(rp);
+                }else {
+                    CGContextFillRect(ctx,hr);
+                }
+            }
+            CGImageRef img=CGBitmapContextCreateImage(ctx);
+            CGContextRelease(ctx);
+            if(img) {
+                _dropShadowMask.frame=_dropShadow.bounds;
+                _dropShadowMask.contentsScale=scale;
+                _dropShadowMask.contents=(__bridge id)img;
+                CGImageRelease(img);
+                _dropShadowMaskKey=key;
+            }
+        }
     }
     if(_dropShadow.mask!=_dropShadowMask)_dropShadow.mask=_dropShadowMask;
 }

@@ -105,24 +105,10 @@ static NSInteger WXGLoadMenuDotCount(void) {
 }
 
 @interface WXGHomePlusTriggerView : UIView
-- (void)setMenuOpen:(BOOL)open animated:(BOOL)animated speed:(double)speed;
-- (void)setDotsHidden:(BOOL)hidden;
+- (void)setProgress:(double)progress dotsHidden:(BOOL)hidden;
 - (void)setDotCount:(NSInteger)count;
 - (void)updateInkColor;
 - (NSDictionary *)diagnostics;
-@end
-
-@interface WXGHomePlusTicker : NSObject
-@property(nonatomic,weak) WXGHomePlusTriggerView *owner;
-- (void)tick:(CADisplayLink *)link;
-@end
-
-@interface WXGHomePlusTriggerView ()
-- (void)tickAnimation;
-@end
-
-@implementation WXGHomePlusTicker
-- (void)tick:(CADisplayLink *)link {[self.owner tickAnimation];}
 @end
 
 @implementation WXGHomePlusTriggerView {
@@ -132,19 +118,14 @@ static NSInteger WXGLoadMenuDotCount(void) {
     CAShapeLayer *_dots[WXGMenuMaxParticles];
     NSInteger _dotCount;
     CGSize _builtSize;
-    BOOL _menuOpen;
+    double _progress;
     BOOL _dotsHidden;
-    BOOL _animating;
-    double _animSpeed;
-    CFTimeInterval _animStart;
-    CADisplayLink *_link;
-    WXGHomePlusTicker *_ticker;
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if((self=[super initWithFrame:frame])) {
         self.userInteractionEnabled=NO;self.backgroundColor=UIColor.clearColor;self.opaque=NO;
         _dotCount=WXGLoadMenuDotCount();
-        _animSpeed=1.;
+        _progress=0.;
         _arcLayer=[CAShapeLayer layer];
         _arcLayer.fillColor=UIColor.clearColor.CGColor;
         _arcLayer.lineCap=kCALineCapRound;
@@ -171,9 +152,6 @@ static NSInteger WXGLoadMenuDotCount(void) {
     }
     return self;
 }
-- (void)dealloc {
-    [_link invalidate];_link=nil;
-}
 - (void)updateInkColor {
     UIColor *ink=[UIColor.labelColor resolvedColorWithTraitCollection:self.traitCollection];
     CGColorRef cg=ink.CGColor;
@@ -195,54 +173,24 @@ static NSInteger WXGLoadMenuDotCount(void) {
     [self setNeedsLayout];
     [self layoutIfNeeded];
 }
-- (void)stopDisplayLink {
-    if(_link){[_link invalidate];_link=nil;}
-}
-- (void)ensureDisplayLink {
-    if(_link)return;
-    if(!_ticker){_ticker=[WXGHomePlusTicker new];_ticker.owner=self;}
-    _link=[CADisplayLink displayLinkWithTarget:_ticker selector:@selector(tick:)];
-    if([_link respondsToSelector:@selector(setPreferredFrameRateRange:)]) {
-#pragma clang diagnostic push
-#pragma clang diagnostic ignored "-Wunguarded-availability-new"
-        _link.preferredFrameRateRange=CAFrameRateRangeMake(60,120,120);
-#pragma clang diagnostic pop
-    }
-    [_link addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
-}
-- (void)applyPoseAtElapsed:(double)t {
-    int openFlag=_menuOpen?1:0;
-    double stroke=WXGMenuRingStrokeAt(openFlag,t,_animSpeed);
-    WXGMenuSymbolPose sym=WXGMenuSymbolPoseAt(openFlag,t,_animSpeed);
+- (void)applyCurrentPose {
+    double p=WXGMenuClamp(_progress,0.,1.);
+    double stroke=WXGMenuArcStrokeForProgress(p);
+    WXGMenuSymbolPose sym=WXGMenuSymbolForProgress(p);
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _arcLayer.strokeEnd=(CGFloat)stroke;
     _symbolRotLayer.transform=CATransform3DMakeRotation((CGFloat)sym.rotationRad,0,0,1);
     _symbolLayer.transform=CATransform3DMakeScale((CGFloat)sym.scale,(CGFloat)sym.scale,1.);
     _symbolLayer.opacity=(float)sym.alpha;
+    for(int i=0;i<WXGMenuMaxParticles;i++)_dots[i].hidden=_dotsHidden || i>=_dotCount;
     [CATransaction commit];
 }
-- (void)tickAnimation {
-    if(!_animating || !self.window) {
-        if(!self.window && _animating){_animating=NO;[self applyPoseAtElapsed:1.];}
-        [self stopDisplayLink];
-        return;
-    }
-    double v=WXGMenuClamp(isfinite(_animSpeed)?_animSpeed:1.,.5,2.);
-    double total=.360/v;
-    double elapsed=MAX(0.,CACurrentMediaTime()-_animStart);
-    if(elapsed>=total) {
-        _animating=NO;
-        [self applyPoseAtElapsed:total+.02];
-        [self stopDisplayLink];
-        return;
-    }
-    [self applyPoseAtElapsed:elapsed];
-}
-- (void)didMoveToWindow {
-    [super didMoveToWindow];
-    if(!self.window && _animating) {
-        _animating=NO;[self applyPoseAtElapsed:1.];[self stopDisplayLink];
-    }
+- (void)setProgress:(double)progress dotsHidden:(BOOL)hidden {
+    double clamped=WXGMenuClamp(isfinite(progress)?progress:0.,0.,1.);
+    if(fabs(_progress-clamped)<1e-5 && _dotsHidden==hidden)return;
+    _progress=clamped;
+    _dotsHidden=hidden;
+    [self applyCurrentPose];
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -296,38 +244,11 @@ static NSInteger WXGLoadMenuDotCount(void) {
     _symbolLayer.lineWidth=(CGFloat)WXGMenuSymbolLineWidth(side);
     [CATransaction commit];
     [self updateInkColor];
-    if(_animating)[self applyPoseAtElapsed:MAX(0.,CACurrentMediaTime()-_animStart)];
-    else [self applyPoseAtElapsed:1.];
-}
-- (void)setDotsHidden:(BOOL)hidden {
-    if(_dotsHidden==hidden)return;
-    _dotsHidden=hidden;
-    [CATransaction begin];[CATransaction setDisableActions:YES];
-    for(int i=0;i<WXGMenuMaxParticles;i++)_dots[i].hidden=hidden || i>=_dotCount;
-    [CATransaction commit];
-}
-- (void)setMenuOpen:(BOOL)open animated:(BOOL)animated speed:(double)speed {
-    double v=WXGMenuClamp(isfinite(speed)?speed:1.,.5,2.);
-    if(animated && _menuOpen==open && _animating)return;
-    if(!animated) {
-        _menuOpen=open;_animating=NO;_animSpeed=v;
-        [self stopDisplayLink];
-        [self applyPoseAtElapsed:1.];
-        return;
-    }
-    CFTimeInterval now=CACurrentMediaTime();
-    if(_menuOpen==open && !_animating) {
-        double expectedStroke=open?0.:1.;
-        if(fabs(_arcLayer.strokeEnd-expectedStroke)<.01 && fabs(_symbolLayer.opacity-1.f)<.02)return;
-    }
-    _menuOpen=open;_animating=YES;_animSpeed=v;_animStart=now;
-    [self applyPoseAtElapsed:0.];
-    if(self.window)[self ensureDisplayLink];
-    else { _animating=NO;[self applyPoseAtElapsed:1.]; }
+    [self applyCurrentPose];
 }
 - (NSDictionary *)diagnostics {
-    return @{@"dotCount":@(_dotCount),@"menuOpen":@(_menuOpen),@"dotsHidden":@(_dotsHidden),
-             @"animating":@(_animating),@"arcStroke":@(_arcLayer.strokeEnd),@"symOpacity":@(_symbolLayer.opacity)};
+    return @{@"dotCount":@(_dotCount),@"progress":@(round(_progress*1000.)/1000.),@"dotsHidden":@(_dotsHidden),
+             @"arcStroke":@(_arcLayer.strokeEnd),@"symOpacity":@(_symbolLayer.opacity)};
 }
 @end
 
@@ -357,16 +278,12 @@ static NSInteger WXGLoadMenuDotCount(void) {
     }
     _plusTriggerView.hidden=!trigger;
     if(trigger){_iconView.hidden=YES;if(_nativeContent)_nativeContent.hidden=YES;}
-    else{_iconView.hidden=!_sourceImage;if(_nativeContent)_nativeContent.hidden=NO;[_plusTriggerView setMenuOpen:NO animated:NO speed:1.];[_plusTriggerView setDotsHidden:NO];}
+    else{_iconView.hidden=!_sourceImage;if(_nativeContent)_nativeContent.hidden=NO;[_plusTriggerView setProgress:0. dotsHidden:NO];}
     [self setNeedsLayout];
 }
-- (void)setHomePlusMenuOpen:(BOOL)open animated:(BOOL)animated speed:(double)speed {
+- (void)setHomePlusProgress:(double)progress dotsHidden:(BOOL)hidden {
     if(!_homePlusTrigger || !_plusTriggerView)return;
-    [_plusTriggerView setMenuOpen:open animated:animated speed:speed];
-}
-- (void)setHomePlusDotsHidden:(BOOL)hidden {
-    if(!_plusTriggerView)return;
-    [_plusTriggerView setDotsHidden:hidden];
+    [_plusTriggerView setProgress:progress dotsHidden:hidden];
 }
 - (void)setHomePlusDotCount:(NSInteger)count {
     if(!_plusTriggerView)return;
