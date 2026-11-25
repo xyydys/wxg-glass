@@ -326,9 +326,10 @@ static BOOL WXGFinderContainerFits(WXGFinderLink *link,UIView *container) {
 static BOOL WXGFinderFeedName(NSString *name) {
     return [name hasPrefix:@"WCFinderTimelineTab"] ||
            [name hasPrefix:@"WCFinderShareList"] ||
-           [name hasPrefix:@"WCFinderFeedDetail"] ||
+           [name hasPrefix:@"WCFinderFeed"] ||
            [name hasPrefix:@"WCFinderFullScreen"] ||
            [name hasPrefix:@"WCFinderStream"] ||
+           [name hasPrefix:@"WCFinderProfile"] ||
            [name hasPrefix:@"WCFinderTopicList"] ||
            [name hasPrefix:@"WCFinderRelated"] ||
            [name hasPrefix:@"WCFinderCollection"];
@@ -579,6 +580,7 @@ static UIView *WXGFinderLiveContainer(WXGFinderLink *link) {
 @property(nonatomic) CGFloat homePull;
 @property(nonatomic,strong) NSMutableDictionary<NSNumber *,NSArray *> *badgeArtCache;   // FIX108 D
 @property(nonatomic) CGFloat homeFloorHold;            // FIX108 C: the floor while pulled, held a moment after
+@property(nonatomic) CGFloat homePullFloorValue;
 @property(nonatomic) CFTimeInterval homePullSeenAt;
 @property(nonatomic) CFTimeInterval homePullTraceAt,homePullTraceStart;
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *homePullTrace;
@@ -1667,10 +1669,12 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
 }
 - (NSString *)currentNavigationBindingKey {
     UINavigationItem *item=_route.leaf.navigationItem;
-    NSMutableString *key=[NSMutableString stringWithFormat:@"%p/%p/%p",_route.leaf,item,_route.nav.navigationBar.topItem];
+    UINavigationBar *bar=_route.nav.navigationBar;
+    NSMutableString *key=[NSMutableString stringWithFormat:@"%p/%p/%p",_route.leaf,item,bar.topItem];
+    if(WXGFinderFeed(_route.leaf) && bar)[key appendFormat:@"/fb:%lu",(unsigned long)bar.subviews.count];
     for(UIBarButtonItem *button in [item.leftBarButtonItems?:@[] arrayByAddingObjectsFromArray:item.rightBarButtonItems?:@[]]) {
         id value=WXGRead(button,@"view");UIView *host=button.customView?:([value isKindOfClass:UIView.class]?value:nil);
-        [key appendFormat:@"/%p:%p:%p:%p:%p",button,host,host.superview,host.window,host.subviews.firstObject];
+        [key appendFormat:@"/%p:%p:%p:%p:%p:%lu",button,host,host.superview,host.window,host.subviews.firstObject,(unsigned long)host.subviews.count];
     }
     return key;
 }
@@ -3746,6 +3750,11 @@ static UIView *WXGNativeClone(UIView *control) {
 static BOOL WXGSurfaceInNativeView(WXGSurface *surface) {
     return [surface.role isEqual:@"nativeGesture"] || [surface.role isEqual:@"finderCapsule"];
 }
+static BOOL WXGFinderBadgeView(UIView *v) {
+    if(!v)return YES;
+    NSString *cls=NSStringFromClass(v.class);
+    return [cls containsString:@"RedDot"] || [cls containsString:@"Badge"];
+}
 - (void)bindFinderCapsules:(NSArray<UIControl *> *)controls metrics:(WXGMetrics)m alive:(NSMutableSet *)alive {
     UIWindow *w=_window;UINavigationBar *bar=_route.nav.navigationBar;
     if(!w || !bar)return;
@@ -3754,20 +3763,20 @@ static BOOL WXGSurfaceInNativeView(WXGSurface *surface) {
     [_finderShiftHosts removeAllObjects];
     NSMutableArray<UIView *> *natives=[NSMutableArray array];
     UINavigationItem *item=_route.leaf.navigationItem;
-    for(UIControl *c in controls)if(WXGVisible(c,w) && !WXGInTitleView(_route.nav,c) && !WXGFinderTab(c,bar))[natives addObject:c];
+    for(UIControl *c in controls)if(WXGVisible(c,w) && !WXGFinderBadgeView(c) && !WXGInTitleView(_route.nav,c) && !WXGFinderTab(c,bar))[natives addObject:c];
     // R20: walk shared customViews so sibling Back + floating PiP buttons are
     // BOTH discovered instead of skipping the whole customView when Back is found.
     for(UIBarButtonItem *button in [item.leftBarButtonItems?:@[] arrayByAddingObjectsFromArray:item.rightBarButtonItems?:@[]]) {
         id raw=WXGRead(button,@"view");UIView *native=button.customView?:([raw isKindOfClass:UIView.class]?raw:nil);
-        if(!native || !WXGVisible(native,w))continue;
+        if(!native || !WXGVisible(native,w) || WXGFinderBadgeView(native))continue;
         BOOL foundSub=NO;
         for(UIView *sub in WXGViews(native,64)) {
-            if(sub==native || WXGIsPluginView(sub) || !WXGVisible(sub,w))continue;
+            if(sub==native || WXGIsPluginView(sub) || !WXGVisible(sub,w) || WXGFinderBadgeView(sub))continue;
             if(WXGInTitleView(_route.nav,sub) || WXGFinderTab(sub,bar))continue;
             BOOL tappable=[sub isKindOfClass:UIControl.class] || sub.gestureRecognizers.count>0;
             if(!tappable)continue;
             CGRect sr=WXGWindowRect(sub,w);
-            if(sr.size.width<12 || sr.size.height<12 || sr.size.width>w.bounds.size.width*.4 || sr.size.height>m.button*1.5)continue;
+            if(sr.size.width<16 || sr.size.height<16 || sr.size.width>w.bounds.size.width*.4 || sr.size.height>m.button*1.5)continue;
             BOOL dup=NO;for(UIView *v in natives)if(v==sub || [v isDescendantOfView:sub] || [sub isDescendantOfView:v]){dup=YES;break;}
             if(!dup){[natives addObject:sub];foundSub=YES;}
         }
@@ -3777,12 +3786,12 @@ static BOOL WXGSurfaceInNativeView(WXGSurface *surface) {
         }
     }
     // Also discover any bar-hosted UIControls (e.g. Finder floating PiP button)
-    // that navigationControls did not forward.
+    // that navigationControls did not forward, excluding red-dot badges.
     for(UIView *sub in WXGViews(bar,160)) {
-        if(sub==bar || WXGIsPluginView(sub) || !WXGVisible(sub,w) || ![sub isKindOfClass:UIControl.class])continue;
+        if(sub==bar || WXGIsPluginView(sub) || !WXGVisible(sub,w) || ![sub isKindOfClass:UIControl.class] || WXGFinderBadgeView(sub))continue;
         if(WXGInTitleView(_route.nav,sub) || WXGFinderTab(sub,bar))continue;
         CGRect sr=WXGWindowRect(sub,w);
-        if(sr.size.width<12 || sr.size.height<12 || sr.size.width>w.bounds.size.width*.35 || sr.size.height>m.button*1.5)continue;
+        if(sr.size.width<16 || sr.size.height<16 || sr.size.width>w.bounds.size.width*.35 || sr.size.height>m.button*1.5)continue;
         BOOL dup=NO;for(UIView *v in natives)if(v==sub || [v isDescendantOfView:sub] || [sub isDescendantOfView:v]){dup=YES;break;}
         if(!dup)[natives addObject:sub];
     }
@@ -5045,13 +5054,15 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     // FIX108 E: only on the home page itself, not during a push / pop (the
     // next page's glass is not lifted), never above what the panel allows.
     BOOL homePage=[NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"];
-    if(_homePull>1){floor=WXGClamp(1-_homePanel,0,1);_homeFloorHold=floor;_homePullSeenAt=now;}
-    else floor=homePage && !_nativeTransition && now-_homePullSeenAt<.45?MIN(_homeFloorHold,WXGClamp(1-_homePanel,0,1)):0;
+    if(_homePull>.2){floor=WXGClamp(1-_homePanel,0,1);_homeFloorHold=floor;_homePullSeenAt=now;}
+    else floor=homePage && !_nativeTransition && now-_homePullSeenAt<.65?MIN(_homeFloorHold,WXGClamp(1-_homePanel,0,1)):0;
+    _homePullFloorValue=floor;
     // FIX107: the search button WeChat fades in and out keeps its own alpha (the
     // list pulled down shows the search bar: WeChat's button is at 0 then).
     for(WXGSurface *surface in _buttons)if(!WXGSurfaceInNativeView(surface))surface.alphaFloor=[surface.role isEqual:@"navigationSearch"]?0:floor;
     for(WXGSurface *surface in _departingButtons)surface.alphaFloor=0;
 }
+- (CGFloat)homePullAlphaFloor {return _homePullFloorValue;}
 // FIX93: what the title bar does while the home list is pulled (every 0.1 s,
 // the last 60 samples): WeChat's opacity of each button's own view, the
 // glass's, positions, the navigation bar's; where the native views live.

@@ -154,7 +154,7 @@ BOOL WXGIsPluginView(UIView *view) {
     dispatch_once(&once,^{
         for(NSString *name in @[@"WXGGlassView",@"WXGSurface",@"WXGDemoBar",@"WXGDockSearch",@"WXGOverlay",@"WXGRimView",@"WXGMetalSurface",
                                 @"WXGSyncBackdropView",@"WXGSettingsCard",@"WXGSettingsRow",@"WXGSettingsScrollView",@"WXGEdgeBlurView",@"WXGEdgeCoverView",@"WXGEdgePlateView",
-                                @"WXGBubbleGlass",@"WXGPerfHUDView",@"WXGSegmentBar",@"WXGHomePlusTriggerView",@"WXGMenuInkOverlayView"]) {
+                                @"WXGBubbleGlass",@"WXGPerfHUDView",@"WXGSegmentBar",@"WXGHomePlusTriggerView",@"WXGMenuInkOverlayView",@"WXGVectorIconView"]) {
             Class cls=NSClassFromString(name);if(cls && count<24)classes[count++]=cls;
         }
     });

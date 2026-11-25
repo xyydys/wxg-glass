@@ -315,6 +315,9 @@ void WXGInstallNativeIconGuard(void);
 @property(nonatomic) BOOL homePlusTrigger;
 - (void)setHomePlusProgress:(double)progress dotsHidden:(BOOL)hidden;
 - (void)setHomePlusDotCount:(NSInteger)count;
+// R25: crisp unclipped vector glyph (CAShapeLayer) for chat input actions ("send", "emoji", "keyboard", "voiceMode", "plus").
+@property(nonatomic,copy) NSString *vectorIconName;
+@property(nonatomic) CGFloat vectorIconDiameter;
 - (void)placeMaterial:(CGRect)rect inParent:(UIView *)parent;
 - (void)setImage:(UIImage *)image title:(NSString *)title count:(NSString *)count;
 - (void)setNativeIconSource:(UIView *)source preservingColors:(BOOL)preserve;
@@ -472,6 +475,7 @@ FOUNDATION_EXPORT NSString *WXGChatNameSummary(void);   // FIX113 Z: where the n
 // plugin has none there); the plus menu's icons are put in line with it.
 - (CGRect)homePlusRectInWindow:(UIWindow *)window;
 - (WXGSurface *)homePlusSurfaceInWindow:(UIWindow *)window;
+- (CGFloat)homePullAlphaFloor;
 // FIX118 A: the user's own photo (HD, from the contact's address; kept on disk); nil while it downloads.
 - (UIImage *)selfAvatarPhoto;
 @end

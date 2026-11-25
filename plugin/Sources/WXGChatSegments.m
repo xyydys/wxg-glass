@@ -1698,7 +1698,7 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
     __weak UIView *_titleNavView,*_titlePullView;
     __weak UIView *_titleOverlay;
     WXGStateBag *_titleConceal;  // dedicated conceal bag: never wiped on push to chat -> zero flash on return
-    CGRect _titleRestRect;
+    CGRect _titleRestRect,_titleLastRect;
     BOOL _titleEnglishHint;
     NSMutableArray<NSString *> *_titleTrace;
     NSInteger _titleSelected;
@@ -2181,6 +2181,12 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
     }else if(!navTitle && !pullTitle && onHome && !transitioning) {
         shownAlpha=1.;
     }
+    // R25: bridge WeChat's 1-3 frame navTitle <-> pullTitle handoff gap during
+    // partial pull-down & release using the host's homePullAlphaFloor (same
+    // floor that protects the "+" button), and keep the Metal bar warm while
+    // on Home so it never blinks re-presenting a frame.
+    CGFloat pullFloor=(onHome && !transitioning)?[WXGIntegrationHost.shared homePullAlphaFloor]:0.;
+    if(pullFloor>.01 && shownAlpha<pullFloor)shownAlpha=pullFloor;
     if(homePanel>.005)shownAlpha=MIN(shownAlpha,WXGClamp(1.-homePanel,0.,1.));
     BOOL visible=shownAlpha>=.01;
     CGRect rect=_titleRestRect;
@@ -2192,13 +2198,18 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
             CGFloat rx=round((c.x-rect.size.width*.5)*sc)/sc;
             CGFloat ry=round((c.y-rect.size.height*.5)*sc)/sc;
             rect=CGRectMake(rx,ry,round(rect.size.width),round(rect.size.height));
+            _titleLastRect=rect;
         }
+    }else if(pullFloor>.01 && !CGRectIsEmpty(_titleLastRect)) {
+        rect=_titleLastRect;
     }
+    BOOL keepWarm=onHome && !transitioning;
+    BOOL mountShown=visible || keepWarm;
     CGRect target=CGRectInset(rect,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
-        if(visible && self->_titleBar.superview!=overlay)[overlay addSubview:self->_titleBar];
-        if(visible) {
+        if(mountShown && self->_titleBar.superview!=overlay)[overlay addSubview:self->_titleBar];
+        if(mountShown) {
             CGRect cur=self->_titleBar.frame;
             if(fabs(cur.origin.x-target.origin.x)>.25 || fabs(cur.origin.y-target.origin.y)>.25 ||
                fabs(cur.size.width-target.size.width)>.25 || fabs(cur.size.height-target.size.height)>.25) {
@@ -2206,12 +2217,12 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
             }
         }
         if(fabs(self->_titleBar.alpha-shownAlpha)>.005)self->_titleBar.alpha=shownAlpha;
-        BOOL hide=!visible;
+        BOOL hide=!mountShown;
         if(self->_titleBar.hidden!=hide)self->_titleBar.hidden=hide;
         [CATransaction commit];
     }];
     _titleBar.userInteractionEnabled=visible && !transitioning;
-    _titleBar.active=visible && overlay.window!=nil;
+    _titleBar.active=mountShown && overlay.window!=nil;
     if(!_titleTrace)_titleTrace=[NSMutableArray array];
     NSString *entry=[NSString stringWithFormat:@"%.2f h:%d t:%d a:%.2f y:%.1f",WXGSecondsSinceLoad(),onHome,transitioning,shownAlpha,rect.origin.y];
     if(![_titleTrace.lastObject isEqualToString:entry]) {
@@ -2247,7 +2258,7 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
     [self hideTitleBar];
     [_titleConceal restore];
     _titleConceal=nil;
-    _titleNavView=nil;_titlePullView=nil;_titleOverlay=nil;_titleRestRect=CGRectZero;
+    _titleNavView=nil;_titlePullView=nil;_titleOverlay=nil;_titleRestRect=CGRectZero;_titleLastRect=CGRectZero;
 }
 - (void)segmentChanged:(WXGSegmentBar *)bar {
     NSArray<NSDictionary *> *groups=WXGChatGroupList();

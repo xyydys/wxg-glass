@@ -242,6 +242,7 @@ static char WXGDecorationKey;
 @property(nonatomic,strong) WXGMenuInkOverlayView *sharedInkOverlay;
 @property(nonatomic,strong) CADisplayLink *menuLink;
 @property(nonatomic) double menuProgress,menuTarget,menuSpeed,menuStagger;
+@property(nonatomic) CGFloat settledMenuGap;
 @property(nonatomic) CFTimeInterval menuLastTime;
 @property(nonatomic) NSUInteger menuToken;
 - (void)reassertVisiblePaint;
@@ -279,6 +280,19 @@ static NSArray<UIView *> *WXGMenuItems(UIView *body) {
     CGFloat (^top)(UIView *)=^CGFloat(UIView *v){return [v convertPoint:CGPointMake(CGRectGetMidX(v.bounds),CGRectGetMidY(v.bounds)) toView:window].y;};
     [items sortUsingComparator:^NSComparisonResult(UIView *a,UIView *b){CGFloat ya=top(a),yb=top(b);return ya<yb?NSOrderedAscending:ya>yb?NSOrderedDescending:NSOrderedSame;}];
     return items;
+}
+static CGRect WXGMenuUnshiftedRectIn(UIView *v,UIView *root) {
+    if(!v || !root)return CGRectNull;
+    CGRect r=v.bounds;
+    if(v==root)return r;
+    if(![v isDescendantOfView:root])return [v convertRect:r toView:root];
+    for(UIView *p=v;p && p!=root;p=p.superview) {
+        if(!p.superview)return [v convertRect:v.bounds toView:root];
+        CGPoint ap=p.layer.anchorPoint;CGSize sz=p.bounds.size;
+        r.origin.x+=p.center.x-ap.x*sz.width-p.bounds.origin.x;
+        r.origin.y+=p.center.y-ap.y*sz.height-p.bounds.origin.y;
+    }
+    return r;
 }
 static CGFloat WXGMenuSnap(CGFloat v,UIView *view) {
     CGFloat scale=view.window.screen.scale>0?view.window.screen.scale:UIScreen.mainScreen.scale;
@@ -371,14 +385,15 @@ static void WXGMenuSetLayerBlur(CALayer *layer,double radius) {
     CGFloat farthest=0;   // how far WeChat's rows have moved from where the glass was laid out
     if(parent && entry.rowsReady && now-entry.lastPlaced>.05)for(WXGMenuRow *row in entry.rows) {
         UIView *item=row.item;if(!item || !row.drawn)continue;
-        CGRect r=[item convertRect:item.bounds toView:parent],was=row.itemFrame;
-        farthest=MAX(farthest,MAX(MAX(fabs(r.origin.x-was.origin.x),fabs(r.origin.y-was.origin.y)),MAX(fabs(r.size.width-was.size.width),fabs(r.size.height-was.size.height))));
+        CGRect r=WXGMenuUnshiftedRectIn(item,parent),was=row.itemFrame;
+        if(CGRectIsNull(r))continue;
+        CGFloat d=MAX(MAX(0.,r.origin.y-was.origin.y),MAX(fabs(r.size.width-was.size.width),fabs(r.size.height-was.size.height)));
+        farthest=MAX(farthest,d);
     }
     BOOL moved=farthest>.5,open=entry.phase==WXGMenuPhaseOpen;
-    // R24: only treat row displacement as WeChat closing once settled (>0.45s after open);
-    // during initial open WeChat may adjust MainFrameActionFloatView's Y offset, so re-place instead.
-    if(open && entry.entranceDone && now-entry.openAt>.45 && farthest>12){[self beginExit:entry];return;}
-    BOOL stale=entry.blockReopen && now-entry.exitAt>.8 && WXGMenuAlpha(body)>=.99;   // (still on screen long after the exit: it is not closing any more)
+    // R25: only treat downward row collapse as WeChat closing once settled (>0.45s after open).
+    if(open && entry.entranceDone && now-entry.openAt>.45 && farthest>16){[self beginExit:entry];return;}
+    BOOL stale=entry.blockReopen && now-entry.exitAt>.25 && WXGMenuAlpha(body)>=.95;   // (still on screen after exit: open again)
     BOOL need=(!open && !entry.blockReopen) ||                       // opened: the entrance
               (open && (moved || !entry.rowsReady || !entry.entranceDone)) ||
               (!open && entry.blockReopen && (!moved || stale));     // (its rows are back where they were: opened again)
@@ -868,14 +883,16 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     if(remove)entry.rows=nil;
     entry.rowsReady=NO;
 }
-// FIX116 B: have WeChat's rows moved since the glass was laid out, by more than `limit` pt? (the rows that are the same views)
+// FIX116 B / R25: compare unshifted (transform-invariant) row frames. Ignore
+// transient X/upward settle shifts so popup settle never triggers a false exit.
 - (BOOL)rowsMovedOf:(WXGDecoration *)entry items:(NSArray<UIView *> *)items parent:(UIView *)parent limit:(CGFloat)limit {
     NSUInteger n=MIN(entry.rows.count,items.count);
     for(NSUInteger i=0;i<n;i++) {
         WXGMenuRow *row=entry.rows[i];UIView *item=items[i];
         if(row.item!=item || !row.drawn)continue;
-        CGRect r=[item convertRect:item.bounds toView:parent],was=row.itemFrame;
-        if(fabs(r.origin.x-was.origin.x)>limit || fabs(r.origin.y-was.origin.y)>limit || fabs(r.size.width-was.size.width)>limit || fabs(r.size.height-was.size.height)>limit)return YES;
+        CGRect r=WXGMenuUnshiftedRectIn(item,parent),was=row.itemFrame;
+        if(CGRectIsNull(r))continue;
+        if(r.origin.y-was.origin.y>limit || fabs(r.size.width-was.size.width)>limit || fabs(r.size.height-was.size.height)>limit)return YES;
     }
     return NO;
 }
@@ -918,14 +935,18 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     }
     BOOL same=entry.rows.count==items.count;   // (WeChat's rows are the views the glass was made for)
     for(NSUInteger i=0;same && i<items.count;i++)same=entry.rows[i].item==items[i];
+    CGRect plus=[self plusRectFor:entry parent:parent];
     if(entry.phase==WXGMenuPhaseOpen) {
         if(entry.entranceDone) {
-            if(!items.count || (same && now-entry.openAt>.45 && [self rowsMovedOf:entry items:items parent:parent limit:12])){[self beginExit:entry];return;}
+            if(!items.count || (same && now-entry.openAt>.45 && [self rowsMovedOf:entry items:items parent:parent limit:16])){[self beginExit:entry];return;}
         }
     }else {
         if(entry.blockReopen) {
+            CGRect f0=items.count?WXGMenuUnshiftedRectIn(items.firstObject,parent):CGRectNull;
+            CGFloat g0=CGRectIsNull(f0)?999.:CGRectGetMinY(f0)-CGRectGetMaxY(plus);
+            BOOL settledAgain=g0>=-2. && g0<=28. && WXGMenuAlpha(body)>=.95 && now-entry.exitAt>.25;
             BOOL again=items.count && WXGMenuHasParts(items) &&
-                (!same || ![self rowsMovedOf:entry items:items parent:parent limit:3] || (now-entry.exitAt>.8 && WXGMenuAlpha(body)>=.99));
+                (!same || ![self rowsMovedOf:entry items:items parent:parent limit:3] || settledAgain);
             if(!again)return;
             entry.blockReopen=NO;
         }
@@ -948,17 +969,38 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     NSMutableArray<NSValue *> *frames=[NSMutableArray array];
     CGFloat minHeight=CGFLOAT_MAX,pitch=CGFLOAT_MAX,lastMid=0;BOOL haveLast=NO;
     for(UIView *item in items) {
-        CGRect r=[item convertRect:item.bounds toView:parent];[frames addObject:[NSValue valueWithCGRect:r]];
+        CGRect r=WXGMenuUnshiftedRectIn(item,parent);
+        if(CGRectIsNull(r) || r.size.height<10)r=[item convertRect:item.bounds toView:parent];
+        if(item.bounds.size.height>=20)r.size.height=item.bounds.size.height;
+        [frames addObject:[NSValue valueWithCGRect:r]];
         minHeight=MIN(minHeight,r.size.height);
         if(haveLast && CGRectGetMidY(r)-lastMid>1)pitch=MIN(pitch,CGRectGetMidY(r)-lastMid);
         lastMid=CGRectGetMidY(r);haveLast=YES;
     }
     CGFloat rowHeight=pitch<CGFLOAT_MAX?MIN(minHeight,pitch):minHeight;
-    CGRect plus=[self plusRectFor:entry parent:parent];
+    CGFloat rowPitch=pitch<CGFLOAT_MAX && pitch>=24 && pitch<=80?pitch:MAX(44.,rowHeight);
+    // R25: guard against WeChat's mid-animation popup displacement on rapid tap
+    // (seen at y=214 instead of y=105). When row0 is sane below "+", learn its
+    // gap; when displaced, anchor deterministically below "+".
+    if(frames.count) {
+        CGRect f0=frames.firstObject.CGRectValue;
+        CGFloat rawGap=CGRectGetMinY(f0)-CGRectGetMaxY(plus);
+        if(rawGap>=-2. && rawGap<=28.) {
+            _settledMenuGap=MAX(2.,rawGap);
+        }else {
+            CGFloat baseY=CGRectGetMaxY(plus)+(_settledMenuGap>0.?_settledMenuGap:6.);
+            for(NSUInteger i=0;i<frames.count;i++) {
+                CGRect f=frames[i].CGRectValue;
+                f.origin.y=baseY+(CGFloat)i*rowPitch;
+                frames[i]=[NSValue valueWithCGRect:f];
+            }
+        }
+    }
     WXGMenuMetrics m=WXGMenuMetricsFor([WXGConfig.shared extraNumber:@"homeMenuIconSize"],rowHeight);
     UIFont *font=[UIFont systemFontOfSize:m.fontSize weight:UIFontWeightSemibold];
     double minX=parent.bounds.origin.x+parent.safeAreaInsets.left+10,centreX=CGRectGetMidX(plus);
     UIView *source=_source?:WXGContentSourceForView(host);
+    BOOL animatingOpen=entry.entranceDone && entry==_activeHomeMenu && _menuProgress<.9999;
     NSUInteger drawn=0;
     for(NSUInteger i=0;i<entry.rows.count;i++) {
         WXGMenuRow *row=entry.rows[i];UIView *item=items[i];CGRect r=frames[i].CGRectValue;
@@ -975,17 +1017,24 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
         WXGMenuRowBoxes b=WXGMenuRowBoxesFor(CGRectGetMidY(r),centreX,textWidth,m,minX);
         CGRect iconRect=CGRectMake(WXGMenuSnap(b.icon.x,parent),WXGMenuSnap(b.icon.y,parent),b.icon.w,b.icon.h);
         CGRect capsuleRect=CGRectMake(WXGMenuSnap(b.capsule.x,parent),WXGMenuSnap(b.capsule.y,parent),b.capsule.w,b.capsule.h);
-        row.iconRect=iconRect;row.capsuleRect=capsuleRect;
+        BOOL iconMoved=!CGRectEqualToRect(row.iconRect,iconRect) && (fabs(row.iconRect.origin.x-iconRect.origin.x)>2. || fabs(row.iconRect.origin.y-iconRect.origin.y)>2. || fabs(row.iconRect.size.width-iconRect.size.width)>2. || fabs(row.iconRect.size.height-iconRect.size.height)>2.);
+        BOOL capMoved=!CGRectEqualToRect(row.capsuleRect,capsuleRect) && (fabs(row.capsuleRect.origin.x-capsuleRect.origin.x)>2. || fabs(row.capsuleRect.origin.y-capsuleRect.origin.y)>2. || fabs(row.capsuleRect.size.width-capsuleRect.size.width)>2. || fabs(row.capsuleRect.size.height-capsuleRect.size.height)>2.);
         for(WXGSurface *s in @[row.icon,row.capsule]){s.glass.sourceView=source;s.glass.backdropExclusions=@[host];s.glass.shadowClipRoot=parent;}
         if(hasIcon) {
             [row.icon setImage:iconView.image title:nil count:nil];
-            [row.icon placeMaterial:iconRect inParent:parent];
-        }else{row.icon.hidden=YES;row.icon.active=NO;}
+            if(!animatingOpen || row.icon.superview!=parent || iconMoved) {
+                row.iconRect=iconRect;
+                [row.icon placeMaterial:iconRect inParent:parent];
+            }
+        }else{row.iconRect=iconRect;row.icon.hidden=YES;row.icon.active=NO;}
         if(hasTitle) {
             [row.capsule setImage:nil title:title count:nil];
             if(![row.capsule.label.font isEqual:font]){row.capsule.label.font=font;[row.capsule setNeedsLayout];}
-            [row.capsule placeMaterial:capsuleRect inParent:parent];
-        }else{row.capsule.hidden=YES;row.capsule.active=NO;}
+            if(!animatingOpen || row.capsule.superview!=parent || capMoved) {
+                row.capsuleRect=capsuleRect;
+                [row.capsule placeMaterial:capsuleRect inParent:parent];
+            }
+        }else{row.capsuleRect=capsuleRect;row.capsule.hidden=YES;row.capsule.active=NO;}
         row.observer.icon=row.icon;row.observer.capsule=row.capsule;
     }
     entry.rowsReady=drawn>0;entry.lastPlaced=now;

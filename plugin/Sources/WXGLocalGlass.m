@@ -1743,11 +1743,13 @@ static CGRect WXGLocalTitleFrame(UIView *view,UIColor **ink,CGFloat *visibility)
     if(ink)*ink=color;if(visibility)*visibility=shown;
     return result;
 }
-// FIX115 F: the title view's own content watched (see WXGTitleWatch).
+// FIX115 F / R25: watch all nested subviews of the title view (WeChat nests
+// labels 2-3 levels deep inside MFTitleView) and sync sibling home titles
+// together on the exact handoff frame.
 - (void)watchTitle:(UIView *)view {
-    for(UIView *c in view.subviews) {
-        if(WXGIsPluginView(c) || objc_getAssociatedObject(c,&WXGTitleWatchKey))continue;
-        if(![c isKindOfClass:UILabel.class] && ![c isKindOfClass:UIImageView.class] && ![c isKindOfClass:UIActivityIndicatorView.class])continue;
+    for(UIView *c in WXGLocalViews(view,40)) {
+        if(c==view || WXGIsPluginView(c) || objc_getAssociatedObject(c,&WXGTitleWatchKey))continue;
+        if(![c isKindOfClass:UILabel.class] && ![c isKindOfClass:UIImageView.class] && ![c isKindOfClass:UIActivityIndicatorView.class] && c.class!=UIView.class)continue;
         WXGTitleWatch *watch=[WXGTitleWatch new];watch.title=view;
         objc_setAssociatedObject(c,&WXGTitleWatchKey,watch,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         @try {for(NSString *k in @[@"hidden",@"alpha"])[c addObserver:watch forKeyPath:k options:0 context:&WXGTitleWatchContext];}
@@ -1759,7 +1761,16 @@ static CGRect WXGLocalTitleFrame(UIView *view,UIColor **ink,CGFloat *visibility)
     WXGLocalEntry *entry=WXGLocalEntryOfAnchor(view);
     if(!entry.mounted || entry.kind!=WXGLocalTitle || entry.applying || !view.window || entry.surface.superview!=view)return;
     ++_titleWatchFollows;
-    @try {[self followShown:entry immediately:NO];} @catch(__unused NSException *error) {}
+    @try {
+        [self followShown:entry immediately:NO];
+        if(_homeTitle && [view isKindOfClass:_homeTitle]) {
+            UIWindow *w=view.window;
+            for(WXGLocalEntry *other in _entries.allObjects) {
+                if(other==entry || !other.mounted || other.kind!=WXGLocalTitle || other.applying)continue;
+                if(other.anchor.window==w && [other.anchor isKindOfClass:_homeTitle])[self followShown:other immediately:NO];
+            }
+        }
+    } @catch(__unused NSException *error) {}
 }
 static UIViewController *WXGLocalPageController(UIView *view) {
     UIViewController *owner=WXGLocalOwner(view);
@@ -2527,7 +2538,27 @@ static BOOL WXGLocalCovering(CGRect r,CGRect b) {
 }
 - (void)follow:(WXGLocalEntry *)entry shown:(CGFloat)alpha immediately:(BOOL)now {
     WXGSurface *surface=entry.surface;BOOL nothing=alpha<.01;
-    if(alpha<0){now=YES;alpha=0;}   // FIX108 F: WeChat hid the text: no debounce
+    BOOL homeTitle=entry.kind==WXGLocalTitle && _homeTitle && [entry.anchor isKindOfClass:_homeTitle];
+    if(alpha<0) {
+        alpha=0;
+        // R25: during a partial home pull-down (not into mini-program panel),
+        // WeChat briefly hides navTitle/pullTitle for 1-2 frames before the
+        // sibling MFTitleView shows. Bridge that handoff if no sibling is visible yet.
+        BOOL bridgeGap=NO;
+        if(homeTitle && surface.alpha>.05 && [WXGIntegrationHost.shared homePullAlphaFloor]>.01 && entry.anchor.window) {
+            BOOL siblingShown=NO;
+            for(WXGLocalEntry *other in _entries.allObjects) {
+                if(other==entry || !other.mounted || other.kind!=WXGLocalTitle)continue;
+                if(other.anchor.window==entry.anchor.window && [other.anchor isKindOfClass:_homeTitle]) {
+                    CGFloat sAlpha=0;if(other.titleMeasure)other.titleMeasure(NULL,&sAlpha);
+                    BOOL drawn=other.surface.plain || other.surface.glass.hasPresentedFrame;
+                    if(sAlpha>.05 && drawn){siblingShown=YES;break;}
+                }
+            }
+            if(!siblingShown)bridgeGap=YES;
+        }
+        if(!bridgeGap)now=YES;   // FIX108 F: WeChat hid the text: no debounce
+    }
     entry.unseenTurns=nothing?entry.unseenTurns+1:0;
     if(nothing && !now && entry.unseenTurns<2) {
         // FIX114 A (user: pulling the home list down sometimes left an empty
@@ -2552,7 +2583,9 @@ static BOOL WXGLocalCovering(CGRect r,CGRect b) {
     if(entry.kind==WXGLocalTitle) {
         if(surface.hidden){surface.hidden=NO;entry.dirty=MAX(entry.dirty,12);}
         CGFloat target=nothing?0:WXGClamp(alpha,0,1);
+        BOOL woke=surface.alpha<.05 && target>.05;
         if(fabs(surface.alpha-target)>.01)surface.alpha=target;
+        if(woke && homeTitle && surface.active){[surface layoutIfNeeded];[surface tick:CACurrentMediaTime()];}
         return;
     }
     if(surface.hidden!=nothing){surface.hidden=nothing;if(!nothing)entry.dirty=MAX(entry.dirty,12);}
@@ -2615,16 +2648,13 @@ static BOOL WXGLocalCovering(CGRect r,CGRect b) {
         // FIX109: a glass hidden with what it is behind (an unselected group,
         // a hidden title) rests like one off screen.
         BOOL shown=window && !surface.hidden && WXGVisible(anchor,window);
-        // FIX115 E (user, 06:48: pulling the home list down, the title capsule
-        // still flickers): Y kept a title's glass drawn while WeChat hides the
-        // title text, but this loop still switched it off whenever the title
-        // view or a view above it was hidden or fully transparent (the home
-        // page's title bar as the pull goes), and switched on it is drawn again
-        // first: the capsule came back frames after the text. A title's glass
-        // now stays on while it is in the window and on screen at all (it
-        // shows nothing while its view is hidden; it is idle unless changed).
-        if(!shown && entry.kind==WXGLocalTitle && window && !surface.hidden &&
-           CGRectIntersectsRect(WXGWindowRect(anchor,window),window.bounds))shown=YES;
+        // FIX115 E / R25: keep title glasses warm while on screen (and keep
+        // home MFTitleView pullTitle warm even slightly above window top so it
+        // never cold-starts Metal on pull-down).
+        if(!shown && entry.kind==WXGLocalTitle && window && !surface.hidden) {
+            CGRect warmBounds=(_homeTitle && [anchor isKindOfClass:_homeTitle])?CGRectInset(window.bounds,0,-180):window.bounds;
+            if(CGRectIntersectsRect(WXGWindowRect(anchor,window),warmBounds))shown=YES;
+        }
         if(!shown){if(surface.active)surface.active=NO;continue;}
         if(!surface.active) {
             surface.active=YES;[surface applyConfig];[self updateTint:entry force:YES];

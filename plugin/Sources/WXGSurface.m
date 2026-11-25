@@ -252,6 +252,151 @@ static NSInteger WXGLoadMenuDotCount(void) {
 }
 @end
 
+// R25: crisp unclipped vector icons (CAShapeLayer) for chat input actions so
+// send / emoji / keyboard / voiceMode / plus share exact optical size with zero
+// bitmap resampling or edge clipping.
+@interface WXGVectorIconView : UIView
+@property(nonatomic,copy) NSString *iconName;
+@property(nonatomic) CGFloat diameter;
+@property(nonatomic,strong) UIColor *inkTint;
+- (void)updateInkColor;
+@end
+
+@implementation WXGVectorIconView {
+    CAShapeLayer *_strokeLayer;
+    CAShapeLayer *_fillLayer;
+    NSString *_builtName;
+    CGSize _builtSize;
+    CGFloat _builtDiameter;
+    CGFloat _builtScale;
+}
+- (instancetype)initWithFrame:(CGRect)frame {
+    if((self=[super initWithFrame:frame])) {
+        self.userInteractionEnabled=NO;self.backgroundColor=UIColor.clearColor;self.opaque=NO;self.clipsToBounds=NO;
+        _fillLayer=[CAShapeLayer layer];
+        _fillLayer.strokeColor=NULL;
+        _fillLayer.fillRule=kCAFillRuleEvenOdd;
+        _fillLayer.allowsEdgeAntialiasing=YES;
+        _fillLayer.edgeAntialiasingMask=kCALayerLeftEdge|kCALayerRightEdge|kCALayerTopEdge|kCALayerBottomEdge;
+        [self.layer addSublayer:_fillLayer];
+        _strokeLayer=[CAShapeLayer layer];
+        _strokeLayer.fillColor=UIColor.clearColor.CGColor;
+        _strokeLayer.lineCap=kCALineCapRound;
+        _strokeLayer.lineJoin=kCALineJoinRound;
+        _strokeLayer.allowsEdgeAntialiasing=YES;
+        _strokeLayer.edgeAntialiasingMask=kCALayerLeftEdge|kCALayerRightEdge|kCALayerTopEdge|kCALayerBottomEdge;
+        [self.layer addSublayer:_strokeLayer];
+        [self updateInkColor];
+    }
+    return self;
+}
+- (void)setIconName:(NSString *)iconName {
+    if(_iconName==iconName || [_iconName isEqualToString:iconName])return;
+    _iconName=[iconName copy];
+    _builtName=nil;
+    [self setNeedsLayout];
+}
+- (void)setDiameter:(CGFloat)diameter {
+    if(fabs(_diameter-diameter)<.05)return;
+    _diameter=diameter;
+    _builtDiameter=0;
+    [self setNeedsLayout];
+}
+- (void)setInkTint:(UIColor *)inkTint {
+    if(_inkTint==inkTint || [_inkTint isEqual:inkTint])return;
+    _inkTint=inkTint;
+    [self updateInkColor];
+}
+- (void)updateInkColor {
+    UIColor *ink=[(_inkTint?:UIColor.labelColor) resolvedColorWithTraitCollection:self.traitCollection];
+    CGColorRef cg=ink.CGColor;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    _strokeLayer.strokeColor=cg;
+    _fillLayer.fillColor=cg;
+    [CATransaction commit];
+}
+- (void)traitCollectionDidChange:(UITraitCollection *)previous {
+    [super traitCollectionDidChange:previous];
+    if(!previous || [self.traitCollection hasDifferentColorAppearanceComparedToTraitCollection:previous])[self updateInkColor];
+}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGSize sz=self.bounds.size;
+    if(sz.width<4 || sz.height<4 || !_iconName.length)return;
+    CGFloat sc=self.traitCollection.displayScale>0?self.traitCollection.displayScale:UIScreen.mainScreen.scale;
+    CGFloat side=MIN(sz.width,sz.height);
+    CGFloat d=_diameter>4.?MIN(_diameter,side):MIN(24.,side*.64);
+    if([_builtName isEqualToString:_iconName] && CGSizeEqualToSize(_builtSize,sz) && fabs(_builtDiameter-d)<.05 && fabs(_builtScale-sc)<.01)return;
+    _builtName=[_iconName copy];_builtSize=sz;_builtDiameter=d;_builtScale=sc;
+    CGFloat cx=sz.width*.5,cy=sz.height*.5,r=d*.5;
+    UIBezierPath *strokePath=[UIBezierPath bezierPath];
+    UIBezierPath *fillPath=[UIBezierPath bezierPath];
+    CGFloat lineW=MAX(1.75,round(d*.088*sc)/sc);
+
+    if([_iconName isEqualToString:@"send"]) {
+        // Solid circle diameter D with clean non-self-intersecting 45-deg upward arrow cutout (evenOdd).
+        [fillPath appendPath:[UIBezierPath bezierPathWithOvalInRect:CGRectMake(cx-r,cy-r,d,d)]];
+        CGFloat t=d*.118,hs=t*.5,invSqrt2=0.70710678,sqrt2=1.41421356;
+        CGFloat yTip=cy-r*.48,yBot=cy+r*.48,hw=r*.44;
+        CGFloat notchY=yTip+hs+t*sqrt2;
+        UIBezierPath *arrow=[UIBezierPath bezierPath];
+        [arrow moveToPoint:CGPointMake(cx,yTip)];
+        [arrow addLineToPoint:CGPointMake(cx+hw,yTip+hw)];
+        [arrow addLineToPoint:CGPointMake(cx+hw-t*invSqrt2,yTip+hw+t*invSqrt2)];
+        [arrow addLineToPoint:CGPointMake(cx+hs,notchY)];
+        [arrow addLineToPoint:CGPointMake(cx+hs,yBot-hs)];
+        [arrow addArcWithCenter:CGPointMake(cx,yBot-hs) radius:hs startAngle:0 endAngle:(CGFloat)M_PI clockwise:YES];
+        [arrow addLineToPoint:CGPointMake(cx-hs,notchY)];
+        [arrow addLineToPoint:CGPointMake(cx-hw+t*invSqrt2,yTip+hw+t*invSqrt2)];
+        [arrow addLineToPoint:CGPointMake(cx-hw,yTip+hw)];
+        [arrow closePath];
+        [fillPath appendPath:arrow];
+    }else if([_iconName isEqualToString:@"emoji"]) {
+        // Outer stroked ring matching exact outer ink diameter D + two filled eyes + round-capped smile arc.
+        CGFloat ringR=r-lineW*.5;
+        [strokePath appendPath:[UIBezierPath bezierPathWithArcCenter:CGPointMake(cx,cy) radius:ringR startAngle:0 endAngle:(CGFloat)(M_PI*2.) clockwise:YES]];
+        [strokePath moveToPoint:CGPointMake(cx+d*.255*(CGFloat)cos(26.*M_PI/180.),cy+d*.02+d*.255*(CGFloat)sin(26.*M_PI/180.))];
+        [strokePath addArcWithCenter:CGPointMake(cx,cy+d*.02) radius:d*.255 startAngle:(CGFloat)(26.*M_PI/180.) endAngle:(CGFloat)(154.*M_PI/180.) clockwise:YES];
+        CGFloat eyeD=MAX(2.5,d*.132),eyeX=d*.165,eyeY=cy-d*.095;
+        [fillPath appendPath:[UIBezierPath bezierPathWithOvalInRect:CGRectMake(cx-eyeX-eyeD*.5,eyeY-eyeD*.5,eyeD,eyeD)]];
+        [fillPath appendPath:[UIBezierPath bezierPathWithOvalInRect:CGRectMake(cx+eyeX-eyeD*.5,eyeY-eyeD*.5,eyeD,eyeD)]];
+    }else if([_iconName isEqualToString:@"keyboard"]) {
+        CGFloat kw=d*1.08,kh=d*.76;
+        lineW=MAX(1.65,round(d*.082*sc)/sc);
+        CGRect kbRect=CGRectMake(cx-kw*.5+lineW*.5,cy-kh*.5+lineW*.5,kw-lineW,kh-lineW);
+        [strokePath appendPath:[UIBezierPath bezierPathWithRoundedRect:kbRect cornerRadius:d*.14]];
+        CGFloat dot=MAX(1.9,d*.095),stepX=kw*.19,row1Y=cy-kh*.17,row2Y=cy+kh*.02;
+        for(int col=0;col<4;col++) {
+            CGFloat kx=cx+((CGFloat)col-1.5)*stepX;
+            [fillPath appendPath:[UIBezierPath bezierPathWithRoundedRect:CGRectMake(kx-dot*.5,row1Y-dot*.5,dot,dot) cornerRadius:dot*.4]];
+            [fillPath appendPath:[UIBezierPath bezierPathWithRoundedRect:CGRectMake(kx-dot*.5,row2Y-dot*.5,dot,dot) cornerRadius:dot*.4]];
+        }
+        CGFloat spW=kw*.44,spH=MAX(1.8,d*.082),spY=cy+kh*.21;
+        [fillPath appendPath:[UIBezierPath bezierPathWithRoundedRect:CGRectMake(cx-spW*.5,spY-spH*.5,spW,spH) cornerRadius:spH*.5]];
+    }else if([_iconName isEqualToString:@"voiceMode"]) {
+        lineW=MAX(1.85,round(d*.095*sc)/sc);
+        CGFloat step=d*.215;
+        const CGFloat heights[5]={0.15,0.34,0.44,0.34,0.15};
+        for(int i=0;i<5;i++) {
+            CGFloat x=cx+((CGFloat)(i-2))*step,hh=d*heights[i];
+            [strokePath moveToPoint:CGPointMake(x,cy-hh)];
+            [strokePath addLineToPoint:CGPointMake(x,cy+hh)];
+        }
+    }else if([_iconName isEqualToString:@"plus"]) {
+        lineW=MAX(1.85,round(d*.092*sc)/sc);
+        CGFloat arm=d*.42;
+        [strokePath moveToPoint:CGPointMake(cx-arm,cy)];[strokePath addLineToPoint:CGPointMake(cx+arm,cy)];
+        [strokePath moveToPoint:CGPointMake(cx,cy-arm)];[strokePath addLineToPoint:CGPointMake(cx,cy+arm)];
+    }
+
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    _fillLayer.contentsScale=sc;_fillLayer.frame=self.bounds;_fillLayer.path=[fillPath isEmpty]?NULL:fillPath.CGPath;
+    _strokeLayer.contentsScale=sc;_strokeLayer.frame=self.bounds;_strokeLayer.lineWidth=lineW;_strokeLayer.path=[strokePath isEmpty]?NULL:strokePath.CGPath;
+    [CATransaction commit];
+    [self updateInkColor];
+}
+@end
+
 @implementation WXGSurface {
     WXGStretchState _stretch;
     WXGTouchObserver *_touchObserver;
@@ -266,6 +411,7 @@ static NSInteger WXGLoadMenuDotCount(void) {
     BOOL _resolvedPreserve;
     UIImageView *_trailingView;           // FIX114 M: trailingSymbol
     WXGHomePlusTriggerView *_plusTriggerView;
+    WXGVectorIconView *_vectorIconView;
     CFTimeInterval _lastFollow;           // FIX114 T: holdsPlace's fade
     CFTimeInterval _hostAwaySince;        // FIX114 U: holdsPlace: the native view out of the window since
 }
@@ -277,8 +423,8 @@ static NSInteger WXGLoadMenuDotCount(void) {
         [self addSubview:_plusTriggerView];
     }
     _plusTriggerView.hidden=!trigger;
-    if(trigger){_iconView.hidden=YES;if(_nativeContent)_nativeContent.hidden=YES;}
-    else{_iconView.hidden=!_sourceImage;if(_nativeContent)_nativeContent.hidden=NO;[_plusTriggerView setProgress:0. dotsHidden:NO];}
+    if(trigger){_iconView.hidden=YES;if(_vectorIconView)_vectorIconView.hidden=YES;if(_nativeContent)_nativeContent.hidden=YES;}
+    else{_iconView.hidden=!_sourceImage || _vectorIconName.length>0;if(_vectorIconView)_vectorIconView.hidden=!_vectorIconName.length;if(_nativeContent)_nativeContent.hidden=NO;[_plusTriggerView setProgress:0. dotsHidden:NO];}
     [self setNeedsLayout];
 }
 - (void)setHomePlusProgress:(double)progress dotsHidden:(BOOL)hidden {
@@ -288,6 +434,26 @@ static NSInteger WXGLoadMenuDotCount(void) {
 - (void)setHomePlusDotCount:(NSInteger)count {
     if(!_plusTriggerView)return;
     [_plusTriggerView setDotCount:count];
+}
+- (void)setVectorIconName:(NSString *)name {
+    if(_vectorIconName==name || [_vectorIconName isEqualToString:name])return;
+    _vectorIconName=[name copy];
+    if(_vectorIconName.length && !_vectorIconView) {
+        _vectorIconView=[WXGVectorIconView new];
+        [self addSubview:_vectorIconView];
+    }
+    _vectorIconView.iconName=_vectorIconName;
+    _vectorIconView.diameter=_vectorIconDiameter;
+    _vectorIconView.inkTint=_iconTint;
+    BOOL showVec=!_homePlusTrigger && _vectorIconName.length>0;
+    _vectorIconView.hidden=!showVec;
+    _iconView.hidden=_homePlusTrigger || showVec || !_sourceImage;
+    [self setNeedsLayout];
+}
+- (void)setVectorIconDiameter:(CGFloat)diameter {
+    if(fabs(_vectorIconDiameter-diameter)<.05)return;
+    _vectorIconDiameter=diameter;
+    if(_vectorIconView){_vectorIconView.diameter=diameter;[self setNeedsLayout];}
 }
 - (void)setNativeContent:(UIView *)content {   // FIX114 V
     if(content==_nativeContent)return;
@@ -355,13 +521,16 @@ static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
     CGRect canvas=CGRectInset(rect,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
     CGRect material=CGRectMake(WXGCanvasPaddingX,WXGCanvasPaddingY,rect.size.width,rect.size.height);
     BOOL sizeChanged=!CGRectEqualToRect(material,_materialRect);
-    // Layout can run during an interactive transition. UIView.frame is undefined
-    // under a non-identity transform; never feed last frame's presentation delta
-    // back into the next model-sized canvas.
+    // R25: always update bounds + center instead of UIView.frame so non-identity
+    // layer.transform (e.g. home "+" menu entrance scale/translation) is never
+    // corrupted by UIKit's frame setter.
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
         if(self.followsNative)self.transform=CGAffineTransformIdentity;
-        if(!CGRectEqualToRect(self.frame,canvas))self.frame=canvas;
+        CGRect targetBounds=CGRectMake(0,0,canvas.size.width,canvas.size.height);
+        CGPoint targetCenter=CGPointMake(CGRectGetMidX(canvas),CGRectGetMidY(canvas));
+        if(!CGRectEqualToRect(self.bounds,targetBounds))self.bounds=targetBounds;
+        if(!CGPointEqualToPoint(self.center,targetCenter))self.center=targetCenter;
         if(self.followsNative)self.restingFrame=canvas;
         if(sizeChanged){self.textLayoutKey=nil;self.textCorrection=CGPointZero;self.materialRect=material;[self setNeedsLayout];}
         [self layoutIfNeeded];
@@ -473,7 +642,7 @@ static BOOL WXGSameArtwork(UIImage *a,UIImage *b) {
     if(image && _sourceImage && image!=_sourceImage && WXGSameArtwork(_sourceImage,image))image=_sourceImage;
     BOOL imageChanged=_sourceImage!=image || _sourceStyle!=self.traitCollection.userInterfaceStyle;
     if(imageChanged){_sourceImage=image;[self resolveSourceImage];}
-    BOOL hideIcon=_homePlusTrigger || !image;
+    BOOL hideIcon=_homePlusTrigger || _vectorIconName.length>0 || !image;
     if(!imageChanged && [_label.text?:@"" isEqual:title?:@""] && [_countLabel.text?:@"" isEqual:count?:@""] && _iconView.hidden==hideIcon)return;
     if(![_label.text isEqual:title]){_label.text=title;_textLayoutKey=nil;_textCorrection=CGPointZero;}
     if(![_countLabel.text isEqual:count])_countLabel.text=count;
@@ -525,6 +694,7 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
 - (void)setIconTint:(UIColor *)tint {
     if(tint==_iconTint || [tint isEqual:_iconTint])return;
     _iconTint=tint;_iconView.tintColor=tint?:_resolvedNativeTint;
+    if(_vectorIconView)_vectorIconView.inkTint=tint;
 }
 - (void)setNativeIconSource:(UIView *)source preservingColors:(BOOL)preserve {
     BOOL changed=_nativeIconSource!=source || _preservesNativeIconColors!=preserve;
@@ -538,13 +708,13 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     // FIX114 M (crash): out of a window the traits are not the page's; the
     // work is done once it is back in one.
     if(!self.window){_traitsPending=YES;return;}
-    _traitsPending=NO;[self resolveSourceImage];[self applyConfig];[_plusTriggerView updateInkColor];
+    _traitsPending=NO;[self resolveSourceImage];[self applyConfig];[_plusTriggerView updateInkColor];[_vectorIconView updateInkColor];
 }
 - (void)didMoveToWindow {
     [super didMoveToWindow];
     if(!self.window || !_traitsPending)return;
     _traitsPending=NO;
-    if(_sourceStyle!=self.traitCollection.userInterfaceStyle){[self resolveSourceImage];[self applyConfig];[_plusTriggerView updateInkColor];}
+    if(_sourceStyle!=self.traitCollection.userInterfaceStyle){[self resolveSourceImage];[self applyConfig];[_plusTriggerView updateInkColor];[_vectorIconView updateInkColor];}
 }
 - (void)layoutSubviews {
     [super layoutSubviews];
@@ -554,6 +724,7 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     _iconView.transform=_label.transform=_countLabel.transform=CGAffineTransformIdentity;
     if(_trailingView)_trailingView.transform=CGAffineTransformIdentity;   // FIX114 M
     if(_plusTriggerView){_plusTriggerView.transform=CGAffineTransformIdentity;_plusTriggerView.frame=_materialRect;}
+    if(_vectorIconView){_vectorIconView.transform=CGAffineTransformIdentity;_vectorIconView.frame=CGRectInset(_materialRect,-4,-4);}
     _glass.transform=CGAffineTransformIdentity;
     _glass.frame=self.bounds;_glass.glassRect=_materialRect;
     CGFloat radius=MIN(_materialRect.size.width,_materialRect.size.height)*.5;
@@ -566,10 +737,7 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     CGFloat iconMax=MIN(26,h*.50);
     if([_role isEqual:@"homeMenuIcon"])iconMax=MIN(21,h*.44);
     if([_role isEqual:@"dictation"])iconMax=MIN(20,h*.48);
-    if([_role isEqual:@"send"])iconMax=MIN(28,h*.80);
-    // FIX88: the (filled) smiley about the microphone's height beside it (it
-    // was a 26 pt disc next to a 17 pt microphone).
-    if([_role isEqual:@"emoji"])iconMax=MIN(19,h*.67);
+    if([_role isEqual:@"send"] || [_role isEqual:@"emoji"])iconMax=MIN(24,h*.70);
     if([_role isEqual:@"avatar"])iconMax=MAX(24,h-10);
     _iconView.layer.minificationFilter=kCAFilterTrilinear;
     _iconView.layer.magnificationFilter=kCAFilterLinear;
@@ -693,6 +861,7 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
         NSMutableArray<UIView *> *children=[@[self.glass,self.fallback,self.iconView,self.label,self.countLabel] mutableCopy];
         if(_trailingView)[children addObject:_trailingView];
         if(_plusTriggerView && !_plusTriggerView.hidden)[children addObject:_plusTriggerView];
+        if(_vectorIconView && !_vectorIconView.hidden)[children addObject:_vectorIconView];
         if(_nativeContent)[children addObject:_nativeContent];   // FIX114 V: pressed and stretched with the glass
         for(UIView *child in children) {
             CGPoint centre=child.center;double tx=0,ty=0;
