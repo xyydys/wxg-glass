@@ -241,6 +241,7 @@ void WXGInstallNativeIconGuard(void);
 // layout never undoes it); 0 puts it back. Restored with the rest.
 - (void)shiftContents:(UIView *)view x:(CGFloat)dx;
 - (void)shiftContents:(UIView *)view x:(CGFloat)dx y:(CGFloat)dy;   // FIX114 C
+- (void)shiftView:(UIView *)view x:(CGFloat)dx y:(CGFloat)dy;       // R22: transform shift for leaf UIImageView/UILabel or container sublayerTransform
 - (CGFloat)contentShiftOf:(UIView *)view;
 - (CGPoint)contentOffsetOf:(UIView *)view;   // FIX114 C: across and down
 - (void)stripChrome:(UIView *)root preserving:(NSArray<UIView *> *)content;

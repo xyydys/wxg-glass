@@ -1187,10 +1187,13 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
         }
         if(local && ![local[@"dockPureInnerBarShrink"] isKindOfClass:NSNumber.class] && [local[@"dockPureInnerBarHeight"] isKindOfClass:NSNumber.class]) {
             double legacyInner=[local[@"dockPureInnerBarHeight"] doubleValue];
-            double baseH=WXGClamp([local[@"height"] isKindOfClass:NSNumber.class]?[local[@"height"] doubleValue]:62.,32.,96.);
-            double barG=WXGClamp([local[@"dockPureBarGrowth"] isKindOfClass:NSNumber.class]?[local[@"dockPureBarGrowth"] doubleValue]:1.035,1.,1.08);
+            double rawH=[local[@"height"] isKindOfClass:NSNumber.class]?[local[@"height"] doubleValue]:62.;
+            double rawG=[local[@"dockPureBarGrowth"] isKindOfClass:NSNumber.class]?[local[@"dockPureBarGrowth"] doubleValue]:1.035;
+            double baseH=WXGClamp(isfinite(rawH)?rawH:62.,32.,96.);
+            double barG=WXGClamp(isfinite(rawG)?rawG:1.035,1.,1.08);
             double refH=baseH*barG;
-            _extra[@"dockPureInnerBarShrink"]=@(WXGClamp((refH-legacyInner)/MAX(1.,refH),0.,.55));
+            if(isfinite(legacyInner) && isfinite(refH) && refH>1.)
+                _extra[@"dockPureInnerBarShrink"]=@(WXGClamp((refH-legacyInner)/refH,0.,.55));
         }
         if(!local)[self loadDefaults];   // FIX81: a fresh install is exactly 恢复默认 (this build's defaults as they are)
         [self normalize];

@@ -335,6 +335,7 @@ static BOOL WXGLocalOwnPaint(UIView *v) {
     BOOL _wasAvailable;   // FIX108 C
     BOOL _coldWake;       // FIX109
     BOOL _themeFirst;     // FIX109: 搜索框让主题优先 as last applied
+    BOOL _adjustingHomeHeader;
 }
 + (instancetype)shared {
     static WXGLocalGlass *manager;static dispatch_once_t once;
@@ -772,7 +773,7 @@ static CGRect WXGLocalEntryMaterial(WXGLocalEntry *entry) {
     return NO;
 }
 - (void)hostLaidOut:(UIView *)view {
-    if(!NSThread.isMainThread || !view || WXGIsPluginView(view))return;
+    if(!NSThread.isMainThread || !view || _adjustingHomeHeader || WXGIsPluginView(view))return;
     ++_layouts;
     @try {
         WXGLocalEntry *own=objc_getAssociatedObject(view,&WXGLocalHostKey);if(own.host!=view)own=nil;
@@ -950,7 +951,7 @@ static BOOL WXGLocalFieldCandidate(UIView *v,UIView *bar,BOOL emptied) {
     CGRect r=[v convertRect:v.bounds toView:bar];
     return r.size.height>=24 && r.size.height<=(emptied?44:60) && r.size.width>=bar.bounds.size.width*.4 && (!emptied || r.size.width<=bar.bounds.size.width-6);
 }
-static char WXGLocalHomeHeaderHKey;
+static char WXGLocalHomeHeaderHKey,WXGLocalHomePaintRectKey;
 static UITableView *WXGLocalHomeTableFor(UIView *view) {
     static Class mainTable;static dispatch_once_t once;
     dispatch_once(&once,^{mainTable=NSClassFromString(@"MainFrameTableView");});
@@ -963,6 +964,18 @@ static UITableView *WXGLocalHomeTableFor(UIView *view) {
 }
 static CGRect WXGLocalFrameIn(UIView *v,UIView *ancestor,CGRect r);
 static CGRect WXGLocalTextRect(UILabel *label);
+static CGRect WXGLocalUnshiftedRectIn(UIView *v,UIView *root,CGRect r) {
+    if(!v || !root || CGRectIsNull(r))return CGRectNull;
+    if(v==root)return r;
+    if(![v isDescendantOfView:root])return [v convertRect:r toView:root];
+    for(UIView *p=v;p && p!=root;p=p.superview) {
+        if(!p.superview)return CGRectNull;
+        CGPoint ap=p.layer.anchorPoint;CGSize sz=p.bounds.size;
+        r.origin.x+=p.center.x-ap.x*sz.width-p.bounds.origin.x;
+        r.origin.y+=p.center.y-ap.y*sz.height-p.bounds.origin.y;
+    }
+    return r;
+}
 static UIView *WXGLocalSearchWrapUnder(UIView *v,UIView *paint,UIView *host) {
     UIView *best=v;
     for(UIView *a=v.superview;a && a!=host && a!=paint;a=a.superview) {
@@ -971,37 +984,55 @@ static UIView *WXGLocalSearchWrapUnder(UIView *v,UIView *paint,UIView *host) {
     }
     return best;
 }
-static BOOL WXGLocalSearchCollectContent(UIView *host,UIView *paint,NSHashTable<UIView *> *skins,CGRect *outBox,NSArray<UIView *> **outTargets) {
-    if(outBox)*outBox=CGRectNull;
+@interface WXGLocalSearchAlignCache : NSObject
+@property(nonatomic) BOOL valid,customHome,editing,hasContent;
+@property(nonatomic) NSUInteger hostShape;
+@property(nonatomic) CGRect material,paintBounds;
+@property(nonatomic) CGFloat dx,dy;
+@property(nonatomic,weak) UITextField *textField;
+@property(nonatomic,strong) NSHashTable<UIView *> *targets;
+@end
+@implementation WXGLocalSearchAlignCache
+@end
+static BOOL WXGLocalSearchCollectContent(UIView *host,UIView *paint,NSHashTable<UIView *> *skins,CGRect paintInHost,CGRect *outBoxInHost,NSArray<UIView *> **outTargets,UITextField **outField,BOOL *outEditing) {
+    if(outBoxInHost)*outBoxInHost=CGRectNull;
     if(outTargets)*outTargets=@[];
-    if(!host || !paint)return NO;
-    for(UIView *v in WXGLocalViews(host,120)) {
-        if([v isKindOfClass:UITextField.class]) {
-            UITextField *tf=(UITextField *)v;
-            if(tf.isFirstResponder || tf.text.length>0)return NO;
-        }
-    }
-    CGRect paintInHost=[paint convertRect:paint.bounds toView:host];
+    if(outField)*outField=nil;
+    if(outEditing)*outEditing=NO;
+    if(!host || !paint || CGRectIsNull(paintInHost))return NO;
     CGRect searchZone=CGRectInset(paintInHost,-24,-24);
     UILabel *bestLabel=nil;CGRect bestLabelRect=CGRectNull;
+    NSMutableArray<UIImageView *> *icons=nil;
     for(UIView *v in WXGLocalViews(host,140)) {
-        if(WXGIsPluginView(v) || [skins containsObject:v] || !WXGLocalShownIn(v,host) || ![v isKindOfClass:UILabel.class])continue;
-        UILabel *l=(UILabel *)v;NSString *txt=l.text?:l.attributedText.string;
-        if(!txt.length || txt.length>24)continue;
-        CGRect tr=WXGLocalFrameIn(l,paint,WXGLocalTextRect(l));
-        if(CGRectIsNull(tr) || tr.size.width<4 || tr.size.height<4)continue;
-        CGRect inHost=[paint convertRect:tr toView:host];
-        if(!CGRectContainsPoint(searchZone,CGPointMake(CGRectGetMidX(inHost),CGRectGetMidY(inHost))))continue;
-        bestLabel=l;bestLabelRect=tr;break;
+        if([v isKindOfClass:UITextField.class]) {
+            UITextField *tf=(UITextField *)v;
+            if(outField && !*outField)*outField=tf;
+            if(tf.isFirstResponder || tf.text.length>0) {
+                if(outEditing)*outEditing=YES;
+                return NO;
+            }
+            continue;
+        }
+        if(WXGIsPluginView(v) || [skins containsObject:v] || !WXGLocalShownIn(v,host))continue;
+        if(!bestLabel && [v isKindOfClass:UILabel.class]) {
+            UILabel *l=(UILabel *)v;NSString *txt=l.text?:l.attributedText.string;
+            if(!txt.length || txt.length>24)continue;
+            CGRect tr=WXGLocalUnshiftedRectIn(l,host,WXGLocalTextRect(l));
+            if(CGRectIsNull(tr) || tr.size.width<4 || tr.size.height<4)continue;
+            if(!CGRectContainsPoint(searchZone,CGPointMake(CGRectGetMidX(tr),CGRectGetMidY(tr))))continue;
+            bestLabel=l;bestLabelRect=tr;
+        }else if([v isKindOfClass:UIImageView.class]) {
+            UIImageView *iv=(UIImageView *)v;
+            if(!iv.image || iv.bounds.size.width<6 || iv.bounds.size.height<6 || iv.bounds.size.width>36 || iv.bounds.size.height>36)continue;
+            if(!icons)icons=[NSMutableArray array];
+            [icons addObject:iv];
+        }
     }
     UIImageView *bestIcon=nil;CGRect bestIconRect=CGRectNull;CGFloat bestScore=CGFLOAT_MAX;
-    for(UIView *v in WXGLocalViews(host,140)) {
-        if(WXGIsPluginView(v) || [skins containsObject:v] || !WXGLocalShownIn(v,host) || ![v isKindOfClass:UIImageView.class])continue;
-        UIImageView *iv=(UIImageView *)v;if(!iv.image || iv.bounds.size.width<6 || iv.bounds.size.height<6 || iv.bounds.size.width>36 || iv.bounds.size.height>36)continue;
-        CGRect ir=WXGLocalFrameIn(iv,paint,iv.bounds);
+    for(UIImageView *iv in icons) {
+        CGRect ir=WXGLocalUnshiftedRectIn(iv,host,iv.bounds);
         if(CGRectIsNull(ir) || ir.size.width<4 || ir.size.height<4)continue;
-        CGRect inHost=[paint convertRect:ir toView:host];
-        if(!CGRectContainsPoint(searchZone,CGPointMake(CGRectGetMidX(inHost),CGRectGetMidY(inHost))))continue;
+        if(!CGRectContainsPoint(searchZone,CGPointMake(CGRectGetMidX(ir),CGRectGetMidY(ir))))continue;
         if(bestLabel) {
             CGFloat dy=fabs(CGRectGetMidY(ir)-CGRectGetMidY(bestLabelRect));
             if(dy>20)continue;
@@ -1011,7 +1042,7 @@ static BOOL WXGLocalSearchCollectContent(UIView *host,UIView *paint,NSHashTable<
     }
     if(!bestLabel && !bestIcon)return NO;
     CGRect box=(!CGRectIsNull(bestIconRect) && !CGRectIsNull(bestLabelRect))?CGRectUnion(bestIconRect,bestLabelRect):(bestLabel?bestLabelRect:bestIconRect);
-    if(outBox)*outBox=box;
+    if(outBoxInHost)*outBoxInHost=box;
     if(outTargets) {
         UIView *wIcon=bestIcon?WXGLocalSearchWrapUnder(bestIcon,paint,host):nil;
         UIView *wLabel=bestLabel?WXGLocalSearchWrapUnder(bestLabel,paint,host):nil;
@@ -1022,35 +1053,61 @@ static BOOL WXGLocalSearchCollectContent(UIView *host,UIView *paint,NSHashTable<
     }
     return YES;
 }
-static char WXGLocalSearchShiftedKey;
-- (void)syncSearchAlignment:(WXGLocalEntry *)entry material:(CGRect)material {
+static char WXGLocalSearchShiftedKey,WXGLocalSearchAlignCacheKey;
+- (void)syncSearchAlignment:(WXGLocalEntry *)entry material:(CGRect)material force:(BOOL)force {
     if(!entry || entry.kind!=WXGLocalSearch || !entry.host || !entry.anchor)return;
     UIView *host=entry.host,*paint=entry.anchor;
-    NSHashTable<UIView *> *prev=objc_getAssociatedObject(entry,&WXGLocalSearchShiftedKey);
     BOOL isHome=WXGLocalHomeTableFor(host)!=nil;
     WXGConfig *cfg=WXGConfig.shared;
     BOOL customHome=isHome && (cfg.homeSearchWidthPct>.5 || cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
-    CGRect contentBox=CGRectNull;NSArray<UIView *> *targets=@[];
-    BOOL hasContent=customHome && !CGRectIsNull(material) && !CGRectIsEmpty(material) &&
-        WXGLocalSearchCollectContent(host,paint,entry.skinViews,&contentBox,&targets);
+    WXGLocalSearchAlignCache *cache=objc_getAssociatedObject(entry,&WXGLocalSearchAlignCacheKey);
+    UITextField *cachedTF=cache.textField;
+    BOOL cachedEditing=cachedTF && (cachedTF.isFirstResponder || cachedTF.text.length>0);
+    if(!force && cache && cache.valid && cache.customHome==customHome && cache.hostShape==entry.hostShape &&
+       CGRectEqualToRect(cache.material,material) && CGRectEqualToRect(cache.paintBounds,paint.bounds) &&
+       cachedEditing==cache.editing) {
+        BOOL alive=!cache.hasContent || cache.targets.count>0;
+        if(alive && cache.hasContent) {
+            for(UIView *v in cache.targets.allObjects) {
+                if(!v.superview || ![v isDescendantOfView:host]){alive=NO;break;}
+            }
+        }
+        if(alive && (cache.hasContent || !customHome || cachedEditing)) {
+            CGFloat dx=cache.hasContent?cache.dx:0,dy=cache.hasContent?cache.dy:0;
+            for(UIView *v in cache.targets.allObjects)[entry.states shiftView:v x:dx y:dy];
+            return;
+        }
+    }
+    NSHashTable<UIView *> *prev=objc_getAssociatedObject(entry,&WXGLocalSearchShiftedKey);
+    CGRect paintInHost=WXGLocalUnshiftedRectIn(paint,host,paint.bounds);
+    CGRect contentBoxInHost=CGRectNull;NSArray<UIView *> *targets=@[];UITextField *tf=nil;BOOL editing=NO;
+    BOOL hasContent=customHome && !CGRectIsNull(material) && !CGRectIsEmpty(material) && !CGRectIsNull(paintInHost) &&
+        WXGLocalSearchCollectContent(host,paint,entry.skinViews,paintInHost,&contentBoxInHost,&targets,&tf,&editing);
+    if(!cache){cache=[WXGLocalSearchAlignCache new];objc_setAssociatedObject(entry,&WXGLocalSearchAlignCacheKey,cache,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    cache.valid=YES;cache.customHome=customHome;cache.hostShape=entry.hostShape;
+    cache.material=material;cache.paintBounds=paint.bounds;cache.textField=tf;cache.editing=editing;cache.hasContent=hasContent && targets.count>0;
     if(!hasContent || !targets.count) {
-        for(UIView *v in prev.allObjects)[entry.states shiftContents:v x:0 y:0];
+        cache.dx=0;cache.dy=0;cache.targets=nil;
+        for(UIView *v in prev.allObjects)[entry.states shiftView:v x:0 y:0];
         objc_setAssociatedObject(entry,&WXGLocalSearchShiftedKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         return;
     }
-    CGFloat dx=CGRectGetMidX(material)-CGRectGetMidX(contentBox);
-    CGFloat dy=CGRectGetMidY(material)-CGRectGetMidY(contentBox);
+    CGRect matInHost=CGRectOffset(material,paintInHost.origin.x-paint.bounds.origin.x,paintInHost.origin.y-paint.bounds.origin.y);
+    CGFloat dx=CGRectGetMidX(matInHost)-CGRectGetMidX(contentBoxInHost);
+    CGFloat dy=CGRectGetMidY(matInHost)-CGRectGetMidY(contentBoxInHost);
     if(fabs(dx)<.1)dx=0;
     if(fabs(dy)<.1)dy=0;
+    cache.dx=dx;cache.dy=dy;
     NSHashTable<UIView *> *next=[NSHashTable weakObjectsHashTable];
     for(UIView *v in targets) {
         [next addObject:v];
-        [entry.states shiftContents:v x:dx y:dy];
+        [entry.states shiftView:v x:dx y:dy];
     }
-    for(UIView *v in prev.allObjects)if(![next containsObject:v])[entry.states shiftContents:v x:0 y:0];
+    cache.targets=next;
+    for(UIView *v in prev.allObjects)if(![next containsObject:v])[entry.states shiftView:v x:0 y:0];
     objc_setAssociatedObject(entry,&WXGLocalSearchShiftedKey,next,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     _lastSearchAlign=@{@"dx":@(round(dx*10)/10),@"dy":@(round(dy*10)/10),
-                       @"contentBox":NSStringFromCGRect(contentBox),@"material":NSStringFromCGRect(material),
+                       @"contentBox":NSStringFromCGRect(contentBoxInHost),@"material":NSStringFromCGRect(matInHost),
                        @"targets":@(targets.count)};
 }
 - (void)searchBar:(UIView *)bar {
@@ -1121,18 +1178,31 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
             savedH=@(homeHeader.frame.size.height);
             objc_setAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey,savedH,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
+        NSValue *savedPaint=objc_getAssociatedObject(homeHeader,&WXGLocalHomePaintRectKey);
+        if(!savedPaint && paint.bounds.size.width>10 && paint.bounds.size.height>10) {
+            CGRect r=WXGLocalUnshiftedRectIn(paint,homeHeader,paint.bounds);
+            if(!CGRectIsNull(r) && r.size.width>10 && r.size.height>10) {
+                savedPaint=[NSValue valueWithCGRect:r];
+                objc_setAssociatedObject(homeHeader,&WXGLocalHomePaintRectKey,savedPaint,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+        }
         CGFloat nativeH=savedH?savedH.doubleValue:homeHeader.frame.size.height;
         if(!customHome && savedH && fabs(homeHeader.frame.size.height-nativeH)>.5) {
-            [UIView performWithoutAnimation:^{
-                CGRect hf=homeHeader.frame;hf.size.height=nativeH;homeHeader.frame=hf;
-                if(homeTable.tableHeaderView==homeHeader)homeTable.tableHeaderView=homeHeader;
-            }];
+            _adjustingHomeHeader=YES;
+            @try {
+                [UIView performWithoutAnimation:^{
+                    CGRect hf=homeHeader.frame;hf.size.height=nativeH;homeHeader.frame=hf;
+                    if(homeTable.tableHeaderView==homeHeader)homeTable.tableHeaderView=homeHeader;
+                }];
+            } @finally {_adjustingHomeHeader=NO;}
         }
     }
     if(customHome && homeHeader) {
         NSNumber *savedH=objc_getAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey);
         CGFloat nativeH=savedH?savedH.doubleValue:homeHeader.frame.size.height;
-        CGRect nat=[paint convertRect:paint.bounds toView:homeHeader];
+        NSValue *savedPaint=objc_getAssociatedObject(homeHeader,&WXGLocalHomePaintRectKey);
+        CGRect nat=savedPaint?savedPaint.CGRectValue:WXGLocalUnshiftedRectIn(paint,homeHeader,paint.bounds);
+        if(CGRectIsNull(nat))nat=[paint convertRect:paint.bounds toView:homeHeader];
         CGFloat wPct=cfg.homeSearchWidthPct,customH=cfg.homeSearchHeight,topGap=cfg.homeSearchTopGap;
         CGFloat w=wPct>.5?WXGClamp(homeHeader.bounds.size.width*(wPct/100.),120,MAX(120,homeHeader.bounds.size.width-4)):nat.size.width;
         CGFloat h=customH>.5?WXGClamp(customH,24,64):nat.size.height;
@@ -1141,24 +1211,34 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
         CGFloat bottomPad=MAX(4,nativeH-CGRectGetMaxY(nat));
         CGFloat neededH=MAX(nativeH,y+h+bottomPad);
         if(fabs(homeHeader.frame.size.height-neededH)>.5) {
-            [UIView performWithoutAnimation:^{
-                CGRect hf=homeHeader.frame;hf.size.height=neededH;homeHeader.frame=hf;
-                if(homeTable.tableHeaderView==homeHeader)homeTable.tableHeaderView=homeHeader;
-            }];
+            _adjustingHomeHeader=YES;
+            @try {
+                [UIView performWithoutAnimation:^{
+                    CGRect hf=homeHeader.frame;hf.size.height=neededH;homeHeader.frame=hf;
+                    if(homeTable.tableHeaderView==homeHeader)homeTable.tableHeaderView=homeHeader;
+                }];
+            } @finally {_adjustingHomeHeader=NO;}
         }
-        CGRect targetInPaint=[homeHeader convertRect:CGRectMake(x,y,w,h) toView:paint];
+        CGRect pInHdr=WXGLocalUnshiftedRectIn(paint,homeHeader,paint.bounds);
+        CGRect targetInPaint=!CGRectIsNull(pInHdr)
+            ?CGRectMake(x-pInHdr.origin.x+paint.bounds.origin.x,y-pInHdr.origin.y+paint.bounds.origin.y,w,h)
+            :[homeHeader convertRect:CGRectMake(x,y,w,h) toView:paint];
         if([self searchGlassClashes:paint material:targetInPaint host:host])return;
         __weak UIView *weakPaint=paint,*weakHeader=homeHeader;
         [self mount:WXGLocalSearch host:host anchor:paint paint:paint below:nil measure:nil
             frame:^CGRect{
                 UIView *p=weakPaint,*hdr=weakHeader;if(!p || !hdr)return CGRectNull;
                 WXGConfig *c=WXGConfig.shared;
-                CGRect n=[p convertRect:p.bounds toView:hdr];
+                NSValue *sp=objc_getAssociatedObject(hdr,&WXGLocalHomePaintRectKey);
+                CGRect curP=WXGLocalUnshiftedRectIn(p,hdr,p.bounds);
+                CGRect n=sp?sp.CGRectValue:curP;
+                if(CGRectIsNull(n))return CGRectNull;
                 CGFloat wp=c.homeSearchWidthPct,ch=c.homeSearchHeight,tg=c.homeSearchTopGap;
                 CGFloat tw=wp>.5?WXGClamp(hdr.bounds.size.width*(wp/100.),120,MAX(120,hdr.bounds.size.width-4)):n.size.width;
                 CGFloat th=ch>.5?WXGClamp(ch,24,64):n.size.height;
                 CGFloat tx=wp>.5?(hdr.bounds.size.width-tw)*.5:n.origin.x;
                 CGFloat ty=tg>=0?tg:n.origin.y;
+                if(!CGRectIsNull(curP))return CGRectMake(tx-curP.origin.x+p.bounds.origin.x,ty-curP.origin.y+p.bounds.origin.y,tw,th);
                 return [hdr convertRect:CGRectMake(tx,ty,tw,th) toView:p];
             }
             radius:0 button:nil
@@ -1177,7 +1257,7 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
         entry.hostShape=WXGLocalSubviewShape(host);entry.skins=skins.count;
         NSHashTable *table=[NSHashTable weakObjectsHashTable];for(UIView *skin in skins)[table addObject:skin];entry.skinViews=table;
         [self clearSearchBandAround:entry];
-        [self syncSearchAlignment:entry material:WXGLocalEntryMaterial(entry)];
+        [self syncSearchAlignment:entry material:WXGLocalEntryMaterial(entry) force:YES];
     }
 }
 // FIX113 F: 表情搜索 opened from the text in the input bar (its quick jump,
@@ -2673,7 +2753,7 @@ static BOOL WXGLocalCovering(CGRect r,CGRect b) {
                     entry.dirty=MAX(entry.dirty,12);++_remeasures;wake=YES;
                 }
             }
-            if(entry.kind==WXGLocalSearch)[self syncSearchAlignment:entry material:material];
+            if(entry.kind==WXGLocalSearch)[self syncSearchAlignment:entry material:material force:NO];
             // FIX114 B: a native title-bar button drawn at the title row's margin.
             if(entry.kind==WXGLocalNavButton && [entry.button isKindOfClass:UIButton.class]) {
                 CGFloat was=[entry.states contentShiftOf:anchor],to=WXGLocalKeptShift(entry,(UIButton *)entry.button);   // FIX114 T

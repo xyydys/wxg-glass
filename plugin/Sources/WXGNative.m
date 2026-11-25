@@ -519,8 +519,9 @@ static void WXGInstallFillGuard(void) {
 @property(nonatomic,weak) UIView *alignmentHost;
 @property(nonatomic) BOOL alignmentWriting;
 // FIX113 E: shiftContents:x:.
-@property(nonatomic) BOOL changedSublayerTransform;
+@property(nonatomic) BOOL changedSublayerTransform,changedTransform;
 @property(nonatomic) CATransform3D originalSublayerTransform,appliedSublayerTransform;
+@property(nonatomic) CGAffineTransform originalTransform,appliedTransform;
 @property(nonatomic) CGFloat contentShift;
 @property(nonatomic) CGFloat contentShiftY;   // FIX114 C: the title row moved down (顶部按钮往下移)
 @end
@@ -607,6 +608,7 @@ void WXGInstallNativeIconGuard(void) {
     if(_changedContents && !_changedImage)v.layer.contents=_contents;
     if(_restoreGeometry && !CGRectEqualToRect(v.frame,_originalFrame)) v.frame=_originalFrame;
     if(_changedSublayerTransform){[CATransaction begin];[CATransaction setDisableActions:YES];v.layer.sublayerTransform=_originalSublayerTransform;[CATransaction commit];}
+    if(_changedTransform){[UIView performWithoutAnimation:^{v.transform=self->_originalTransform;}];_changedTransform=NO;}
     if(_changedTitleColor && [v isKindOfClass:UIButton.class]) {   // FIX115 Q (review)
         UIButton *b=(UIButton *)v;
         [b setTitleColor:_titleNormal forState:UIControlStateNormal];
@@ -701,6 +703,33 @@ static CALayer *WXGOwnMask(UIView *v) {
     if(!CATransform3DEqualToTransform(v.layer.sublayerTransform,s.appliedSublayerTransform)) {
         [CATransaction begin];[CATransaction setDisableActions:YES];v.layer.sublayerTransform=s.appliedSublayerTransform;[CATransaction commit];
     }
+}
+- (void)shiftView:(UIView *)v x:(CGFloat)dx y:(CGFloat)dy {
+    if(!v)return;
+    if(v.subviews.count>0) {
+        WXGViewState *prev=[_states objectForKey:v];
+        if(prev.changedTransform) {
+            prev.changedTransform=NO;prev.appliedTransform=prev.originalTransform;
+            if(!CGAffineTransformEqualToTransform(v.transform,prev.originalTransform))
+                [UIView performWithoutAnimation:^{v.transform=prev.originalTransform;}];
+        }
+        [self shiftContents:v x:dx y:dy];return;
+    }
+    WXGViewState *s=[_states objectForKey:v];
+    if(!s && fabs(dx)<.01 && fabs(dy)<.01)return;
+    s=[self remember:v];
+    if(s.changedSublayerTransform) {
+        s.changedSublayerTransform=NO;s.contentShift=0;s.contentShiftY=0;s.appliedSublayerTransform=s.originalSublayerTransform;
+        if(!CATransform3DEqualToTransform(v.layer.sublayerTransform,s.originalSublayerTransform)) {
+            [CATransaction begin];[CATransaction setDisableActions:YES];v.layer.sublayerTransform=s.originalSublayerTransform;[CATransaction commit];
+        }
+    }
+    if(!s.changedTransform){s.changedTransform=YES;s.originalTransform=v.transform;}
+    CGFloat tx=fabs(dx)<.01?0:dx,ty=fabs(dy)<.01?0:dy;
+    s.contentShift=tx;s.contentShiftY=ty;
+    s.appliedTransform=(tx!=0 || ty!=0)?CGAffineTransformConcat(s.originalTransform,CGAffineTransformMakeTranslation(tx,ty)):s.originalTransform;
+    if(!CGAffineTransformEqualToTransform(v.transform,s.appliedTransform))
+        [UIView performWithoutAnimation:^{v.transform=s.appliedTransform;}];
 }
 - (CGFloat)contentShiftOf:(UIView *)v {WXGViewState *s=v?[_states objectForKey:v]:nil;return s.changedSublayerTransform?s.contentShift:0;}
 - (CGPoint)contentOffsetOf:(UIView *)v {WXGViewState *s=v?[_states objectForKey:v]:nil;return s.changedSublayerTransform?CGPointMake(s.contentShift,s.contentShiftY):CGPointZero;}
@@ -908,6 +937,8 @@ static CALayer *WXGOwnMask(UIView *v) {
         if(s.changedSublayerTransform && !CATransform3DEqualToTransform(view.layer.sublayerTransform,s.appliedSublayerTransform)) {
             [CATransaction begin];[CATransaction setDisableActions:YES];view.layer.sublayerTransform=s.appliedSublayerTransform;[CATransaction commit];
         }
+        if(s.changedTransform && !CGAffineTransformEqualToTransform(view.transform,s.appliedTransform))
+            [UIView performWithoutAnimation:^{view.transform=s.appliedTransform;}];
     }
     for(WXGLayerState *s in _layers.objectEnumerator){CALayer *layer=s.layer;if(layer && !layer.hidden)layer.hidden=YES;}
     }@finally {_reapplying=NO;}
