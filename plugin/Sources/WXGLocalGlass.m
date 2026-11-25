@@ -290,6 +290,16 @@ static BOOL WXGLocalOwnPaint(UIView *v) {
     return color && [b isKindOfClass:color] && WXGLocalHasFill(b) && WXGPluginEnabled() && WXGEffectiveRenderMode()>=2 &&
         [WXGConfig.shared extraNumber:@"localColorButtons"]>.5;
 }
+@interface WXGLocalSearchAlignCache : NSObject
+@property(nonatomic) BOOL valid,customHome,editing,hasContent;
+@property(nonatomic) NSUInteger hostShape;
+@property(nonatomic) CGRect material,paintBounds;
+@property(nonatomic) CGFloat dx,dy;
+@property(nonatomic,weak) UITextField *textField;
+@property(nonatomic,strong) NSHashTable<UIView *> *targets;
+@end
+@implementation WXGLocalSearchAlignCache
+@end
 @implementation WXGLocalGlass {
     NSHashTable<WXGLocalEntry *> *_entries;
     CADisplayLink *_link;
@@ -984,16 +994,6 @@ static UIView *WXGLocalSearchWrapUnder(UIView *v,UIView *paint,UIView *host) {
     }
     return best;
 }
-@interface WXGLocalSearchAlignCache : NSObject
-@property(nonatomic) BOOL valid,customHome,editing,hasContent;
-@property(nonatomic) NSUInteger hostShape;
-@property(nonatomic) CGRect material,paintBounds;
-@property(nonatomic) CGFloat dx,dy;
-@property(nonatomic,weak) UITextField *textField;
-@property(nonatomic,strong) NSHashTable<UIView *> *targets;
-@end
-@implementation WXGLocalSearchAlignCache
-@end
 static BOOL WXGLocalSearchCollectContent(UIView *host,UIView *paint,NSHashTable<UIView *> *skins,CGRect paintInHost,CGRect *outBoxInHost,NSArray<UIView *> **outTargets,UITextField **outField,BOOL *outEditing) {
     if(outBoxInHost)*outBoxInHost=CGRectNull;
     if(outTargets)*outTargets=@[];
