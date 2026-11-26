@@ -477,14 +477,20 @@ static UIImage *WXGMenuMorphSnapshot(UIView *view) {
 }
 
 static UIImage *WXGMenuMorphTriggerInk(UIView *trigger,CGRect anchor) {
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];
+    format.scale=trigger.window.screen.scale?:UIScreen.mainScreen.scale;
+    format.opaque=NO;format.preferredRange=UIGraphicsImageRendererFormatRangeStandard;
     if([trigger isKindOfClass:WXGSurface.class]) {
         WXGSurface *surface=(WXGSurface *)trigger;
         UIView *ink=surface.nativeContent?:surface.iconView;
         UIImage *snapshot=ink.hidden?nil:WXGMenuMorphSnapshot(ink);
         if(snapshot && !CGRectIsEmpty(surface.materialRect)) {
-            CGRect inkRect=[ink convertRect:ink.bounds toView:surface];
-            inkRect=CGRectOffset(inkRect,-surface.materialRect.origin.x,-surface.materialRect.origin.y);
-            return [[[UIGraphicsImageRenderer alloc]initWithSize:surface.materialRect.size] imageWithActions:^(__unused UIGraphicsImageRendererContext *image){
+            CGSize inkSize=ink.bounds.size;
+            CGPoint inkCenter=ink.center;
+            CGRect inkRect=CGRectMake(inkCenter.x-inkSize.width*.5-surface.materialRect.origin.x,
+                inkCenter.y-inkSize.height*.5-surface.materialRect.origin.y,inkSize.width,inkSize.height);
+            return [[[UIGraphicsImageRenderer alloc]initWithSize:surface.materialRect.size format:format]
+                imageWithActions:^(__unused UIGraphicsImageRendererContext *image){
                 [snapshot drawInRect:inkRect];
             }];
         }
@@ -494,7 +500,7 @@ static UIImage *WXGMenuMorphTriggerInk(UIView *trigger,CGRect anchor) {
     if(icon.renderingMode!=UIImageRenderingModeAlwaysOriginal)icon=[icon imageWithTintColor:UIColor.labelColor renderingMode:UIImageRenderingModeAlwaysOriginal];
     CGSize size=anchor.size;
     CGFloat d=MIN(22,MIN(size.width,size.height)*.6);
-    return [[[UIGraphicsImageRenderer alloc]initWithSize:size] imageWithActions:^(__unused UIGraphicsImageRendererContext *image){
+    return [[[UIGraphicsImageRenderer alloc]initWithSize:size format:format] imageWithActions:^(__unused UIGraphicsImageRendererContext *image){
         CGFloat scale=d/MAX(1,MAX(icon.size.width,icon.size.height));
         CGSize ink=CGSizeMake(icon.size.width*scale,icon.size.height*scale);
         [icon drawInRect:CGRectMake((size.width-ink.width)*.5,(size.height-ink.height)*.5,ink.width,ink.height)];
@@ -1089,7 +1095,7 @@ static BOOL WXGMenuMapTransform(UIView *view,UIView *space,CGRect target,CGAffin
     CGRect anchor=entry.morphAnchor,target=entry.morphRect;
     if(!parent.window || CGRectIsEmpty(anchor) || CGRectIsEmpty(target))return;
     UIView *trigger=[self resolveHomePlusFor:entry]?:entry.plusControl;
-    CGRect canvas=CGRectIntersection(CGRectInset(CGRectUnion(anchor,target),-56,-72),
+    CGRect canvas=CGRectIntersection(CGRectInset(CGRectUnion(anchor,target),-84,-96),
                                      [parent.window convertRect:parent.window.bounds toView:parent]);
     if(CGRectIsEmpty(canvas))return;
     [WXGIntegrationHost.shared updateHomeMenuFloatingToolsForOwner:entry inWindow:parent.window
@@ -1106,6 +1112,7 @@ static BOOL WXGMenuMapTransform(UIView *view,UIView *space,CGRect target,CGAffin
         WXGMenuMorphView *old=entry.morphView;
         WXGHomeMenuPortal *view=[[WXGHomeMenuPortal alloc]initWithFrame:windowCanvas];
         view.entry=entry;view.userInteractionEnabled=YES;view.isAccessibilityElement=NO;view.accessibilityElementsHidden=NO;
+        view.layer.zPosition=20000;
         [old returnSurfaceToButton];[old removeFromSuperview];
         [window addSubview:view];
         entry.morphView=view;
@@ -1141,6 +1148,8 @@ static BOOL WXGMenuMapTransform(UIView *view,UIView *space,CGRect target,CGAffin
     if(!entry.morphTriggerImage.image || (entry.morphMaskedTrigger && entry.morphMaskedTrigger!=trigger))
         entry.morphTriggerImage.image=WXGMenuMorphTriggerInk(trigger,anchor);
     entry.morphRowsImage.image=entry.morphContent.image;
+    [entry.morphView setSessionTriggerSide:MIN(anchor.size.width,anchor.size.height)
+                                  menuSide:MIN(target.size.width,target.size.height)];
     [entry.morphView setOpticalSessionBounds:[parent convertRect:CGRectUnion(anchor,target) toView:window]];
     [entry.morphView setForegroundRowsImage:entry.morphContent.image triggerImage:entry.morphTriggerImage.image];
     [CATransaction commit];
@@ -1153,7 +1162,9 @@ static BOOL WXGMenuMapTransform(UIView *view,UIView *space,CGRect target,CGAffin
     BOOL calm=UIAccessibilityIsReduceMotionEnabled();
     if(!calm && (entry.phase==WXGMenuPhaseOpen || !entry.morphSettled)) {
         WXGMenuBox source=entry->_morphMotion.source,target=entry->_morphMotion.destination;
-        frame.bounds=WXGMenuScrubBounds(frame.bounds,scrub,true,WXGMenuMorphCenterY(target)<WXGMenuMorphCenterY(source));
+        double scrubWeight=entry.phase==WXGMenuPhaseOpen?1.:WXGMenuClamp(frame.contentProgress,0.,1.);
+        frame.bounds=WXGMenuScrubBoundsWeighted(frame.bounds,scrub,true,
+            WXGMenuMorphCenterY(target)<WXGMenuMorphCenterY(source),scrubWeight);
     }
     BOOL settled=entry.morphSettled && entry.phase==WXGMenuPhaseOpen;
     UIView *trigger=[self resolveHomePlusFor:entry]?:entry.plusControl;
@@ -1835,7 +1846,6 @@ static UIControl *WXGMenuForwardableRow(UIView *row) {
             entry->_scrub=WXGMenuScrubInitial(entry.menuParent.window.screen.scale);
             entry.scrubStartupFrames=4;entry.scrubPresses=0;entry.scrubCrossings=0;entry.scrubFrames=0;entry.scrubPeakY=0;
             WXGMenuMorphInitialize(&entry->_morphMotion,anchor,WXGMenuMorphBox(entry.morphRect),WXGHomeMenuPanelRadius(entry),anchor,false);
-            WXGMenuMorphSetAbsorbDuration(&entry->_morphMotion,.48);
             _morphLayerSamples=[NSMutableDictionary dictionary];
             if(entry.morphView.sourceAtPickup)_morphLayerSamples[@"pickup"]=entry.morphView.sourceAtPickup;
             _lastMorphPresentation=@{@"layerSamples":_morphLayerSamples,@"route":@"nativeControlAfterAbsorption",

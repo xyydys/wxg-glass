@@ -14,6 +14,7 @@ FOUNDATION_EXPORT void WXGPrewarmMenuMorphRenderer(void);
 @property(nonatomic,strong,readonly) UIBezierPath *currentOutline;
 - (void)useSurfaceFromButton:(WXGSurface *)button;
 - (void)setOpticalSessionBounds:(CGRect)windowBounds;
+- (void)setSessionTriggerSide:(CGFloat)triggerSide menuSide:(CGFloat)menuSide;
 - (NSDictionary *)returnSurfaceToButton;
 - (NSDictionary *)presentationEvidence;
 - (BOOL)captureBackdropFromView:(UIView *)source excludingViews:(NSArray<UIView *> *)excluded;

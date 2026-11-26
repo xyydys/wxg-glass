@@ -34,6 +34,8 @@ static WXGStretchStyle WXGCurrentStretchStyle(void) {
 @property(nonatomic,weak) UIView *referenceParent;
 @property(nonatomic) BOOL referenceValid,followingDeparture;
 @property(nonatomic) CGPoint stretchStart;   // FIX68: where the finger touched down
+- (void)updateContentTransform;
+- (void)releaseFinger;
 @end
 /* FIX68: hold-and-drag stretch (WXGPressStretch.h). FIX69: the glass stays
    pressed and pulled for as long as the finger is down, however far it goes;
@@ -439,8 +441,16 @@ static NSInteger WXGLoadMenuDotCount(void) {
     }
     _glass.hidden=YES;_glass.active=NO;_fallback.hidden=YES;
 }
+- (void)resetPressAndStretchForMorph {
+    _followTouching=NO;_trackingInside=NO;
+    [self releaseFinger];[self setExternalPressed:NO];
+    _press=_velocity=0;_touchX=_touchY=_touchVelocityX=_touchVelocityY=0;
+    _stretch=(WXGStretchState){0};_glass.pressAmount=0;
+    [self updateContentTransform];
+}
 - (WXGMenuMorphSurface *)borrowHomeMenuMorphSurface {
     if(_homeMorphBorrowed || ![self usesHomeMenuMorphSurface])return nil;
+    [self resetPressAndStretchForMorph];
     [self layoutHomeMenuMorphSurface];
     if(!_homeMorphSurface)return nil;
     _homeMorphBorrowed=YES;
@@ -450,6 +460,7 @@ static NSInteger WXGLoadMenuDotCount(void) {
     if(!_homeMorphBorrowed || surface!=_homeMorphSurface)return;
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _homeMorphBorrowed=NO;
+    [self resetPressAndStretchForMorph];
     [self layoutHomeMenuMorphSurface];
     [self setNeedsLayout];[self layoutIfNeeded];
     [CATransaction commit];

@@ -142,17 +142,15 @@ typedef enum {
 } WXGMorphFieldSampling;
 
 static inline int WXGMenuMorphKernel(float localSigma,WXGMorphFieldSampling mode,float weights[WXGMenuMorphFieldKernel+1]) {
-    bool legacy=mode==WXGMorphFieldGeometry;
-    int radius=localSigma<(legacy?.30f:.000001f)?0:
-        (int)fminf(ceilf(localSigma*(legacy?3.2f:4.f)),WXGMenuMorphFieldKernel);
+    (void)mode;
+    int radius=localSigma<.000001f?0:
+        (int)fminf(ceilf(localSigma*4.f),WXGMenuMorphFieldKernel);
     float sum=weights[0]=1.f;
     for(int i=1;i<=radius;i++){
         weights[i]=expf(-i*i/(2.f*localSigma*localSigma));sum+=2.f*weights[i];
     }
-    if(!legacy){
-        while(radius>0 && weights[radius]/sum<.002f)--radius;
-        sum=1.f;for(int i=1;i<=radius;i++)sum+=2.f*weights[i];
-    }
+    while(radius>0 && weights[radius]/sum<.002f)--radius;
+    sum=1.f;for(int i=1;i<=radius;i++)sum+=2.f*weights[i];
     for(int i=0;i<=radius;i++)weights[i]/=sum;
     return radius;
 }
@@ -170,8 +168,7 @@ static inline void WXGMenuMorphFieldBuildMode(WXGMenuMorphField *field, WXGMenuM
         float radiusY,WXGMenuMorphFieldBox source,float smoothing,float gridStep,WXGMorphFieldSampling mode) {
     float sigma = fmaxf(0.0f, smoothing);
     float ratio=fmaxf(menu.radius,radiusY)/fmaxf(.01f,fminf(menu.radius,radiusY));
-    float grow=mode==WXGMorphFieldGeometry?sigma*.25f:
-        (fminf(source.width,source.height)>=.01f?sigma*.25f*ratio:0.f);
+    float grow=fminf(source.width,source.height)>=.01f?sigma*.25f*ratio:0.f;
     float left = fminf(menu.x, source.x) - grow;
     float top = fminf(menu.y, source.y) - grow;
     float right = fmaxf(menu.x + menu.width, source.x + source.width) + grow;

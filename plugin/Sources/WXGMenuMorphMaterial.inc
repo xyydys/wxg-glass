@@ -301,11 +301,24 @@ static BOOL WXGInstallMorphMesh(CALayer *layer,id mesh) {
 }
 
 - (void)applyField:(const WXGMenuMorphField *)field bounds:(CGRect)b outline:(UIBezierPath *)outline {
+    CGFloat side=MIN(b.size.width,b.size.height);
+    [self applyField:field bounds:b outline:outline optics:(WXGMenuMorphSurfaceOptics){0.,0.,0.,side,side}];
+}
+
+- (void)applyField:(const WXGMenuMorphField *)field bounds:(CGRect)b outline:(UIBezierPath *)outline optics:(WXGMenuMorphSurfaceOptics)optics {
     self.frame=b;
     WXGConfig *c=WXGConfig.shared;
     BOOL dark=self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark;
     CGFloat side=MIN(b.size.width,b.size.height);
-    CGFloat blur=[c glassBlurForScope:WXGGlassScopeOther side:side]*c.syncBlurScale;
+    CGFloat t=WXGClamp(optics.contentProgress,0.,1.);
+    CGFloat smallSide=optics.triggerSide>1.?optics.triggerSide:side;
+    CGFloat largeSide=optics.menuSide>1.?optics.menuSide:side;
+    CGFloat smallBlur=[c glassBlurForScope:WXGGlassScopeOther side:smallSide]*c.syncBlurScale;
+    CGFloat largeBlur=[c glassBlurForScope:WXGGlassScopeOther side:largeSide]*c.syncBlurScale;
+    CGFloat morphBlur=MIN(smallBlur,1.2*c.syncBlurScale);
+    CGFloat clearing=MIN(t*6.,1.);
+    CGFloat baseBlur=smallBlur+(morphBlur-smallBlur)*clearing;
+    CGFloat blur=MAX(0.,baseBlur+(largeBlur-baseBlur)*t*t*t);
     WXGBackdropTone tone=[c backdropToneForScope:WXGGlassScopeOther dark:dark];
     WXGGlassCurve curve=[c glassCurveForScope:WXGGlassScopeOther];
     BOOL split=!_fallback && curve.dispersion>.001 && c.syncMeshRefraction && c.syncDispersion && !c.performanceMode && WXGMeshTransformClass();
@@ -317,7 +330,14 @@ static BOOL WXGInstallMorphMesh(CALayer *layer,id mesh) {
 #ifdef WXG_MESH_OFF
     enabled=NO;
 #endif
-    float band=MIN(curve.height*side,curve.maxHeight);
+    float restBand=MIN(curve.height*side,curve.maxHeight);
+    float restAmount=curve.height>0?restBand*curve.amount/curve.height:0.f;
+    float refractionScale=(float)WXGClamp(curve.amount/.8,0.,2.);
+    float morphBand=refractionScale>.001f?(float)MAX(0.,optics.lensHeight):0.f;
+    float morphAmount=(float)fabs(optics.lensAmount)*refractionScale;
+    float band=fmaxf(restBand,morphBand);
+    float amount=fmaxf(restAmount,morphAmount);
+    float squeeze=(band>restBand+.01f && band>.01f)?curve.squeeze*(restBand/band):curve.squeeze;
     WXGMenuMorphFieldBox box={(float)b.origin.x,(float)b.origin.y,(float)b.size.width,(float)b.size.height,0};
     const WXGMenuMorphField *opticalField=field;
     // Only moving necks need a Gaussian texture. The mask remains anchored
@@ -334,8 +354,8 @@ static BOOL WXGInstallMorphMesh(CALayer *layer,id mesh) {
         }
     }
     _opticsGaussian=opticalField->gaussian;
-    _meshAccepted=enabled && WXGMorphOpticalBuild(&_optics,opticalField,box,band,band*curve.amount/curve.height,
-        curve.squeeze,split?curve.dispersion:0);
+    _meshAccepted=enabled && WXGMorphOpticalBuild(&_optics,opticalField,box,band,amount,
+        squeeze,split?curve.dispersion:0);
     split=split && _meshAccepted;
     if(_meshAccepted){
         [self updateCaptureBoundsForBlur:blur split:split];
@@ -374,7 +394,9 @@ static BOOL WXGInstallMorphMesh(CALayer *layer,id mesh) {
     if(_fallback){_fallback.frame=self.bounds;_fallback.hidden=blur<.2;}
     _meshMS=(CACurrentMediaTime()-begin)*1000;
     UIColor *tint=WXGColor([c materialHexForScope:WXGGlassScopeOther dark:dark]);
-    CGFloat alpha=CGColorGetAlpha(tint.CGColor)*[c materialOpacityForScope:WXGGlassScopeOther dark:dark];
+    CGFloat baseAlpha=CGColorGetAlpha(tint.CGColor)*[c materialOpacityForScope:WXGGlassScopeOther dark:dark];
+    CGFloat domeClear=WXGClamp((band-restBand)/32.,0.,1.);
+    CGFloat alpha=baseAlpha*(1.-.28*domeClear);
     _veil.frame=self.bounds;_veil.backgroundColor=[tint colorWithAlphaComponent:WXGClamp(alpha,0,1)].CGColor;
     [self placeRimForField:field bounds:b outline:outline config:c dark:dark];
 }

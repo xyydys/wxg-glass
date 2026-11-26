@@ -84,12 +84,18 @@ static inline bool WXGMenuScrubAdvance(WXGMenuScrub *s,double dt,bool reduceMoti
     return settled;
 }
 
-static inline WXGMenuBox WXGMenuScrubBounds(WXGMenuBox bounds,const WXGMenuScrub *s,bool fromRight,bool above) {
+static inline WXGMenuBox WXGMenuScrubBoundsWeighted(WXGMenuBox bounds,const WXGMenuScrub *s,bool fromRight,bool above,double amount) {
+    double a=WXGMenuClamp(amount,0.,1.);
+    if(a<=.0001)return bounds;
     double x=tanh(s->dragX.value/260.),y=tanh(s->dragY.value/260.);
     double awayX=fromRight?-x:x,awayY=above?-y:y;
-    double width=fmax(1.,bounds.w+16.*awayX-21.*awayY);
-    double height=fmax(1.,bounds.h+16.*awayY-21.*awayX);
-    return WXGMenuMorphCenteredBox(WXGMenuMorphCenterX(bounds)+21.*x,WXGMenuMorphCenterY(bounds)+21.*y,width,height);
+    double width=fmax(1.,bounds.w+(16.*awayX-21.*awayY)*a);
+    double height=fmax(1.,bounds.h+(16.*awayY-21.*awayX)*a);
+    return WXGMenuMorphCenteredBox(WXGMenuMorphCenterX(bounds)+21.*x*a,WXGMenuMorphCenterY(bounds)+21.*y*a,width,height);
+}
+
+static inline WXGMenuBox WXGMenuScrubBounds(WXGMenuBox bounds,const WXGMenuScrub *s,bool fromRight,bool above) {
+    return WXGMenuScrubBoundsWeighted(bounds,s,fromRight,above,1.);
 }
 
 #endif
