@@ -232,6 +232,7 @@ void WXGInstallNativeIconGuard(void);
 - (void)titleColor:(UIButton *)button color:(UIColor *)color;   // FIX115 Q: a button's title colour, restorably
 // FIX115 L: cleared, and its layer kept without a fill against WeChat painting it again (restorably).
 - (void)guardFill:(UIView *)view;
+- (void)clearEffect:(UIVisualEffectView *)view;
 // FIX115 M: a layer of no view hidden (restorably).
 - (void)hideDecorationLayer:(CALayer *)layer;
 - (void)clearImagePaint:(UIImageView *)view;
@@ -251,6 +252,7 @@ void WXGInstallNativeIconGuard(void);
 - (NSArray<NSDictionary *> *)evidence;
 @end
 
+@class WXGMenuMorphSurface;
 @interface WXGSurface : UIControl
 @property(nonatomic,strong,readonly) WXGGlassView *glass;
 @property(nonatomic,strong,readonly) UIImageView *iconView;
@@ -311,6 +313,9 @@ void WXGInstallNativeIconGuard(void);
 @property(nonatomic,strong) UIImage *trailingSymbol;
 @property(nonatomic) CGFloat trailingSymbolHeight,trailingGap;
 @property(nonatomic) CGFloat trailingBias;   // FIX114 O: the text and symbol moved right (less room after the symbol)
+@property(nonatomic) BOOL homePlusAnchor;
+- (WXGMenuMorphSurface *)borrowHomeMenuMorphSurface;
+- (void)returnHomeMenuMorphSurface:(WXGMenuMorphSurface *)surface;
 // Ink-drop home "+" trigger button: 270 deg solid arc + dynamic N bottom dots + two-stage +/x swap.
 @property(nonatomic) BOOL homePlusTrigger;
 - (void)setHomePlusProgress:(double)progress dotsHidden:(BOOL)hidden;
@@ -356,6 +361,8 @@ void WXGInstallNativeIconGuard(void);
 - (NSDictionary *)evidence;
 - (NSArray<UIView *> *)navButtonAnchors;   // FIX114 T: title-bar buttons with our glass on screen (the trace)
 @end
+// The floating clone owns search paint in this table header until unpinned.
+FOUNDATION_EXPORT void WXGSetSearchHeaderFloating(UIView *header,BOOL floating);
 // FIX114 V: a WeChat title-bar button's glass as the local glass sizes it (in
 // the button; CGRectNull: nothing to put one behind), and whether it paints
 // its own (a green 完成: left as WeChat has it).
@@ -373,10 +380,6 @@ FOUNDATION_EXPORT CGRect WXGLocalTitleCapsuleRect(UINavigationBar *bar,UIView *t
 @interface WXGMeHeader : NSObject
 + (instancetype)shared;
 - (NSDictionary *)evidence;
-// FIX118 B: the banner's video (picked from the photo library, kept in the app's Library)
-- (void)pickBannerVideoFrom:(UIViewController *)controller;
-- (void)clearBannerVideo;
-- (NSString *)bannerVideoName;
 @end
 FOUNDATION_EXPORT NSString *WXGSelfAvatarState(void);   // FIX118 B: where the 我 page's photo came from
 FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我 header's own views (the host's top-paint cleaning skips them)
@@ -393,6 +396,7 @@ FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我
 // FIX113 O: every host frame: the floating search (the segment bar, WeChat's
 // home / 通讯录 search bars) and home title group bar in the navigation overlay.
 - (void)hostTick:(CFTimeInterval)time page:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome homePanel:(CGFloat)homePanel rowOffset:(CGFloat)rowOffset;
+- (void)coverHomeSearchFor:(UIViewController *)controller;
 - (void)suspendFloating;   // a page this host leaves native: nothing left floating, WeChat's bars back
 - (void)restore;           // the segment bar (WeChat's search bar back)
 - (void)restoreAll;        // the segment bar and the floating capsules (the plugin off)
@@ -409,11 +413,14 @@ FOUNDATION_EXPORT void WXGChatGroupSave(NSArray<NSDictionary *> *groups);
 FOUNDATION_EXPORT NSArray<NSDictionary *> *WXGChatSessionChoices(void);
 FOUNDATION_EXPORT NSString *WXGChatNameSummary(void);   // FIX113 Z: where the names came from (counts only), after WXGChatSessionChoices
 
-/* FIX82: liquid chat bubbles (WXGBubbles.m, WXGBubbleRules.h): WeChat's
-   text bubbles drawn as glass, the native bubble image hidden. */
+/* Glass behind supported message content. Detaching or reusing the native
+   host restores the layers owned by its previous message. */
 @interface WXGBubbles : NSObject
 + (instancetype)shared;
-- (void)textCellLaidOut:(UIView *)cell;
+- (void)messageCellLaidOut:(UIView *)cell;
+- (void)messageCellWillReuse:(UIView *)cell;
+- (void)nativeQuoteLaidOut:(UIView *)preview;
+- (void)voiceTranscriptTextDidChange:(UIView *)textView;
 - (void)tick:(CFTimeInterval)time;
 - (void)applyConfiguration;
 - (void)restore;
@@ -475,6 +482,9 @@ FOUNDATION_EXPORT NSString *WXGChatNameSummary(void);   // FIX113 Z: where the n
 // plugin has none there); the plus menu's icons are put in line with it.
 - (CGRect)homePlusRectInWindow:(UIWindow *)window;
 - (WXGSurface *)homePlusSurfaceInWindow:(UIWindow *)window;
+// The animated home menu temporarily covers floating plugin tools in its window.
+// Pass CGRectNull to clear the requesting owner's occlusion.
+- (void)updateHomeMenuFloatingToolsForOwner:(id)owner inWindow:(UIWindow *)window occupiedRect:(CGRect)rect;
 - (CGFloat)homePullAlphaFloor;
 // FIX118 A: the user's own photo (HD, from the contact's address; kept on disk); nil while it downloads.
 - (UIImage *)selfAvatarPhoto;

@@ -1,4 +1,6 @@
 #import "WXGNativeIcons.h"
+#import "WXGNativeIconAnchors.h"
+#import "WXGTabIconPreview.h"
 extern BOOL WXGImageIsMonochrome(UIImage *image);
 #import <QuartzCore/QuartzCore.h>
 #include <math.h>
@@ -109,66 +111,120 @@ static UIColor *WXGColorOfHex(NSString *text) {
     if(parts.count!=4)return nil;
     return [UIColor colorWithRed:parts[0].doubleValue green:parts[1].doubleValue blue:parts[2].doubleValue alpha:parts[3].doubleValue];
 }
-// FIX36: the last complete read of WeChat's tab icons, per light/dark style,
-// is cached on disk and used from the very first frame of the next launch
-// (WeChat's real icons, or a theme plugin's, instead of the built-in symbols).
+// Keep one complete, immutable publication per appearance, including slots whose
+// other state has never been seen. The file is replaced in one atomic rename.
 static NSString *WXGIconCacheDirectory(NSInteger style) {
     NSString *caches=NSSearchPathForDirectoriesInDomains(NSCachesDirectory,NSUserDomainMask,YES).firstObject;
     return [caches stringByAppendingPathComponent:[NSString stringWithFormat:@"WXGLiquidGlass/TabIcons/%ld",(long)style]];
 }
+static NSMutableDictionary<NSNumber *,NSArray<WXGNativeIconPair *> *> *WXGIconSnapshots(void) {
+    static NSMutableDictionary *snapshots;
+    static dispatch_once_t once;
+    dispatch_once(&once,^{ snapshots=[NSMutableDictionary dictionary]; });
+    return snapshots;
+}
+static NSString *WXGCachedIconSource(NSString *source) {
+    if (![source isKindOfClass:NSString.class] || !source.length) return @"缓存 · 微信图标";
+    return [source hasPrefix:@"缓存 · "] ? source : [@"缓存 · " stringByAppendingString:source];
+}
+static UIImage *WXGDecodeCachedIcon(NSData *png,NSNumber *savedScale) {
+    if (![png isKindOfClass:NSData.class] || !png.length) return nil;
+    CGFloat scale=[savedScale respondsToSelector:@selector(doubleValue)] ? savedScale.doubleValue : 0;
+    if (!isfinite(scale) || scale<=0) scale=UIScreen.mainScreen.scale;
+    return [UIImage imageWithData:png scale:scale];
+}
 static NSArray<WXGNativeIconPair *> *WXGLoadCachedPairs(NSInteger style) {
+    NSMutableDictionary *snapshots=WXGIconSnapshots();
+    @synchronized(snapshots) {
+        NSArray *cached=snapshots[@(style)];
+        if (cached) return [[NSArray alloc] initWithArray:cached copyItems:YES];
+    }
     NSString *dir=WXGIconCacheDirectory(style);
-    NSArray<NSDictionary *> *meta=[NSArray arrayWithContentsOfFile:[dir stringByAppendingPathComponent:@"meta.plist"]];
-    if(meta.count!=4)return nil;
-    NSMutableArray *pairs=[NSMutableArray array];CGFloat scale=UIScreen.mainScreen.scale;
-    for(NSUInteger i=0;i<4;i++) {
-        NSDictionary *m=meta[i];WXGNativeIconPair *pair=[WXGNativeIconPair new];
-        NSData *normal=[NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"normal_%lu.png",(unsigned long)i]]];
-        NSData *selected=[NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"selected_%lu.png",(unsigned long)i]]];
-        UIImage *n=normal?[UIImage imageWithData:normal scale:[m[@"normalScale"] doubleValue]?:scale]:nil;
-        UIImage *sel=selected?[UIImage imageWithData:selected scale:[m[@"selectedScale"] doubleValue]?:scale]:nil;
-        if(!n)return nil;
-        pair.normalTemplate=[m[@"normalTemplate"] boolValue];pair.selectedTemplate=[m[@"selectedTemplate"] boolValue];
-        pair.normalImage=pair.normalTemplate?[n imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]:n;
-        pair.selectedImage=sel?(pair.selectedTemplate?[sel imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]:sel):nil;
-        pair.normalTint=WXGColorOfHex(m[@"normalTint"]);pair.selectedTint=WXGColorOfHex(m[@"selectedTint"]);
-        pair.normalTextColor=WXGColorOfHex(m[@"normalText"]);pair.selectedTextColor=WXGColorOfHex(m[@"selectedText"]);
-        pair.title=m[@"title"];pair.normalRank=1;pair.selectedRank=sel?1:0;
-        pair.normalDisplaySize=CGSizeMake([m[@"normalShownW"] doubleValue],[m[@"normalShownH"] doubleValue]);   // FIX115 D (0 when not recorded)
-        pair.selectedDisplaySize=CGSizeMake([m[@"selectedShownW"] doubleValue],[m[@"selectedShownH"] doubleValue]);
-        pair.normalSource=@"上次读取的微信图标（缓存）";pair.selectedSource=sel?@"上次读取的微信图标（缓存）":nil;
-        [pairs addObject:pair];
+    NSString *snapshotPath=[dir stringByAppendingPathComponent:@"artwork-v2.plist"];
+    NSData *data=[NSData dataWithContentsOfFile:snapshotPath];
+    BOOL legacy=data==nil;
+    NSArray *records;
+    if (legacy) {
+        records=[NSArray arrayWithContentsOfFile:[dir stringByAppendingPathComponent:@"meta.plist"]];
+    } else {
+        NSDictionary *snapshot=[NSPropertyListSerialization propertyListWithData:data options:NSPropertyListImmutable format:NULL error:nil];
+        if (![snapshot isKindOfClass:NSDictionary.class] || ![snapshot[@"version"] isEqual:@2] ||
+            ![snapshot[@"appearance"] isEqual:@(style)]) return nil;
+        records=snapshot[@"slots"];
+    }
+    if (![records isKindOfClass:NSArray.class] || records.count!=4) return nil;
+    NSMutableArray *pairs=[NSMutableArray arrayWithCapacity:4];
+    for (NSUInteger i=0;i<records.count;i++) {
+        NSDictionary *m=records[i];
+        if (![m isKindOfClass:NSDictionary.class]) return nil;
+        NSData *normal=m[@"normalPNG"], *selected=m[@"selectedPNG"];
+        if (legacy) {
+            normal=[NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"normal_%lu.png",(unsigned long)i]]];
+            selected=[NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:[NSString stringWithFormat:@"selected_%lu.png",(unsigned long)i]]];
+        }
+        UIImage *n=WXGDecodeCachedIcon(normal,m[@"normalScale"]), *s=WXGDecodeCachedIcon(selected,m[@"selectedScale"]);
+        // Old caches also saved a recoloured normal as selected. The tint was
+        // separate from the PNG. Import only a clearly distinct selected asset.
+        if (legacy && (!n || !WXGArtDiffers(n,s))) s=nil;
+        WXGNativeIconPair *p=[WXGNativeIconPair new];
+        p.normalTemplate=[m[@"normalTemplate"] boolValue];p.selectedTemplate=[m[@"selectedTemplate"] boolValue];
+        p.normalImage=p.normalTemplate?[n imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]:n;
+        p.selectedImage=p.selectedTemplate?[s imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]:s;
+        p.normalRank=n?1:0;p.selectedRank=s?1:0;
+        p.normalSource=n?WXGCachedIconSource(m[@"normalSource"]):nil;
+        p.selectedSource=s?WXGCachedIconSource(m[@"selectedSource"]):nil;
+        p.normalTint=WXGColorOfHex(m[@"normalTint"]);p.selectedTint=WXGColorOfHex(m[@"selectedTint"]);
+        p.normalTextColor=WXGColorOfHex(m[@"normalText"]);p.selectedTextColor=WXGColorOfHex(m[@"selectedText"]);
+        p.normalDisplaySize=CGSizeMake([m[@"normalShownW"] doubleValue],[m[@"normalShownH"] doubleValue]);
+        p.selectedDisplaySize=CGSizeMake([m[@"selectedShownW"] doubleValue],[m[@"selectedShownH"] doubleValue]);
+        p.title=m[@"title"];[pairs addObject:p];
     }
     return pairs;
 }
 static void WXGSaveCachedPairs(NSArray<WXGNativeIconPair *> *pairs,NSInteger style) {
-    if(pairs.count!=4)return;
-    for(WXGNativeIconPair *pair in pairs)if(!pair.normalImage || pair.normalRank<20)return;   // complete real reads only
-    NSMutableArray *meta=[NSMutableArray array];NSMutableDictionary<NSString *,NSData *> *files=[NSMutableDictionary dictionary];
-    for(NSUInteger i=0;i<4;i++) {
-        WXGNativeIconPair *pair=pairs[i];
-        NSData *normal=UIImagePNGRepresentation(pair.normalImage),*selected=pair.selectedImage?UIImagePNGRepresentation(pair.selectedImage):nil;
-        if(!normal)return;
-        files[[NSString stringWithFormat:@"normal_%lu.png",(unsigned long)i]]=normal;
-        if(selected)files[[NSString stringWithFormat:@"selected_%lu.png",(unsigned long)i]]=selected;
-        NSMutableDictionary *m=[NSMutableDictionary dictionary];
-        m[@"title"]=pair.title?:@"";m[@"normalTemplate"]=@(pair.normalTemplate);m[@"selectedTemplate"]=@(pair.selectedTemplate);
-        m[@"normalScale"]=@(pair.normalImage.scale);m[@"selectedScale"]=@(pair.selectedImage.scale?:pair.normalImage.scale);
-        m[@"normalShownW"]=@(pair.normalDisplaySize.width);m[@"normalShownH"]=@(pair.normalDisplaySize.height);   // FIX115 D
-        m[@"selectedShownW"]=@(pair.selectedDisplaySize.width);m[@"selectedShownH"]=@(pair.selectedDisplaySize.height);
-        NSString *v;
-        if((v=WXGHexOf(pair.normalTint)))m[@"normalTint"]=v;
-        if((v=WXGHexOf(pair.selectedTint)))m[@"selectedTint"]=v;
-        if((v=WXGHexOf(pair.normalTextColor)))m[@"normalText"]=v;
-        if((v=WXGHexOf(pair.selectedTextColor)))m[@"selectedText"]=v;
-        [meta addObject:m];
+    if (pairs.count!=4) return;
+    NSArray<WXGNativeIconPair *> *snapshot=[[NSArray alloc] initWithArray:pairs copyItems:YES];
+    for (WXGNativeIconPair *p in snapshot) {
+        if (p.normalRank<=0) p.normalImage=nil;
+        if (p.selectedRank<=0) p.selectedImage=nil;
+        p.normalRank=p.normalImage?1:0;p.selectedRank=p.selectedImage?1:0;
+        p.normalSource=p.normalImage?WXGCachedIconSource(p.normalSource):nil;
+        p.selectedSource=p.selectedImage?WXGCachedIconSource(p.selectedSource):nil;
     }
-    NSString *dir=WXGIconCacheDirectory(style);
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{
+    NSMutableDictionary *snapshots=WXGIconSnapshots();
+    @synchronized(snapshots) { snapshots[@(style)]=snapshot; }
+    static dispatch_queue_t writer;
+    static dispatch_once_t once;
+    dispatch_once(&once,^{ writer=dispatch_queue_create("wxg.tab-artwork-cache",DISPATCH_QUEUE_SERIAL); });
+    dispatch_async(writer,^{ @autoreleasepool {
+        @synchronized(snapshots) { if (snapshots[@(style)]!=snapshot) return; }
+        NSMutableArray *records=[NSMutableArray arrayWithCapacity:4];
+        for (WXGNativeIconPair *p in snapshot) {
+            NSMutableDictionary *m=[@{@"title":p.title?:@"",@"normalTemplate":@(p.normalTemplate),@"selectedTemplate":@(p.selectedTemplate),
+                @"normalScale":@(p.normalImage.scale),@"selectedScale":@(p.selectedImage.scale),
+                @"normalShownW":@(p.normalDisplaySize.width),@"normalShownH":@(p.normalDisplaySize.height),
+                @"selectedShownW":@(p.selectedDisplaySize.width),@"selectedShownH":@(p.selectedDisplaySize.height)} mutableCopy];
+            if (p.normalImage) {
+                NSData *png=UIImagePNGRepresentation(p.normalImage);
+                if (!png.length) return;
+                m[@"normalPNG"]=png;m[@"normalSource"]=p.normalSource;
+            }
+            if (p.selectedImage) {
+                NSData *png=UIImagePNGRepresentation(p.selectedImage);
+                if (!png.length) return;
+                m[@"selectedPNG"]=png;m[@"selectedSource"]=p.selectedSource;
+            }
+            m[@"normalTint"]=WXGHexOf(p.normalTint);m[@"selectedTint"]=WXGHexOf(p.selectedTint);
+            m[@"normalText"]=WXGHexOf(p.normalTextColor);m[@"selectedText"]=WXGHexOf(p.selectedTextColor);
+            [records addObject:m];
+        }
+        NSDictionary *root=@{@"version":@2,@"appearance":@(style),@"slots":records};
+        NSData *encoded=[NSPropertyListSerialization dataWithPropertyList:root format:NSPropertyListBinaryFormat_v1_0 options:0 error:nil];
+        if (!encoded) return;
+        NSString *dir=WXGIconCacheDirectory(style);
         [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil];
-        [files enumerateKeysAndObjectsUsingBlock:^(NSString *name,NSData *data,__unused BOOL *stop){[data writeToFile:[dir stringByAppendingPathComponent:name] atomically:YES];}];
-        [meta writeToFile:[dir stringByAppendingPathComponent:@"meta.plist"] atomically:YES];
-    });
+        [encoded writeToFile:[dir stringByAppendingPathComponent:@"artwork-v2.plist"] options:NSDataWritingAtomic error:nil];
+    }});
 }
 static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
     NSMutableArray *pairs=[NSMutableArray array];
@@ -176,11 +232,87 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
     return pairs;
 }
 
+// All UI resolution happens on the main thread once per normal asset. The
+// atlas queue receives the resolved preview exactly as it does a genuine icon.
+static UIImage *WXGSelectedPreview(UIImage *normal,BOOL mono) {
+    if (!WXGUsableNativeImage(normal)) return nil;
+    static NSMapTable<UIImage *,UIImage *> *cache;
+    if (!cache) cache=[NSMapTable weakToStrongObjectsMapTable];
+    UIImage *known=[cache objectForKey:normal];
+    if (known) return known;
+    CGSize size=normal.size;
+    CGFloat scale=MIN(MAX(1.,UIScreen.mainScreen.scale),160./MAX(size.width,size.height));
+    int w=MAX(2,MIN(160,lround(size.width*scale))),h=MAX(2,MIN(160,lround(size.height*scale)));
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];
+    format.scale=1;format.opaque=NO;format.preferredRange=UIGraphicsImageRendererFormatRangeStandard;
+    UIImage *raster=[[[UIGraphicsImageRenderer alloc] initWithSize:CGSizeMake(w,h) format:format]
+        imageWithActions:^(__unused UIGraphicsImageRendererContext *context){[normal drawInRect:CGRectMake(0,0,w,h)];}];
+    if (!raster.CGImage) return nil;
+    CGColorSpaceRef space=CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CGContextRef ctx=CGBitmapContextCreate(NULL,w,h,8,4*w,space,kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big);
+    CGColorSpaceRelease(space);
+    if (!ctx) return nil;
+    CGContextDrawImage(ctx,CGRectMake(0,0,w,h),raster.CGImage);
+    uint8_t *pixels=CGBitmapContextGetData(ctx);
+    NSData *input=[NSData dataWithBytes:pixels length:(NSUInteger)4*w*h];
+    CGImageRef rendered=WXGFillTabIcon(input.bytes,pixels,w,h,mono)?CGBitmapContextCreateImage(ctx):NULL;
+    CGContextRelease(ctx);
+    if (!rendered) return nil;
+    UIImage *preview=[UIImage imageWithCGImage:rendered scale:scale orientation:UIImageOrientationUp];
+    CGImageRelease(rendered);
+    [cache setObject:preview forKey:normal];
+    return preview;
+}
+
+static void WXGSetPreviewIfMissing(WXGNativeIconPair *pair,UIColor *accent) {
+    if (pair.selectedImage || !pair.normalImage) return;
+    BOOL mono=pair.normalTemplate || WXGImageIsMonochrome(pair.normalImage);
+    pair.selectedImage=WXGSelectedPreview(pair.normalImage,mono);
+    pair.selectedRank=-1; pair.selectedTemplate=mono; pair.selectedTint=mono?accent:nil;
+    pair.selectedDisplaySize=pair.normalDisplaySize;
+    pair.selectedSource=pair.selectedImage?@"临时填充（取自该项普通图）":@"临时系统实心图";
+}
+
+static BOOL WXGSkipIconView(UIView *view) {
+    NSString *name = NSStringFromClass(view.class).lowercaseString;
+    return view.hidden || view.alpha < .01 || [name containsString:@"badge"] ||
+           [name containsString:@"reddot"] || [name containsString:@"unread"];
+}
+
+static NSArray<UIView *> *WXGWeChatItemAnchors(UITabBar *bar) {
+    // UIKit can supply two copies of its buttons for the lens. WeChat's four
+    // item views own the real artwork. Inspect only those roots once validated.
+    Class itemClass = NSClassFromString(@"MMTabBarItemView");
+    if (!itemClass || bar.subviews.count > 256) return nil;
+    NSMutableArray<UIView *> *queue = [bar.subviews mutableCopy];
+    NSMutableArray<UIView *> *items = [NSMutableArray arrayWithCapacity:4];
+    double centers[4];
+    for (NSUInteger cursor = 0; cursor < queue.count; ++cursor) {
+        UIView *view = queue[cursor];
+        if (WXGSkipIconView(view)) continue;
+        if ([view isKindOfClass:itemClass]) {
+            CGRect rect = [view convertRect:view.bounds toView:bar];
+            if (CGRectIsEmpty(rect) || !CGRectIntersectsRect(bar.bounds, rect)) continue;
+            if (items.count >= 4) return nil;
+            centers[items.count] = CGRectGetMidX(rect) - CGRectGetMinX(bar.bounds);
+            [items addObject:view];
+        } else {
+            if (view.subviews.count > 256 - queue.count) return nil;
+            [queue addObjectsFromArray:view.subviews];
+        }
+    }
+    unsigned order[4];
+    if (!WXGOrderIconAnchors(centers, items.count, CGRectGetWidth(bar.bounds), order)) return nil;
+    return @[items[order[0]], items[order[1]], items[order[2]], items[order[3]]];
+}
+
 @interface WXGNativeIcons ()
 @property(nonatomic,strong) NSArray<WXGNativeIconPair *> *items;
 @property(nonatomic,copy) NSString *diagnostics, *identity, *signature;
 @property(nonatomic,weak) UITabBar *lastBar;
-@property(nonatomic) NSInteger lastSelection, lastStyle;
+@property(nonatomic) NSInteger lastSelection, lastStyle, itemsStyle, previousStateSlot;
+@property(nonatomic) CFTimeInterval selectionChangedAt;
+@property(nonatomic,copy) NSString *snapshotSignature;
 @property(nonatomic) CFTimeInterval nextSample;
 @property(nonatomic) NSUInteger unlaidScans;
 @property(nonatomic,copy) NSString *titleFont;   // FIX91: WeChat's own tab title font, for the diagnostics
@@ -190,8 +322,10 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
 @implementation WXGNativeIcons
 - (instancetype)init {
     if((self=[super init])) {
-        NSArray *cached=WXGLoadCachedPairs(UIScreen.mainScreen.traitCollection.userInterfaceStyle);
+        _itemsStyle=UIScreen.mainScreen.traitCollection.userInterfaceStyle;
+        NSArray *cached=WXGLoadCachedPairs(_itemsStyle);
         _items=cached?:WXGEmptyNativePairs();
+        for (WXGNativeIconPair *pair in cached) WXGSetPreviewIfMissing(pair,pair.selectedTextColor);
         _diagnostics=cached?@"使用上次读取的微信图标（缓存），等待原生底栏":@"等待微信原生底栏";
     }
     return self;
@@ -206,7 +340,8 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
             WXGIconColorSignature(p.normalTint),WXGIconColorSignature(p.selectedTint),
             WXGIconColorSignature(p.normalTextColor),WXGIconColorSignature(p.selectedTextColor),p.title,
             (long)p.traits.userInterfaceStyle,p.traits.displayScale,
-            p.normalDisplaySize.width,p.normalDisplaySize.height,p.selectedDisplaySize.width,p.selectedDisplaySize.height];   // FIX115 D
+            p.normalDisplaySize.width,p.normalDisplaySize.height,p.selectedDisplaySize.width,p.selectedDisplaySize.height];
+        [signature appendFormat:@"%.0f/%.0f;",floor(p.normalRank),floor(p.selectedRank)];   // FIX115 D
     }
     return signature;
 }
@@ -218,7 +353,16 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
     if(nativeIndex!=NSNotFound && bar.items.count) selected=(NSInteger)nativeIndex;
     CFTimeInterval now=CACurrentMediaTime();
     if(bar==_lastBar && selected==_lastSelection && style==_lastStyle && now<_nextSample) return NO;
-    NSInteger previousSelection=_lastSelection;   // FIX108 E
+    BOOL continuingStyle=(_itemsStyle==style);
+    if (!continuingStyle) {
+        _items=WXGLoadCachedPairs(style)?:WXGEmptyNativePairs();
+        for (WXGNativeIconPair *pair in _items) WXGSetPreviewIfMissing(pair,pair.selectedTextColor);
+        _itemsStyle=style; _snapshotSignature=nil; _identity=nil;
+    }
+    NSInteger previousSelection=_lastSelection;
+    if (continuingStyle && selected!=previousSelection && _identity) {
+        _selectionChangedAt=now; _previousStateSlot=previousSelection;
+    }
     _lastBar=bar; _lastSelection=selected; _lastStyle=style; _nextSample=now+.8;
     @try {
         NSArray<UITabBarItem *> *nativeItems=bar.items;
@@ -231,7 +375,7 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
             // FIX38: not ready yet (cold start) is not "no icons": keep what we
             // have (the cached set from the last launch, or an earlier read).
             _diagnostics=[NSString stringWithFormat:@"原生底栏 %lu 项，未匹配四项；保留现有图标",(unsigned long)nativeItems.count];
-            return NO;
+            return !continuingStyle;
         }
         UITraitCollection *traits=bar.traitCollection;
         NSMutableString *identity=[NSMutableString stringWithFormat:@"%p/%ld/%.1f",(__bridge void *)bar,(long)style,traits.displayScale];
@@ -249,9 +393,8 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
             pair.normalTextColor=WXGResolvedIconColor(appearance.normal.titleTextAttributes[NSForegroundColorAttributeName],traits)?:cached.normalTextColor;
             pair.selectedTextColor=WXGResolvedIconColor(appearance.selected.titleTextAttributes[NSForegroundColorAttributeName],traits)?:cached.selectedTextColor;
             WXGSetNativeImage(pair,NO,item.image,normalTint,YES,20,@"UITabBarItem.image",CGSizeZero);
-            // UIKit uses the normal image when no separate selectedImage exists.
-            WXGSetNativeImage(pair,YES,item.selectedImage?:item.image,selectedTint,YES,20,
-                item.selectedImage?@"UITabBarItem.selectedImage":@"UITabBarItem.image（选中共用）",CGSizeZero);
+            if (item.selectedImage!=item.image)
+                WXGSetNativeImage(pair,YES,item.selectedImage,selectedTint,YES,20,@"UITabBarItem.selectedImage",CGSizeZero);
             [pairs addObject:pair];
         }
         // Observe custom/native controls inside the existing tab bar. Read only
@@ -268,11 +411,16 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
         [buttons sortUsingComparator:^NSComparisonResult(UIView *a,UIView *b){return CGRectGetMidX(a.frame)<CGRectGetMidX(b.frame)?NSOrderedAscending:NSOrderedDescending;}];
         BOOL laidOut=buttons.count==4;
         for(NSUInteger i=1;laidOut && i<4;i++)if(CGRectGetMidX(buttons[i].frame)-CGRectGetMidX(buttons[i-1].frame)<bar.bounds.size.width/8)laidOut=NO;
-        if(!laidOut){[views removeAllObjects];++_unlaidScans;}
+        NSArray<UIView *> *weChatItems=WXGWeChatItemAnchors(bar);
+        if (!laidOut) {
+            buttons = [weChatItems mutableCopy];
+            [views removeAllObjects];
+            if (weChatItems) {laidOut=YES;[views addObjectsFromArray:weChatItems];}
+            else ++_unlaidScans;
+        }
         while(cursor<views.count && cursor<256) {
             UIView *view=views[cursor++];
-            NSString *name=NSStringFromClass(view.class).lowercaseString;
-            if(view.hidden || view.alpha<.01 || [name containsString:@"badge"] || [name containsString:@"reddot"] || [name containsString:@"unread"]) continue;
+            if (WXGSkipIconView(view)) continue;
             if(views.count<256) {
                 for(UIView *child in view.subviews) { if(views.count>=256) break; [views addObject:child]; }
             }
@@ -281,7 +429,19 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
             CGFloat x=CGRectGetMidX(rect)-bar.bounds.origin.x;
             if(x<0 || x>=bar.bounds.size.width || !CGRectIntersectsRect(rect,bar.bounds)) continue;
             NSInteger slot=MIN(3,(NSInteger)(4*x/bar.bounds.size.width));
-            for(UIView *a=view;a && a!=bar;a=a.superview){NSUInteger b=[buttons indexOfObjectIdenticalTo:a];if(b!=NSNotFound){slot=(NSInteger)b;break;}}
+            BOOL owned=NO;
+            for(UIView *a=view;a && a!=bar;a=a.superview){
+                if(weChatItems){
+                    NSUInteger owner=[weChatItems indexOfObjectIdenticalTo:a];
+                    if(owner!=NSNotFound){slot=(NSInteger)owner;owned=YES;break;}
+                }
+                NSUInteger button=[buttons indexOfObjectIdenticalTo:a];
+                if(button!=NSNotFound){slot=(NSInteger)button;if(!weChatItems)break;}
+            }
+            // UIKit can keep simultaneous rest/lens copies. The visible
+            // state belongs to WeChat's item, while external buttons may
+            // still explicitly provide a pair of named control states.
+            if(weChatItems && !owned && ![view isKindOfClass:UIButton.class])continue;
             if(rtl) slot=3-slot;
             WXGNativeIconPair *pair=pairs[slot]; BOOL currentSelected=slot==selected;
             if([view isKindOfClass:UILabel.class]) {
@@ -304,7 +464,7 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
                     UIImage *normal=[button imageForState:UIControlStateNormal],*chosen=[button imageForState:UIControlStateSelected];
                     WXGSetNativeImage(pair,NO,normal,tint,NO,60,@"UIButton.normal",WXGShownSize(button.imageView,normal));
                     // UIButton returns the normal image when no selected resource exists.
-                    if(chosen && (chosen!=normal || button.selected))WXGSetNativeImage(pair,YES,chosen,tint,NO,60,@"UIButton.selected",WXGShownSize(button.imageView,chosen));
+                    if(chosen && chosen!=normal)WXGSetNativeImage(pair,YES,chosen,tint,NO,60,@"UIButton.selected",WXGShownSize(button.imageView,chosen));
                 }
             }
             if([view isKindOfClass:UIImageView.class]) {
@@ -315,12 +475,18 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
                 UIColor *tint=WXGResolvedIconColor(imageView.tintColor,traits);
                 UITabBarItem *item=nativeItems[slot];
                 BOOL template=imageView.image && (imageView.image==item.image || imageView.image==item.selectedImage);
-                if(imageView.highlightedImage) {
+                if(imageView.highlightedImage && imageView.highlightedImage!=imageView.image) {
                     WXGSetNativeImage(pair,NO,imageView.image,tint,template,score,@"UIImageView.image",WXGShownSize(imageView,imageView.image));
                     BOOL highlightedTemplate=imageView.highlightedImage==item.selectedImage || imageView.highlightedImage==item.image;
                     WXGSetNativeImage(pair,YES,imageView.highlightedImage,tint,highlightedTemplate,score,@"UIImageView.highlightedImage",WXGShownSize(imageView,imageView.highlightedImage));
                 } else {
-                    WXGSetNativeImage(pair,currentSelected,imageView.image,tint,template,score,@"微信当前图标视图",WXGShownSize(imageView,imageView.image));
+                    // The model can commit first; a live image from the old
+                    // state on this same tab is not a reading of its new state.
+                    WXGNativeIconPair *prior=_items[slot];
+                    UIImage *opposite=currentSelected?prior.normalImage:prior.selectedImage;
+                    BOOL awaitingPaint=now-_selectionChangedAt<.4 && (currentSelected || slot==_previousStateSlot) &&
+                        imageView.image && imageView.image==opposite;
+                    if (!awaitingPaint) WXGSetNativeImage(pair,currentSelected,imageView.image,tint,template,score,@"微信当前图标视图",WXGShownSize(imageView,imageView.image));
                 }
             }
         }
@@ -350,29 +516,22 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
             }
             priors=kept;++_artworkChanges;sameIdentity=NO;
         }
-        // Keep an observed custom state when this scan only offers a generic
-        // tab-item fallback. Fresh observations of the same class always win,
-        // even if the icon's bounds became slightly smaller since the last scan.
-        if(sameIdentity) for(NSUInteger i=0;i<4;i++) {
-            WXGNativeIconPair *pair=pairs[i],*cached=_items[i];
-            if(floor(cached.normalRank)>floor(pair.normalRank))
-                WXGSetNativeImage(pair,NO,cached.normalImage,cached.normalTint,cached.normalTemplate,cached.normalRank,cached.normalSource,cached.normalDisplaySize);
-            if(floor(cached.selectedRank)>floor(pair.selectedRank))
-                WXGSetNativeImage(pair,YES,cached.selectedImage,cached.selectedTint,cached.selectedTemplate,cached.selectedRank,cached.selectedSource,cached.selectedDisplaySize);
-        }
-        // FIX38: a read replaces only what it actually saw. At launch WeChat's
-        // items have no images yet; that read used to replace the cached set
-        // from the last launch, so the built-in symbols showed anyway.
-        for(NSUInteger i=0;i<4 && i<priors.count;i++) {
+        // A genuine themed view outranks generic item data on the next scan.
+        // Reconstruct synthetic states from the current normal on each read.
+        for(NSUInteger i=0;i<4;i++) {
             WXGNativeIconPair *pair=pairs[i],*prior=priors[i];
-            if(!pair.normalImage && prior.normalImage) {
-                pair.normalImage=prior.normalImage;pair.normalTint=prior.normalTint;pair.normalTemplate=prior.normalTemplate;
-                pair.normalRank=prior.normalRank;pair.normalSource=prior.normalSource;pair.normalDisplaySize=prior.normalDisplaySize;
+            UITabBarItem *item=nativeItems[i];
+            // A theme can replace just this one glyph while UIKit keeps the
+            // stock selected asset. Compare normal with normal before pairing.
+            BOOL changedNormal=pair.normalRank>=60 && prior.normalRank>0 && WXGArtDiffers(pair.normalImage,prior.normalImage);
+            UIImage *shownNormal=pair.normalRank>=60?pair.normalImage:prior.normalImage;
+            if (pair.selectedRank==20 && item.image && shownNormal && WXGArtDiffers(item.image,shownNormal)) {
+                pair.selectedImage=nil;pair.selectedSource=nil;pair.selectedRank=0;
             }
-            if(!pair.selectedImage && prior.selectedImage) {
-                pair.selectedImage=prior.selectedImage;pair.selectedTint=prior.selectedTint;pair.selectedTemplate=prior.selectedTemplate;
-                pair.selectedRank=prior.selectedRank;pair.selectedSource=prior.selectedSource;pair.selectedDisplaySize=prior.selectedDisplaySize;
-            }
+            if(prior.normalRank>0 && (!pair.normalImage || (sameIdentity && floor(prior.normalRank)>floor(pair.normalRank))))
+                WXGSetNativeImage(pair,NO,prior.normalImage,prior.normalTint,prior.normalTemplate,prior.normalRank,prior.normalSource,prior.normalDisplaySize);
+            if(!changedNormal && prior.selectedRank>0 && (!pair.selectedImage || (sameIdentity && floor(prior.selectedRank)>floor(pair.selectedRank))))
+                WXGSetNativeImage(pair,YES,prior.selectedImage,prior.selectedTint,prior.selectedTemplate,prior.selectedRank,prior.selectedSource,prior.selectedDisplaySize);
             if(!pair.title.length && prior.title.length)pair.title=prior.title;
             if(!pair.normalTextColor)pair.normalTextColor=prior.normalTextColor;
             if(!pair.selectedTextColor)pair.selectedTextColor=prior.selectedTextColor;
@@ -381,19 +540,12 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
         accent=accent?:selectedTint?:[UIColor colorWithRed:.03 green:.72 blue:.38 alpha:1];
         UIColor *rest=normalTint?:[UIColor.labelColor resolvedColorWithTraitCollection:traits];
         for(WXGNativeIconPair *pair in pairs) {
-            if(pair.selectedRank<=20 && pair.normalRank>=60) {
-                // FIX108 D: a theme's coloured artwork as it is (tinting it made
-                // a flat green silhouette); a one-colour outline in the accent.
-                BOOL mono=WXGImageIsMonochrome(pair.normalImage);
-                pair.selectedImage=pair.normalImage;pair.selectedTemplate=mono;pair.selectedTint=mono?accent:nil;pair.selectedDisplaySize=pair.normalDisplaySize;
-                pair.selectedSource=mono?@"现有轮廓和原生选中色（未访问状态）":@"现有图（主题彩色图，未访问状态）";
-            }
-            // FIX108 D: the selected tab's other state unknown (dropped above,
-            // or never seen): its selected artwork, the rest colour if one-colour.
-            if(!pair.normalImage && pair.selectedImage && pair.selectedRank>=60) {
+            WXGSetPreviewIfMissing(pair,accent);
+            if(!pair.normalImage && pair.selectedRank>0) {
                 BOOL mono=WXGImageIsMonochrome(pair.selectedImage);
-                pair.normalImage=pair.selectedImage;pair.normalTemplate=mono;pair.normalTint=mono?rest:nil;pair.normalRank=10;pair.normalDisplaySize=pair.selectedDisplaySize;
-                pair.normalSource=@"选中图（未选中状态未见过）";
+                pair.normalImage=pair.selectedImage;pair.normalTemplate=mono;pair.normalTint=mono?rest:nil;
+                pair.normalRank=-1;pair.normalDisplaySize=pair.selectedDisplaySize;
+                pair.normalSource=@"临时共用选中图（普通图未见）";
             }
             if(!pair.selectedTextColor)pair.selectedTextColor=accent;
             if(!pair.normalTextColor)pair.normalTextColor=rest;
@@ -403,15 +555,17 @@ static NSArray<WXGNativeIconPair *> *WXGEmptyNativePairs(void) {
         }
         NSString *sig=[self signatureForPairs:pairs]; BOOL changed=![_signature isEqual:sig];
         _signature=sig; _identity=identity; _items=pairs;
-        if(changed && laidOut)WXGSaveCachedPairs(pairs,style);
+        if(laidOut && ![_snapshotSignature isEqual:sig]) {
+            WXGSaveCachedPairs(pairs,style);_snapshotSignature=sig;
+        }
         NSUInteger normals=0,selecteds=0; NSMutableArray *sources=[NSMutableArray array];
         for(NSUInteger i=0;i<4;i++) {
-            WXGNativeIconPair *p=pairs[i]; normals+=p.normalImage!=nil; selecteds+=p.selectedImage!=nil;
-            [sources addObject:[NSString stringWithFormat:@"%lu：%@ / %@；图 %.0fx%.0f@%.0fx / %.0fx%.0f@%.0fx，显示 %.1fx%.1f / %.1fx%.1f",(unsigned long)i+1,p.normalSource?:@"未选中回退",p.selectedSource?:@"选中回退",
+            WXGNativeIconPair *p=pairs[i]; normals+=p.normalRank>0; selecteds+=p.selectedRank>0;
+            [sources addObject:[NSString stringWithFormat:@"%lu：%@ / %@；图 %.0fx%.0f@%.0fx / %.0fx%.0f@%.0fx，显示 %.1fx%.1f / %.1fx%.1f",(unsigned long)i+1,p.normalSource?:@"未选中回退",p.selectedSource?:@"临时系统实心图",
                 p.normalImage.size.width,p.normalImage.size.height,p.normalImage.scale,p.selectedImage.size.width,p.selectedImage.size.height,p.selectedImage.scale,
                 p.normalDisplaySize.width,p.normalDisplaySize.height,p.selectedDisplaySize.width,p.selectedDisplaySize.height]];   // FIX115 D
         }
-        _diagnostics=[NSString stringWithFormat:@"微信图标：未选中 %lu/4，选中 %lu/4；按钮%@布局（未布局扫描 %lu 次）；图标换过 %lu 次（主题）；微信标题字体 %@\n%@",(unsigned long)normals,(unsigned long)selecteds,
+        _diagnostics=[NSString stringWithFormat:@"微信图标：实读或缓存普通 %lu/4，实读或缓存选中 %lu/4；按钮%@布局（未布局扫描 %lu 次）；图标换过 %lu 次（主题）；微信标题字体 %@\n%@",(unsigned long)normals,(unsigned long)selecteds,
             laidOut?@"已":@"未",(unsigned long)_unlaidScans,(unsigned long)_artworkChanges,_titleFont?:@"未读到",[sources componentsJoinedByString:@"\n"]];
         return changed;
     } @catch(NSException *e) {

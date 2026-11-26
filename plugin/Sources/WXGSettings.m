@@ -884,8 +884,8 @@ void WXGConfirmResetAll(UIViewController *page,void (^done)(void)) {
 // the features by page; then only the settings page itself and the licence).
 + (NSArray<NSDictionary *> *)sections {
     return @[
-        @{@"title":@"效果 · 统一液态折射 · 各范围色彩材质、阴影与边框独立设置",
-          @"cards":@[@[@"effect",@"效果调整",@"自定义色彩材质 · 阴影 · iOS 27 边框 · 视频号完整玻璃",@[@"drop",@"drop.fill"]],
+        @{@"title":@"效果",
+          @"cards":@[@[@"effect",@"效果调整",@"折射 · 模糊 · 色彩材质 · 阴影与边框",@[@"drop",@"drop.fill"]],
                      @[@"pureDock",@"底栏透镜与形变",@"R8 极光折射与色散 · 缩窄高度 · 自适应形变（同步分组栏）",@[@"capsule.inset.filled",@"dock.rectangle",@"rectangle"]]]},
         @{@"title":@"功能",@"cards":@[@[@"chat",@"聊天页",@"输入栏 · 标题与头像 · 气泡 · 菜单",@[@"bubble.left.and.bubble.right.fill",@"bubble.left.and.bubble.right",@"message"]],
                                       @[@"home",@"首页",@"标题分组 · 分组栏尺寸 · 加号菜单 · 搜索框",@[@"rectangle.split.3x1",@"square.split.2x1",@"rectangle.split.2x1",@"rectangle"]],

@@ -172,14 +172,17 @@ static inline void WXGDockSpringConstants(double response,double damping,double 
    cell's top: 7 pt above the bar's middle. The titles are 10 pt (their boxes
    10 pt wide a character), in boxes 14 pt high from 33 pt under the cell's
    top: 6 pt under the bar's middle, their baseline 16.6 pt under it.
-   As the dock's own settings (its icons' middle is 8 pt above the bar's
-   middle plus the shift, its titles' top 10 pt under it plus theirs; a title
-   drawn in the system font has its baseline 9.5 pt under its top): the
-   icons 1 pt down and the titles 2.9 pt up, i.e. a gap of 1.1 and both 1 pt up. */
+   Drawing the system font at +7 pt places its baseline at +16.5 pt. */
 #define WXG_DOCK26_ICON_HEIGHT 26.
-#define WXG_DOCK26_ICON_TITLE_GAP 1.
-#define WXG_DOCK26_ICON_OFFSET (-1.)
+#define WXG_DOCK26_ICON_CENTER_Y (-7.)
+#define WXG_DOCK26_TITLE_DRAW_Y 7.
 #define WXG_DOCK26_TITLE_SIZE 10.
+
+/* Keep the 26 pt reference row's lower edge next to the title as the artwork
+   is scaled. Without a title both icon states sit on the platter midline. */
+static inline double WXGDockArtworkCenterY(double middle, double scale, int hiddenTitles) {
+    return hiddenTitles ? middle : middle + WXG_DOCK26_ICON_CENTER_Y + WXG_DOCK26_ICON_HEIGHT * .5 * (1. - scale);
+}
 #define WXG_DOCK26_GLOW_SPOT .15
 #define WXG_DOCK26_GLOW_BAR .04
 #define WXG_DOCK26_GLOW_DISC 93.

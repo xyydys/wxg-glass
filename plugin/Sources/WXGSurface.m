@@ -3,6 +3,7 @@
 #import "WXGButtonPress.h"
 #import "WXGPressStretch.h"
 #import "WXGMenuCascade.h"
+#import "WXGMenuMorphMaterial.h"
 #import <UIKit/UIGestureRecognizerSubclass.h>
 // FIX80: the stretch settings (WXGPressStretch.h).
 static WXGStretchStyle WXGCurrentStretchStyle(void) {
@@ -399,6 +400,8 @@ static NSInteger WXGLoadMenuDotCount(void) {
 
 @implementation WXGSurface {
     WXGStretchState _stretch;
+    WXGMenuMorphSurface *_homeMorphSurface;
+    BOOL _homeMorphBorrowed;
     WXGTouchObserver *_touchObserver;
     NSHashTable<UIView *> *_followers;
     BOOL _followTouching;                 // FIX72: an observed touch is down
@@ -414,6 +417,42 @@ static NSInteger WXGLoadMenuDotCount(void) {
     WXGVectorIconView *_vectorIconView;
     CFTimeInterval _lastFollow;           // FIX114 T: holdsPlace's fade
     CFTimeInterval _hostAwaySince;        // FIX114 U: holdsPlace: the native view out of the window since
+}
+- (BOOL)usesHomeMenuMorphSurface {
+    return _homeMorphBorrowed || (_homePlusAnchor && !_plain && WXGConfig.shared.homeMenuStyle==WXGHomeMenuStyleMorph);
+}
+- (void)setHomePlusAnchor:(BOOL)homePlusAnchor {
+    if(_homePlusAnchor!=homePlusAnchor){_homePlusAnchor=homePlusAnchor;[self setNeedsLayout];}
+}
+- (void)layoutHomeMenuMorphSurface {
+    if(![self usesHomeMenuMorphSurface]) {
+        if(_homeMorphSurface){[_homeMorphSurface removeFromSuperview];_homeMorphSurface=nil;_glass.active=_active && !_plain;}
+        return;
+    }
+    if(CGRectIsEmpty(_materialRect))return;
+    if(!_homeMorphSurface)_homeMorphSurface=[[WXGMenuMorphSurface alloc] initWithFrame:self.bounds];
+    if(!_homeMorphBorrowed) {
+        if(_homeMorphSurface.superview!=self)[self insertSubview:_homeMorphSurface aboveSubview:_glass];
+        _homeMorphSurface.bounds=self.bounds;
+        _homeMorphSurface.center=CGPointMake(CGRectGetMidX(self.bounds),CGRectGetMidY(self.bounds));
+        [_homeMorphSurface placeButtonRect:_materialRect];
+    }
+    _glass.hidden=YES;_glass.active=NO;_fallback.hidden=YES;
+}
+- (WXGMenuMorphSurface *)borrowHomeMenuMorphSurface {
+    if(_homeMorphBorrowed || ![self usesHomeMenuMorphSurface])return nil;
+    [self layoutHomeMenuMorphSurface];
+    if(!_homeMorphSurface)return nil;
+    _homeMorphBorrowed=YES;
+    return _homeMorphSurface;
+}
+- (void)returnHomeMenuMorphSurface:(WXGMenuMorphSurface *)surface {
+    if(!_homeMorphBorrowed || surface!=_homeMorphSurface)return;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    _homeMorphBorrowed=NO;
+    [self layoutHomeMenuMorphSurface];
+    [self setNeedsLayout];[self layoutIfNeeded];
+    [CATransaction commit];
 }
 - (void)setHomePlusTrigger:(BOOL)trigger {
     if(_homePlusTrigger==trigger)return;
@@ -505,14 +544,18 @@ static NSInteger WXGLoadMenuDotCount(void) {
         self.isAccessibilityElement=YES;self.accessibilityTraits=UIAccessibilityTraitButton;
     }return self;
 }
-- (void)setActive:(BOOL)active {if(_active==active)return;_active=active;_glass.active=active && !_plain;
+- (void)setActive:(BOOL)active {if(_active==active)return;_active=active;_glass.active=active && !_plain && ![self usesHomeMenuMorphSurface];
     if(!active && _touchObserver){[_touchObserver.view removeGestureRecognizer:_touchObserver];_touchObserver=nil;}
     if(!active){_target=_press=_velocity=0;_touchX=_touchY=_touchTargetX=_touchTargetY=_touchVelocityX=_touchVelocityY=0;_stretch=(WXGStretchState){0};_glass.pressAmount=0;_lastTick=0;_followingDeparture=NO;[self updateContentTransform];}}
 // FIX28: in render-server mode the fallback tint never shows: the live glass
 // renders as soon as it is configured, and the tint read as a grey flash on a
 // freshly opened plus menu.
 static BOOL WXGFallbackAllowed(void) {return WXGEffectiveRenderMode()<2;}
-- (void)setPlain:(BOOL)plain {_plain=plain;_glass.hidden=plain || (!_glass.ready && WXGFallbackAllowed());_fallback.hidden=plain || _glass.hasPresentedFrame || !WXGFallbackAllowed();_glass.active=_active && !plain;}
+- (void)setPlain:(BOOL)plain {_plain=plain;_glass.hidden=plain || (!_glass.ready && WXGFallbackAllowed());_fallback.hidden=plain || _glass.hasPresentedFrame || !WXGFallbackAllowed();_glass.active=_active && !plain && ![self usesHomeMenuMorphSurface];
+    if(_homeMorphBorrowed || (_homeMorphSurface.superview==self && [self usesHomeMenuMorphSurface])) {
+        _glass.hidden=YES;_fallback.hidden=YES;
+    }
+    if(_homeMorphSurface || _homePlusAnchor)[self setNeedsLayout];}
 - (void)placeMaterial:(CGRect)rect inParent:(UIView *)parent {
     // FIX114 M (crash): moved straight into the new parent. Taken out first,
     // it left the window and came back, and its colours were resolved again
@@ -820,8 +863,9 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
         _countLabel.frame=CGRectMake(CGRectGetMaxX(_materialRect)-14*s-bw,CGRectGetMidY(_materialRect)-bh*.5,bw,bh);
         _countLabel.layer.cornerRadius=bh*.5;
     }
-    [self updateContentTransform];
     [_glass layoutIfNeeded];_glass.hidden=_plain || (!_glass.ready && WXGFallbackAllowed());_fallback.hidden=_plain || _glass.hasPresentedFrame || !WXGFallbackAllowed();
+    [self layoutHomeMenuMorphSurface];
+    [self updateContentTransform];
     [CATransaction commit];
     }];
 }
@@ -859,6 +903,7 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
         NSMutableArray<UIView *> *children=[@[self.glass,self.fallback,self.iconView,self.label,self.countLabel] mutableCopy];
+        if(_homeMorphSurface.superview==self)[children addObject:_homeMorphSurface];
         if(_trailingView)[children addObject:_trailingView];
         if(_plusTriggerView && !_plusTriggerView.hidden)[children addObject:_plusTriggerView];
         if(_vectorIconView && !_vectorIconView.hidden)[children addObject:_vectorIconView];
@@ -974,7 +1019,9 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     _fallback.contentView.backgroundColor=[t colorWithAlphaComponent:WXGClamp(opacity,0,1)];
     _fallback.layer.borderWidth=0; // The shared TEST9 directional rim owns the border.
     _fallback.hidden=_plain || (_glass.ready && _glass.hasPresentedFrame) || !WXGFallbackAllowed();
-    _glass.hidden=_plain || (!_glass.ready && WXGFallbackAllowed());[self setNeedsLayout];
+    _glass.hidden=_plain || (!_glass.ready && WXGFallbackAllowed());
+    if(_homeMorphBorrowed || _homeMorphSurface.superview==self){_glass.hidden=YES;_fallback.hidden=YES;}
+    [self setNeedsLayout];
 }
 - (BOOL)pointInside:(CGPoint)p withEvent:(UIEvent *)event {
     (void)event;if(_materialOnly)return NO;
@@ -1081,7 +1128,7 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
              @"pixelInk":pixel,
              @"iconImageSize":@[@(_iconView.image.size.width),@(_iconView.image.size.height)],@"titleFontSize":@(_label.font.pointSize),
              @"hasText":@(_label.text.length>0),@"textCorrection":@[@(_textCorrection.x),@(_textCorrection.y)],
-             @"materialLayers":_glass.layerEvidence,@"fallbackVisible":@(!_fallback.hidden),
+             @"materialLayers":_homeMorphSurface?_homeMorphSurface.presentationEvidence:_glass.layerEvidence,@"fallbackVisible":@(!_fallback.hidden),
              @"originalClass":_original?NSStringFromClass(_original.class):@"none",
              @"actions":WXGActionNames(_original),@"forwardedTaps":@(_forwardedTaps),@"metalFirstFrame":@(_glass.hasPresentedFrame),
              @"renderer":_glass.diagnostics,@"stretchFollowers":_followerNames?:@[],@"stretchClip":clipEvidence,@"textLength":@(_label.text.length),@"countDigits":@(_countLabel.text.length),

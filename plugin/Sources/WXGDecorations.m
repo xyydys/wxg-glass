@@ -1,5 +1,9 @@
 #import "WXGIntegration.h"
 #import "WXGMenuCascade.h"
+#import "WXGMenuMorph.h"
+#import "WXGMenuScrub.h"
+#import "WXGMenuMorphContent.h"
+#import "WXGMenuMorphView.h"
 #import <UIKit/UIGestureRecognizerSubclass.h>
 
 /* FIX116 A (user, 10-29: the home "+" menu as in his reference video): each of
@@ -12,6 +16,8 @@
    field's glass does). The entrance is WXGMenuCascade.h's. */
 @interface WXGMenuRowObserver : UIGestureRecognizer
 @property(nonatomic,weak) WXGSurface *icon,*capsule;
+@property(nonatomic,copy) void (^pressedChanged)(BOOL pressed);
+@property(nonatomic,copy) void (^scrubTouch)(UITouch *touch,UITouchPhase phase);
 @end
 @implementation WXGMenuRowObserver {
     __weak UITouch *_followed;
@@ -22,26 +28,47 @@
 }
 - (BOOL)canPreventGestureRecognizer:(UIGestureRecognizer *)other {(void)other;return NO;}
 - (BOOL)canBePreventedByGestureRecognizer:(UIGestureRecognizer *)other {(void)other;return NO;}
-- (void)press:(BOOL)on {[_icon setExternalPressed:on];[_capsule setExternalPressed:on];}
+- (void)press:(BOOL)on {[_icon setExternalPressed:on];[_capsule setExternalPressed:on];if(_pressedChanged)_pressedChanged(on);}
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     if(_followed){for(UITouch *touch in touches)[self ignoreTouch:touch forEvent:event];return;}
-    _followed=touches.anyObject;[self press:YES];
+    _followed=touches.anyObject;
+    for(UITouch *touch in touches)if(touch!=_followed)[self ignoreTouch:touch forEvent:event];
+    if(_scrubTouch)_scrubTouch(_followed,UITouchPhaseBegan);else [self press:YES];
 }
 - (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
     (void)event;
     if(!_followed || ![touches containsObject:_followed])return;
+    if(_scrubTouch){_scrubTouch(_followed,UITouchPhaseMoved);return;}
     // Like a control: pressed while the finger is on the row (and a little around it).
     [self press:CGRectContainsPoint(CGRectInset(self.view.bounds,-40,-40),[_followed locationInView:self.view])];
 }
-- (void)finish:(NSSet<UITouch *> *)touches {
+- (void)finish:(NSSet<UITouch *> *)touches phase:(UITouchPhase)phase {
     if(!_followed || ![touches containsObject:_followed])return;
-    _followed=nil;[self press:NO];self.state=UIGestureRecognizerStateFailed;
+    UITouch *touch=_followed;_followed=nil;
+    if(_scrubTouch)_scrubTouch(touch,phase);else [self press:NO];
+    self.state=UIGestureRecognizerStateFailed;
 }
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;[self finish:touches];}
-- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;[self finish:touches];}
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;[self finish:touches phase:UITouchPhaseEnded];}
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {(void)event;[self finish:touches phase:UITouchPhaseCancelled];}
 - (void)reset {
     [super reset];
-    if(_followed){_followed=nil;[self press:NO];}
+    if(_followed){UITouch *touch=_followed;_followed=nil;
+        if(_scrubTouch)_scrubTouch(touch,UITouchPhaseCancelled);else [self press:NO];}
+}
+@end
+
+// A transparent activation surface for a native row with a registered control event.
+@interface WXGMenuActionButton : UIButton
+@property(nonatomic,weak) UIControl *nativeControl;
+@end
+@implementation WXGMenuActionButton
+// The portal owns direct touch-up and resolves the row under the finger.
+// Keyboard/VoiceOver activation still goes through this button's action.
+- (BOOL)beginTracking:(UITouch *)touch withEvent:(UIEvent *)event {return NO;}
+- (BOOL)accessibilityActivate {
+    if(!self.enabled || !self.window)return NO;
+    [self sendActionsForControlEvents:UIControlEventTouchUpInside];
+    return YES;
 }
 @end
 
@@ -52,15 +79,32 @@
 @property(nonatomic,weak) UILabel *nativeLabel;
 @property(nonatomic,strong) WXGSurface *icon,*capsule;
 @property(nonatomic,strong) WXGMenuRowObserver *observer;
+@property(nonatomic,strong) WXGMenuActionButton *actionButton;
+@property(nonatomic) BOOL wasAccessibilityElement,wereAccessibilityElementsHidden;
+- (void)removeActionButton;
 @property(nonatomic) CGRect itemFrame,iconRect,capsuleRect;   // the row and the glass' rectangles as last laid out, in the menu parent's coordinates
 @property(nonatomic) double slotDistance;                     // how far below the "+" the row is
 @property(nonatomic) BOOL drawn;                              // a row whose icon or title was found and is drawn in glass
+@property(nonatomic) BOOL mapOwnsTransform;
+@property(nonatomic) CGAffineTransform mapNativeTransform,mapAppliedTransform;
+- (NSArray<WXGSurface *> *)surfaces;
 @end
 @implementation WXGMenuRow
+- (void)removeActionButton {
+    if(!_actionButton)return;
+    _item.isAccessibilityElement=_wasAccessibilityElement;
+    _item.accessibilityElementsHidden=_wereAccessibilityElementsHidden;
+    [_actionButton removeFromSuperview];
+    _actionButton=nil;
+}
+- (NSArray<WXGSurface *> *)surfaces {return _icon && _capsule?@[_icon,_capsule]:@[];}
 @end
 
 // FIX116 B: the home menu's glass is closed, open (laid out, entrance played, following the rows) or leaving (its exit running, deaf to WeChat's own close).
 typedef NS_ENUM(NSInteger,WXGMenuPhase) {WXGMenuPhaseClosed,WXGMenuPhaseOpen,WXGMenuPhaseExiting};
+typedef NS_ENUM(NSInteger,WXGMenuRetirement) {
+    WXGMenuRetirementNone,WXGMenuRetirementDispatching,WXGMenuRetirementCovered
+};
 
 @protocol WXGMenuCAFilterFactory <NSObject>
 + (id)filterWithType:(NSString *)type;
@@ -195,7 +239,11 @@ static id WXGMenuMakeBlurFilter(double radius) {
 @end
 
 static char WXGDecorationKey;
-@interface WXGDecoration : NSObject
+@interface WXGDecoration : NSObject {
+@public
+    WXGMenuMorph _morphMotion;
+    WXGMenuScrub _scrub;
+}
 @property(nonatomic,weak) UIView *host,*body;
 @property(nonatomic,strong) WXGSurface *surface;
 @property(nonatomic,strong) WXGStateBag *states;
@@ -206,8 +254,29 @@ static char WXGDecorationKey;
 @property(nonatomic) NSUInteger bodyChildren,hostChildren;
 @property(nonatomic) NSUInteger earlyRetries;
 @property(nonatomic) UIUserInterfaceStyle appearance;
-// FIX116 A: the home menu's capsule + icon rows.
-@property(nonatomic) BOOL capsuleMode,rowsReady,entranceDone;
+// The two animated home menu styles share the native menu's lifecycle.
+@property(nonatomic) BOOL animatedHomeMenu,rowsReady,entranceDone;
+@property(nonatomic) BOOL morphMode;
+@property(nonatomic,strong) WXGMenuMorphView *morphView;
+@property(nonatomic,strong) WXGMenuMorphContent *morphContent;
+@property(nonatomic,copy) NSDictionary *morphContentKey;
+@property(nonatomic) CFTimeInterval morphLastContentCheck;
+@property(nonatomic,strong) UIView *morphForeground,*morphRows,*morphHighlight;
+@property(nonatomic,strong) UIImageView *morphRowsImage,*morphTriggerImage;
+@property(nonatomic,strong) CALayer *morphRowsMask,*morphTriggerMask;
+@property(nonatomic,strong) CALayer *morphOriginalRowsMask;
+@property(nonatomic,weak) UIView *morphMaskedBody,*morphMaskedTrigger,*morphPositionedBody,*morphSelectedRow;
+@property(nonatomic,strong) WXGMenuRowObserver *morphTouch;
+@property(nonatomic) NSUInteger scrubPresses,scrubCrossings,scrubFrames,scrubStartupFrames;
+@property(nonatomic) CGFloat scrubPeakY;
+@property(nonatomic,strong) UISelectionFeedbackGenerator *scrubHaptic;
+@property(nonatomic,strong) WXGMenuRow *pendingRow;
+@property(nonatomic,weak) UIViewController *morphOwner;
+@property(nonatomic) BOOL hasMorphOwner;
+@property(nonatomic) WXGMenuRetirement retirement;
+@property(nonatomic,copy) NSString *morphPlacementFailure;
+@property(nonatomic) CGRect morphRect,morphAnchor;
+@property(nonatomic) BOOL morphSettled;
 @property(nonatomic) WXGMenuPhase phase;
 @property(nonatomic) BOOL blockReopen;                      // the exit began while WeChat still showed the menu: not opened again until it is hidden (or its rows are back where they were)
 @property(nonatomic) NSUInteger exitToken;
@@ -225,9 +294,12 @@ static char WXGDecorationKey;
 // the shared "+" button here (another MainFrameActionFloatView may already own it).
 - (void)dealloc {
     NSArray<WXGMenuRow *> *rows=_rows;
-    if(!rows.count)return;
+    WXGMenuMorphView *morphView=_morphView;
+    if(!rows.count && !morphView)return;
     void (^remove)(void)=^{
-        for(WXGMenuRow *row in rows)for(WXGSurface *s in @[row.icon,row.capsule]){s.active=NO;s.hidden=YES;[s removeFromSuperview];}
+        for(WXGMenuRow *row in rows)for(WXGSurface *s in row.surfaces){s.active=NO;s.hidden=YES;[s removeFromSuperview];}
+        for(WXGMenuRow *row in rows)[row removeActionButton];
+        [morphView returnSurfaceToButton];[morphView removeFromSuperview];
     };
     if(NSThread.isMainThread)remove();else dispatch_async(dispatch_get_main_queue(),remove);
 }
@@ -237,23 +309,29 @@ static char WXGDecorationKey;
 @property(nonatomic,strong) NSHashTable<WXGDecoration *> *entries;
 @property(nonatomic,strong) NSMutableDictionary<NSString *,NSArray *> *dumps;   // FIX114 Z: each kind's last menu, as it is made
 @property(nonatomic) NSUInteger mounts,reuses;
+@property(nonatomic,copy) NSDictionary *lastMorphPresentation;
+@property(nonatomic,strong) NSMutableDictionary<NSString *,NSDictionary *> *morphLayerSamples;
+@property(nonatomic,copy) NSString *lastMorphFallback;
 // R24: single-owner, single-clock home "+" menu animation state.
 @property(nonatomic,strong) WXGDecoration *activeHomeMenu;
 @property(nonatomic,strong) WXGMenuInkOverlayView *sharedInkOverlay;
 @property(nonatomic,strong) CADisplayLink *menuLink;
 @property(nonatomic) double menuProgress,menuTarget,menuSpeed,menuStagger;
 @property(nonatomic) CGFloat settledMenuGap;
-@property(nonatomic) CFTimeInterval menuLastTime;
+@property(nonatomic) CFTimeInterval menuLastTime,scrubLastTimestamp;
 @property(nonatomic) NSUInteger menuToken;
 - (void)reassertVisiblePaint;
-- (void)placeCapsuleMenu:(WXGDecoration *)entry items:(NSArray<UIView *> *)items;
-- (void)watchCapsuleMenu:(WXGDecoration *)entry;
+- (void)placeAnimatedHomeMenu:(WXGDecoration *)entry items:(NSArray<UIView *> *)items;
+- (void)watchHomeMenu:(WXGDecoration *)entry;
 - (void)hideRows:(WXGDecoration *)entry remove:(BOOL)remove;
 - (void)beginExit:(WXGDecoration *)entry;
+- (void)finishActiveHomeMenuClose;
+- (void)releaseDismissedNativeMenu:(WXGDecoration *)entry;
 - (void)playEntrance:(WXGDecoration *)entry;
+- (void)resetMenuMorph:(WXGDecoration *)entry;
+- (void)highlightMorphRow:(UIView *)row inEntry:(WXGDecoration *)entry;
 @end
 
-static BOOL WXGHomeMenuCapsulesOn(void) {return [WXGConfig.shared extraNumber:@"homeMenuCapsules"]>.5;}
 // WeChat's own icon and title inside one of its rows: the largest picture
 // (8..64 pt: not a red dot) and the widest label that has text (not a badge).
 static void WXGMenuParts(UIView *item,UIImageView **icon,UILabel **label) {
@@ -270,17 +348,6 @@ static void WXGMenuParts(UIView *item,UIImageView **icon,UILabel **label) {
     }
     *icon=bestIcon;*label=bestLabel;
 }
-// WeChat's rows of the menu, top to bottom.
-static NSArray<UIView *> *WXGMenuItems(UIView *body) {
-    NSMutableArray<UIView *> *items=[NSMutableArray array];
-    for(UIView *v in WXGViews(body,160))
-        if(v!=body && !v.hidden && v.bounds.size.width>40 && v.bounds.size.height>16 &&
-           [NSStringFromClass(v.class) isEqual:@"RightTopMenuItemBtn"])[items addObject:v];
-    UIWindow *window=body.window;
-    CGFloat (^top)(UIView *)=^CGFloat(UIView *v){return [v convertPoint:CGPointMake(CGRectGetMidX(v.bounds),CGRectGetMidY(v.bounds)) toView:window].y;};
-    [items sortUsingComparator:^NSComparisonResult(UIView *a,UIView *b){CGFloat ya=top(a),yb=top(b);return ya<yb?NSOrderedAscending:ya>yb?NSOrderedDescending:NSOrderedSame;}];
-    return items;
-}
 static CGRect WXGMenuUnshiftedRectIn(UIView *v,UIView *root) {
     if(!v || !root)return CGRectNull;
     CGRect r=v.bounds;
@@ -294,6 +361,18 @@ static CGRect WXGMenuUnshiftedRectIn(UIView *v,UIView *root) {
     }
     return r;
 }
+// Use the host's layout order even while its buttons are mapped into the open panel.
+static NSArray<UIView *> *WXGMenuItems(UIView *body) {
+    NSMutableArray<UIView *> *items=[NSMutableArray array];
+    for(UIView *v in WXGViews(body,160))
+        if(v!=body && !v.hidden && v.bounds.size.width>40 && v.bounds.size.height>16 &&
+           [NSStringFromClass(v.class) isEqual:@"RightTopMenuItemBtn"])[items addObject:v];
+    [items sortUsingComparator:^NSComparisonResult(UIView *a,UIView *b){
+        CGFloat ya=CGRectGetMidY(WXGMenuUnshiftedRectIn(a,body)),yb=CGRectGetMidY(WXGMenuUnshiftedRectIn(b,body));
+        return ya<yb?NSOrderedAscending:ya>yb?NSOrderedDescending:NSOrderedSame;
+    }];
+    return items;
+}
 static CGFloat WXGMenuSnap(CGFloat v,UIView *view) {
     CGFloat scale=view.window.screen.scale>0?view.window.screen.scale:UIScreen.mainScreen.scale;
     return round(v*scale)/scale;
@@ -304,6 +383,60 @@ static BOOL WXGMenuShown(UIView *view) {
     for(UIView *v=view;v;v=v.superview)if(v.hidden || v.alpha<.01)return NO;
     return CGRectIntersectsRect([view convertRect:view.bounds toView:window],window.bounds);
 }
+// A window-level popup must yield when the presenting home page is pushed,
+// covered or switched away, even while WeChat still retains its menu.
+static BOOL WXGMenuOwnerVisible(WXGDecoration *entry) {
+    if(!entry.hasMorphOwner)return YES;
+    UIViewController *page=entry.morphOwner;
+    if(!page.viewIfLoaded.window)return NO;
+    for(UIViewController *vc=page;vc;vc=vc.parentViewController) {
+        if(vc.presentedViewController || vc.isBeingDismissed || vc.isMovingFromParentViewController)return NO;
+        UIViewController *parent=vc.parentViewController;
+        if([parent isKindOfClass:UINavigationController.class] && ((UINavigationController *)parent).topViewController!=vc)return NO;
+        if([parent isKindOfClass:UITabBarController.class] && ((UITabBarController *)parent).selectedViewController!=vc)return NO;
+    }
+    return YES;
+}
+static WXGMenuBox WXGMenuMorphBox(CGRect rect) {return (WXGMenuBox){rect.origin.x,rect.origin.y,rect.size.width,rect.size.height};}
+static CGFloat WXGHomeMenuPanelRadius(WXGDecoration *entry) {
+    CGFloat extra=[WXGConfig.shared extraNumber:@"homeMenuMorphCornerExtra"];
+    CGSize size=entry.morphRect.size;
+    return MIN(entry.morphContent.panelCornerRadius+extra,MIN(size.width,size.height)*.5);
+}
+// The menu host can start below the navigation bar, and its 132 pt image
+// wrapper clips the native row views. Start the hit test at the mapped row;
+// unbound private rows keep WeChat's own touch sequence.
+@interface WXGHomeMenuPortal : WXGMenuMorphView
+@property(nonatomic,weak) WXGDecoration *entry;
+@end
+@implementation WXGHomeMenuPortal
+- (UIView *)hitTest:(CGPoint)point withEvent:(UIEvent *)event {
+    WXGDecoration *entry=self.entry;
+    if(!self.userInteractionEnabled || self.hidden || !self.window || !WXGMenuOwnerVisible(entry))return nil;
+    if(entry.pendingRow)return [self pointInside:point withEvent:event]?self:nil;
+    if(entry.phase!=WXGMenuPhaseOpen || entry.host.window!=self.window || !WXGMenuShown(entry.body))return nil;
+    CGPoint location=[self convertPoint:point toView:entry.menuParent];
+    UIView *body=entry.body,*host=entry.host;
+    BOOL inNativePopup=CGRectContainsPoint(body.bounds,[self convertPoint:point toView:body]) &&
+        [host pointInside:[self convertPoint:point toView:host] withEvent:event];
+    WXGMenuMorphHitZone zone=WXGMenuMorphHitZoneAt(WXGMenuMorphBox(entry.morphRect),location.x,location.y,inNativePopup);
+    // The old 132 x 212 body can receive touches below the shorter visible
+    // panel. Route its empty strip to the same host that handles outside taps.
+    if(zone==WXGMenuMorphNativeBackdrop)return host;
+    if(zone==WXGMenuMorphPassThrough)return nil;
+    CGPoint local=CGPointMake(location.x-entry.morphRect.origin.x,location.y-entry.morphRect.origin.y);
+    NSArray<NSValue *> *frames=entry.morphContent.rowFrames;
+    for(NSUInteger i=0,count=MIN(frames.count,entry.rows.count);i<count;i++) {
+        if(!WXGMenuMorphPointInBox(WXGMenuMorphBox(frames[i].CGRectValue),local.x,local.y))continue;
+        UIView *item=entry.rows[i].item;
+        if(item.window!=self.window || ![item isDescendantOfView:entry.body])return nil;
+        if(entry.rows[i].actionButton)return entry.rows[i].actionButton;
+        return [item hitTest:[self convertPoint:point toView:item] withEvent:event]?:self;
+    }
+    return self; // absorb touches in the panel's padding and section dividers
+}
+@end
+
 // Is there anything to read in WeChat's rows (an icon or a title)? / how opaque is a view, with everything above it.
 static BOOL WXGMenuHasParts(NSArray<UIView *> *items) {
     for(UIView *item in items){UIImageView *i=nil;UILabel *l=nil;WXGMenuParts(item,&i,&l);if(i || l.text.length)return YES;}
@@ -312,6 +445,11 @@ static BOOL WXGMenuHasParts(NSArray<UIView *> *items) {
 static CGFloat WXGMenuAlpha(UIView *view) {
     CGFloat a=1;for(UIView *v=view;v;v=v.superview)a*=v.alpha;
     return a;
+}
+static NSString *WXGMenuActionTitle(UIView *item,UILabel *label,UIButton *button) {
+    if(label.text.length)return label.text;
+    if(button.currentTitle.length)return button.currentTitle;
+    return item.accessibilityLabel?:@"";
 }
 static void WXGMenuSetLayerBlur(CALayer *layer,double radius) {
     if(!layer)return;
@@ -326,12 +464,51 @@ static void WXGMenuSetLayerBlur(CALayer *layer,double radius) {
     if(f)layer.filters=@[f];
 }
 
+static CGRect WXGMenuMorphCGRect(WXGMenuBox box) {return CGRectMake(box.x,box.y,box.w,box.h);}
+static UIImage *WXGMenuMorphSnapshot(UIView *view) {
+    if(CGRectIsEmpty(view.bounds))return nil;
+    [view layoutIfNeeded];
+    UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat defaultFormat];
+    format.scale=view.window.screen.scale?:UIScreen.mainScreen.scale;
+    format.opaque=NO;format.preferredRange=UIGraphicsImageRendererFormatRangeStandard;
+    return [[[UIGraphicsImageRenderer alloc]initWithBounds:view.bounds format:format] imageWithActions:^(UIGraphicsImageRendererContext *image){
+        [view.layer renderInContext:image.CGContext];
+    }];
+}
+
+static UIImage *WXGMenuMorphTriggerInk(UIView *trigger,CGRect anchor) {
+    if([trigger isKindOfClass:WXGSurface.class]) {
+        WXGSurface *surface=(WXGSurface *)trigger;
+        UIView *ink=surface.nativeContent?:surface.iconView;
+        UIImage *snapshot=ink.hidden?nil:WXGMenuMorphSnapshot(ink);
+        if(snapshot && !CGRectIsEmpty(surface.materialRect)) {
+            CGRect inkRect=[ink convertRect:ink.bounds toView:surface];
+            inkRect=CGRectOffset(inkRect,-surface.materialRect.origin.x,-surface.materialRect.origin.y);
+            return [[[UIGraphicsImageRenderer alloc]initWithSize:surface.materialRect.size] imageWithActions:^(__unused UIGraphicsImageRendererContext *image){
+                [snapshot drawInRect:inkRect];
+            }];
+        }
+    }
+    UIImage *icon=[trigger isKindOfClass:UIControl.class]?WXGButtonImage((UIControl *)trigger):nil;
+    if(!icon)icon=[UIImage systemImageNamed:@"plus.circle" withConfiguration:[UIImageSymbolConfiguration configurationWithPointSize:20]];
+    if(icon.renderingMode!=UIImageRenderingModeAlwaysOriginal)icon=[icon imageWithTintColor:UIColor.labelColor renderingMode:UIImageRenderingModeAlwaysOriginal];
+    CGSize size=anchor.size;
+    CGFloat d=MIN(22,MIN(size.width,size.height)*.6);
+    return [[[UIGraphicsImageRenderer alloc]initWithSize:size] imageWithActions:^(__unused UIGraphicsImageRendererContext *image){
+        CGFloat scale=d/MAX(1,MAX(icon.size.width,icon.size.height));
+        CGSize ink=CGSizeMake(icon.size.width*scale,icon.size.height*scale);
+        [icon drawInRect:CGRectMake((size.width-ink.width)*.5,(size.height-ink.height)*.5,ink.width,ink.height)];
+    }];
+}
+
 @implementation WXGDecorations
 + (instancetype)shared {
     static WXGDecorations *manager;static dispatch_once_t once;
     dispatch_once(&once,^{
         manager=[self new];manager.entries=[NSHashTable weakObjectsHashTable];
         manager.menuSpeed=1.;manager.menuStagger=.045;
+        [NSNotificationCenter.defaultCenter addObserver:manager selector:@selector(cancelInterruptedMenuSelection:)
+            name:UIApplicationWillResignActiveNotification object:nil];
         // FIX29: just before every Core Animation commit, re-assert the cleared
         // native paint of on-screen menus. WeChat re-skins its reused plus
         // menu while opening it, outside any layout we hook; whatever it set
@@ -343,16 +520,24 @@ static void WXGMenuSetLayerBlur(CALayer *layer,double radius) {
     });
     return manager;
 }
+- (void)cancelInterruptedMenuSelection:(NSNotification *)notification {
+    (void)notification;
+    if(_activeHomeMenu.pendingRow)[self finishActiveHomeMenuClose];
+}
 - (void)reassertVisiblePaint {
+    if(_activeHomeMenu.morphMode && !WXGMenuOwnerVisible(_activeHomeMenu)) {
+        _activeHomeMenu.retirement=WXGMenuShown(_activeHomeMenu.body)?WXGMenuRetirementCovered:WXGMenuRetirementNone;
+        [self finishActiveHomeMenuClose];
+    }
     for(WXGDecoration *entry in _entries.allObjects) {   // (a copy: a layout done below may mount another menu)
         // FIX116 B: a menu WeChat took out of its window while the glass was open: the glass leaves.
-        if(entry.capsuleMode && !entry.host.window && !entry.applying) {
+        if(entry.animatedHomeMenu && !entry.host.window && !entry.applying) {
             entry.blockReopen=NO;
             if(entry.phase==WXGMenuPhaseOpen)[self beginExit:entry];
         }
         if(!entry.host.window || entry.applying)continue;
         @try {[entry.states reapply];} @catch(__unused NSException *error) {}
-        if(entry.capsuleMode || [entry.kind isEqual:@"homeMenu"])[self watchCapsuleMenu:entry];   // FIX116 A
+        if(entry.animatedHomeMenu || [entry.kind isEqual:@"homeMenu"])[self watchHomeMenu:entry];   // FIX116 A
     }
     // Also watch activeHomeMenu if WeChat already dropped its weak host reference while open.
     if(_activeHomeMenu && _activeHomeMenu.phase==WXGMenuPhaseOpen && !_activeHomeMenu.host.window && !_activeHomeMenu.applying) {
@@ -364,15 +549,19 @@ static void WXGMenuSetLayerBlur(CALayer *layer,double radius) {
 // moves it to close it): noticed here, before the commit, and laid out again
 // so the entrance starts with the first frame the menu is on screen in and
 // the exit with the first frame WeChat's close would have moved anything in.
-- (void)watchCapsuleMenu:(WXGDecoration *)entry {
+- (void)watchHomeMenu:(WXGDecoration *)entry {
     UIView *host=entry.host,*body=entry.body;if(!host)return;
     CFTimeInterval now=CACurrentMediaTime();
-    if(!body){if(entry.capsuleMode && entry.phase==WXGMenuPhaseOpen)[self beginExit:entry];return;}   // (WeChat let its menu's body go)
+    if(!body){if(entry.animatedHomeMenu && entry.phase==WXGMenuPhaseOpen)[self beginExit:entry];return;}   // (WeChat let its menu's body go)
     BOOL shown=WXGMenuShown(body);
-    if(!entry.capsuleMode) {
-        // Plate mode with the setting on: the rows had nothing to read when the
-        // menu was last laid out; looked at again (at most every 0.1 s) while it is on screen.
-        if(shown && WXGHomeMenuCapsulesOn() && now-entry.lastNudge>.1){entry.lastNudge=now;entry.watching=YES;@try{[self nativeHostLaidOut:host];}@finally{entry.watching=NO;}}
+    if(!shown || (entry.retirement==WXGMenuRetirementCovered && WXGMenuOwnerVisible(entry))) {
+        [self releaseDismissedNativeMenu:entry];
+        if(entry.pendingRow && entry==_activeHomeMenu){[self finishActiveHomeMenuClose];return;}
+    }
+    if(entry.pendingRow || entry.retirement || !WXGMenuOwnerVisible(entry))return;
+    if(!entry.animatedHomeMenu) {
+        // WeChat may populate an already visible native menu after layout.
+        if(shown && now-entry.lastNudge>.1 && WXGPluginEnabled() && WXGPreferences.shared.nav){entry.lastNudge=now;entry.watching=YES;@try{[self nativeHostLaidOut:host];}@finally{entry.watching=NO;}}
         return;
     }
     if(!shown) {
@@ -394,8 +583,25 @@ static void WXGMenuSetLayerBlur(CALayer *layer,double radius) {
     // R25: only treat downward row collapse as WeChat closing once settled (>0.45s after open).
     if(open && entry.entranceDone && now-entry.openAt>.45 && farthest>16){[self beginExit:entry];return;}
     BOOL stale=entry.blockReopen && now-entry.exitAt>.25 && WXGMenuAlpha(body)>=.95;   // (still on screen after exit: open again)
+    BOOL movedMorphBody=NO;
+    if(open && entry.morphMode)for(WXGMenuRow *row in entry.rows)
+        if(row.mapOwnsTransform && !CGAffineTransformEqualToTransform(row.item.transform,row.mapAppliedTransform)){movedMorphBody=YES;break;}
+    BOOL changedInk=NO;
+    if(open && entry.morphContent && now-entry.morphLastContentCheck>.2) {
+        entry.morphLastContentCheck=now;
+        UITraitCollection *traits=host.traitCollection;
+        NSArray *knownIcons=entry.morphContentKey[@"icons"];
+        NSArray *knownTitles=entry.morphContent.titles;
+        changedInk=![entry.morphContentKey[@"traits"] isEqual:traits] || entry.rows.count!=knownTitles.count || entry.rows.count!=knownIcons.count;
+        for(NSUInteger i=0;!changedInk && i<entry.rows.count;i++) {
+            WXGMenuRow *row=entry.rows[i];
+            UIButton *button=[row.item isKindOfClass:UIButton.class]?(UIButton *)row.item:nil;
+            changedInk=!row.item || ![knownTitles[i] isEqual:WXGMenuActionTitle(row.item,row.nativeLabel,button)] ||
+                knownIcons[i]!=(row.nativeIcon.image?:button.currentImage?:NSNull.null);
+        }
+    }
     BOOL need=(!open && !entry.blockReopen) ||                       // opened: the entrance
-              (open && (moved || !entry.rowsReady || !entry.entranceDone)) ||
+              (open && (moved || movedMorphBody || changedInk || !entry.rowsReady || !entry.entranceDone)) ||
               (!open && entry.blockReopen && (!moved || stale));     // (its rows are back where they were: opened again)
     // (a budget: a menu that never reads right is not laid out on every pass; a layout WeChat does itself, or a flip, gives it back)
     if(need && entry.tickRetries<40) {
@@ -507,30 +713,35 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
         return;
     }
     NSString *kind=[self kindForHost:view];if(!kind)return;
+    BOOL homeMenu=[kind isEqual:@"homeMenu"];
     WXGDecoration *entry=objc_getAssociatedObject(view,&WXGDecorationKey);
     // A menu owns this entry through an associated object. Release the temporary
     // capture exclusion on detachment, otherwise entry -> glass -> host forms
     // a retain cycle each time WeChat creates a fresh native menu instance.
     if(!view.window) {
+        [self releaseDismissedNativeMenu:entry];
+        if(entry.pendingRow && entry==_activeHomeMenu)[self finishActiveHomeMenuClose];
         entry.surface.active=NO;entry.surface.glass.backdropExclusions=@[];
-        if(entry.capsuleMode){entry.blockReopen=NO;[self beginExit:entry];}   // FIX116 B: WeChat took the menu away (its own close ends so): the glass leaves, it does not vanish with it
+        if(entry.animatedHomeMenu){entry.blockReopen=NO;[self beginExit:entry];}   // FIX116 B: WeChat took the menu away (its own close ends so): the glass leaves, it does not vanish with it
         return;
     }
     if(!WXGPluginEnabled() || !WXGPreferences.shared.nav) {
         if(entry){
             [entry.states restore];entry.surface.active=NO;entry.surface.hidden=YES;entry.surface.glass.backdropExclusions=@[];
-            [self hideRows:entry remove:YES];entry.capsuleMode=NO;entry.phase=WXGMenuPhaseClosed;entry.entranceDone=NO;   // FIX116 A
+            [self hideRows:entry remove:YES];entry.animatedHomeMenu=NO;entry.morphMode=NO;entry.phase=WXGMenuPhaseClosed;entry.entranceDone=NO;
         }return;
     }
     if(entry.applying)return;
+    if(entry.retirement && !WXGMenuShown(entry.body))[self releaseDismissedNativeMenu:entry];
+    if(entry.pendingRow || entry.retirement || (entry.morphMode && !WXGMenuOwnerVisible(entry)))return;
     if(!entry) {
         entry=[WXGDecoration new];entry.host=view;entry.kind=kind;entry.states=[WXGStateBag new];
-        entry.surface=[WXGSurface new];entry.surface.role=kind;entry.surface.materialOnly=YES;
-        entry.surface.glass.keepsAncestorClips=YES;   // FIX114 Y: nothing above the host is opened
-        // FIX115 B: the menus' containers between the glass and the menu itself
-        // (cleared of their paint) are opened for the shadow (see WXGCommon.h).
-        if([kind isEqual:@"messageMenu"] || [kind isEqual:@"homeMenu"])entry.surface.glass.shadowClipRoot=view;   // the two with the grey corners
-        entry.surface.userInteractionEnabled=NO;entry.surface.isAccessibilityElement=NO;
+        if(!homeMenu) {
+            entry.surface=[WXGSurface new];entry.surface.role=kind;entry.surface.materialOnly=YES;
+            entry.surface.glass.keepsAncestorClips=YES;
+            if([kind isEqual:@"messageMenu"])entry.surface.glass.shadowClipRoot=view;
+            entry.surface.userInteractionEnabled=NO;entry.surface.isAccessibilityElement=NO;
+        }
         objc_setAssociatedObject(view,&WXGDecorationKey,entry,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         [_entries addObject:entry];++_mounts;
     }else ++_reuses;
@@ -540,7 +751,8 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
         UIView *body=[self bodyForHost:view kind:kind];
         if(!body || body.bounds.size.width<40 || body.bounds.size.height<16) {
             entry.validBody=NO;entry.surface.active=NO;entry.surface.hidden=YES;
-            if(entry.capsuleMode)[self beginExit:entry];   // FIX116 B: a body that collapses is WeChat closing the menu (only an open menu has anything to leave)
+            if(entry.animatedHomeMenu)[self beginExit:entry];   // FIX116 B: a body that collapses is WeChat closing the menu (only an open menu has anything to leave)
+            if(homeMenu && entry.earlyRetries>=6 && entry.phase==WXGMenuPhaseClosed){[entry.states restore];entry.lastPaint=0;return;}
             // FIX28: WeChat lays the plus menu out once before adding its
             // buttons. Its own background must not render meanwhile: clear the
             // host's paint now and look again on the next main-queue turn.
@@ -572,24 +784,22 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
         if(entry.body!=body){[entry.states restore];entry.body=body;entry.lastPaint=0;}
         entry.validBody=YES;
         WXGSurface *surface=entry.surface;
-        // FIX116 A: the home menu as glass capsules and round icons, when its
-        // rows can be read; until they can (WeChat fills them a pass later) it
-        // is painted bare for up to a quarter second, and the plate (below) is
-        // the fallback when they never can. A menu that is not on
-        // screen keeps the look it has.
-        NSArray<UIView *> *items=nil;BOOL capsules=NO;
-        if([kind isEqual:@"homeMenu"] && WXGHomeMenuCapsulesOn()) {
+        // Both home styles need native row content. Allow delayed population,
+        // then release the original menu if WeChat does not expose those rows.
+        NSArray<UIView *> *items=nil;BOOL animateMenu=NO;
+        BOOL morph=homeMenu && WXGConfig.shared.homeMenuStyle==WXGHomeMenuStyleMorph;
+        if(homeMenu) {
             items=WXGMenuItems(body);BOOL content=NO,visible=WXGMenuShown(body);
             for(UIView *item in items){UIImageView *i=nil;UILabel *l=nil;WXGMenuParts(item,&i,&l);if(i || l.text.length){content=YES;break;}}
             CFTimeInterval waited=CACurrentMediaTime();
             if(!visible || content)entry.partsSince=0;
-            if(content)capsules=YES;
-            else if(!visible)capsules=entry.capsuleMode;
-            else if(entry.capsuleMode && entry.phase!=WXGMenuPhaseClosed) {
+            if(content)animateMenu=YES;
+            else if(!visible)animateMenu=entry.animatedHomeMenu;
+            else if(entry.animatedHomeMenu && entry.phase!=WXGMenuPhaseClosed) {
                 // WeChat emptying its rows while the menu is open is most likely its close: the glass leaves (and is no
-                // reason to drop it at once); if the rows stay empty, the grace below takes it back to the plate after that.
+                // reason to drop it at once); if the rows stay empty, release the native menu after that.
                 if(entry.phase==WXGMenuPhaseOpen)[self beginExit:entry];
-                capsules=YES;
+                animateMenu=YES;
             }
             else {
                 if(entry.partsSince==0) {
@@ -599,35 +809,36 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
                     for(NSNumber *delay in @[@.08,@.27])
                         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(delay.doubleValue*NSEC_PER_SEC)),dispatch_get_main_queue(),^{if(weakHost)[self nativeHostLaidOut:weakHost];});
                 }
-                capsules=waited-entry.partsSince<.25;
+                animateMenu=waited-entry.partsSince<.25;
             }
         }
-        if(entry.capsuleMode!=capsules) {
+        morph=morph && animateMenu;
+        if(entry.animatedHomeMenu!=animateMenu || entry.morphMode!=morph) {
             // The look changed (the setting, or the rows turned up): the other look is taken down.
-            entry.capsuleMode=capsules;[entry.states restore];[self hideRows:entry remove:YES];
+            [entry.states restore];[self hideRows:entry remove:YES];
+            entry.animatedHomeMenu=animateMenu;entry.morphMode=morph;
             entry.phase=WXGMenuPhaseClosed;entry.entranceDone=NO;entry.blockReopen=NO;entry.lastPaint=0;
         }
-        if(capsules){surface.active=NO;surface.hidden=YES;surface.glass.backdropExclusions=@[];}
-        else {
-        // FIX27: the message long-press menu radius is a setting; the plus menu keeps 18.
-        surface.maximumCornerRadius=[kind isEqual:@"pinnedRow"]?MIN(body.bounds.size.height*.5,32):
-            [kind isEqual:@"messageMenu"]?WXGConfig.shared.messageMenuCornerRadius:
-            [kind isEqual:@"momentsMenu"]?body.bounds.size.height*.5:18;   // FIX108 C: the Moments bar is a capsule
-        surface.glass.sourceView=[kind isEqual:@"pinnedRow"]?WXGContentSourceForView(view):(_source?:WXGContentSourceForView(view));
-        surface.glass.backdropExclusions=@[view];
-        UIView *parent=body;CGRect material=body.bounds;
-        if([kind isEqual:@"pinnedRow"]) {
-            // Probe: every native tips row has its own 44pt performBgAction.
-            // Use that action's rectangle, not a shorter/clipped paint child.
-            parent=view;material=[body convertRect:body.bounds toView:parent];
-            for(UIView *child in WXGViews(body,80))if([child isKindOfClass:UIControl.class] &&
-                [WXGActionNames((id)child) containsObject:@"performBgAction"] && child.bounds.size.height>=16) {
-                material=[child convertRect:child.bounds toView:parent];break;
+        if(homeMenu && !animateMenu){[entry.states restore];entry.lastPaint=0;return;}
+        if(!homeMenu) {
+            surface.maximumCornerRadius=[kind isEqual:@"pinnedRow"]?MIN(body.bounds.size.height*.5,32):
+                [kind isEqual:@"messageMenu"]?WXGConfig.shared.messageMenuCornerRadius:
+                [kind isEqual:@"momentsMenu"]?body.bounds.size.height*.5:18;   // FIX108 C: the Moments bar is a capsule
+            surface.glass.sourceView=[kind isEqual:@"pinnedRow"]?WXGContentSourceForView(view):(_source?:WXGContentSourceForView(view));
+            surface.glass.backdropExclusions=@[view];
+            UIView *parent=body;CGRect material=body.bounds;
+            if([kind isEqual:@"pinnedRow"]) {
+                // Probe: every native tips row has its own 44pt performBgAction.
+                // Use that action's rectangle, not a shorter/clipped paint child.
+                parent=view;material=[body convertRect:body.bounds toView:parent];
+                for(UIView *child in WXGViews(body,80))if([child isKindOfClass:UIControl.class] &&
+                    [WXGActionNames((id)child) containsObject:@"performBgAction"] && child.bounds.size.height>=16) {
+                    material=[child convertRect:child.bounds toView:parent];break;
+                }
+                surface.maximumCornerRadius=MIN(material.size.height*.5,32);
             }
-            surface.maximumCornerRadius=MIN(material.size.height*.5,32);
-        }
-        [surface placeMaterial:material inParent:parent];
-        if(parent.subviews.firstObject!=surface)[parent insertSubview:surface atIndex:0];
+            [surface placeMaterial:material inParent:parent];
+            if(parent.subviews.firstObject!=surface)[parent insertSubview:surface atIndex:0];
         }
         CFTimeInterval now=CACurrentMediaTime();
         if(!entry.lastPaint || now-entry.lastPaint>.35 || entry.bodyChildren!=body.subviews.count ||
@@ -637,11 +848,11 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
             entry.bodyChildren=body.subviews.count;entry.hostChildren=view.subviews.count;
             entry.appearance=view.traitCollection.userInterfaceStyle;
         }else [entry.states reapply];
-        if(capsules)[self placeCapsuleMenu:entry items:items];
+        if(animateMenu)[self placeAnimatedHomeMenu:entry items:items];
         else {surface.hidden=NO;surface.active=view.window && WXGVisible(body,view.window);}
     } @catch(NSException *error) {
         WXGLog(@"局部材质 %@：%@",kind,error.reason);[entry.states restore];entry.surface.active=NO;entry.surface.hidden=YES;
-        if(entry.capsuleMode){[self hideRows:entry remove:YES];entry.capsuleMode=NO;entry.phase=WXGMenuPhaseClosed;entry.entranceDone=NO;}   // FIX116 A: WeChat's own icons are back, so the glass of them goes
+        if(entry.animatedHomeMenu){[self hideRows:entry remove:YES];entry.animatedHomeMenu=NO;entry.morphMode=NO;entry.phase=WXGMenuPhaseClosed;entry.entranceDone=NO;}
     } @finally {entry.applying=NO;}
 }
 // ---- FIX116 A: the home menu's capsules and icons ---------------------------
@@ -669,7 +880,8 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     }
     if(!CGRectIsNull(found)){entry.lastPlus=found;return found;}
     if(!CGRectIsEmpty(entry.lastPlus))return entry.lastPlus;
-    return CGRectMake(parent.bounds.size.width-parent.safeAreaInsets.right-14-44,0,44,44);
+    return CGRectMake(CGRectGetMaxX(parent.bounds)-parent.safeAreaInsets.right-14-44,
+                      CGRectGetMinY(parent.bounds)+parent.safeAreaInsets.top,44,44);
 }
 - (WXGSurface *)glassForRowRole:(NSString *)role {
     WXGSurface *s=[WXGSurface new];s.role=role;s.materialOnly=YES;
@@ -702,6 +914,7 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
 - (void)ensureMenuLinkForWindow:(UIWindow *)window {
     if(_menuLink)return;
     WXGMenuLinkProxy *proxy=[WXGMenuLinkProxy new];proxy.target=self;
+    _scrubLastTimestamp=0.;
     _menuLink=[CADisplayLink displayLinkWithTarget:proxy selector:@selector(tick:)];
     WXGConfigureDisplayLink(_menuLink,window.screen?:UIScreen.mainScreen);
     [_menuLink addToRunLoop:NSRunLoop.mainRunLoop forMode:NSRunLoopCommonModes];
@@ -715,6 +928,287 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     if(plus)entry.plusSurface=plus;
     return plus;
 }
+- (void)clearMorphRowsMask:(WXGDecoration *)entry {
+    if(entry.morphMaskedBody.layer.mask==entry.morphRowsMask)entry.morphMaskedBody.layer.mask=entry.morphOriginalRowsMask;
+    entry.morphMaskedBody=nil;
+    entry.morphOriginalRowsMask=nil;
+}
+- (void)clearMorphTriggerMask:(WXGDecoration *)entry {
+    if(entry.morphMaskedTrigger.layer.mask==entry.morphTriggerMask)entry.morphMaskedTrigger.layer.mask=nil;
+    entry.morphMaskedTrigger=nil;
+}
+- (void)restoreMorphBodyPosition:(WXGDecoration *)entry {
+    [UIView performWithoutAnimation:^{
+        for(WXGMenuRow *row in entry.rows) {
+            UIView *item=row.item;
+            if(row.mapOwnsTransform && item && CGAffineTransformEqualToTransform(item.transform,row.mapAppliedTransform))
+                item.transform=row.mapNativeTransform;
+            row.mapOwnsTransform=NO;
+        }
+    }];
+    entry.morphPositionedBody=nil;
+}
+- (void)releaseDismissedNativeMenu:(WXGDecoration *)entry {
+    if(!entry.retirement)return;
+    entry.retirement=WXGMenuRetirementNone;
+    [self clearMorphRowsMask:entry];
+    entry.morphOwner=nil;entry.hasMorphOwner=NO;
+}
+- (void)resetMenuMorph:(WXGDecoration *)entry {
+    entry.pendingRow=nil;
+    for(WXGMenuRow *row in entry.rows)[row removeActionButton];
+    if(entry.morphMode)[WXGIntegrationHost.shared updateHomeMenuFloatingToolsForOwner:entry inWindow:nil occupiedRect:CGRectNull];
+    // WeChat can take a transition snapshot inside its own action handler.
+    // Keep its underlying native artwork concealed until its menu is gone.
+    if(!entry.retirement) {
+        [self clearMorphRowsMask:entry];
+        entry.morphOwner=nil;entry.hasMorphOwner=NO;
+    }
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    [self clearMorphTriggerMask:entry];
+    NSDictionary *returned=[entry.morphView returnSurfaceToButton];
+    if(returned && [returned[@"surface"] isEqual:_morphLayerSamples[@"pickup"][@"surface"]])
+        _morphLayerSamples[@"returned"]=returned;
+    [self restoreMorphBodyPosition:entry];
+    [entry.morphTouch.view removeGestureRecognizer:entry.morphTouch];entry.morphTouch=nil;
+    [entry.morphView removeFromSuperview];entry.morphView=nil;
+    [CATransaction commit];
+    entry.morphForeground=nil;
+    entry.morphRows=nil;entry.morphRowsImage=nil;entry.morphTriggerImage=nil;
+    entry.morphHighlight=nil;entry.morphSelectedRow=nil;entry.scrubHaptic=nil;
+    entry.morphContent=nil;entry.morphContentKey=nil;
+    entry.morphSettled=NO;
+    if(entry)entry->_morphMotion=(WXGMenuMorph){0};
+}
+static BOOL WXGMenuMapValidPoint(CGPoint p) {return isfinite(p.x) && isfinite(p.y);}
+
+// Fit bounds to a rectangle expressed in menu-parent coordinates, without
+// writing native frame, center or bounds. All touch and accessibility queries
+// then see the same transformed controls that back the menu's visible rows.
+static BOOL WXGMenuMapTransform(UIView *view,UIView *space,CGRect target,CGAffineTransform *out) {
+    UIView *superview=view.superview,*ancestor=view;
+    if(!superview || CGRectIsEmpty(view.bounds) || CGRectIsEmpty(target) || CGRectIsInfinite(target))return NO;
+    for(;ancestor && ancestor!=space;ancestor=ancestor.superview)
+        if(!CATransform3DIsAffine(ancestor.layer.transform) || !CATransform3DIsAffine(ancestor.layer.sublayerTransform))return NO;
+    if(ancestor!=space)return NO;
+
+    CGPoint root=[superview convertPoint:CGPointZero toView:space];
+    CGPoint ex=[superview convertPoint:CGPointMake(32.,0.) toView:space];
+    CGPoint ey=[superview convertPoint:CGPointMake(0.,32.) toView:space];
+    CGFloat determinant=(ex.x-root.x)*(ey.y-root.y)-(ex.y-root.y)*(ey.x-root.x);
+    if(!isfinite(determinant) || fabs(determinant)<.001)return NO;
+
+    CGPoint start=[space convertPoint:target.origin toView:superview];
+    CGPoint right=[space convertPoint:CGPointMake(CGRectGetMaxX(target),CGRectGetMinY(target)) toView:superview];
+    CGPoint bottom=[space convertPoint:CGPointMake(CGRectGetMinX(target),CGRectGetMaxY(target)) toView:superview];
+    if(!WXGMenuMapValidPoint(start) || !WXGMenuMapValidPoint(right) || !WXGMenuMapValidPoint(bottom))return NO;
+    CGSize size=view.bounds.size;
+    CGFloat a=(right.x-start.x)/size.width,b=(right.y-start.y)/size.width;
+    CGFloat c=(bottom.x-start.x)/size.height,d=(bottom.y-start.y)/size.height;
+    CGPoint anchor=view.layer.anchorPoint,center=view.center;
+    CGFloat ox=anchor.x*size.width,oy=anchor.y*size.height;
+    *out=CGAffineTransformMake(a,b,c,d,start.x+a*ox+c*oy-center.x,start.y+b*ox+d*oy-center.y);
+    return WXGMenuMapValidPoint(CGPointMake(out->tx,out->ty));
+}
+
+- (CGRect)positionMorphBody:(WXGDecoration *)entry anchor:(CGRect)anchor {
+    UIView *body=entry.body,*parent=entry.menuParent;
+    WXGMenuMorphContent *content=entry.morphContent;
+    entry.morphPlacementFailure=nil;
+    if(!body || !parent || CGRectIsEmpty(anchor) || !content || content.rowFrames.count!=entry.rows.count) {
+        entry.morphPlacementFailure=@"missing anchor or row geometry";
+        [self restoreMorphBodyPosition:entry];
+        return CGRectNull;
+    }
+    UIWindow *window=parent.window;
+    CGRect screen=[window convertRect:window.bounds toView:parent];
+    CGRect available=[window convertRect:UIEdgeInsetsInsetRect(window.bounds,window.safeAreaInsets) toView:parent];
+    WXGMenuBox panel=WXGMenuMorphPlacePanel(WXGMenuMorphBox(anchor),WXGMenuMorphBox(screen),WXGMenuMorphBox(available),content.size.width,content.size.height);
+    CGRect target=WXGMenuMorphCGRect(panel);
+    if(CGRectIsEmpty(target)) {
+        entry.morphPlacementFailure=@"panel exceeds available viewport";
+        [self restoreMorphBodyPosition:entry];
+        return CGRectNull;
+    }
+    if(entry.morphPositionedBody!=body)[self restoreMorphBodyPosition:entry];
+    entry.morphPositionedBody=body;
+    __block BOOL mapped=YES;
+    [UIView performWithoutAnimation:^{
+        for(NSUInteger i=0;i<entry.rows.count;i++) {
+            WXGMenuRow *row=entry.rows[i];UIView *item=row.item;
+            CGRect hit=CGRectOffset(content.rowFrames[i].CGRectValue,target.origin.x,target.origin.y);
+            CGAffineTransform rowMap;
+            if(![item isDescendantOfView:body] || !WXGMenuMapTransform(item,parent,hit,&rowMap)) {
+                entry.morphPlacementFailure=@"unmappable native row";
+                mapped=NO;
+                break;
+            }
+            if(!row.mapOwnsTransform || !CGAffineTransformEqualToTransform(item.transform,row.mapAppliedTransform))row.mapNativeTransform=item.transform;
+            row.mapOwnsTransform=YES;
+            row.mapAppliedTransform=rowMap;
+            if(!CGAffineTransformEqualToTransform(item.transform,rowMap))item.transform=rowMap;
+        }
+        if(!mapped)[self restoreMorphBodyPosition:entry];
+    }];
+    if(!mapped)return CGRectNull;
+    return target;
+}
+// Render the actual actions into one image in their final coordinate system.
+// Its pixels are sampled by the lens throughout opening, tracking and closing.
+- (BOOL)updateMorphContent:(WXGDecoration *)entry {
+    NSMutableArray *titles=[NSMutableArray array],*icons=[NSMutableArray array];
+    NSMutableIndexSet *submenus=[NSMutableIndexSet indexSet];
+    for(WXGMenuRow *row in entry.rows) {
+        UIImageView *iv=nil;UILabel *label=nil;
+        WXGMenuParts(row.item,&iv,&label);
+        row.nativeIcon=iv;row.nativeLabel=label;
+        UIButton *button=[row.item isKindOfClass:UIButton.class]?(UIButton *)row.item:nil;
+        NSString *title=WXGMenuActionTitle(row.item,label,button);
+        UIImage *icon=iv.image?:button.currentImage;
+        if(!title.length && !icon){entry.morphContent=nil;entry.morphContentKey=nil;return YES;}
+        if(button.menu)[submenus addIndex:titles.count];
+        [titles addObject:title];
+        [icons addObject:icon?:NSNull.null];
+    }
+    UIView *parent=entry.menuParent;
+    UIWindow *window=parent.window;
+    CGFloat maxWidth=CGRectGetWidth([window convertRect:UIEdgeInsetsInsetRect(window.bounds,window.safeAreaInsets) toView:parent]);
+    CGFloat width=MIN([WXGConfig.shared extraNumber:@"homeMenuMorphWidth"],maxWidth);
+    UITraitCollection *traits=entry.host.traitCollection;
+    CGFloat scale=parent.window.screen.scale?:UIScreen.mainScreen.scale;
+    NSDictionary *key=@{@"titles":titles,@"icons":icons,@"submenus":submenus,@"width":@(width),@"scale":@(scale),@"traits":traits};
+    if([entry.morphContentKey isEqual:key])return NO;
+    WXGMenuMorphContent *content=[WXGMenuMorphContent contentWithTitles:titles nativeIcons:icons submenuRows:submenus
+        dividerBeforeRows:nil panelWidth:width traitCollection:traits scale:scale];
+    entry.morphContent=content;
+    entry.morphContentKey=content?key:nil;
+    return YES;
+}
+- (void)prepareMenuMorph:(WXGDecoration *)entry {
+    UIView *parent=entry.menuParent,*host=entry.host;
+    CGRect anchor=entry.morphAnchor,target=entry.morphRect;
+    if(!parent.window || CGRectIsEmpty(anchor) || CGRectIsEmpty(target))return;
+    UIView *trigger=[self resolveHomePlusFor:entry]?:entry.plusControl;
+    CGRect canvas=CGRectIntersection(CGRectInset(CGRectUnion(anchor,target),-56,-72),
+                                     [parent.window convertRect:parent.window.bounds toView:parent]);
+    if(CGRectIsEmpty(canvas))return;
+    [WXGIntegrationHost.shared updateHomeMenuFloatingToolsForOwner:entry inWindow:parent.window
+        occupiedRect:[parent convertRect:canvas toView:parent.window]];
+    UIWindow *window=parent.window;
+    CGRect windowCanvas=[parent convertRect:canvas toView:window];
+    CGFloat scale=window.screen.scale?:UIScreen.mainScreen.scale;
+    windowCanvas=CGRectApplyAffineTransform(CGRectIntegral(CGRectApplyAffineTransform(windowCanvas,
+        CGAffineTransformMakeScale(scale,scale))),CGAffineTransformMakeScale(1./scale,1./scale));
+    BOOL newPortal=!entry.morphView || entry.morphView.superview!=window;
+    BOOL canvasChanged=newPortal || !CGRectEqualToRect(entry.morphView.frame,windowCanvas);
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    if(newPortal) {
+        WXGMenuMorphView *old=entry.morphView;
+        WXGHomeMenuPortal *view=[[WXGHomeMenuPortal alloc]initWithFrame:windowCanvas];
+        view.entry=entry;view.userInteractionEnabled=YES;view.isAccessibilityElement=NO;view.accessibilityElementsHidden=NO;
+        [old returnSurfaceToButton];[old removeFromSuperview];
+        [window addSubview:view];
+        entry.morphView=view;
+        __weak WXGDecoration *weakEntry=entry;
+        __weak WXGMenuMorphView *weakView=view;
+        __weak WXGDecorations *weakSelf=self;
+        view.requestFrame=^{
+            WXGDecoration *active=weakEntry;WXGDecorations *manager=weakSelf;
+            if(active && active==manager.activeHomeMenu && active.morphView==weakView && active.morphView.window)
+                [manager renderMenuMorph:active];
+        };
+
+        UIView *foreground=entry.morphForeground;
+        if(!foreground) {
+            foreground=[UIView new];entry.morphForeground=foreground;
+            foreground.userInteractionEnabled=NO;foreground.accessibilityElementsHidden=YES;
+            UIView *rows=[UIView new];entry.morphRows=rows;[foreground addSubview:rows];
+            UIView *highlight=[UIView new];entry.morphHighlight=highlight;
+            highlight.layer.cornerCurve=kCACornerCurveContinuous;highlight.alpha=0.;
+            [rows addSubview:highlight];
+            entry.morphRowsImage=[UIImageView new];[rows addSubview:entry.morphRowsImage];
+            entry.morphTriggerImage=[UIImageView new];[foreground addSubview:entry.morphTriggerImage];
+        }
+        [view useSurfaceFromButton:[trigger isKindOfClass:WXGSurface.class]?(WXGSurface *)trigger:nil];
+        view.fallbackForeground=foreground;
+    }
+    entry.morphView.overrideUserInterfaceStyle=host.traitCollection.userInterfaceStyle;
+    if(canvasChanged) {
+        entry.morphView.frame=windowCanvas;
+        [entry.morphView setNeedsLayout];[entry.morphView layoutIfNeeded];
+        [entry.morphView captureBackdropFromView:window excludingViews:trigger?@[host,trigger]:@[host]];
+    }
+    if(!entry.morphTriggerImage.image || (entry.morphMaskedTrigger && entry.morphMaskedTrigger!=trigger))
+        entry.morphTriggerImage.image=WXGMenuMorphTriggerInk(trigger,anchor);
+    entry.morphRowsImage.image=entry.morphContent.image;
+    [entry.morphView setOpticalSessionBounds:[parent convertRect:CGRectUnion(anchor,target) toView:window]];
+    [entry.morphView setForegroundRowsImage:entry.morphContent.image triggerImage:entry.morphTriggerImage.image];
+    [CATransaction commit];
+}
+- (void)renderMenuMorph:(WXGDecoration *)entry {
+    WXGMenuMorphView *view=entry.morphView;
+    if(!view || !entry->_morphMotion.initialized)return;
+    WXGMenuMorphFrame frame=entry->_morphMotion.frame;
+    WXGMenuScrub *scrub=&entry->_scrub;
+    BOOL calm=UIAccessibilityIsReduceMotionEnabled();
+    if(!calm && (entry.phase==WXGMenuPhaseOpen || !entry.morphSettled)) {
+        WXGMenuBox source=entry->_morphMotion.source,target=entry->_morphMotion.destination;
+        frame.bounds=WXGMenuScrubBounds(frame.bounds,scrub,true,WXGMenuMorphCenterY(target)<WXGMenuMorphCenterY(source));
+    }
+    BOOL settled=entry.morphSettled && entry.phase==WXGMenuPhaseOpen;
+    UIView *trigger=[self resolveHomePlusFor:entry]?:entry.plusControl;
+    UIView *body=entry.body;
+    [CATransaction begin];[CATransaction setDisableActions:YES];
+    CGRect row=entry.morphContent.rowFrames.firstObject.CGRectValue;
+    row.origin.y=scrub->top.value;row.size.height=scrub->height.value;
+    CGFloat alpha=WXGMenuClamp(scrub->alpha.value,0.,1.);
+    [view stageHighlightedRowRect:row opacity:alpha];
+    CGPoint light=CGPointMake(scrub->lightX.value,scrub->lightY.value);
+    [view stageMenuLightAtPoint:light inParent:entry.menuParent artworkX:light.x-CGRectGetMinX(entry.morphRect) strength:WXGMenuClamp(scrub->glow.value,0.,1.)*frame.contentProgress];
+    BOOL renderedInk=[view applyMorphFrame:frame inParent:entry.menuParent settledOpen:settled showsForeground:YES];
+    entry.morphForeground.hidden=renderedInk;
+    if(entry.morphMaskedTrigger!=trigger)[self clearMorphTriggerMask:entry];
+    if(trigger.window==view.window && (!trigger.layer.mask || trigger.layer.mask==entry.morphTriggerMask)) {
+        if(!entry.morphTriggerMask)entry.morphTriggerMask=[CALayer layer];
+        trigger.layer.mask=entry.morphTriggerMask;entry.morphMaskedTrigger=trigger;
+    }
+    if(body!=entry.morphMaskedBody)[self clearMorphRowsMask:entry];
+    if(body.window && entry.morphRowsImage.image) {
+        if(!entry.morphRowsMask)entry.morphRowsMask=[CALayer layer];
+        if(body.layer.mask!=entry.morphRowsMask){entry.morphOriginalRowsMask=body.layer.mask;body.layer.mask=entry.morphRowsMask;}
+        entry.morphMaskedBody=body;
+    }
+    NSString *milestone=nil;
+    if(entry.phase==WXGMenuPhaseExiting) {
+        if(entry.morphSettled)milestone=@"collapsed";
+        else if(frame.contentProgress<.65 && frame.contentProgress>.08)milestone=@"closing";
+    } else if(settled)milestone=@"open";
+    else if(frame.contentProgress<.01)milestone=@"button";
+    else if(frame.contentProgress>.2 && frame.contentProgress<.8)milestone=@"opening";
+    if(milestone && _morphLayerSamples && !_morphLayerSamples[milestone])
+        _morphLayerSamples[milestone]=view.presentationEvidence;
+    if(renderedInk){[CATransaction commit];return;}
+
+    CGRect incoming=[view convertRect:WXGMenuMorphCGRect(frame.bounds) fromView:entry.menuParent];
+    CGRect lobe=[view convertRect:WXGMenuMorphCGRect(frame.sourceLobe) fromView:entry.menuParent];
+    WXGMenuSetLayerBlur(entry.morphForeground.layer,frame.portalBlur);
+    UIView *highlight=entry.morphHighlight;
+    highlight.frame=row;highlight.layer.cornerRadius=MAX(0.,row.size.height*.5);
+    highlight.backgroundColor=entry.morphContent.highlightColor;highlight.alpha=alpha;
+    UIView *rows=entry.morphRows;
+    CGSize size=entry.morphRect.size;
+    rows.bounds=(CGRect){CGPointZero,size};
+    rows.center=CGPointMake(CGRectGetMidX(incoming),CGRectGetMidY(incoming));
+    CGFloat sx=incoming.size.width/MAX(size.width,1)*frame.contentZoom,sy=incoming.size.height/MAX(size.height,1)*frame.contentZoom;
+    rows.transform=CGAffineTransformMakeScale(sx,sy);
+    rows.layer.opacity=(float)frame.rowsOpacity;
+    entry.morphRowsImage.frame=rows.bounds;
+    WXGMenuSetLayerBlur(entry.morphRowsImage.layer,frame.contentBlur/MAX(MIN(sx,sy),.25));
+    entry.morphTriggerImage.frame=CGRectInset(lobe,lobe.size.width*(1.-frame.sourceZoom)*.5,lobe.size.height*(1.-frame.sourceZoom)*.5);
+    entry.morphTriggerImage.layer.opacity=(float)frame.sourceOpacity;
+    WXGMenuSetLayerBlur(entry.morphTriggerImage.layer,frame.sourceBlur);
+    [CATransaction commit];
+}
 // R24: single deterministic frame renderer for the entire "+" trigger, flying
 // ink dots, circular glass icons, and text capsules at progress p in [0, 1].
 - (void)applyHomeMenuProgress:(double)p {
@@ -725,6 +1219,11 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     if(!entry) {
         [_sharedInkOverlay hideAll];
         [plus setHomePlusProgress:0. dotsHidden:NO];
+        return;
+    }
+    if(entry.morphMode) {
+        [_sharedInkOverlay hideAll];
+        [self renderMenuMorph:entry];
         return;
     }
     NSArray<NSValue *> *targets=[self drawnIconTargets:entry];
@@ -804,7 +1303,8 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     [plus setHomePlusProgress:0. dotsHidden:NO];
     if(entry) {
         entry.phase=WXGMenuPhaseClosed;
-        for(WXGMenuRow *row in entry.rows)for(WXGSurface *s in @[row.icon,row.capsule]) {
+        [self resetMenuMorph:entry];
+        for(WXGMenuRow *row in entry.rows)for(WXGSurface *s in row.surfaces) {
             s.layer.transform=CATransform3DIdentity;s.layer.opacity=0.f;
             WXGMenuSetLayerBlur(s.iconView.layer,0.);
             s.active=NO;s.hidden=YES;
@@ -812,18 +1312,78 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     }
     _activeHomeMenu=nil;
 }
+// Only the natural end of absorption (or Reduce Motion's immediate close)
+// may deliver a selection. Replacement, route changes and teardown discard it.
+- (void)completeHomeMenuAbsorption:(WXGDecoration *)entry {
+    if(entry!=_activeHomeMenu || entry.phase!=WXGMenuPhaseExiting)return;
+    WXGMenuRow *row=entry.pendingRow;
+    UIControl *action=row.actionButton.nativeControl;
+    NSUInteger index=row?[entry.rows indexOfObjectIdenticalTo:row]:NSNotFound;
+    NSString *expected=index<entry.morphContent.titles.count?entry.morphContent.titles[index]:nil;
+    UIButton *button=[row.item isKindOfClass:UIButton.class]?(id)row.item:nil;
+    BOOL dispatch=row && [expected isEqualToString:WXGMenuActionTitle(row.item,row.nativeLabel,button)] &&
+        UIApplication.sharedApplication.applicationState==UIApplicationStateActive &&
+        WXGMenuOwnerVisible(entry) && WXGMenuShown(entry.body) &&
+        [row.item isDescendantOfView:entry.body] && [action isDescendantOfView:row.item] &&
+        WXGVisible(action,entry.morphView.window) && WXGCanForward(action);
+    entry.retirement=dispatch?WXGMenuRetirementDispatching:WXGMenuRetirementNone;
+    [self finishActiveHomeMenuClose];
+    if(dispatch) {
+        UIControlEvents event=(action.allControlEvents & UIControlEventTouchUpInside)?UIControlEventTouchUpInside:UIControlEventPrimaryActionTriggered;
+        [action sendActionsForControlEvents:event];
+        // A custom target may leave the menu open, or replace its rows in
+        // place. Let its queued UIKit updates run before resuming observation.
+        NSUInteger token=entry.exitToken;
+        dispatch_async(dispatch_get_main_queue(),^{
+            if(entry.retirement!=WXGMenuRetirementDispatching || entry.exitToken!=token)return;
+            if(WXGMenuShown(entry.body) && !WXGMenuOwnerVisible(entry))entry.retirement=WXGMenuRetirementCovered;
+            else [self releaseDismissedNativeMenu:entry];
+        });
+        [WXGIntegrationHost.shared schedule];
+    }
+}
 - (void)menuTick:(CADisplayLink *)link {
-    (void)link;
     WXGDecoration *entry=_activeHomeMenu;
     UIView *parent=entry.menuParent?:entry.host.superview;
-    if(!entry || !parent || !parent.window) {
+    if(!entry || !parent.window || (entry.pendingRow && (!WXGMenuShown(entry.body) ||
+       UIApplication.sharedApplication.applicationState!=UIApplicationStateActive))) {
+        [self finishActiveHomeMenuClose];
+        return;
+    }
+    if(entry.morphMode && !WXGMenuOwnerVisible(entry)) {
+        entry.retirement=WXGMenuShown(entry.body)?WXGMenuRetirementCovered:WXGMenuRetirementNone;
         [self finishActiveHomeMenuClose];
         return;
     }
     CFTimeInterval now=CACurrentMediaTime();
     double dt=_menuLastTime>0.?WXGMenuClamp(now-_menuLastTime,0.,.05):(1./120.);
     _menuLastTime=now;
-    double dur=_menuTarget>_menuProgress?WXGMenuOpenDuration(_menuSpeed):WXGMenuCloseDuration(_menuSpeed);
+    if(entry.morphMode) {
+        double seconds=dt*_menuSpeed;
+        BOOL settled=entry.morphSettled || WXGMenuMorphAdvance(&entry->_morphMotion,seconds);
+        double interval=WXGMenuClamp(link.targetTimestamp-link.timestamp,1./240.,1./30.);
+        double elapsed=_scrubLastTimestamp>0.?MAX(0.,link.timestamp-_scrubLastTimestamp):interval*.5;
+        _scrubLastTimestamp=link.timestamp;
+        double scrubDT=MIN(elapsed,interval*(entry.scrubStartupFrames?1.:2.5))*_menuSpeed;
+        if(entry.scrubStartupFrames)entry.scrubStartupFrames--;
+        BOOL scrubSettled=WXGMenuScrubAdvance(&entry->_scrub,scrubDT,UIAccessibilityIsReduceMotionEnabled());
+        if(entry->_scrub.touching || !scrubSettled) {
+            entry.scrubFrames++;
+            entry.scrubPeakY=MAX(entry.scrubPeakY,fabs(entry->_scrub.dragY.value));
+        }
+        _menuProgress=entry->_morphMotion.frame.contentProgress;
+        entry.morphSettled=settled;
+        [self renderMenuMorph:entry];
+        if(settled && entry.phase==WXGMenuPhaseExiting){
+            _morphLayerSamples[@"scrub"]=@{@"presses":@(entry.scrubPresses),@"crossings":@(entry.scrubCrossings),
+                @"movingFrames":@(entry.scrubFrames),@"peakYInputPt":@(entry.scrubPeakY)};
+            [self completeHomeMenuAbsorption:entry];return;
+        }
+        if(settled && scrubSettled)[self stopMenuLink];
+        return;
+    }
+    BOOL opening=_menuTarget>_menuProgress;
+    double dur=opening?WXGMenuOpenDuration(_menuSpeed):WXGMenuCloseDuration(_menuSpeed);
     if(dur<.05)dur=.05;
     if(_menuTarget>_menuProgress) {
         _menuProgress=MIN(_menuTarget,_menuProgress+dt/dur);
@@ -861,6 +1421,7 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     [self beginExit:entry];
 }
 - (void)hideRows:(WXGDecoration *)entry remove:(BOOL)remove {
+    [self releaseDismissedNativeMenu:entry];
     BOOL ownsPlus=(entry && entry==_activeHomeMenu);
     if(ownsPlus) {
         [self stopMenuLink];
@@ -871,8 +1432,9 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
         _activeHomeMenu=nil;
     }
     if(remove)entry.plusSurface=nil;
+    [self resetMenuMorph:entry];
     for(WXGMenuRow *row in entry.rows) {
-        for(WXGSurface *s in @[row.icon,row.capsule]) {
+        for(WXGSurface *s in row.surfaces) {
             s.layer.transform=CATransform3DIdentity;s.layer.opacity=1.f;
             WXGMenuSetLayerBlur(s.iconView.layer,0.);
             s.active=NO;s.hidden=YES;s.glass.backdropExclusions=@[];
@@ -905,7 +1467,8 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     ++entry.exitToken;
     if(entry!=_activeHomeMenu) {
         entry.phase=WXGMenuPhaseClosed;
-        for(WXGMenuRow *row in entry.rows)for(WXGSurface *s in @[row.icon,row.capsule]) {
+        [self resetMenuMorph:entry];
+        for(WXGMenuRow *row in entry.rows)for(WXGSurface *s in row.surfaces) {
             s.layer.transform=CATransform3DIdentity;WXGMenuSetLayerBlur(s.iconView.layer,0.);
             s.active=NO;s.hidden=YES;
         }
@@ -915,17 +1478,166 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     _menuSpeed=WXGMenuClamp([WXGConfig.shared extraNumber:@"homeMenuSpeed"],.5,2.);
     _menuStagger=WXGMenuClamp([WXGConfig.shared extraNumber:@"homeMenuStagger"],0,80)/1000.0;
     _menuTarget=0.;
-    if(UIAccessibilityIsReduceMotionEnabled() || _menuProgress<=.0001) {
-        [self finishActiveHomeMenuClose];
+    if(UIAccessibilityIsReduceMotionEnabled() || (entry.morphMode?!entry->_morphMotion.initialized:_menuProgress<=.0001)) {
+        [self completeHomeMenuAbsorption:entry];
         return;
     }
     UIWindow *win=entry.host.window?:entry.menuParent.window?:_source.window;
+    if(entry.morphMode) {
+        CGRect anchor=[self plusRectFor:entry parent:entry.menuParent];
+        if(!CGRectIsEmpty(anchor))WXGMenuMorphUpdateSource(&entry->_morphMotion,WXGMenuMorphBox(anchor),WXGMenuMorphBox(anchor));
+        WXGMenuScrubRelease(&entry->_scrub);WXGMenuScrubClear(&entry->_scrub);
+        entry.morphSelectedRow=nil;
+        WXGMenuMorphSetExpanded(&entry->_morphMotion,false);
+        entry.morphSettled=NO;
+    }
     [self applyHomeMenuProgress:_menuProgress];
     [self ensureMenuLinkForWindow:win];
 }
-- (void)placeCapsuleMenu:(WXGDecoration *)entry items:(NSArray<UIView *> *)items {
+static CGRect WXGMenuMorphRowRect(WXGDecoration *entry,UIView *item) {
+    if(!item)return CGRectNull;
+    NSArray<NSValue *> *frames=entry.morphContent.rowFrames;
+    for(NSUInteger i=0,count=MIN(entry.rows.count,frames.count);i<count;i++)
+        if(entry.rows[i].item==item)return frames[i].CGRectValue;
+    return CGRectNull;
+}
+
+- (void)paintMorphHighlightRow:(UIView *)row inEntry:(WXGDecoration *)entry immediate:(BOOL)immediate {
+    UIView *previous=entry.morphSelectedRow;
+    if(previous==row)return;
+    WXGMenuScrub *scrub=&entry->_scrub;
+    if(row) {
+        CGRect rect=WXGMenuMorphRowRect(entry,row);
+        if(CGRectIsEmpty(rect))return;
+        WXGMenuScrubSelect(scrub,rect.origin.y,rect.size.height,immediate);
+        if(previous) {
+            entry.scrubCrossings++;
+            if(WXGConfig.shared.haptics)[entry.scrubHaptic selectionChanged];
+        }
+    }else WXGMenuScrubClear(scrub);
+    entry.morphSelectedRow=row;
+}
+- (void)highlightMorphRow:(UIView *)row inEntry:(WXGDecoration *)entry {
+    [self paintMorphHighlightRow:row inEntry:entry immediate:YES];
+    [self ensureMenuLinkForWindow:entry.menuParent.window];
+}
+
+static UIControl *WXGMenuForwardableRow(UIView *row) {
+    // FIX103 identifies RightTopMenuItemBtn itself as the sender for
+    // onItemAction:. Never substitute a nested accessory for a private row.
+    UIControl *control=[row isKindOfClass:UIControl.class]?(UIControl *)row:nil;
+    if(!WXGCanForward(control) || !WXGMenuShown(control))return nil;
+    if([control isKindOfClass:UIButton.class] && ((UIButton *)control).menu &&
+       ((UIButton *)control).showsMenuAsPrimaryAction)return nil;
+    return control;
+}
+- (void)selectMorphButton:(WXGMenuActionButton *)button {
+    WXGDecoration *entry=_activeHomeMenu;
+    if(!button || entry.phase!=WXGMenuPhaseOpen || entry.pendingRow || button.superview!=entry.morphView ||
+       !WXGCanForward(button.nativeControl) || !WXGMenuOwnerVisible(entry))return;
+    for(WXGMenuRow *row in entry.rows)if(row.actionButton==button) {
+        if(![row.item isDescendantOfView:entry.body] || !WXGMenuShown(entry.body))return;
+        // Touch-up activates the strict row under the finger. Fade the plate
+        // where the last move left it, including keyboard/VoiceOver activation.
+        entry.pendingRow=row;
+        [self beginExit:entry];
+        return;
+    }
+}
+- (void)installMorphActions:(WXGDecoration *)entry {
+    UIView *portal=entry.morphView;
+    if(!portal)return;
+    NSArray<NSValue *> *frames=entry.morphContent.rowFrames;
+    for(NSUInteger i=0;i<entry.rows.count;i++) {
+        WXGMenuRow *row=entry.rows[i];
+        UIControl *control=WXGMenuForwardableRow(row.item);
+        if(!control || i>=frames.count){[row removeActionButton];continue;}
+        WXGMenuActionButton *button=row.actionButton;
+        if(!button) {
+            row.wasAccessibilityElement=row.item.isAccessibilityElement;
+            row.wereAccessibilityElementsHidden=row.item.accessibilityElementsHidden;
+            row.item.isAccessibilityElement=NO;
+            row.item.accessibilityElementsHidden=YES;
+            button=[[WXGMenuActionButton alloc] initWithFrame:CGRectZero];
+            [button addTarget:self action:@selector(selectMorphButton:) forControlEvents:UIControlEventTouchUpInside|UIControlEventPrimaryActionTriggered];
+            row.actionButton=button;
+        }
+        button.nativeControl=control;
+        button.accessibilityLabel=control.accessibilityLabel.length?control.accessibilityLabel:entry.morphContent.titles[i];
+        button.accessibilityHint=control.accessibilityHint;
+        button.accessibilityValue=control.accessibilityValue;
+        button.accessibilityTraits=control.accessibilityTraits|UIAccessibilityTraitButton;
+        if(button.superview!=portal)[portal addSubview:button];
+        CGRect frame=CGRectOffset(frames[i].CGRectValue,entry.morphRect.origin.x,entry.morphRect.origin.y);
+        button.frame=[entry.menuParent convertRect:frame toView:portal];
+    }
+    if(entry.morphTouch.view!=portal) {
+        [entry.morphTouch.view removeGestureRecognizer:entry.morphTouch];
+        WXGMenuRowObserver *observer=[WXGMenuRowObserver new];
+        __weak WXGDecoration *weakEntry=entry;
+        __weak typeof(self) weakSelf=self;
+        observer.scrubTouch=^(UITouch *touch,UITouchPhase phase){
+            WXGDecoration *current=weakEntry;
+            if(current)[weakSelf scrubTouch:touch phase:phase inEntry:current];
+        };
+        entry.morphTouch=observer;[portal addGestureRecognizer:observer];
+    }
+}
+- (void)scrubTouch:(UITouch *)touch phase:(UITouchPhase)phase inEntry:(WXGDecoration *)entry {
+    if(entry!=_activeHomeMenu || entry.phase!=WXGMenuPhaseOpen || !entry->_morphMotion.initialized)return;
+    WXGMenuScrub *scrub=&entry->_scrub;
+    CGPoint point=[touch locationInView:entry.menuParent];
+    BOOL down=phase==UITouchPhaseBegan,up=phase==UITouchPhaseEnded,cancel=phase==UITouchPhaseCancelled;
+    if(down) {
+        if(!CGRectContainsPoint(entry.morphRect,point))return;
+        WXGMenuScrubDown(scrub,point.x,point.y);
+        ++entry.scrubPresses;
+        if(WXGConfig.shared.haptics) {
+            if(!entry.scrubHaptic)entry.scrubHaptic=[UISelectionFeedbackGenerator new];
+            [entry.scrubHaptic prepare];
+        }
+    }else {
+        if(!scrub->touching)return;
+        if(up || cancel)WXGMenuScrubRelease(scrub);else WXGMenuScrubMove(scrub,point.x,point.y);
+    }
+    // Source hit testing stays in the resting target while the drawn glass
+    // follows the finger. Scrubbing includes 24 pt of slack; release is strict.
+    point.x-=entry.morphRect.origin.x;point.y-=entry.morphRect.origin.y;
+    WXGMenuRow *choice=nil;
+    CGFloat best=CGFLOAT_MAX;
+    CGFloat slack=up?0.:24.;
+    CGSize size=entry.morphRect.size;
+    if(!cancel && point.x>=-slack && point.x<=size.width+slack && point.y>=-slack && point.y<=size.height+slack) {
+        NSArray<NSValue *> *frames=entry.morphContent.rowFrames;
+        for(NSUInteger i=0,count=MIN(entry.rows.count,frames.count);i<count;i++) {
+            WXGMenuRow *row=entry.rows[i];if(!row.actionButton)continue;
+            CGRect rect=frames[i].CGRectValue;
+            if(up && (point.y<CGRectGetMinY(rect) || point.y>=CGRectGetMaxY(rect)))continue;
+            CGFloat gap=MAX(0.,MAX(CGRectGetMinY(rect)-point.y,point.y-CGRectGetMaxY(rect)));
+            if(gap<best){best=gap;choice=row;}
+        }
+    }
+    if(up && choice){[self selectMorphButton:choice.actionButton];return;}
+    [self paintMorphHighlightRow:choice.item inEntry:entry immediate:down];
+    [self ensureMenuLinkForWindow:entry.menuParent.window];
+    if(down) {
+        // A tap on an already open menu displays the initial plate even if
+        // the finger lifts before the next display callback.
+        if(UIAccessibilityIsReduceMotionEnabled())WXGMenuScrubAdvance(scrub,0.,true);
+        [self renderMenuMorph:entry];
+    }
+}
+- (void)finishHomeMenuPlacement:(WXGDecoration *)entry at:(CFTimeInterval)time {
+    entry.lastPlaced=time;
+    if(!entry.rowsReady)return;
+    if(!entry.entranceDone){entry.entranceDone=YES;++entry.entrances;[self playEntrance:entry];}
+    else if(entry==_activeHomeMenu)[self applyHomeMenuProgress:_menuProgress];
+}
+- (void)placeAnimatedHomeMenu:(WXGDecoration *)entry items:(NSArray<UIView *> *)items {
     UIView *host=entry.host,*body=entry.body,*parent=host.superview;
-    if(!host.window || !body || !parent)return;
+    if(!host.window || !body || !parent || entry.pendingRow || (entry.morphMode && !WXGMenuOwnerVisible(entry)))return;
+    if(entry.retirement && WXGMenuShown(body))return;
+    [self releaseDismissedNativeMenu:entry];
     CFTimeInterval now=CACurrentMediaTime();
     if(!WXGMenuShown(body)) {
         // Hidden by WeChat (or faded, or moved off screen): an open menu leaves; the next time it shows, it is open.
@@ -956,15 +1668,68 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     if(!items.count){[self hideRows:entry remove:YES];entry.phase=WXGMenuPhaseClosed;return;}
     entry.menuParent=parent;
     if(!same) {
-        [self hideRows:entry remove:YES];entry.rows=[NSMutableArray array];
+        BOOL continuing=entry.morphMode && entry==_activeHomeMenu && entry->_morphMotion.initialized;
+        if(continuing) {
+            [self restoreMorphBodyPosition:entry];
+            [self highlightMorphRow:nil inEntry:entry];
+            for(WXGMenuRow *row in entry.rows) {
+                [row removeActionButton];
+                [row.observer.view removeGestureRecognizer:row.observer];
+            }
+        }else [self hideRows:entry remove:YES];
+        entry.rows=[NSMutableArray array];
         for(UIView *item in items) {
             WXGMenuRow *row=[WXGMenuRow new];row.item=item;
-            row.icon=[self glassForRowRole:@"homeMenuIcon"];row.capsule=[self glassForRowRole:@"homeMenuTitle"];
-            WXGMenuRowObserver *observer=[WXGMenuRowObserver new];observer.icon=row.icon;observer.capsule=row.capsule;
+            WXGMenuRowObserver *observer=[WXGMenuRowObserver new];
+            if(entry.morphMode) {
+                __weak WXGDecoration *weakEntry=entry;
+                __weak UIView *weakItem=item;
+                __weak WXGDecorations *weakSelf=self;
+                observer.pressedChanged=^(BOOL pressed){
+                    WXGDecorations *manager=weakSelf;WXGDecoration *active=weakEntry;
+                    if(!manager || !active || active!=manager.activeHomeMenu || active.phase!=WXGMenuPhaseOpen)return;
+                    if(!active->_scrub.touching)
+                        [manager highlightMorphRow:pressed?weakItem:nil inEntry:active];
+                };
+            }else {
+                row.icon=[self glassForRowRole:@"homeMenuIcon"];row.capsule=[self glassForRowRole:@"homeMenuTitle"];
+                observer.icon=row.icon;observer.capsule=row.capsule;
+            }
             [item addGestureRecognizer:observer];row.observer=observer;
             [entry.rows addObject:row];
         }
-        entry.entranceDone=NO;entry.openAt=now;
+        if(!continuing){entry.entranceDone=NO;entry.openAt=now;}
+    }
+    if(entry.morphMode) {
+        BOOL changedBody=entry.morphPositionedBody!=body;
+        for(WXGMenuRow *row in entry.rows) {
+            row.itemFrame=WXGMenuUnshiftedRectIn(row.item,parent);
+            row.drawn=!CGRectIsNull(row.itemFrame);
+        }
+        BOOL changedContent=[self updateMorphContent:entry];
+        CGRect target=entry.morphContent?[self positionMorphBody:entry anchor:plus]:CGRectNull;
+        if(CGRectIsEmpty(target)) {
+            _lastMorphFallback=entry.morphContent?entry.morphPlacementFailure:@"native artwork unavailable";
+            // Leave the native panel usable if a row is missing or detached.
+            [self hideRows:entry remove:YES];[entry.states restore];
+            entry.animatedHomeMenu=NO;entry.morphMode=NO;entry.entranceDone=NO;entry.phase=WXGMenuPhaseClosed;
+            return;
+        }
+        BOOL changedAnchor=!CGRectEqualToRect(plus,entry.morphAnchor);
+        BOOL changedTarget=!CGRectEqualToRect(target,entry.morphRect);
+        entry.morphAnchor=plus;entry.morphRect=target;
+        if(!entry.morphView || changedBody || changedAnchor || changedTarget || changedContent)[self prepareMenuMorph:entry];
+        [self installMorphActions:entry];
+        CGFloat panelRadius=WXGHomeMenuPanelRadius(entry);
+        BOOL changedRadius=entry->_morphMotion.destinationRadius!=panelRadius;
+        if(entry->_morphMotion.initialized && (changedAnchor || changedTarget || changedRadius)) {
+            WXGMenuMorphUpdateSource(&entry->_morphMotion,WXGMenuMorphBox(plus),WXGMenuMorphBox(plus));
+            WXGMenuMorphUpdateTarget(&entry->_morphMotion,WXGMenuMorphBox(target),panelRadius);
+            if(UIAccessibilityIsReduceMotionEnabled())entry.morphSettled=WXGMenuMorphAdvance(&entry->_morphMotion,2.);
+            else {entry.morphSettled=NO;[self ensureMenuLinkForWindow:parent.window];}
+        }
+        entry.rowsReady=YES;[self finishHomeMenuPlacement:entry at:now];
+        return;
     }
     NSMutableArray<NSValue *> *frames=[NSMutableArray array];
     CGFloat minHeight=CGFLOAT_MAX,pitch=CGFLOAT_MAX,lastMid=0;BOOL haveLast=NO;
@@ -1037,10 +1802,7 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
         }else{row.capsuleRect=capsuleRect;row.capsule.hidden=YES;row.capsule.active=NO;}
         row.observer.icon=row.icon;row.observer.capsule=row.capsule;
     }
-    entry.rowsReady=drawn>0;entry.lastPlaced=now;
-    if(!entry.rowsReady)return;
-    if(!entry.entranceDone){entry.entranceDone=YES;++entry.entrances;[self playEntrance:entry];}
-    else if(entry==_activeHomeMenu)[self applyHomeMenuProgress:_menuProgress];
+    entry.rowsReady=drawn>0;[self finishHomeMenuPlacement:entry at:now];
 }
 // R24 single-clock expand: transfers exclusive ownership of the "+" trigger &
 // ink overlay to `entry`, then advances unified progress p smoothly -> 1.0
@@ -1050,7 +1812,8 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     if(prev && prev!=entry) {
         // Retire the previous menu's rows cleanly WITHOUT resetting the shared "+" button.
         prev.phase=WXGMenuPhaseClosed;prev.entranceDone=NO;
-        for(WXGMenuRow *row in prev.rows)for(WXGSurface *s in @[row.icon,row.capsule]) {
+        [self resetMenuMorph:prev];
+        for(WXGMenuRow *row in prev.rows)for(WXGSurface *s in row.surfaces) {
             s.layer.transform=CATransform3DIdentity;WXGMenuSetLayerBlur(s.iconView.layer,0.);
             s.active=NO;s.hidden=YES;[s removeFromSuperview];
         }
@@ -1062,7 +1825,30 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     _menuStagger=WXGMenuClamp([WXGConfig.shared extraNumber:@"homeMenuStagger"],0,80)/1000.0;
     _menuTarget=1.;
 
-    int drawnCount=(int)[self drawnIconTargets:entry].count;
+    if(entry.morphMode) {
+        UIResponder *owner=(_source.window==entry.menuParent.window?_source:nil)?:entry.menuParent;
+        while(owner && ![owner isKindOfClass:UIViewController.class])owner=owner.nextResponder;
+        entry.morphOwner=(UIViewController *)owner;
+        entry.hasMorphOwner=owner!=nil;
+        if(!entry->_morphMotion.initialized) {
+            WXGMenuBox anchor=WXGMenuMorphBox(entry.morphAnchor);
+            entry->_scrub=WXGMenuScrubInitial(entry.menuParent.window.screen.scale);
+            entry.scrubStartupFrames=4;entry.scrubPresses=0;entry.scrubCrossings=0;entry.scrubFrames=0;entry.scrubPeakY=0;
+            WXGMenuMorphInitialize(&entry->_morphMotion,anchor,WXGMenuMorphBox(entry.morphRect),WXGHomeMenuPanelRadius(entry),anchor,false);
+            WXGMenuMorphSetAbsorbDuration(&entry->_morphMotion,.48);
+            _morphLayerSamples=[NSMutableDictionary dictionary];
+            if(entry.morphView.sourceAtPickup)_morphLayerSamples[@"pickup"]=entry.morphView.sourceAtPickup;
+            _lastMorphPresentation=@{@"layerSamples":_morphLayerSamples,@"route":@"nativeControlAfterAbsorption",
+                @"panelInWindow":NSStringFromCGRect([entry.menuParent convertRect:entry.morphRect toView:entry.host.window]),
+                @"anchorInWindow":NSStringFromCGRect([entry.menuParent convertRect:entry.morphAnchor toView:entry.host.window]),
+                @"rows":@(entry.rows.count),@"reduceMotion":@(UIAccessibilityIsReduceMotionEnabled()),@"time":@(NSDate.date.timeIntervalSince1970)};
+            _lastMorphFallback=nil;
+        }
+        WXGMenuMorphSetExpanded(&entry->_morphMotion,true);
+        entry.morphSettled=NO;
+    }
+
+    int drawnCount=entry.morphMode?0:(int)[self drawnIconTargets:entry].count;
     WXGSurface *plus=[self resolveHomePlusFor:entry];
     if(drawnCount>=1 && drawnCount<=WXGMenuMaxParticles) {
         [plus setHomePlusDotCount:drawnCount];
@@ -1072,6 +1858,7 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
 
     if(UIAccessibilityIsReduceMotionEnabled()) {
         [self stopMenuLink];
+        if(entry.morphMode)entry.morphSettled=WXGMenuMorphAdvance(&entry->_morphMotion,2.);
         _menuProgress=1.;
         [self applyHomeMenuProgress:1.];
     }else {
@@ -1093,9 +1880,11 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
 }
 - (void)refresh {
     if(!WXGPluginEnabled() || !WXGPreferences.shared.nav){[self restore];return;}
+    if(WXGConfig.shared.homeMenuStyle==WXGHomeMenuStyleMorph)WXGPrewarmMenuMorphRenderer();
     for(WXGDecoration *entry in _entries)if(entry.host.window)[self nativeHostLaidOut:entry.host];
 }
 - (void)applyConfiguration {
+    if(_activeHomeMenu.morphView.window)[self renderMenuMorph:_activeHomeMenu];
     for(WXGDecoration *entry in _entries) {
         [entry.surface applyConfig];
         for(WXGMenuRow *row in entry.rows){[row.icon applyConfig];[row.capsule applyConfig];}   // FIX116 A
@@ -1106,12 +1895,12 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     NSMutableArray *out=[NSMutableArray array];
     BOOL enabled=WXGPluginEnabled() && WXGPreferences.shared.nav;
     for(WXGDecoration *entry in _entries) {
-        if(entry.capsuleMode) {
+        if(entry.animatedHomeMenu) {
             // FIX116 A: the rows' glass instead of the plate; FIX116 B: and still while it leaves (WeChat has hidden its menu by then).
             entry.surface.active=NO;
             BOOL live=enabled && entry.rowsReady && ((entry.phase==WXGMenuPhaseOpen && entry.host.window) || entry.phase==WXGMenuPhaseExiting);
             UIView *source=_source?:WXGContentSourceForView(entry.menuParent?:entry.host);
-            for(WXGMenuRow *row in entry.rows)for(WXGSurface *s in @[row.icon,row.capsule]) {
+            for(WXGMenuRow *row in entry.rows)for(WXGSurface *s in row.surfaces) {
                 BOOL on=live && row.drawn && !s.hidden && s.superview;
                 s.active=on;
                 if(on){s.glass.sourceView=source;[out addObject:s];}
@@ -1119,6 +1908,7 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
             if(live && entry.host.window)[entry.states reapply];
             continue;
         }
+        if(!entry.surface)continue;
         BOOL visible=enabled && entry.validBody && entry.host.window && WXGVisible(entry.body,entry.host.window);
         entry.surface.active=visible;
         if(visible){entry.surface.hidden=NO;[entry.states reapply];entry.surface.glass.sourceView=[entry.kind isEqual:@"pinnedRow"]?WXGContentSourceForView(entry.host):(_source?:WXGContentSourceForView(entry.host));[out addObject:entry.surface];}
@@ -1128,7 +1918,7 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
     [self finishActiveHomeMenuClose];
     for(WXGDecoration *entry in _entries) {
         [entry.states restore];entry.surface.active=NO;entry.surface.hidden=YES;entry.surface.glass.backdropExclusions=@[];
-        [self hideRows:entry remove:YES];entry.capsuleMode=NO;entry.phase=WXGMenuPhaseClosed;entry.entranceDone=NO;   // FIX116 A
+        [self hideRows:entry remove:YES];entry.animatedHomeMenu=NO;entry.morphMode=NO;entry.phase=WXGMenuPhaseClosed;entry.entranceDone=NO;
     }
 }
 - (NSArray *)rowEvidence:(WXGDecoration *)entry {
@@ -1141,15 +1931,16 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
 - (NSDictionary *)evidence {
     NSMutableArray *rows=[NSMutableArray array];
     for(WXGDecoration *entry in _entries)if(entry.host.window)[rows addObject:@{@"kind":entry.kind,@"host":NSStringFromClass(entry.host.class),
-        @"visible":@(entry.surface.active),@"nativeActionsRetained":@YES,@"frame":NSStringFromCGRect(entry.body.bounds),
+        @"visible":@(entry.surface.active || entry.morphView.window!=nil),@"nativeActionsRetained":@YES,@"frame":NSStringFromCGRect(entry.body.bounds),
         // FIX116 A
-        @"capsuleMode":@(entry.capsuleMode),@"phase":@(entry.phase),@"rowsReady":@(entry.rowsReady),@"entrances":@(entry.entrances),@"exits":@(entry.exits),
+        @"capsuleMode":@(entry.animatedHomeMenu && !entry.morphMode),@"morphMode":@(entry.morphMode),@"phase":@(entry.phase),@"rowsReady":@(entry.rowsReady),@"entrances":@(entry.entrances),@"exits":@(entry.exits),
         @"blockReopen":@(entry.blockReopen),@"menuParent":entry.menuParent?NSStringFromClass(entry.menuParent.class):@"",
         @"rows":[self rowEvidence:entry]}];
     WXGSurface *plus=_activeHomeMenu.plusSurface;
     if(!plus && _source.window)plus=[WXGIntegrationHost.shared homePlusSurfaceInWindow:_source.window];
     NSInteger savedCount=[NSUserDefaults.standardUserDefaults integerForKey:@"WXGHomeMenuLastItemCount"];
     return @{@"mounts":@(_mounts),@"reuses":@(_reuses),@"hosts":rows,@"lastMenus":_dumps?:@{},
+             @"lastMorphPresentation":_lastMorphPresentation?:@{},@"lastMorphFallback":_lastMorphFallback?:@"",
              @"plusDotCountSaved":@(savedCount),@"menuProgress":@(round(_menuProgress*1000.)/1000.),@"menuTarget":@(_menuTarget),
              @"plusTrigger":plus?[plus evidence][@"plusTrigger"]?:@{}:@{}};   // FIX114 Z
 }

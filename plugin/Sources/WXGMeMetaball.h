@@ -94,7 +94,7 @@ static inline WXGMeLayout WXGMeLayoutFor(double headerHeight,double safeTop,doub
    with the banner on, negative). `collapse` is how far the avatar goes to the
    cut-out's centre. */
 typedef struct {
-    double centerY,radius,darkness,blur,goo,presence,stretch,tip,blend,expand,flow,fade;
+    double centerY,radius,darkness,blur,goo,presence,stretch,tip,blend,expand,fade;
 } WXGMetaballPose;
 static inline double WXGMBLerp(double x,double x0,double x1,double y0,double y1) {
     if(x1==x0)return x<=x0?y0:y1;
@@ -119,7 +119,6 @@ static inline WXGMetaballPose WXGMetaballPoseAt(double travel,double collapse,do
     {double xs[3]={0,C*.5,C},ys[3]={restRadius,restRadius*.62,0};p.radius=t<0?restRadius:WXGMBStops(t,xs,ys,3);}
     p.blur=WXGMBLerp(t,C*.08,C*.5,0,24);
     p.expand=t<0 && bannerPull>1?WXGMBLerp(-t,0,bannerPull,0,1):0;
-    p.flow=WXGMBLerp(p.expand,.55,1,0,1);
     double gate=1-p.expand;
     if(merge) {
         p.darkness=WXGMBLerp(t,C*.6,C*.95,0,1);

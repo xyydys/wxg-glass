@@ -1,7 +1,6 @@
 # Third-party notices
 
-This project re-implements, in its own C code, one formula that follows
-another open-source project. No source file of that project is included.
+This file records the origin and license of third-party material in wxg-glass.
 
 ## Backdrop (Liquid Glass for Compose Multiplatform), by Kyant
 
@@ -42,3 +41,39 @@ https://github.com/Kyant0/AndroidLiquidGlass, commit eb4a0ea2e17542ea28c2e71088f
 Copyright 2025 Kyant. Apache License 2.0. Full license in LICENSES/.
 The compiler/integration fixes and local-test shader selection are documented
 in README_R4_原底栏透镜接入.md. The R4 integration is rebased on original FIX135, keeps its inner-bar mapping and adds lens-only native spectral sampling and matching glyph rays.
+
+## Expo Glass Custom Menu
+
+The home menu's glass morph ports the Android module's spring motion,
+two-lobe outline, and refraction equations from
+[xyydys/expo-glass-custom-menu](https://github.com/xyydys/expo-glass-custom-menu/tree/0021efd8ab0d068f155bbdac62c5f673ccc39a24/modules/glass-menu-android).
+
+> The MIT License (MIT)
+>
+> Copyright (c) 2015-present 650 Industries, Inc. (aka Expo)
+>
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+## MixBubble
+
+The message bubble adapter follows the native cell coverage, single-line radius
+reference, translated content geometry, voice transcription layout updates,
+quote background and divider behavior,
+and long-message identity rules in
+[xyydys/MixBubble 2.9.4.6](https://github.com/xyydys/mixbubble/tree/6c4a4152536e8a383654deee2c04f81ea27dfd20).

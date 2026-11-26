@@ -9,6 +9,17 @@ static void near(double a,double b,double tolerance) {
     if(!(fabs(a-b)<=tolerance)){fprintf(stderr,"expected %.5f, got %.5f (tolerance %.5f)\n",b,a,tolerance);assert(0);}
 }
 int main(void) {
+    // The title's draw origin matches the measured baseline. Scaling the
+    // reference artwork keeps its gap, and icon-only tabs stay centered.
+    for(int height=38;height<=90;height++)for(int percent=60;percent<=140;percent++) {
+        double mid=height*.5,scale=percent*.01;
+        double iconY=WXGDockArtworkCenterY(mid,scale,0);
+        double halfIcon=WXG_DOCK26_ICON_HEIGHT*.5*scale;
+        double titleY=mid+WXG_DOCK26_TITLE_DRAW_Y;
+        near(titleY-(iconY+halfIcon),1.,1e-10);
+        near(WXGDockArtworkCenterY(mid,scale,1),mid,0);
+        if(percent==100)near(iconY,mid-7.,0);
+    }
     // Nothing new set: the dock's own layout, bit for bit.
     const float widths[]={280,331.2f,372,398,420.5f},heights[]={54,62,68,90},gaps[]={2,4,6,14};
     for(int wi=0;wi<5;wi++)for(int hi=0;hi<4;hi++)for(int gi=0;gi<4;gi++) {

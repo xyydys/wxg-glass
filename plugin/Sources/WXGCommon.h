@@ -4,6 +4,7 @@
 #import "WXGMotion.h"
 #import "WXGOptics.h"
 #import "WXGLensOptics.h"
+#import "WXGRimGlow.h"
 #import "WXGLensFlex.h"
 #import "WXGDockSystem.h"
 #import "WXGRenderPolicy.h"
@@ -129,8 +130,10 @@ typedef struct {
 // FIX87: angle (degrees) of the highlight. FIX89: two of them drawn together
 // (not per appearance), each with its colour: red, green, blue and alpha (the
 // colour's alpha times the opacity).
-typedef struct { CGFloat width,falloff,endLevel,sharpness,angle,red,green,blue,alpha; } WXGRimGlowShape;
-enum { WXGRimGlowCount=2 };
+typedef NS_ENUM(NSInteger,WXGHomeMenuStyle) {
+    WXGHomeMenuStyleCapsules=1,
+    WXGHomeMenuStyleMorph=2,
+};
 // FIX79: the colour-sampling parameters of one appearance.
 @interface WXGConfig : NSObject
 + (instancetype)shared;
@@ -258,6 +261,7 @@ enum { WXGRimGlowCount=2 };
 - (BOOL)knowsKey:(NSString *)key;
 - (BOOL)bubbleFullGlass;
 - (BOOL)glassShadowOn;
+- (WXGHomeMenuStyle)homeMenuStyle;
 - (CGFloat)homeMenuAutoClose;
 - (BOOL)homeTitleSegments;
 - (BOOL)homeTitleSegmentsEnglish;
@@ -268,8 +272,8 @@ enum { WXGRimGlowCount=2 };
 - (BOOL)discoverTitleCapsule;
 // FIX89: the dock's icons and titles: the gap between them (pt, from the
 // icon's box to the title's top; 5 as before) and both moved together (+ down).
-- (CGFloat)dockIconTitleGap;
-- (CGFloat)dockIconOffset;
+- (CGFloat)dockArtworkScale;
+- (BOOL)dockTitlesHidden;
 // FIX91: the dock's titles: size (pt), weight (0 light, 1 regular, 2 medium,
 // 3 semibold, 4 bold) and whether the selected one is a step bolder.
 - (CGFloat)dockTitleSize;
@@ -331,6 +335,17 @@ FOUNDATION_EXPORT CALayer *WXGMakeTravelBackdropLayer(CGFloat blurRadius);
 // as a mesh for `size`. Their layers go into the animated lens.
 // FIX88: in `group` (the dock glass's backdrop group: the page without the
 // dock's veil, which the tap animation then draws itself); nil = its own capture.
+// Capture layers for an R8 compositor glide; each begins at (-padding,-padding).
+FOUNDATION_EXPORT NSArray<UIView *> *WXGMakePureTravelLensBackdrops(CGRect lensRect,CGRect barRect,CGFloat restHeight,
+                                                                   CGFloat press,NSString *group,CGFloat *padding);
+// The selected atlas is positioned in the padded canvas; the glyph ray has
+// its own field, independent of the smaller bar behind it.
+FOUNDATION_EXPORT BOOL WXGApplyPureTravelGlyphRefraction(CALayer *canvas,CGSize lensSize,CGFloat padding,CGFloat press);
+FOUNDATION_EXPORT void WXGAnimatePureTravelRefraction(CALayer *layer,NSArray<NSNumber *> *press,NSArray<NSNumber *> *times,
+                                                     CFTimeInterval start,CFTimeInterval duration);
+// Keep the rim's live capture opaque. Vary strengthLayer.opacity with the
+// normal pressed-border curve while scaling the rim to the animated lens.
+FOUNDATION_EXPORT UIView *WXGMakePureTravelLensRim(CGSize size,BOOL dark,CALayer **strengthLayer);
 FOUNDATION_EXPORT NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString *group,BOOL seesBar,CGFloat barHeight);
 // FIX113 I: the share of the lens' rim offset cancelled (0 unless the
 // server's shader knows it).

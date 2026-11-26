@@ -154,7 +154,7 @@ BOOL WXGIsPluginView(UIView *view) {
     dispatch_once(&once,^{
         for(NSString *name in @[@"WXGGlassView",@"WXGSurface",@"WXGDemoBar",@"WXGDockSearch",@"WXGOverlay",@"WXGRimView",@"WXGMetalSurface",
                                 @"WXGSyncBackdropView",@"WXGSettingsCard",@"WXGSettingsRow",@"WXGSettingsScrollView",@"WXGEdgeBlurView",@"WXGEdgeCoverView",@"WXGEdgePlateView",
-                                @"WXGBubbleGlass",@"WXGPerfHUDView",@"WXGSegmentBar",@"WXGHomePlusTriggerView",@"WXGMenuInkOverlayView",@"WXGVectorIconView"]) {
+                                @"WXGBubbleGlass",@"WXGPerfHUDView",@"WXGSegmentBar",@"WXGHomePlusTriggerView",@"WXGMenuInkOverlayView",@"WXGMenuMorphView",@"WXGVectorIconView"]) {
             Class cls=NSClassFromString(name);if(cls && count<24)classes[count++]=cls;
         }
     });
@@ -895,9 +895,7 @@ static CALayer *WXGOwnMask(UIView *v) {
         }
         // A blur with controls inside must keep its contentView interactive.
         if([v isKindOfClass:UIVisualEffectView.class]) {
-            UIVisualEffectView *effectView=(id)v;WXGViewState *state=[self remember:v];
-            if(!state.changedEffect || effectView.effect)state.effect=effectView.effect;
-            state.changedEffect=YES;if(effectView.effect)effectView.effect=nil;
+            [self clearEffect:(UIVisualEffectView *)v];
         } else if(![v isKindOfClass:UIImageView.class]) {
             [self clear:v];
             if(v.layer.contents){WXGViewState *state=[self remember:v];
@@ -913,6 +911,12 @@ static CALayer *WXGOwnMask(UIView *v) {
                ([layer isKindOfClass:CAGradientLayer.class] && layer.bounds.size.width>=root.bounds.size.width*.8))[self hideDecorationLayer:layer];
         }
     }
+}
+- (void)clearEffect:(UIVisualEffectView *)view {
+    WXGViewState *state=[self remember:view];
+    if(!state.changedEffect || view.effect)state.effect=view.effect;
+    state.changedEffect=YES;
+    if(view.effect)view.effect=nil;
 }
 - (void)reapply {
     if(_reapplying)return;_reapplying=YES;

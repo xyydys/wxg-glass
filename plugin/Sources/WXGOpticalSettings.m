@@ -1,4 +1,5 @@
 #import "WXGSettingsKit.h"
+#import "WXGBannerLibraryController.h"
 
 // FIX58: the module pages behind the home cards. Every setting of the FIX57
 // pages is here (tools/check_settings_coverage.py lists them). Four modules
@@ -84,6 +85,18 @@ static NSDictionary *WXGCopyGroup(void) {
     return c;
 }
 static NSDictionary *WXGChoiceValues(NSDictionary *row,NSArray<NSNumber *> *values) {NSMutableDictionary *m=[row mutableCopy];m[@"values"]=values;return m;}
+static NSDictionary *WXGHomeMenuGroup(NSString *title,WXGHomeMenuStyle style,NSArray *controls,NSString *footer) {
+    NSArray *rows=[controls arrayByAddingObjectsFromArray:@[
+        WXGSlider(@"动画速度",@"homeMenuSpeed",nil,.5,2,@"%.2f 倍"),
+        WXGSlider(@"展开后自动收回（0 = 关闭）",@"homeMenuAutoClose",nil,0,30,@"%.0f s")]];
+    NSMutableDictionary *group=[WXGGroup(title,nil,rows,footer) mutableCopy];
+    group[@"homeMenuStyle"]=@(style);
+    return group;
+}
+static BOOL WXGShowsHomeMenuGroup(NSDictionary *group) {
+    NSNumber *required=group[@"homeMenuStyle"];
+    return !required || required.integerValue==WXGConfig.shared.homeMenuStyle;
+}
 static NSDictionary *WXGModuleSpec(NSString *module) {
     if([module isEqual:@"pureDock"])return @{@"title":@"底栏透镜与形变",@"scoped":@NO,@"groups":@[
         WXGGroup(@"R8 极光透镜引擎",nil,@[WXGSwitch(@"启用 R8 极光透镜与形变",@"dockPureGlassMode",nil)],
@@ -126,6 +139,17 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                  @"仅恢复本页透镜与形变参数为默认值，不影响其他页面。")
     ]};
     if([module isEqual:@"effect"])return @{@"title":@"效果调整",@"scoped":@YES,@"scopes":@[@"other",@"dock",@"lens",@"segment",@"segmentLens",@"bubble",@"card",@"finder"],@"groups":@[
+        WXGNotIn(WXGGroup(@"折射",nil,@[
+                 WXGSlider3(@"折射带宽（短边的比例）",@"glassBand",@"dockGlassBand",@"bubbleGlassBand",.02,.5,@"%.3f"),
+                 WXGSlider3(@"边缘取样深度（短边的比例）",@"glassDepth",@"dockGlassDepth",@"bubbleGlassDepth",0,1,@"%.3f"),
+                 WXGSlider3(@"带宽上限",@"glassBandMax",@"dockGlassBandMax",@"bubbleGlassBandMax",4,80,@"%.0f pt"),
+                 WXGSlider3(@"最外圈最大压缩（0 = 不限制）",@"glassSqueeze",@"dockGlassSqueeze",@"bubbleGlassSqueeze",0,20,@"%.1f 倍"),
+                 WXGSlider3(@"色散",@"glassDispersion",@"dockGlassDispersion",@"bubbleGlassDispersion",0,3,@"%.2f")],
+                 @"沿用 iOS 26.6 实测的折射曲线。默认带宽为玻璃短边的 25%，边缘取样深度为短边的 80%。带宽达到 20 pt 上限后，取样深度也按比例缩小。"),@[@"lens",@"segmentLens"]),
+        WXGNotIn(WXGGroup(@"模糊",nil,@[
+                 WXGSlider3(@"小玻璃（短边 ≤ 48 pt）",@"glassBlurSmall",@"dockGlassBlurSmall",@"bubbleGlassBlurSmall",0,10,@"%.2f"),
+                 WXGSlider3(@"大玻璃（短边 90 pt）",@"glassBlurLarge",@"dockGlassBlurLarge",@"bubbleGlassBlurLarge",0,20,@"%.2f")],
+                 @"两个滑块分别设置小玻璃和大玻璃的背景模糊半径。当前范围内的玻璃按实际短边长度在两者之间过渡。"),@[@"lens",@"segmentLens"]),
         WXGNotIn(WXGGroup(@"自定义色彩材质 · 浅色模式",nil,@[
                  WXGSwitch3(@"启用自定义色彩材质",@"glassTintOn",@"dockGlassTintOn",@"bubbleGlassTintOn"),
                  WXGColor3(@"材质颜色",@"glassTintHex",@"dockGlassTintHex",@"bubbleGlassTintHex"),
@@ -140,12 +164,11 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                  WXGSlider3(@"背景亮度",@"darkGlassBrightness",@"dockDarkGlassBrightness",@"bubbleDarkGlassBrightness",-.3,.3,@"%+.2f")],
                  @"深色模式下的自定义色彩材质颜色与覆盖比例。视频号范围默认覆盖比例为 0（透明视频背景），可按需调高或着色。"),@[@"lens",@"segmentLens"]),
         WXGNotIn(WXGGroup(@"阴影",nil,@[
-                 WXGSwitch(@"全局启用玻璃阴影",@"glassShadowOn",nil),
                  WXGSlider3(@"浓度（浅色模式）",@"glassShadow",@"dockGlassShadow",@"bubbleGlassShadow",0,.6,@"%.2f"),
                  WXGSlider3(@"浓度（深色模式）",@"darkGlassShadow",@"dockDarkGlassShadow",@"bubbleDarkGlassShadow",0,.6,@"%.2f"),
                  WXGSlider3(@"柔和度",@"glassShadowBlur",@"dockGlassShadowBlur",@"bubbleGlassShadowBlur",.5,40,@"%.1f pt"),
                  WXGSlider3(@"向下偏移",@"glassShadowOffset",@"dockGlassShadowOffset",@"bubbleGlassShadowOffset",-10,30,@"%.1f pt")],
-                 @"阴影已自动裁剪避开下方相邻的玻璃，不会再盖到另一块玻璃上；关闭「全局启用玻璃阴影」可一键关闭所有玻璃阴影。"),@[@"lens",@"segmentLens"]),
+                 @"这些参数控制当前范围的玻璃外阴影。"),@[@"lens",@"segmentLens"]),
         WXGGroup(@"边框样式",nil,@[WXGBare(WXGChoiceValues(WXGChoice3(@"样式",@"rimStyle",@"dockRimStyle",@"bubbleRimStyle",@[@"iOS 26",@"iOS 27"],YES),@[@3,@2]))],
                  @"每个范围（包含底栏透镜、分组透镜与视频号）可独立选择 iOS 26 或 iOS 27 边框样式。"),
         WXGStyled(WXGGroup(@"iOS 26 · 形状",nil,@[WXGSlider3(@"高度（往里多宽）",@"edge26Height",@"dockEdge26Height",@"bubbleEdge26Height",.3,4,@"%.2f pt"),
@@ -230,7 +253,10 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
         WXGGroup(@"液态气泡",nil,@[WXGSwitch(@"液态气泡",@"pref.bubbles",nil),
                  WXGSwitch(@"气泡用完整玻璃",@"bubbleFullGlass",nil),
                  WXGSwitch(@"气泡共用一次背景采样（省 GPU）",@"bubbleSharedBackdrop",nil)],
-                 @"文字气泡换成玻璃。气泡用完整玻璃：关着时气泡只有颜色和边框（省电）；打开后每个气泡都有折射和模糊，折射、模糊、材质、边框在“效果调整”的“气泡”范围里调。气泡共用一次背景采样：一屏的气泡共用同一份背景，省 GPU。"),
+                 @"文字、语音和支持的消息卡片使用玻璃背景。气泡用完整玻璃：关着时气泡只有颜色和边框（省电）；打开后每个气泡都有折射和模糊，折射、模糊、材质、边框在“效果调整”的“气泡”范围里调。气泡共用一次背景采样：一屏的气泡共用同一份背景，省 GPU。"),
+        WXGGroup(@"引用消息",nil,@[WXGSwitch(@"隐藏引用原生背景",@"bubbleQuoteHideNativeBackground",nil),
+                 WXGSwitch(@"显示引用分割线",@"bubbleQuoteDivider",nil)],
+                 @"开启液态气泡后生效。分割线显示在正文和引用内容之间。"),
         WXGGroup(@"气泡颜色",nil,@[WXGColorRow(@"自己的气泡",@"bubbleOutgoingHex",nil),
                  WXGColorRow(@"对方的气泡",@"bubbleIncomingHex",nil),
                  WXGColorRow(@"自己的气泡",@"darkBubbleOutgoingHex",nil),
@@ -253,7 +279,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                  @"直接按现有首页标题大小拓展为分组栏（默认 全部 / 未读，支持英文 All / Unread），复用与底栏等比同步的选中胶囊与按压透镜，点击即可筛选聊天列表。"),
         WXGGroup(@"分组栏与搜索框尺寸",nil,@[
                  WXGSwitch(@"分组栏取代聊天列表搜索框",@"chatSegments",nil),
-                 WXGSwitch(@"悬浮，不随列表滚走",@"searchFloat",nil),
+                 WXGSwitch(@"仅在首页悬浮",@"searchFloat",nil),
                  WXGSlider(@"宽度占比（0 = 原生）",@"homeSearchWidthPct",nil,0,98,@"%.0f%%"),
                  WXGSlider(@"高度（0 = 原生）",@"homeSearchHeight",nil,0,64,@"%.1f pt"),
                  WXGSlider(@"与顶部标题的距离（-1 = 原生）",@"homeSearchTopGap",nil,-1,32,@"%.1f pt")],
@@ -271,12 +297,17 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                              WXGColorRow(@"浅色模式颜色",@"segmentInkHex",nil),WXGColorRow(@"深色模式颜色",@"segmentDarkInkHex",nil),
                              WXGSwitch(@"选中的用强调色",@"segmentAccentOn",nil),WXGColorRow(@"强调色",@"segmentAccentHex",nil)],
                  @"和底栏一样：没选中的是深灰（深色模式浅灰），选中的那一段用强调色，字重自动加一级。"),
-        WXGGroup(@"首页加号菜单",nil,@[WXGSwitch(@"左侧玻璃胶囊 + 右侧圆形图标",@"homeMenuCapsules",nil),
-                                  WXGSlider(@"图标大小",@"homeMenuIconSize",nil,34,56,@"%.0f pt"),
-                                  WXGSlider(@"逐项出现的间隔",@"homeMenuStagger",nil,0,80,@"%.0f ms"),
-                                  WXGSlider(@"动画速度",@"homeMenuSpeed",nil,.5,2,@"%.2f 倍"),
-                                  WXGSlider(@"展开后自动收回（0 = 关闭）",@"homeMenuAutoClose",nil,0,30,@"%.0f s")],
-                 @"流畅直飞模糊变形动效：圆点数量随菜单实际条目数（如 4 项对应 4 点）动态等距分布，展开时圆弧自右向左收回，+ 收缩切换为 ×，小点沿平滑曲线 1:1 飞往对应菜单图标并用模糊自然过渡，收起时同步倒放。"),
+        WXGGroup(@"首页加号菜单",nil,@[WXGBare(WXGChoiceValues(
+                 WXGChoice3(@"样式",@"homeMenuCapsules",nil,nil,@[@"融展玻璃",@"胶囊展开"],YES),
+                 @[@(WXGHomeMenuStyleMorph),@(WXGHomeMenuStyleCapsules)]))],nil),
+        WXGHomeMenuGroup(@"融展玻璃",WXGHomeMenuStyleMorph,@[
+                 WXGSlider(@"融展菜单宽度",@"homeMenuMorphWidth",nil,160,320,@"%.0f pt"),
+                 WXGSlider(@"融展菜单外圆角增量",@"homeMenuMorphCornerExtra",nil,0,12,@"%.1f pt")],
+                 @"外圆角增量为 0 时，菜单与选中胶囊的圆角等距。"),
+        WXGHomeMenuGroup(@"胶囊展开",WXGHomeMenuStyleCapsules,@[
+                 WXGSlider(@"胶囊图标大小",@"homeMenuIconSize",nil,34,56,@"%.0f pt"),
+                 WXGSlider(@"胶囊展开间隔",@"homeMenuStagger",nil,0,80,@"%.0f ms")],
+                 @"展开时，圆点从加号飞向菜单图标。"),
         WXGGroup(@"搜索框",nil,@[WXGSwitch(@"搜索框换成玻璃胶囊",@"pref.localSearch",nil),
                  WXGSwitch(@"搜索框让主题优先",@"pref.localSearchThemeFirst",nil),
                  WXGSwitch(@"隐藏聊天列表顶部搜索栏",@"pref.hideTopSearch",nil)],
@@ -287,14 +318,13 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                  @"分组栏的色彩材质、阴影与边框在「效果调整 → 分组栏」里，按压透镜与形变在「底栏透镜与形变」里。")]};
     if([module isEqual:@"me"])return @{@"title":@"个人页",@"groups":@[
         WXGGroup(@"“我”页头部",nil,@[WXGSwitch(@"Telegram 式头部（头像收进灵动岛）",@"meHeader",nil),
-                                 WXGSwitch(@"下拉展开头像横幅（替换微信的下拉状态）",@"meBanner",nil),
-                                 WXGChoice3(@"横幅下边缘",@"meBannerEdgeStyle",nil,nil,@[@"液滴",@"渐隐",@"直边"],NO),
-                                 WXGAction(@"选择横幅视频（相册）",@"meBannerVideo",NO),WXGAction(@"清除横幅视频",@"meBannerVideoClear",YES),
+                                 WXGSwitch(@"下拉展开横幅（替换微信的下拉状态）",@"meBanner",nil),
+                                 WXGAction(@"横幅媒体库",@"meBannerLibrary",NO),
                                  WXGSlider(@"头像大小",@"meAvatarSize",nil,70,130,@"%.0f pt"),
                                  WXGSwitch(@"刘海屏：头像融进刘海",@"meNotchMerge",nil),
                                  WXGSlider(@"灵动岛 / 刘海位置微调（上下）",@"meCutoutY",nil,-8,8,@"%.1f pt"),
                                  WXGSlider(@"灵动岛 / 刘海宽度微调",@"meCutoutW",nil,-30,30,@"%.0f pt")],
-                 @"FIX118 A：“我”页改成 Telegram 个人页的排法：头像居中变圆，下面居中是昵称、微信号和状态那两个按钮；二维码变成左上角的按钮，右上角“设置”直接打开本插件的设置；点头像进个人资料（FIX118 D 起不再单独放一条“个人资料”）。往上滑：头像变小、变模糊变暗，和灵动岛黏成一滴被吸进去，昵称滑到顶栏下面时顶栏中间出现小标题；松手停在一半时会自己回到“展开”或“收起”。灵动岛 / 刘海的位置按机型查表（Telegram 的各机型数据），对不准时用下面两个微调。刘海屏：开着“融进刘海”就和灵动岛一样黏进去，关掉就只缩小淡出（Telegram 在刘海屏上的做法）。“下拉展开头像横幅”打开后，往下拉“我”页不再拉出微信的状态页，而是头像撑开成整宽的横幅、下边缘像液体一样流动并滴落（状态仍可以从头像下面的状态按钮进）；关掉就是微信原来的下拉。FIX118 B：拉过约 100 pt 松手（或快速一甩）横幅停住展开，往上推收回；“选择横幅视频”从相册选一段视频，展开时淡入、静音循环播放，没选就是头像。FIX118 E/F：“横幅下边缘”可选液滴、渐隐（横幅下面约三分之一逐渐变透明，自然过渡到微信页面，不镜像）或直边；液滴：液滴的颜色是横幅在边缘处的镜像（越往下越模糊），横幅打开时下面的昵称和列表会再往下让一点，液滴只在这段空隙里垂下和滴落，不挡昵称。"),
+                 @"轻点头像可打开个人资料。向上滑动时，头像收向灵动岛或刘海，昵称移到导航栏。启用横幅后，下拉约 100 pt 松手即可展开，上推收回。横幅下缘渐隐，背景可在媒体库选择头像、图片或静音循环视频。状态入口在头像下方。"),
         WXGGroup(@"恢复",nil,@[WXGAction(@"恢复本页默认",@"resetPage",YES)],
                  nil)]};
     if([module isEqual:@"dock"])return @{@"title":@"底栏",@"groups":@[
@@ -331,11 +361,12 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
         WXGGroup(@"选中胶囊",nil,@[WXGColorRow(@"浅色模式底色",@"selectionHex",nil),WXGColorRow(@"深色模式底色",@"darkSelectionHex",nil),
                                  WXGSlider(@"静置底色不透明度",@"selectionOpacity",nil,0,.75,nil),WXGSlider(@"静置内边距",@"selectionInset",nil,2,14,@"%.1f pt")],nil),
         WXGGroup(@"图标与文字",nil,@[WXGSlider(@"图标高度（0 = 微信原大小）",@"dockIconHeight",nil,0,36,@"%.1f pt"),
-                                   WXGSlider(@"图标与文字间距",@"dockIconTitleGap",nil,0,16,@"%.1f pt"),WXGSlider(@"图标和文字整体上下",@"dockIconOffset",nil,-12,12,@"%+.1f pt"),
+                                   WXGSlider(@"图标整体缩放",@"dockIconScalePercent",nil,60,140,@"%.0f%%"),
+                                   WXGSwitch(@"隐藏底栏标题",@"dockHideTitles",nil),
                                    WXGSlider(@"文字大小",@"dockTitleSize",nil,8,13,@"%.1f pt"),
                                    WXGChoice3(@"文字粗细",@"dockTitleWeight",nil,nil,@[@"细",@"常规",@"中等",@"半粗",@"粗"],NO),
                                    WXGSwitch(@"选中的文字加粗一档",@"dockTitleBolderSelected",nil)],
-                 @"图标按微信自己的大小画（FIX114 B，以前统一缩放到 28 × 26 的框里，微信 28 pt 的图标被画小了；最大 30 pt）。图标与文字间距：图标框（按 26 pt 高算）下沿到文字上沿的距离，原来是 5 pt；调大调小时图标往上、文字往下各移一半，整组的中心不变。整体上下：图标和文字一起移，正数往下、负数往上，原来是 0。文字大小和粗细：FIX90 之前固定是 10.5 pt、未选中中等、选中半粗，FIX91 起默认 10 pt、中等，选中的不再更粗（打开“选中的文字加粗一档”恢复）；FIX114 B 起默认常规，和微信自己的标签一样（诊断里微信用的是 .SFUI-Regular 10 pt），还停在旧默认“中等”的会自动改成常规一次。微信自己用的字体写在诊断的底栏图标那一行（“微信标题字体”），可以对照。未读角标跟着图标走。透镜里的放大图标、点击动画用的都是同一套。\n\niOS 26 系统底栏的摆法（FIX135，从探针导出的系统底栏里读的）：图标 26 pt 高（最宽 37 pt），图标中线在底栏中线上方 7 pt；文字 10 pt、中等粗细，文字框从底栏中线下方 6 pt 开始。换成这里的滑块就是：图标高度 26、间距 1、整体上下 −1、文字大小 10、粗细“中等”。“底栏功能 → iOS 26 系统底栏 → 套用”会一次设好。"),
+                 @"显示标题时，连续底栏采用 iOS 26 实测的图标与文字位置。100% 为图标原始比例，缩放同时作用于普通、选中和透镜内的图标。隐藏标题后图标在底栏内垂直居中，离散底栏也会隐藏中英文标题。"),
         WXGGroup(@"图标与动画",nil,@[WXGSwitch(@"使用微信原生图标",@"useWeChatIcons",nil),
                                   WXGSwitch(@"底栏主题优先（只接管玻璃和位置）",@"dockThemeFirst",nil),
                                   WXGSwitch(@"使用 Telegram 图标（切换时有动画）",@"dockTelegramIcons",nil),
@@ -348,7 +379,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                   WXGSwitch(@"切换后等页面忙完再滑",@"dockTapCalmWaitOn",nil),
                                   WXGSwitch(@"停顿后加速追上",@"dockTapCatchUp",nil),
                                   WXGSwitch(@"点按时用简化透镜（系统渲染）",@"dockTapSimpleTravel",nil)],
-                 @"底栏主题优先（FIX115 D，默认关）：底栏的图标和标题颜色完全交给微信或别的插件的主题——用微信底栏里正在显示的那张图（主题的 PNG 也一样），按它在微信底栏里显示的大小画（不再按图片自己的尺寸、也不再限制在 30 pt 以内；同一个主题的 PNG 用不同倍数加载时尺寸不一样，以前就会忽大忽小），未选中 / 选中的文字颜色用微信 / 主题自己的；Telegram 图标和“选中强调色”不再用于底栏。插件只管玻璃、透镜、位置和间距（图标与文字的上下、间距、文字大小粗细照旧按上面的设置）。诊断的底栏图标那一行会写每个标签的图片尺寸、倍数和显示大小。Telegram 图标（FIX113）：微信、通讯录、发现、我依次换成 Telegram 的聊天、联系人、通话、设置图标（Telegram for iOS 开源仓库里的原动画，GPLv2），平时是静止的样子，切到哪个标签就播放它自己的那段动画（约 0.6–0.75 秒，按 Telegram 的 60 帧），透镜里外、离散底栏都一样；拖动经过别的标签不播，松手落定才播；系统“减弱动态效果”打开时不播。开着时优先于“使用微信原生图标”。选中强调色（FIX113 C）：选中标签的图标和文字颜色，系统图标和 Telegram 图标都用它（默认是原来的绿色），Telegram 图标播放动画时也是这个颜色；使用微信原生图标时仍是微信自己的颜色。FIX115 I：强调色在底栏里总是按 100% 不透明画（颜色的不透明度不用）；开着 Telegram 图标时存着的强调色也自动改成 100%。点按切换（FIX95 / FIX98 / FIX99）：点别的标签时，呼出的就是拖动时那块完整的透镜（折射、色散、透镜里的底栏和图标都一样），自己滑过去再落成胶囊；按住不放，到位后就跟着手指，可以继续左右拖。胶囊变透镜：滑动开始后，在滑动时长的这个比例内升起成透镜、颜色褪成透明（默认 0.40，FIX98 是颜色 0.65、升起 0.55）。落下时长：从透镜落回胶囊、颜色回来用的时间，默认 0.16 s（FIX98 0.26 s），在到位前 70% 就开始落，到位后约 0.05 s 落完，所以颜色的变化都在滑动里完成，不会到位以后还慢慢变。点按滑动时长：1 倍是 FIX43 的 0.28 s ×（0.85 + 0.05 × 标签数），默认 1.4 倍（一个标签约 0.35 s，点一下一共约 0.4 s）。FIX98 时调过这两项的，值会带过来；没调过的用新的默认值。切换页面的时机（FIX100）：按下时（默认）= 和微信自己的标签栏一样，手指一按下就让微信切页面：微信加载那一页的那一下卡顿发生在透镜动起来之前（透镜在原地等它，不跳），然后透镜在新页面上滑过去，页面和原生一样快出来；松手时 = 松手才切，动画接着走；快到位时 = 透镜滑完 80% 时切；落下后 = FIX95–FIX97 的做法。按下时以外的三种：微信切页面时主线程会卡 0.05–0.5 s，透镜在那一下停住、再从停住的地方接着走；启动后第一次打开某个标签总是等透镜落下再切。按下时：会卡的标签等透镜落下再切（FIX119 E；FIX119 F 起默认关闭）：插件记下每个标签上次切换后 0.7 秒内主线程卡了多久（帧超时的部分加起来），超过 50 ms 的标签下次也像第一次打开那样，等透镜落下再切，透镜一路不停；不卡的标签照旧按下就切。在 XS Max 上几乎每个标签都超过 50 ms（微信每次切标签都要检查数据库、刷新那一页），打开后页面差不多总在透镜落下后才出来，所以默认关着。按下后滑到别的标签松手，再切到那个标签；按下后滑出底栏松手，留在按下的那个标签（微信已经切过去了，和原生一样）。切换后等页面忙完再滑（FIX101，FIX102 起默认关闭）：打开后透镜在微信切完页面后原地等到连续三帧准时（最多 0.6 s）再滑，滑动更不容易被打断，但每次都会晚 0.07–0.2 s 开始。停顿后加速追上（FIX102，默认打开）：透镜因为微信切页面停住多久，剩下的动画就快那么久的六成（最多快四分之一），落下的时间尽量和没停时一样。拖动时胶囊颜色也按升起的程度渐变（按压 0.05–0.45）。打开“点按时用简化透镜”恢复 FIX33–FIX94 的做法：动画交给系统渲染服务，页面立刻切换，但滑动的只是一个形状，没有透镜的效果（上面几项不影响它）。"),
+                 @"底栏主题优先（FIX115 D，默认关）：底栏的图标和标题颜色完全交给微信或别的插件的主题——用微信底栏里正在显示的那张图（主题的 PNG 也一样），按它在微信底栏里显示的大小画（不再按图片自己的尺寸、也不再限制在 30 pt 以内；同一个主题的 PNG 用不同倍数加载时尺寸不一样，以前就会忽大忽小），未选中 / 选中的文字颜色用微信 / 主题自己的；Telegram 图标和“选中强调色”不再用于底栏。图标缩放、隐藏标题和文字样式仍在“图标与文字”里设置。诊断的底栏图标那一行会写每个标签的图片尺寸、倍数和显示大小。Telegram 图标（FIX113）：微信、通讯录、发现、我依次换成 Telegram 的聊天、联系人、通话、设置图标（Telegram for iOS 开源仓库里的原动画，GPLv2），平时是静止的样子，切到哪个标签就播放它自己的那段动画（约 0.6–0.75 秒，按 Telegram 的 60 帧），透镜里外、离散底栏都一样；拖动经过别的标签不播，松手落定才播；系统“减弱动态效果”打开时不播。开着时优先于“使用微信原生图标”。选中强调色（FIX113 C）：选中标签的图标和文字颜色，系统图标和 Telegram 图标都用它（默认是原来的绿色），Telegram 图标播放动画时也是这个颜色；使用微信原生图标时仍是微信自己的颜色。FIX115 I：强调色在底栏里总是按 100% 不透明画（颜色的不透明度不用）；开着 Telegram 图标时存着的强调色也自动改成 100%。点按切换（FIX95 / FIX98 / FIX99）：点别的标签时，呼出的就是拖动时那块完整的透镜（折射、色散、透镜里的底栏和图标都一样），自己滑过去再落成胶囊；按住不放，到位后就跟着手指，可以继续左右拖。胶囊变透镜：滑动开始后，在滑动时长的这个比例内升起成透镜、颜色褪成透明（默认 0.40，FIX98 是颜色 0.65、升起 0.55）。落下时长：从透镜落回胶囊、颜色回来用的时间，默认 0.16 s（FIX98 0.26 s），在到位前 70% 就开始落，到位后约 0.05 s 落完，所以颜色的变化都在滑动里完成，不会到位以后还慢慢变。点按滑动时长：1 倍是 FIX43 的 0.28 s ×（0.85 + 0.05 × 标签数），默认 1.4 倍（一个标签约 0.35 s，点一下一共约 0.4 s）。FIX98 时调过这两项的，值会带过来；没调过的用新的默认值。切换页面的时机适用于冷启动首次打开和后续访问。选“按下时”（默认）会在按下标签时切到新页；选“松手时”会在松手时切换；选“快到位时”会在透镜滑完约 80% 时切换；选“落下后”会等透镜落定。开启“按下时：会卡的标签等透镜落下再切”后，如果该标签上次切换后 0.7 秒内累计卡顿达到 50 ms，点它时会等透镜落下再切。按下就已切换时，滑到另一个标签松手会切到最后那个标签，滑出底栏则停留在按下时选中的页。切换后等页面忙完再滑（FIX101，FIX102 起默认关闭）：打开后透镜在微信切完页面后原地等到连续三帧准时（最多 0.6 s）再滑，滑动更不容易被打断，但每次都会晚 0.07–0.2 s 开始。停顿后加速追上（FIX102，默认打开）：透镜因为微信切页面停住多久，剩下的动画就快那么久的六成（最多快四分之一），落下的时间尽量和没停时一样。拖动时胶囊颜色也按升起的程度渐变（按压 0.05–0.45）。打开“点按时用简化透镜”恢复 FIX33–FIX94 的做法：动画交给系统渲染服务，页面立刻切换，但滑动的只是一个形状，没有透镜的效果（上面几项不影响它）。"),
         WXGGroup(@"拖过两端",nil,@[WXGSwitch(@"拖过两端时拉长底栏",@"dockEndStretch",nil),
                  WXGSlider(@"两端拉长距离",@"dockEndStretchDistance",nil,0,40,@"%.0f pt")],
                  @"透镜到了第一个或最后一个标签还继续往外拉，那一端的底栏跟着手指被拉出去，松手弹回。"),
@@ -368,6 +399,8 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                WXGSlider(@"底部模糊强度",@"edgeOtherBlurBottomRadius",nil,0,8,@"%.1f pt")],
                  @"首页（聊天列表）、通讯录、朋友圈、聊天设置（单聊、群聊的聊天信息页）、微信的“设置”页，以及本插件的这几页设置。插件设置页里的卡片是玻璃，不能给列表加遮罩，所以渐隐是在列表上叠一层同样的壁纸、越靠边越不透明，看起来一样。")]};
     if([module isEqual:@"general"])return @{@"title":@"通用",@"groups":@[
+        WXGGroup(@"玻璃外观",nil,@[WXGSwitch(@"全局玻璃阴影",@"glassShadowOn",nil)],
+                 @"控制所有范围的玻璃外阴影。重新开启后，各范围沿用原有的阴影参数。"),
         WXGGroup(@"顶部按钮",nil,@[WXGSwitch(@"顶部按钮与背景适配",@"pref.nav",nil),
                  WXGSwitch(@"标题换成玻璃胶囊",@"pref.localTitle",nil),
                  WXGSwitch(@"通讯录标题覆盖胶囊",@"contactsTitleCapsule",nil),
@@ -796,6 +829,7 @@ static NSString *WXGLastScope=@"dock";
     BOOL _scopeOpen;
     NSMutableArray<NSDictionary *> *_groups;   // label, card, rows, separators, footer (as present)
     WXGRimStyle _builtStyle;                   // FIX85: the rim style the groups were built for (FIX86: the range's)
+    WXGHomeMenuStyle _builtHomeMenuStyle;
     // FIX113 O: opened from the settings search: scroll to this group (spec
     // index) and flash the row (or the group's card).
     NSInteger _focusGroup,_focusRow;
@@ -918,9 +952,11 @@ static NSString *WXGLastScope=@"dock";
     _groups=[NSMutableArray array];
     __weak WXGSettingsModule *weakSelf=self;
     _builtStyle=[self scopeRimStyle];NSNumber *style=@(_builtStyle);
+    if([_module isEqual:@"home"])_builtHomeMenuStyle=WXGConfig.shared.homeMenuStyle;
     NSArray *specGroups=_spec[@"groups"];
     for(NSUInteger groupIndex=0;groupIndex<specGroups.count;groupIndex++) {
         NSDictionary *group=specGroups[groupIndex];
+        if(!WXGShowsHomeMenuGroup(group))continue;
         if([group[@"copySlot"] boolValue]){group=[self copyGroupFrom:group];if(!group)continue;}    // FIX115 E
         NSString *scope=group[@"scope"];
         if(self.scoped && scope && ![scope isEqual:_scope])continue;
@@ -980,7 +1016,8 @@ static NSString *WXGLastScope=@"dock";
 - (void)refreshRows {
     // FIX85: the style changed elsewhere (恢复本页默认, an import): other groups.
     BOOL styled=NO;for(NSDictionary *group in _spec[@"groups"])if(group[@"styles"]){styled=YES;break;}
-    if(styled && _builtStyle!=[self scopeRimStyle]){[self choiceChanged:@{}];return;}
+    if((styled && _builtStyle!=[self scopeRimStyle]) ||
+       ([_module isEqual:@"home"] && _builtHomeMenuStyle!=WXGConfig.shared.homeMenuStyle)){[self choiceChanged:@{}];return;}
     for(NSDictionary *group in _groups)for(WXGSettingsRow *row in group[@"rows"])[row refresh];
     [self configChanged];
 }
@@ -1077,7 +1114,8 @@ static NSString *WXGLastScope=@"dock";
     [self presentViewController:alert animated:YES completion:nil];
 }
 - (void)choiceChanged:(NSDictionary *)spec {
-    if(spec.count && _builtStyle==[self scopeRimStyle])return;   // (review) back to the style shown: nothing to rebuild
+    if(spec.count && _builtStyle==[self scopeRimStyle] &&
+       (![_module isEqual:@"home"] || _builtHomeMenuStyle==WXGConfig.shared.homeMenuStyle))return;
     [UIView performWithoutAnimation:^{[self buildGroups];[self.view setNeedsLayout];[self.view layoutIfNeeded];}];
     UIScrollView *scroll=self.scrollView;
     CGFloat maximum=MAX(0,scroll.contentSize.height-scroll.bounds.size.height);
@@ -1089,14 +1127,14 @@ static NSString *WXGLastScope=@"dock";
 }
 // What the range chosen covers (only that one: the list of all was long).
 - (NSString *)descriptionOfScope:(NSString *)scope {
-    NSDictionary *texts=@{@"dock":@"悬浮标签栏本体的色彩材质、阴影与边框（按压透镜与形变在「底栏透镜与形变」中调节）。",
+    NSDictionary *texts=@{@"dock":@"悬浮标签栏本体。按压透镜在「底栏透镜与形变」中调节。",
                           @"other":@"导航按钮、标题胶囊、输入栏、搜索框、菜单、面板等。",
                           @"bubble":@"聊天里的液态气泡（“气泡用完整玻璃”开着时生效）。",
-                          @"segment":@"聊天列表顶部的分组栏及首页标题分组栏的色彩材质、阴影与边框。",
+                          @"segment":@"聊天列表顶部的分组栏和首页标题分组栏。",
                           @"card":@"这几页设置的卡片和按钮，调节时可直接看到。",
                           @"lens":@"底栏按住时浮起的透镜自己的边框，支持 iOS 26 / iOS 27。",
                           @"segmentLens":@"分组栏与标题分组栏按住时的透镜和选中胶囊边框，支持 iOS 26 / iOS 27。",
-                          @"finder":@"视频号视频页与作品页顶部按钮胶囊的完整玻璃设置（色彩材质覆盖、阴影与 iOS 27 边框）。"};
+                          @"finder":@"视频号视频页和作品页顶部的按钮胶囊。"};
     return texts[scope]?:@"";
 }
 - (void)showScope {
@@ -1171,8 +1209,7 @@ static NSString *WXGLastScope=@"dock";
         if(page)[self.navigationController pushViewController:page animated:YES];
         return;
     }
-    if([action isEqual:@"meBannerVideo"]){[WXGMeHeader.shared pickBannerVideoFrom:self];return;}   // FIX118 B
-    if([action isEqual:@"meBannerVideoClear"]){[WXGMeHeader.shared clearBannerVideo];return;}
+    if([action isEqual:@"meBannerLibrary"]){[self.navigationController pushViewController:WXGBannerLibraryPage() animated:YES];return;}
     if([action isEqual:@"manageGroups"]){[self.navigationController pushViewController:WXGChatGroupsPage() animated:YES];return;}   // FIX113 R
     if([action hasPrefix:@"copyTo:"]){[self copyScopeTo:[action substringFromIndex:7]];return;}   // FIX115 E
     // FIX114 O (user: the capsule's proportions are not the screenshot's): the
@@ -1283,6 +1320,7 @@ NSArray<NSDictionary *> *WXGSettingsSearch(NSString *query,NSArray<NSArray *> *c
         NSArray *groups=spec[@"groups"];
         for(NSUInteger g=0;g<groups.count;g++) {
             NSDictionary *group=groups[g];
+            if(!WXGShowsHomeMenuGroup(group))continue;
             NSString *groupTitle=[group[@"title"] isKindOfClass:NSString.class]?group[@"title"]:@"";
             NSString *range=scopeTitles[group[@"scope"]];
             NSString *place=range && groupTitle.length?[NSString stringWithFormat:@"%@（%@）",groupTitle,range]:groupTitle;

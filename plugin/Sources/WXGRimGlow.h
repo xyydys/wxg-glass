@@ -1,6 +1,9 @@
 #ifndef WXG_RIM_GLOW_H
 #define WXG_RIM_GLOW_H
 #include <math.h>
+
+typedef struct { double width,falloff,endLevel,sharpness,angle,red,green,blue,alpha; } WXGRimGlowShape;
+enum { WXGRimGlowCount=2 };
 #ifndef M_PI
 #define M_PI 3.14159265358979323846
 #endif

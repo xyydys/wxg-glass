@@ -1,5 +1,6 @@
 #import "WXGIntegration.h"
 #import "WXGBackdropSample.h"
+#import "WXGHomeSearchLayout.h"
 
 /* FIX107: more of WeChat in glass (the probe's captures, WeChat 8.0.73 / 8.0.78).
    Each element keeps WeChat's own view, actions and layout; only its paint is
@@ -150,6 +151,13 @@ static const CGFloat WXGLocalSheetRadius=26;
 @end
 static char WXGLocalLoopKey;
 static char WXGLocalAnchorKey,WXGLocalHostKey,WXGLocalRetryKey;
+static char WXGLocalFloatingSearchHeaderKey;
+
+static BOOL WXGLocalInsideFloatingHeader(UIView *view) {
+    for(UIView *parent=view;parent;parent=parent.superview)
+        if(objc_getAssociatedObject(parent,&WXGLocalFloatingSearchHeaderKey))return YES;
+    return NO;
+}
 static WXGLocalEntry *WXGLocalEntryOfAnchor(UIView *view) {return view?objc_getAssociatedObject(view,&WXGLocalAnchorKey):nil;}
 
 // A breadth-first walk that also goes into table / collection cells (WXGViews
@@ -440,6 +448,21 @@ static BOOL WXGLocalAvailable(void) {return WXGPluginEnabled() && WXGEffectiveRe
     _lastSkip[NSStringFromClass(host.class)?:@"?"]=reason;
     [self unmountHost:host];
 }
+- (void)setFloating:(BOOL)floating forSearchHeader:(UIView *)header {
+    if(!header || floating==(objc_getAssociatedObject(header,&WXGLocalFloatingSearchHeaderKey)!=nil))return;
+    objc_setAssociatedObject(header,&WXGLocalFloatingSearchHeaderKey,floating?@YES:nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if(floating) {
+        // Include replacements mounted by either UISearchBar or WCSearchBar.
+        for(WXGLocalEntry *entry in _entries.allObjects)
+            if(entry.mounted && entry.kind==WXGLocalSearch && [entry.anchor isDescendantOfView:header])[self unmount:entry];
+    }else if(header.window) {
+        for(UIView *host in _hosts.allObjects)
+            if([host isDescendantOfView:header] && [self kindForHost:host]==WXGLocalSearch)[host setNeedsLayout];
+    }
+}
+void WXGSetSearchHeaderFloating(UIView *header,BOOL floating) {
+    [WXGLocalGlass.shared setFloating:floating forSearchHeader:header];
+}
 // The host's own layout comes before its descendants' in the same pass: a
 // field still zero-sized now may be ready a moment later (three tries).
 - (void)skip:(UIView *)host because:(NSString *)reason retry:(BOOL)retry {
@@ -687,6 +710,10 @@ static CGRect WXGLocalEntryMaterial(WXGLocalEntry *entry) {
     if(!anchor)return;
     // Nothing is made (no glass, no entry) unless it is wanted and shown.
     WXGLocalEntry *existing=WXGLocalEntryOfAnchor(anchor);
+    if(kind==WXGLocalSearch && WXGLocalInsideFloatingHeader(anchor)) {
+        if(existing.mounted)[self unmount:existing];
+        return;
+    }
     if(![self wants:kind]){if(existing)[self unmount:existing];return;}
     if([self hostResting:host])return;   // FIX115 K
     if(!anchor.window){existing.surface.active=NO;return;}
@@ -962,7 +989,7 @@ static BOOL WXGLocalFieldCandidate(UIView *v,UIView *bar,BOOL emptied) {
     CGRect r=[v convertRect:v.bounds toView:bar];
     return r.size.height>=24 && r.size.height<=(emptied?44:60) && r.size.width>=bar.bounds.size.width*.4 && (!emptied || r.size.width<=bar.bounds.size.width-6);
 }
-static char WXGLocalHomeHeaderHKey;
+static char WXGLocalHomeHeaderHKey,WXGLocalAppliedHeaderHKey;
 static UITableView *WXGLocalHomeTableFor(UIView *view) {
     static Class mainTable;static dispatch_once_t once;
     dispatch_once(&once,^{mainTable=NSClassFromString(@"MainFrameTableView");});
@@ -987,18 +1014,11 @@ static CGRect WXGLocalUnshiftedRectIn(UIView *v,UIView *root,CGRect r) {
     }
     return r;
 }
-// R24: live transform-invariant paint rect inside homeHeader. During cold start,
-// UIStackView has not yet arranged paint.center.y (so curP.origin.y is briefly
-// negative, e.g. -10); resolve to the settled centred Y instead of freezing or
-// placing the search bar above homeHeader into the title bar.
-static CGRect WXGLocalResolvedHomePaintRect(UIView *paint,UIView *homeHeader,CGFloat nativeH) {
-    CGRect curP=WXGLocalUnshiftedRectIn(paint,homeHeader,paint.bounds);
-    if(CGRectIsNull(curP) || curP.size.width<10 || curP.size.height<10)return CGRectNull;
-    CGFloat hdrW=homeHeader.bounds.size.width;
-    CGFloat hdrH=MAX(nativeH,homeHeader.bounds.size.height);
-    if(curP.origin.y<0)curP.origin.y=hdrH>curP.size.height?MAX(0.,round((hdrH-curP.size.height)*.5)):0.;
-    if(curP.origin.x<0 && hdrW>curP.size.width)curP.origin.x=MAX(0.,round((hdrW-curP.size.width)*.5));
-    return curP;
+static CGRect WXGLocalResolvedHomePaintRect(UIView *paint,UIView *header) {
+    if(![paint isDescendantOfView:header])return CGRectNull;
+    CGRect r=WXGLocalUnshiftedRectIn(paint,header,paint.bounds);
+    WXGRect field={r.origin.x-header.bounds.origin.x,r.origin.y-header.bounds.origin.y,r.size.width,r.size.height};
+    return WXGHomeSearchFieldReady(field,header.bounds.size.width,header.bounds.size.height)?r:CGRectNull;
 }
 static UIView *WXGLocalSearchWrapUnder(UIView *v,UIView *paint,UIView *host) {
     UIView *best=v;
@@ -1179,6 +1199,27 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
     }
     return NO;
 }
+// Only own a table-header height when an explicit vertical customization grows it.
+// Ignore a height that WeChat replaced during its own layout.
+- (void)resizeSearchHeader:(UIView *)header table:(UITableView *)table height:(CGFloat)height {
+    if(table.tableHeaderView!=header || fabs(header.frame.size.height-height)<=.5)return;
+    _adjustingHomeHeader=YES;
+    @try {
+        [UIView performWithoutAnimation:^{
+            CGRect frame=header.frame;frame.size.height=height;header.frame=frame;
+            table.tableHeaderView=header;
+        }];
+    } @finally {_adjustingHomeHeader=NO;}
+}
+static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect natural) {
+    WXGConfig *config=WXGConfig.shared;
+    CGFloat pct=config.homeSearchWidthPct,height=config.homeSearchHeight,top=config.homeSearchTopGap;
+    CGFloat width=pct>.5?WXGClamp(header.bounds.size.width*pct/100.,120.,MAX(120.,header.bounds.size.width-4.)):natural.size.width;
+    CGFloat x=pct>.5?CGRectGetMidX(header.bounds)-width*.5:natural.origin.x;
+    CGFloat y=top>=0?CGRectGetMinY(header.bounds)+top:natural.origin.y;
+    return CGRectMake(paint.bounds.origin.x+x-natural.origin.x,paint.bounds.origin.y+y-natural.origin.y,width,
+                      height>.5?WXGClamp(height,24.,64.):natural.size.height);
+}
 - (void)field:(UIView *)paint host:(UIView *)host skins:(NSArray<UIView *> *)skins {
     for(WXGLocalEntry *other in _entries.allObjects)
         if(other.mounted && other.kind==WXGLocalSearch && other.host==host && other.anchor && other.anchor!=paint)[self unmount:other];
@@ -1189,66 +1230,37 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
     WXGConfig *cfg=WXGConfig.shared;
     BOOL customHome=homeTable && (cfg.homeSearchWidthPct>.5 || cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
     UIView *homeHeader=homeTable.tableHeaderView;
-    if(homeHeader) {
-        NSNumber *savedH=objc_getAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey);
-        if(!savedH && homeHeader.frame.size.height>=36.) {
-            savedH=@(homeHeader.frame.size.height);
-            objc_setAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey,savedH,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-        }
-        CGFloat nativeH=savedH?savedH.doubleValue:homeHeader.frame.size.height;
-        if(!customHome && savedH && fabs(homeHeader.frame.size.height-nativeH)>.5) {
-            _adjustingHomeHeader=YES;
-            @try {
-                [UIView performWithoutAnimation:^{
-                    CGRect hf=homeHeader.frame;hf.size.height=nativeH;homeHeader.frame=hf;
-                    if(homeTable.tableHeaderView==homeHeader)homeTable.tableHeaderView=homeHeader;
-                }];
-            } @finally {_adjustingHomeHeader=NO;}
-        }
+    NSNumber *baseHeight=homeHeader?objc_getAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey):nil;
+    NSNumber *applied=homeHeader?objc_getAssociatedObject(homeHeader,&WXGLocalAppliedHeaderHKey):nil;
+    BOOL vertical=customHome && (cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
+    if(applied && (!vertical || fabs(applied.doubleValue-homeHeader.frame.size.height)>.5)) {
+        if(!vertical && fabs(applied.doubleValue-homeHeader.frame.size.height)<=.5)
+            [self resizeSearchHeader:homeHeader table:homeTable height:baseHeight.doubleValue];
+        objc_setAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        objc_setAssociatedObject(homeHeader,&WXGLocalAppliedHeaderHKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        baseHeight=nil;
     }
     if(customHome && homeHeader) {
-        NSNumber *savedH=objc_getAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey);
-        CGFloat nativeH=savedH?savedH.doubleValue:MAX(52.,homeHeader.frame.size.height);
-        CGRect nat=WXGLocalResolvedHomePaintRect(paint,homeHeader,nativeH);
-        if(CGRectIsNull(nat))nat=[paint convertRect:paint.bounds toView:homeHeader];
-        if(nat.origin.y<0)nat.origin.y=MAX(0.,round((nativeH-nat.size.height)*.5));
-        CGFloat wPct=cfg.homeSearchWidthPct,customH=cfg.homeSearchHeight,topGap=cfg.homeSearchTopGap;
-        CGFloat w=wPct>.5?WXGClamp(homeHeader.bounds.size.width*(wPct/100.),120,MAX(120,homeHeader.bounds.size.width-4)):nat.size.width;
-        CGFloat h=customH>.5?WXGClamp(customH,24,64):nat.size.height;
-        CGFloat x=wPct>.5?(homeHeader.bounds.size.width-w)*.5:nat.origin.x;
-        CGFloat y=topGap>=0?MAX(0.,topGap):nat.origin.y;
-        CGFloat bottomPad=MAX(4,nativeH-CGRectGetMaxY(nat));
-        CGFloat neededH=MAX(nativeH,y+h+bottomPad);
-        if(fabs(homeHeader.frame.size.height-neededH)>.5) {
-            _adjustingHomeHeader=YES;
-            @try {
-                [UIView performWithoutAnimation:^{
-                    CGRect hf=homeHeader.frame;hf.size.height=neededH;homeHeader.frame=hf;
-                    if(homeTable.tableHeaderView==homeHeader)homeTable.tableHeaderView=homeHeader;
-                }];
-            } @finally {_adjustingHomeHeader=NO;}
+        CGRect nat=WXGLocalResolvedHomePaintRect(paint,homeHeader);
+        if(CGRectIsNull(nat)){[self skip:host because:@"等待首页搜索框完成原生布局" retry:YES];return;}
+        if(vertical) {
+            CGFloat nativeH=baseHeight?baseHeight.doubleValue:homeHeader.frame.size.height;
+            WXGRect field={nat.origin.x,nat.origin.y-homeHeader.bounds.origin.y,nat.size.width,nat.size.height};
+            CGFloat needed=WXGHomeSearchRequiredHeaderHeight(field,nativeH,cfg.homeSearchHeight,cfg.homeSearchTopGap);
+            if(fabs(homeHeader.frame.size.height-needed)>.5) {
+                objc_setAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey,@(nativeH),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                objc_setAssociatedObject(homeHeader,&WXGLocalAppliedHeaderHKey,@(needed),OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+                [self resizeSearchHeader:homeHeader table:homeTable height:needed];
+            }
         }
-        CGRect pInHdr=WXGLocalUnshiftedRectIn(paint,homeHeader,paint.bounds);
-        CGRect targetInPaint=!CGRectIsNull(pInHdr)
-            ?CGRectMake(x-pInHdr.origin.x+paint.bounds.origin.x,y-pInHdr.origin.y+paint.bounds.origin.y,w,h)
-            :[homeHeader convertRect:CGRectMake(x,y,w,h) toView:paint];
+        CGRect targetInPaint=WXGLocalCustomSearchMaterial(paint,homeHeader,nat);
         if([self searchGlassClashes:paint material:targetInPaint host:host])return;
         __weak UIView *weakPaint=paint,*weakHeader=homeHeader;
         [self mount:WXGLocalSearch host:host anchor:paint paint:paint below:nil measure:nil
             frame:^CGRect{
                 UIView *p=weakPaint,*hdr=weakHeader;if(!p || !hdr)return CGRectNull;
-                WXGConfig *c=WXGConfig.shared;
-                NSNumber *sh=objc_getAssociatedObject(hdr,&WXGLocalHomeHeaderHKey);
-                CGFloat nh=sh?sh.doubleValue:MAX(52.,hdr.bounds.size.height);
-                CGRect curP=WXGLocalUnshiftedRectIn(p,hdr,p.bounds);
-                CGRect n=WXGLocalResolvedHomePaintRect(p,hdr,nh);
-                if(CGRectIsNull(curP) || CGRectIsNull(n))return CGRectNull;
-                CGFloat wp=c.homeSearchWidthPct,ch=c.homeSearchHeight,tg=c.homeSearchTopGap;
-                CGFloat tw=wp>.5?WXGClamp(hdr.bounds.size.width*(wp/100.),120,MAX(120,hdr.bounds.size.width-4)):n.size.width;
-                CGFloat th=ch>.5?WXGClamp(ch,24,64):n.size.height;
-                CGFloat tx=wp>.5?(hdr.bounds.size.width-tw)*.5:n.origin.x;
-                CGFloat ty=tg>=0?MAX(0.,tg):n.origin.y;
-                return CGRectMake(tx-curP.origin.x+p.bounds.origin.x,ty-curP.origin.y+p.bounds.origin.y,tw,th);
+                CGRect natural=WXGLocalResolvedHomePaintRect(p,hdr);
+                return CGRectIsNull(natural)?CGRectNull:WXGLocalCustomSearchMaterial(p,hdr,natural);
             }
             radius:0 button:nil
             prepare:^(WXGStateBag *states){

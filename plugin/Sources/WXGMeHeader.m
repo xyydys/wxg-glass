@@ -6,7 +6,8 @@
 #import <sys/utsname.h>
 #import <AVFoundation/AVFoundation.h>
 #import <CoreVideo/CoreVideo.h>
-#import <PhotosUI/PhotosUI.h>
+#import <ImageIO/ImageIO.h>
+#import "WXGBannerLibrary.h"
 
 /* FIX118 A (user, 11-04: the 我 page as Telegram's profile: "将二维码作为一个左
    上方的按钮，其余的详细资料列一个单独的列表条，昵称微信号，状态那块居中放在头像下";
@@ -14,7 +15,7 @@
    Dynamic Island (into the notch on a notched phone, or only shrinks and fades,
    as the user chooses); "右上角 … 一个胶囊和设置两个字加入我们自己的设置"; a switch:
    off, only the avatar going up; on, pulling down opens the avatar into a
-   banner whose lower edge moves as a liquid, in place of WeChat's own pull
+   banner whose lower edge fades into the page, in place of WeChat's own pull
    (its 状态, still reached from the status buttons).
 
    What is WeChat's stays WeChat's (FIX117 D's probe, diagnostics_16 on the XS
@@ -41,50 +42,20 @@
    cut-out and the banner in one Metal pass (the shader below, after
    expo-scroll-metaball's), its layer only as tall as what it draws. */
 
-typedef struct {float size[2];float scale;float time;float island[4];float islandShape[4];float avatar[4];float effect[4];float drop[4];float image[4];float video[4];float fx[4];} WXGMBUniforms;
+typedef struct {float size[2];float scale;float padding;float island[4];float islandShape[4];float avatar[4];float effect[4];float drop[4];float image[4];float video[4];float videoUV[4];float videoLayout[4];} WXGMBUniforms;
 
 static const char *WXGMBShaderSource=
 "#include <metal_stdlib>\n"
 "using namespace metal;\n"
 "struct WXGMBOut{float4 position [[position]];float2 uv;};\n"
-"struct WXGMBUniforms{float2 size;float scale;float time;float4 island;float4 islandShape;float4 avatar;float4 effect;float4 drop;float4 image;float4 video;float4 fx;};\n"
+"struct WXGMBUniforms{float2 size;float scale;float padding;float4 island;float4 islandShape;float4 avatar;float4 effect;float4 drop;float4 image;float4 video;float4 videoUV;float4 videoLayout;};\n"
 "vertex WXGMBOut wxgmb_vertex(uint vid [[vertex_id]]){float2 p=float2(float((vid<<1)&2),float(vid&2));WXGMBOut o;o.position=float4(p.x*2.0-1.0,1.0-p.y*2.0,0.0,1.0);o.uv=p;return o;}\n"
 "static float sdBox(float2 p,float2 c,float2 h,float r){float2 q=abs(p-c)-h+float2(r);return length(max(q,float2(0.0)))+min(max(q.x,q.y),0.0)-r;}\n"
 "static float smoothUnion(float a,float b,float k){if(k<=0.0001)return min(a,b);float h=max(k-abs(a-b),0.0)/k;return min(a,b)-h*h*h*k*(1.0/6.0);}\n"
 "static float sdDrop(float2 p,float r1,float r2,float h){float2 q=float2(abs(p.x),p.y);float b=(r1-r2)/h;float a=sqrt(max(1.0-b*b,0.0));float k=dot(q,float2(-b,a));if(k<0.0)return length(q)-r1;if(k>a*h)return length(q-float2(0.0,h))-r2;return dot(q,float2(a,b))-r1;}\n"
-"static float hash1(float n){return fract(sin(n*12.9898)*43758.5453);}\n"
-"static float glossAt(float2 p,float2 c,float r){float d=length(p-c+float2(r*0.32,r*0.38));return 1.0-smoothstep(r*0.08,r*0.5+0.01,d);}\n"
-"static float2 dripsAt(float2 p,float edge,float left,float width,float amount,float t,float room){\n"
-"  float2 acc=float2(100000.0,0.0);\n"
-"  for(int i=0;i<7;i++){\n"
-"    float fi=float(i);float seed=hash1(fi*1.7+0.3);\n"
-"    float neck=mix(3.5,6.5,hash1(fi*4.1+0.7))*amount;float bulb=neck+mix(2.5,5.0,hash1(fi*8.3+0.1))*amount;\n"
-"    float x=left+(fi+0.5+(seed-0.5)*0.7)/7.0*width;\n"
-"    if(abs(p.x-x)>bulb*1.3+14.0)continue;\n"
-"    float on=hash1(fi*6.6+0.2)>=0.4?1.0:0.0;float period=mix(2.6,4.4,hash1(fi*11.9+0.5));\n"
-"    float s=fract(t/period+seed*3.1);float form=smoothstep(0.0,0.45,s)*on;float fall=max(s-0.45,0.0)/0.55*on;\n"
-"    float sway=0.9+0.1*sin(t*0.9+fi*1.9)+0.18*form*(1.0-smoothstep(0.45,0.75,s));\n"
-"    float h=max(min(64.0*amount*mix(0.25,1.0,seed)*sway,room*0.45),bulb-neck+0.5);\n"
-"    float root=edge-neck;float tip=root+h;\n"
-"    float dDrip=sdDrop(p-float2(x,root),max(neck,0.01),max(bulb,0.01),h);\n"
-"    float r=bulb*0.95*form*(1.0-smoothstep(0.6,1.0,fall));float stretch=1.0+0.3*smoothstep(0.0,0.3,fall);\n"
-"    float2 c=float2(x,tip+r*0.9+fall*fall*max(room-(tip-edge)-12.0,0.0));float2 bead=float2(p.x,c.y+(p.y-c.y)/stretch);\n"
-"    float dBead=100000.0;\n"
-"    if(r>0.5){dBead=length(bead-c)-r;acc.y=max(acc.y,glossAt(bead,c,r));}\n"
-"    acc.y=max(acc.y,glossAt(p,float2(x,tip),bulb));\n"
-"    acc.x=min(acc.x,smoothUnion(dDrip,dBead,bulb*1.6));\n"
-"  }\n"
-"  return float2(acc.x,acc.y*amount);\n"
-"}\n"
-"// FIX118 E: a drip's colour: the banner mirrored at its lower edge (what is just above it), blurred the more the deeper\n"
-"static float3 blurTap(texture2d<float> t,sampler smp,float2 uv,float2 rad,float2 lo,float2 hi){\n"
-"  float3 acc=float3(0.0);\n"
-"  for(int i=0;i<8;i++){float fi=float(i);float a=fi*2.39996323;float rr=sqrt((fi+0.5)/8.0);acc+=t.sample(smp,clamp(uv+float2(cos(a),sin(a))*rad*rr,lo,hi),level(0.0)).rgb;}\n"
-"  return acc/8.0;\n"
-"}\n"
 "fragment float4 wxgmb_fragment(WXGMBOut in [[stage_in]],constant WXGMBUniforms &u [[buffer(0)]],texture2d<float> photo [[texture(0)]],texture2d<float> video [[texture(1)]],sampler smp [[sampler(0)]]){\n"
 "  float2 pos=in.uv*u.size;float aa=1.0/u.scale;\n"
-"  float presence=u.islandShape.z;float expand=u.drop.z;float flow=u.drop.w;float radius=u.avatar.z;\n"
+"  float presence=u.islandShape.z;float expand=u.drop.z;float radius=u.avatar.z;\n"
 "  float top=mix(u.avatar.y-radius,0.0,expand);float bottom=u.avatar.y+radius;\n"
 "  float2 extent=float2(mix(radius,u.size.x*0.5,expand),max((bottom-top)*0.5,0.001));\n"
 "  float2 center=float2(u.avatar.x,(top+bottom)*0.5);\n"
@@ -96,14 +67,6 @@ static const char *WXGMBShaderSource=
 "    else{float bot=u.island.y+h.y;float2 hh=float2(h.x*presence,(bot+60.0)*0.5);float2 c=float2(u.island.x,bot-hh.y);dIsland=sdBox(pos,c,hh,min(u.islandShape.x*presence,hh.x));}\n"
 "  }\n"
 "  float dShape=sdBox(pos,center,extent,radius*(1.0-expand));\n"
-"  float gloss=0.0;\n"
-"  float mode=u.fx.x;\n"
-"  if(mode<0.5&&flow>0.0&&pos.y>bottom-40.0){\n"
-"    dShape-=flow*2.5*sin(pos.x*0.045+u.time*0.8)*smoothstep(bottom-40.0,bottom,pos.y);\n"
-"    float2 d=dripsAt(pos,bottom,center.x-extent.x,2.0*extent.x,flow,u.time,u.fx.y);\n"
-"    dShape=smoothUnion(dShape,d.x,12.0*flow);gloss=d.y;\n"
-"  }\n"
-
 "  float dAvatar=radius>0.5?dShape:100000.0;\n"
 "  if(radius>0.5&&expand<0.001&&u.drop.x>radius-u.drop.y+0.01)dAvatar=sdDrop(float2(local.x,-local.y),radius,max(u.drop.y,0.01),u.drop.x);\n"
 "  float d=smoothUnion(dIsland,dAvatar,u.effect.y);\n"
@@ -115,33 +78,28 @@ static const char *WXGMBShaderSource=
 "    if(u.effect.w>0.0&&presence>0.001){float soft=max(radius*0.8,8.0);float reach=bottom-(u.island.y+u.island.w)+soft;float front=mix(-soft,reach,u.effect.w);melt=smoothstep(front-soft,front+soft,dIsland);}\n"
 "    float weight=clamp(edge/coverage,0.0,1.0)*melt*(1.0-u.avatar.w);\n"
 "    if(weight>0.0){\n"
-"      float2 uvShape=(pos-center)/(2.0*extent)+0.5;\n"
-"      float depth=max(pos.y-bottom,0.0);\n"
-"      if(uvShape.y>1.0)uvShape.y=2.0-uvShape.y;\n"
-"      uvShape=clamp(uvShape,0.0,1.0);\n"
-"      float mirrorBlur=depth>0.0?clamp(depth*0.35+2.0,2.0,18.0):0.0;\n"
+"      float2 uvShape=clamp((pos-center)/(2.0*extent)+0.5,0.0,1.0);\n"
 "      float aspect=extent.x/extent.y;float img=u.image.x/max(u.image.y,1.0);\n"
 "      float2 lo=float2(0.0);float2 sz=float2(1.0);\n"
 "      if(img>aspect){sz.x=aspect/img;lo.x=(1.0-sz.x)*0.5;}else{sz.y=img/aspect;lo.y=(1.0-sz.y)*u.image.z;}\n"
 "      float texelsPerPt=sz.y*u.image.y/max(2.0*extent.y,1.0);\n"
-"      float lod=log2(max(max(u.effect.x,mirrorBlur)*texelsPerPt*0.5,1.0));\n"
+"      float lod=log2(max(u.effect.x*texelsPerPt*0.5,1.0));\n"
 "      float3 c=photo.sample(smp,lo+uvShape*sz,level(min(lod,u.image.w))).rgb;\n"
 "      if(u.video.w>0.0){\n"
-"        float vimg=u.video.x/max(u.video.y,1.0);float2 vlo=float2(0.0);float2 vsz=float2(1.0);\n"
+"        float vimg=u.videoLayout.z>0.0?u.videoLayout.z:u.video.x/max(u.video.y,1.0);float2 vlo=float2(0.0);float2 vsz=float2(1.0);\n"
 "        if(vimg>aspect){vsz.x=aspect/vimg;vlo.x=(1.0-vsz.x)*0.5;}else{vsz.y=vimg/aspect;vlo.y=(1.0-vsz.y)*u.video.z;}\n"
 "        float2 vuv=vlo+uvShape*vsz;\n"
-"        float3 f=mirrorBlur>0.0?blurTap(video,smp,vuv,mirrorBlur/(2.0*extent)*vsz,vlo,vlo+vsz):video.sample(smp,vuv,level(0.0)).rgb;\n"
+"        vuv=float2(dot(u.videoUV.xy,vuv),dot(u.videoUV.zw,vuv))+u.videoLayout.xy;\n"
+"        float3 f=video.sample(smp,vuv,level(0.0)).rgb;\n"
 "        c=mix(c,f,u.video.w);\n"
 "      }\n"
-"      color=min(c*weight+gloss*0.35*weight,float3(weight));\n"
+"      color=c*weight;\n"
 "    }\n"
 "  }\n"
 "  float a=coverage*u.effect.z;\n"
-"  if(mode>0.5&&mode<1.5){\n"   // FIX118 F: the banner's lower part fades into the page (no drips, no mirroring)
-"    float fadeLen=max((bottom-top)*0.38,64.0);float g=1.0-smoothstep(bottom-fadeLen,bottom,pos.y);\n"
-"    g=g*g*(3.0-2.0*g);\n"
-"    a*=mix(1.0,g,smoothstep(0.3,1.0,expand));\n"
-"  }\n"
+"  float fadeLen=max((bottom-top)*0.38,64.0);float g=1.0-smoothstep(bottom-fadeLen,bottom,pos.y);\n"
+"  g=g*g*(3.0-2.0*g);\n"
+"  a*=mix(1.0,g,smoothstep(0.3,1.0,expand));\n"
 "  return float4(color*a,a);\n"
 "}\n";
 
@@ -167,10 +125,10 @@ static void WXGMBBuildPipeline(void) {
     });
 }
 // The photo as an 8-bit RGBA texture with mipmaps (FIX118 D: a greyscale picture would load as red only), at most 512 px.
-static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
+static id<MTLTexture> WXGMBTextureFor(UIImage *photo,CGFloat maximumSide,NSString **failure) {
     CGSize px=CGSizeMake(photo.size.width*photo.scale,photo.size.height*photo.scale);
     if(px.width<1 || px.height<1)return nil;
-    CGFloat f=MIN(1,512/MAX(px.width,px.height));CGSize out=CGSizeMake(round(px.width*f),round(px.height*f));
+    CGFloat f=MIN(1,maximumSide/MAX(px.width,px.height));CGSize out=CGSizeMake(MAX(1,round(px.width*f)),MAX(1,round(px.height*f)));
     UIGraphicsImageRendererFormat *format=[UIGraphicsImageRendererFormat preferredFormat];format.scale=1;format.opaque=NO;
     if(@available(iOS 12.0,*))format.preferredRange=UIGraphicsImageRendererFormatRangeStandard;
     UIImage *drawn=[[[UIGraphicsImageRenderer alloc]initWithSize:out format:format] imageWithActions:^(__unused UIGraphicsImageRendererContext *c){[photo drawInRect:CGRectMake(0,0,out.width,out.height)];}];
@@ -188,7 +146,11 @@ static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
 @property(nonatomic,copy) void (^photoReady)(void);   // FIX119 E: a photo made off the main thread is in
 @property(nonatomic,copy) NSString *failure;
 @property(nonatomic) NSUInteger frames;
-@property(nonatomic,strong) id<MTLTexture> videoTexture;   // FIX118 B: the banner's video frame (nil: none)
+@property(nonatomic,strong) id<MTLTexture> bannerTexture;   // Current photo or video texture
+// The header retains the decoded frame while it is current. A submitted GPU
+// command retains these owners separately until its last texture read finishes.
+@property(nonatomic,assign) CVMetalTextureRef frameTextureRef;
+@property(nonatomic,assign) CVPixelBufferRef frameBuffer;
 @property(atomic) double lastGPUMS,worstGPUMS;   // FIX120 L: the GPU's time for a frame (diagnostics)
 - (void)setPhoto:(UIImage *)photo;
 - (BOOL)render;
@@ -239,14 +201,14 @@ static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
     if(![self prepare])return;
     NSUInteger token=++_photoToken;
     if(!_photo) {   // the first: at once (the avatar is drawn with it in this very pass)
-        NSString *failure=nil;id<MTLTexture> texture=WXGMBTextureFor(photo,&failure);
+        NSString *failure=nil;id<MTLTexture> texture=WXGMBTextureFor(photo,512,&failure);
         if(texture)_photo=texture;else if(failure)_failure=failure;
         return;
     }
     // a newer one (the HD photo arriving): made off the main thread, the old one shown meanwhile
     __weak WXGMetaballView *weakSelf=self;
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
-        NSString *failure=nil;id<MTLTexture> texture=WXGMBTextureFor(photo,&failure);
+        NSString *failure=nil;id<MTLTexture> texture=WXGMBTextureFor(photo,512,&failure);
         dispatch_async(dispatch_get_main_queue(),^{
             WXGMetaballView *me=weakSelf;if(!me || me->_photoToken!=token || !texture)return;
             me->_photo=texture;
@@ -265,7 +227,7 @@ static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
     WXGMBUniforms u=_uniforms;u.size[0]=size.width;u.size[1]=size.height;u.scale=scale;
     id<MTLTexture> photo=_photo?:_placeholder;
     u.image[0]=photo.width;u.image[1]=photo.height;u.image[3]=MAX((float)photo.mipmapLevelCount-1,0);
-    id<MTLTexture> video=_videoTexture;
+    id<MTLTexture> video=_bannerTexture;
     if(video){u.video[0]=video.width;u.video[1]=video.height;}else u.video[3]=0;
     MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
     pass.colorAttachments[0].texture=drawable.texture;pass.colorAttachments[0].loadAction=MTLLoadActionClear;
@@ -278,7 +240,11 @@ static id<MTLTexture> WXGMBTextureFor(UIImage *photo,NSString **failure) {
     [encoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [encoder endEncoding];
     __weak WXGMetaballView *weakSelf=self;   // FIX120 L (diagnostics)
+    CVMetalTextureRef frameTexture=(video && _frameTextureRef)?(CVMetalTextureRef)CFRetain(_frameTextureRef):NULL;
+    CVPixelBufferRef frameBuffer=(video && _frameBuffer)?CVPixelBufferRetain(_frameBuffer):NULL;
     [buffer addCompletedHandler:^(id<MTLCommandBuffer> done){
+        if(frameTexture)CFRelease(frameTexture);
+        if(frameBuffer)CVPixelBufferRelease(frameBuffer);
         double ms=(done.GPUEndTime-done.GPUStartTime)*1000;WXGMetaballView *me=weakSelf;
         if(me && ms>0 && ms<1000){me.lastGPUMS=ms;if(ms>me.worstGPUMS)me.worstGPUMS=ms;}
     }];
@@ -307,7 +273,7 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
 #define WXGME_TRACE 1
 #endif
 
-@interface WXGMeHeader () <PHPickerViewControllerDelegate,UIGestureRecognizerDelegate>
+@interface WXGMeHeader () <UIGestureRecognizerDelegate>
 - (void)update;
 - (void)statusLaidOut:(UIView *)view;
 @end
@@ -340,23 +306,27 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
     // FIX118 B: the banner pull (WeChat keeps its list from going past its top, diagnostics_17: so the list's top inset grows by
     // the pull and its offset follows, which WeChat lets be; a spring of our own brings it back or to the open banner)
     UITapGestureRecognizer *_avatarTap;CGPoint _avatarWindowCenter;CGFloat _avatarWindowRadius;NSUInteger _avatarTaps;
-    CGFloat _dripRoom,_contentPull;
+    CGFloat _contentPull;
     CGFloat _pull,_pullTarget,_pullVelocity,_pullBase,_pullAtBegin,_pullVisual;BOOL _pulling,_locked,_pullSpring,_pullPinned;CFTimeInterval _pullStepAt;NSUInteger _locks;
-    // FIX118 B: the banner's video
-    AVPlayer *_player;AVPlayerItemVideoOutput *_videoOut;CVMetalTextureCacheRef _textureCache;CVMetalTextureRef _videoRef,_videoRefOld;
-    CVPixelBufferRef _videoBuffer,_videoBufferOld;BOOL _videoPlaying;NSUInteger _videoFrames;NSString *_videoNote;id _loopObserver;
+    WXGBannerItem *_bannerItem;
+    id<MTLTexture> _bannerPhoto;
+    BOOL _mediaSelectionKnown,_mediaLoadFailed;
+    CGAffineTransform _videoUV;
+    CGFloat _videoAspect;
+    AVPlayer *_player;AVPlayerItemVideoOutput *_videoOut;CVMetalTextureCacheRef _textureCache;CVMetalTextureRef _videoRef;
+    CVPixelBufferRef _videoBuffer;BOOL _videoPlaying;NSUInteger _videoFrames;NSString *_videoNote;id _loopObserver;
     NSString *_status_;CGFloat _shift,_collapse,_travel;WXGCutout _cutout;BOOL _merge,_banner;NSUInteger _snaps,_renders,_passes;
     NSUInteger _statusMoves;CGFloat _statusMovedY;   // FIX120 F: WeChat moving its status row after us (diagnostics)
     // FIX120 G (user, diagnostics_7: "灵动岛也闪，头像也闪，名字也闪 … 滑到顶部区域之后就会开始闪"): what each pass did
     NSMutableArray<NSString *> *_trace;NSString *_traceLast,*_coveredBy;__weak UIView *_coveredView;NSUInteger _traceRepeat;char _renderNote;
-    NSUInteger _restores,_insetRetakes,_overlayCovered,_gateSkips;double _worstRenderMS;
+    NSUInteger _restores,_insetRetakes,_overlayCovered;double _worstRenderMS;
     // FIX120 I: WeChat's drag helper moving the list's container with the list's own pan (the lift: how far up, on the screen)
     CGFloat _tableHome,_tableYSeen,_lift,_maxLift,_shownTravel;CFTimeInterval _tableYSince;BOOL _haveTableHome;
     NSMapTable *_heldTargets;__weak UIPanGestureRecognizer *_heldPan;NSUInteger _targetHolds;NSString *_panTargetsSeen,*_helperMethods,*_tableObservers;
     // FIX120 J: the banner's video ready before it is needed; the layer not made taller in the middle of the pull
     BOOL _videoLoading,_pageShown,_canvasOpen;NSUInteger _videoToken,_canvasResizes;CFTimeInterval _visibleSince,_videoWantedAt,_videoFirstAt;
     CGSize _videoNatural,_videoOutSize;double _lastRenderMS;
-    // FIX120 K: clock frames (nothing moved: the video's new frame or the drips' time drawn on the last pose)
+    // Clock frames update video or finish a media fade on a stationary pose.
     CFTimeInterval _lastFullAt;BOOL _videoFresh;float _videoMixBase;NSUInteger _clockPasses,_clockRenders;
     NSUInteger _frameTick,_stepTick,_renderTick,_twiceSkipped;   // FIX120 L: display frames (the link's ticks)
 }
@@ -367,6 +337,8 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
         // FIX119 E: the shader built off the main thread once things have settled after launch
         dispatch_after(dispatch_time(DISPATCH_TIME_NOW,(int64_t)(4*NSEC_PER_SEC)),dispatch_get_global_queue(QOS_CLASS_UTILITY,0),^{WXGMBBuildPipeline();});
         __weak WXGMeHeader *weakHeader=header;
+        [NSNotificationCenter.defaultCenter addObserver:header selector:@selector(bannerSelectionChanged:)
+            name:WXGBannerLibraryDidChangeNotification object:nil];
         // Before each commit (with WeChat's layout of this pass done): the header laid out and drawn in step with the list.
         CFRunLoopObserverRef observer=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,1999750,
             ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity a){WXGPerfTimePluginWorkAs("meHeader",^{[weakHeader update];});});   // FIX119 A: timed
@@ -385,8 +357,6 @@ BOOL WXGMeHeaderOwnsView(UIView *view) {
     });
     return header;
 }
-// FIX118 F: the banner's lower edge: 0 drips, 1 fading into WeChat's page, 2 plain
-static int WXGMeEdgeStyle(void) {return (int)lround(WXGMBLerp([WXGConfig.shared extraNumber:@"meBannerEdgeStyle"],0,2,0,2));}
 static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraNumber:@"meHeader"]>.5;}
 
 #pragma mark - Finding WeChat's page and parts
@@ -486,11 +456,21 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     sig[15]=(double)(_name.text.hash&0xFFFFFFFFFFFF);sig[16]=(double)(_wxid.text.hash&0xFFFFFFFFFFFF);   // (by content: an attributed label hands out a new string each time)
     sig[17]=(double)(uintptr_t)(__bridge void *)item.leftBarButtonItem;sig[18]=(double)(uintptr_t)(__bridge void *)item.rightBarButtonItem;
     sig[19]=status.center.x+status.center.y*4096;sig[20]=mover.center.x+mover.center.y*4096;
-    sig[21]=[c extraNumber:@"meBanner"];sig[22]=[c extraNumber:@"meBannerEdgeStyle"]+[c extraNumber:@"meNotchMerge"]*10;
+    sig[21]=[c extraNumber:@"meBanner"];sig[22]=[c extraNumber:@"meNotchMerge"];
     sig[23]=[c extraNumber:@"meAvatarSize"];sig[24]=[c extraNumber:@"meCutoutY"]*1000+[c extraNumber:@"meCutoutW"];
     sig[25]=_name.font.pointSize;
     sig[26]=(table.isTracking?1:0)+(table.isDragging?2:0)+(table.isDecelerating?4:0);   // (a scroll ending: the snap's pass)
     sig[29]=onScreen.size.height;
+}
+static BOOL WXGMePageExposed(UIViewController *page) {
+    if(UIApplication.sharedApplication.applicationState!=UIApplicationStateActive || !page.viewIfLoaded.window)return NO;
+    for(UIViewController *c=page;c;c=c.parentViewController) {
+        if(c.presentedViewController || c.isBeingDismissed)return NO;
+        UIViewController *parent=c.parentViewController;
+        if([parent isKindOfClass:UINavigationController.class] && ((UINavigationController *)parent).topViewController!=c)return NO;
+        if([parent isKindOfClass:UITabBarController.class] && ((UITabBarController *)parent).selectedViewController!=c)return NO;
+    }
+    return YES;
 }
 - (void)update {
     if(!NSThread.isMainThread)return;
@@ -498,8 +478,13 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     if(!WXGMeOn()){[self restoreBecause:@"开关关"];_status_=WXGPluginEnabled()?@"开关关着":@"插件未启用";return;}
     UIViewController *page=[self findPage];
     if(!page){_status_=@"还没找到“我”页";return;}
-    if(!page.isViewLoaded || !page.view.window){[self pauseLink];[self pauseVideo];_pageShown=NO;return;}   // another tab: left as it is (FIX120 J: the video too)
-    if(!_pageShown){_pageShown=YES;_visibleSince=CACurrentMediaTime();}
+    if(!WXGMePageExposed(page)) {
+        [self pauseLink];[self pauseVideo];_pageShown=NO;return;
+    }
+    if(!_pageShown) {
+        _pageShown=YES;_visibleSince=CACurrentMediaTime();_haveSig=NO;
+        if(_mediaLoadFailed)[self dropBannerMedia];
+    }
     UITableView *oldTable=_table;UIControl *oldHeader=_header;UILabel *oldName=_name;UIView *oldAvatar=_avatar;
     if(![self findPartsOn:page]){[self restoreBecause:[@"找部件：" stringByAppendingString:_status_?:@""]];return;}
     UITableView *table=_table;UIControl *header=_header;UIWindow *window=table.window;
@@ -513,12 +498,8 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     BOOL sameMakeUp=_haveSig && !memcmp(sig+5,_sig+5,sizeof(double)*25),same=sameMakeUp && !memcmp(sig,_sig,sizeof(double)*5);
     memcpy(_sig,sig,sizeof _sig);_haveSig=YES;
     BOOL audit=newParts || !_insetsApplied || !_overlay.superview || now-_auditAt>.5;
-    // FIX120 K (user, diagnostics_9: "还是卡卡的"; the 我 page 25-35 ms of every frame with the banner open): a pass in which
-    // nothing has moved does no layout. Before, anything running with the clock (the video, the drips, the link) made every
-    // run-loop pass a full one, two or three a frame, each drawing the avatar again. Now only the spring moves with the clock
-    // (a full pass once a frame); the video and the drips get a clock frame: the last picture with the new video frame or time.
-    // FIX120 L (diagnostics_10: the spring's frames 20-29 ms, the avatar drawn twice in them and the second waiting 7-15 ms
-    // for a drawable): the spring steps once a display frame (the link's tick; at the latest every 20 ms).
+    // A clock tick updates the spring once per displayed frame. A stationary
+    // video can advance on the current pose without relaying out the page.
     BOOL stepping=_pullSpring && (_frameTick!=_stepTick || now-_lastFullAt>.02);
     if(same && !audit && !stepping) {
         if(_videoPlaying || (_link && !_link.paused))[self clockFrame];else ++_skips;
@@ -529,7 +510,11 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     BOOL slow=audit || !sameMakeUp;   // (the masks, the status row and the bar's items: only when the page's make-up changed)
     ++_fullPasses;
     WXGConfig *c=WXGConfig.shared;
-    _merge=YES;_banner=[c extraNumber:@"meBanner"]>.5;
+    _merge=YES;
+    BOOL bannerEnabled=[c extraNumber:@"meBanner"]>.5;
+    if(_banner && !bannerEnabled)[self dropBannerMedia];
+    _banner=bannerEnabled;
+    if(_banner && !_mediaSelectionKnown)[self readBannerSelection];
     CGFloat W=header.bounds.size.width,H=header.bounds.size.height;
     CGFloat safeTop=window.safeAreaInsets.top;
     // The cut-out (Telegram's table), as the user has nudged it.
@@ -575,10 +560,7 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
     if(range<needed)want.bottom+=needed-range;
     [self stepPull];
     if(!_banner && _pull>0 && !_pulling){_pull=_pullTarget=0;_pullVelocity=0;_locked=NO;}
-    // FIX118 B: the pull (whole points, as the shift). FIX118 E (user: "给名字位置那部分的液体腾开，不要挡住"): as the
-    // banner opens, the page goes a little further down than the banner, so the drips hang in a gap of their own.
-    {double e=WXGMBLerp(_pull,0,140,0,1);_dripRoom=_banner && WXGMeEdgeStyle()==0?72*e*e*(3-2*e):0;}
-    _contentPull=round(_pull+_dripRoom);
+    _contentPull=round(_pull);
     want.top+=_contentPull;
     if(!UIEdgeInsetsEqualToEdgeInsets(cur,want)) {
         CGFloat rel=table.contentOffset.y+cur.top;
@@ -617,7 +599,7 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
         [self ensureBarItemsOn:page];
         // FIX120 J: the banner's video made ready (loaded off the main thread, its first frame decoded) once the page has been
         // up a moment, not on the first pull (the player made on the main thread right as the avatar turned into the banner)
-        if(_banner && !busy && now-_visibleSince>.6)[self prepareVideo];
+        if(_banner && !busy && now-_visibleSince>.6)[self prepareBannerMedia];
     }
     [self layoutOverlayFor:table header:header layout:L travel:t width:W];
     [self snapIfResting:table];
@@ -770,7 +752,7 @@ static BOOL WXGMeOn(void) {return WXGPluginEnabled() && [WXGConfig.shared extraN
         _metal=[WXGMetaballView new];[_overlay addSubview:_metal];
         WXGMeOverlay=_overlay;   // FIX120 G: the host's page-top paint cleaning leaves all of it alone
         __weak WXGMeHeader *weakSelf=self;
-        _metal.photoReady=^{WXGMeHeader *me=weakSelf;if(!me)return;me->_haveLast=NO;[me runLink];};   // (drawn again on the next pass)
+        _metal.photoReady=^{WXGMeHeader *me=weakSelf;if(!me)return;me->_haveLast=NO;me->_haveSig=NO;[me runLink];};   // (drawn again on the next pass)
     }
     if(_overlay.superview!=container || container.subviews.lastObject!=_overlay) {
         if(_overlay.superview!=container){[container addSubview:_overlay];[self traceEvent:@"层加回容器"];}
@@ -866,7 +848,6 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     CGRect cut=[metal convertRect:CGRectMake(_cutout.x,_cutout.y,_cutout.w,_cutout.h) fromView:nil];
     WXGMetaballPose p=WXGMetaballPoseAt(t,_collapse,restY,L.avatarRadius,CGRectGetMaxY(cut),_merge,_banner?140:0);
     WXGMBUniforms u;memset(&u,0,sizeof u);
-    u.time=(float)(now-_start);
     u.island[0]=CGRectGetMidX(cut);u.island[1]=CGRectGetMidY(cut);u.island[2]=cut.size.width*.5;u.island[3]=cut.size.height*.5;
     // the drawn cut-out a little inside the real one; a notch's corners
     u.islandShape[0]=_cutout.kind==WXGCutoutNotch?20:cut.size.height*.5;u.islandShape[1]=_cutout.kind;
@@ -875,18 +856,12 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
     u.avatar[0]=restCenter.x;u.avatar[1]=p.centerY;u.avatar[2]=p.radius;u.avatar[3]=p.darkness;
     _avatarWindowCenter=[metal convertPoint:CGPointMake(restCenter.x,p.centerY) toView:nil];_avatarWindowRadius=p.expand>.05?0:p.radius*p.fade;
     u.effect[0]=p.blur;u.effect[1]=p.goo;u.effect[2]=p.fade;u.effect[3]=p.blend;
-    u.drop[0]=p.stretch;u.drop[1]=p.tip;u.drop[2]=p.expand;u.drop[3]=p.flow;
+    u.drop[0]=p.stretch;u.drop[1]=p.tip;u.drop[2]=p.expand;
     u.image[2]=.3f;
-    u.fx[0]=WXGMeEdgeStyle();   // FIX118 F: 0 drips, 1 fading into the page, 2 a plain edge
-    // (the drips' room: from the banner's edge down to the name, which the page has moved out of their way)
-    {CGFloat nameTop=[_bigName convertPoint:CGPointMake(0,0) toView:metal].y+(_bigName.bounds.size.height-_bigName.font.lineHeight)*.5;
-     u.fx[1]=(float)MAX(nameTop-(p.centerY+p.radius)-4,0);}
-    // FIX119 B: the layer only as tall as what it draws (it was the whole window: a full-screen layer blended over the
-    // page on every frame, and every pixel of it shaded): the avatar or the banner, the drips under it, the cut-out.
+    // Size the canvas for the avatar, the cutout, and the fading banner.
     BOOL resized=NO;
     {CGFloat maxY=MAX(p.centerY+p.radius,CGRectGetMaxY(cut))+6;
      if(p.expand>0)maxY=MAX(maxY,p.centerY+L.avatarRadius+6);
-     if(p.flow>0 && u.fx[0]<.5)maxY+=u.fx[1]+30;
      // FIX120 J (user: "头像和展开的视频切换的时候会有点掉帧"): with the banner on and the avatar near its rest, as tall as the
      // banner pulled as far as it goes needs, from the start. Made taller step by step in the middle of the pull, the layer's
      // drawables were made anew right as the avatar turned into the banner (a frame dropped at each step). Smaller only when
@@ -895,7 +870,6 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
      if(_canvasOpen) {
          WXGMetaballPose open=WXGMetaballPoseAt(-210,_collapse,restY,L.avatarRadius,CGRectGetMaxY(cut),_merge,140);
          CGFloat openY=open.centerY+L.avatarRadius+6;
-         if(u.fx[0]<.5)openY+=130;   // (the drips under it)
          maxY=MAX(maxY,openY);
      }
      CGFloat h=WXGMeCanvasHeight(maxY,windowInOverlay.size.height),shown=metal.bounds.size.height;
@@ -904,66 +878,61 @@ static void WXGMeSetScale(UIView *v,CGFloat scale) {
          [CATransaction begin];[CATransaction setDisableActions:YES];metal.frame=CGRectMake(0,windowInOverlay.origin.y,W,h);[CATransaction commit];
      }}
     u.size[0]=metal.bounds.size.width;u.size[1]=metal.bounds.size.height;u.scale=metal.layer.contentsScale;
-    // FIX118 B: the video fades in as the banner opens (playing only then)
-    float videoMix=(float)WXGMBLerp(p.expand,.35,1,0,1);
-    // FIX120 J: the player runs from the first moment of the pull (it started at 35 % open, its decoder starting then: the
-    // banner held a still and jumped) and stops half a second after the banner has closed (not on every small pull).
-    BOOL videoOn=_banner && (p.expand>0 || _pulling) && [self prepareVideo];
+    // At rest the avatar stays on texture 0. The selected image or live
+    // video on texture 1 is revealed by the same pull progress as the shape.
+    float mix=(float)WXGMBLerp(p.expand,.35,1,0,1);
+    BOOL opening=_banner && (p.expand>0 || _pulling);
+    if(opening)[self prepareBannerMedia];
+    BOOL videoOn=opening && _videoOut;
     if(videoOn)_videoWantedAt=now;
     if(videoOn || (_videoPlaying && now-_videoWantedAt<.5)) {
         [self playVideo];
         BOOL had=_videoRef!=NULL;
-        if([self pullVideoFrame]){metal.videoTexture=CVMetalTextureGetTexture(_videoRef);if(!had)_videoFirstAt=now;}
+        if([self pullVideoFrame]){metal.bannerTexture=CVMetalTextureGetTexture(_videoRef);if(!had)_videoFirstAt=now;}
     }else [self pauseVideo];
-    BOOL wantVideo=videoOn && videoMix>0;
-    // (the very first frame comes in over a sixth of a second, not at once at whatever the mix is by then)
-    _videoMixBase=wantVideo?videoMix:0;
-    if(metal.videoTexture && wantVideo){u.video[2]=.5f;u.video[3]=videoMix*(float)MIN(MAX((now-_videoFirstAt)/.16,0),1);}
-    BOOL moving=(p.flow>0 && u.fx[0]<.5) || wantVideo || _pulling || _pullSpring;   // (FIX119 B: only the drips change with time)
-    WXGMBUniforms a=u,b=_lastUniforms;a.time=b.time=0;
-    BOOL same=_haveLast && !memcmp(&a,&b,sizeof a);   // (nothing but the clock differs from what is on the screen)
-    if(!moving && same){_renderNote='s';[self pauseLink];return;}
-    if(moving && !wantVideo && p.flow<=0 && _haveLast && !memcmp(&u.avatar,&_lastUniforms.avatar,sizeof u.avatar) && !memcmp(&u.drop,&_lastUniforms.drop,sizeof u.drop)){_renderNote='m';[self runLink];return;}   // (still: nothing new to draw)
-    // at most one frame per refresh (several run-loop passes in one frame would wait for drawables). FIX119 C: 1/130 s
-    // dropped real frames on 120 Hz whenever a pass came a little early (the avatar a frame behind the page); and a layer
-    // just made taller is always drawn at once (else its old picture shows stretched to the new height for a frame).
-    // FIX120 G: only a frame that is new in its clock alone (the drips, the video) waits. One whose pose changed (the page
-    // scrolled, the avatar or the cut-out moved) is drawn in this pass: skipped, the avatar and the cut-out stayed where the
-    // last pass had put them for a frame while the page and the name had moved on (a second pass early in a frame).
-    // FIX120 K: and one new in its clock alone is drawn when there is something new to show: a new video frame (30 or 60 a
-    // second, not on every pass), the drips' time once a refresh.
-    BOOL dripping=p.flow>0 && u.fx[0]<.5;
-    if(!resized && same && !_videoFresh && !(dripping && now-_renderedAt>=1./125)){_renderNote='g';++_gateSkips;[self runLink];return;}   // (the link brings the pass that draws it)
+    if(_bannerPhoto)metal.bannerTexture=_bannerPhoto;
+    BOOL wantMedia=opening && mix>0 && metal.bannerTexture;
+    _videoMixBase=opening?mix:0;
+    [self setMediaMapping:&u];
+    if(wantMedia)u.video[3]=mix*(float)MIN(MAX((now-_videoFirstAt)/.16,0),1);
+    BOOL ramping=wantMedia && now-_videoFirstAt<.16;
+    BOOL moving=ramping || _videoPlaying || _pulling || _pullSpring;
+    BOOL same=_haveLast && !memcmp(&u,&_lastUniforms,sizeof u);
+    if(!resized && same && !_videoFresh) {
+        _renderNote='s';
+        if(moving)[self runLink];else [self pauseLink];
+        return;
+    }
     if(moving)[self runLink];else [self pauseLink];
     metal.uniforms=u;
     CFTimeInterval began=CACurrentMediaTime();
     if([metal render]){_lastUniforms=u;_haveLast=YES;++_renders;_renderedAt=now;_renderNote='R';_videoFresh=NO;_renderTick=_frameTick;}else _renderNote='f';
     _lastRenderMS=(CACurrentMediaTime()-began)*1000;_worstRenderMS=MAX(_worstRenderMS,_lastRenderMS);
 }
-// FIX120 K: a clock frame. Nothing has moved since the last full pass: the last pose drawn again with the video's new frame
-// (only when it has one) or the drips' time (once a refresh); no layout, no pose. The video stops half a second after the
-// banner has closed, as in a full pass; the link stops once nothing runs with the clock.
+// A stationary photo only needs a few frames for its initial fade. A video
+// updates when the decoder supplies a new frame, even at a fixed scroll offset.
 - (void)clockFrame {
     ++_clockPasses;
     WXGMetaballView *metal=_metal;
     if(!_haveLast || !metal.window){[self pauseLink];return;}
     CFTimeInterval now=CACurrentMediaTime();
-    BOOL open=_lastUniforms.drop[2]>0;   // (the banner: expand)
-    if(open || _pulling)_videoWantedAt=now;
+    if(_lastUniforms.drop[2]>0 || _pulling)_videoWantedAt=now;
+    if(_player.currentItem.status==AVPlayerItemStatusFailed) {
+        [self dropBannerMedia];_mediaLoadFailed=YES;_videoNote=@"视频无法播放";_haveLast=NO;_haveSig=NO;return;
+    }
     if(_videoPlaying && now-_videoWantedAt>=.5)[self pauseVideo];
-    BOOL dripping=_lastUniforms.drop[3]>0 && _lastUniforms.fx[0]<.5;
-    if(!_videoPlaying && !dripping && !_pulling && !_pullSpring){[self pauseLink];return;}
-    [self runLink];
     BOOL had=_videoRef!=NULL;
-    if(_videoPlaying && [self pullVideoFrame]){metal.videoTexture=CVMetalTextureGetTexture(_videoRef);if(!had)_videoFirstAt=now;}
+    if(_videoPlaying && [self pullVideoFrame]){metal.bannerTexture=CVMetalTextureGetTexture(_videoRef);if(!had)_videoFirstAt=now;}
     float ramp=(float)MIN(MAX((now-_videoFirstAt)/.16,0),1);
-    BOOL ramping=_videoMixBase>0 && ramp<1;
-    if(!_videoFresh && !ramping && !(dripping && now-_renderedAt>=1./125))return;
+    BOOL needsRamp=metal.bannerTexture && _videoMixBase>0 && fabsf(_lastUniforms.video[3]-_videoMixBase*ramp)>.00001;
+    if(!_videoPlaying && !needsRamp && !_pulling && !_pullSpring){[self pauseLink];return;}
+    [self runLink];
+    if(!_videoFresh && !needsRamp)return;
     // FIX120 L: not a second time in a display frame (a new video frame coming in after the pose was drawn waited 7-15 ms for a
     // drawable): the next frame's tick draws it
     if(_renderTick==_frameTick && !_link.paused && now-_renderedAt<.02){++_twiceSkipped;return;}
-    WXGMBUniforms u=_lastUniforms;u.time=(float)(now-_start);
-    if(metal.videoTexture && _videoMixBase>0){u.video[2]=.5f;u.video[3]=_videoMixBase*ramp;}
+    WXGMBUniforms u=_lastUniforms;
+    if(metal.bannerTexture && _videoMixBase>0)u.video[3]=_videoMixBase*ramp;
     metal.uniforms=u;
     CFTimeInterval began=CACurrentMediaTime();
     if([metal render]){_lastUniforms=u;_renderedAt=now;++_renders;++_clockRenders;_videoFresh=NO;_renderTick=_frameTick;}
@@ -1184,47 +1153,104 @@ static NSArray<NSArray *> *WXGMePanTargets(UIGestureRecognizer *g) {
         if(item.rightBarButtonItem==_rightItem)item.rightBarButtonItem=_rightWas;
     }
     _itemsTouched=NO;_itemsOn=nil;_leftWas=_rightWas=nil;
-    [self dropVideo];
+    [self dropBannerMedia];
     [_avatarTap.view removeGestureRecognizer:_avatarTap];
     [_overlay removeFromSuperview];[self pauseLink];_haveLast=NO;
     _haveSig=NO;
 }
 
-#pragma mark - The banner's video (FIX118 B)
+#pragma mark - Selected banner media
 
-static NSString *WXGMeVideoPath(void) {
-    NSString *dir=[NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory,NSUserDomainMask,YES).firstObject stringByAppendingPathComponent:@"WeChatLiquidGlass"];
-    [NSFileManager.defaultManager createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:NULL];
-    return [dir stringByAppendingPathComponent:@"meBanner.mov"];
+- (void)readBannerSelection {
+    WXGBannerItem *next=WXGBannerLibrary.shared.selectedItem;
+    if(_mediaSelectionKnown && ((_bannerItem==next) || [_bannerItem.identifier isEqualToString:next.identifier]))return;
+    [self dropBannerMedia];
+    if(!next && _bannerItem){_shownPhoto=nil;_photoAt=0;}
+    _bannerItem=next;_mediaSelectionKnown=YES;
+    _videoNote=next?@"待载入":@"使用头像";
+    _haveLast=NO;_haveSig=NO;
 }
-- (NSString *)bannerVideoName {
-    NSDictionary *a=[NSFileManager.defaultManager attributesOfItemAtPath:WXGMeVideoPath() error:NULL];
-    return a?[NSString stringWithFormat:@"已选（%.1f MB）",a.fileSize/1048576.0]:@"未选";
+- (void)bannerSelectionChanged:(__unused NSNotification *)notification {
+    [self readBannerSelection];
 }
-// FIX120 J: the asset's tracks loaded off the main thread (YES once the player is there; NO while it is being made). The
-// frames asked for no larger than cover the screen's width both ways (a 4K clip was decoded and converted at full size for a
-// banner 1320 px wide); the first frame decoded at once (paused at the start), so the pull has a picture from its first moment.
-- (BOOL)prepareVideo {
-    if(_videoOut)return YES;
-    if(_videoLoading)return NO;
-    NSString *path=WXGMeVideoPath();
-    if(![NSFileManager.defaultManager fileExistsAtPath:path])return NO;
-    if(!_textureCache && CVMetalTextureCacheCreate(kCFAllocatorDefault,NULL,WXGSharedDevice(),NULL,&_textureCache)!=kCVReturnSuccess){_videoNote=@"纹理缓存失败";return NO;}
+
+// ImageIO applies orientation and decodes only a screen-sized bitmap before
+// texture creation. The avatar's texture is always retained independently.
+static id<MTLTexture> WXGMeBannerImageTexture(NSURL *url,NSUInteger maximumSide) {
+    CGImageSourceRef source=CGImageSourceCreateWithURL((__bridge CFURLRef)url,NULL);
+    if(!source)return nil;
+    NSDictionary *options=@{(__bridge NSString *)kCGImageSourceCreateThumbnailFromImageAlways:@YES,
+        (__bridge NSString *)kCGImageSourceCreateThumbnailWithTransform:@YES,
+        (__bridge NSString *)kCGImageSourceThumbnailMaxPixelSize:@(maximumSide),
+        (__bridge NSString *)kCGImageSourceShouldCacheImmediately:@YES};
+    CGImageRef image=CGImageSourceCreateThumbnailAtIndex(source,0,(__bridge CFDictionaryRef)options);
+    CFRelease(source);
+    if(!image)return nil;
+    UIImage *photo=[UIImage imageWithCGImage:image];
+    CGImageRelease(image);
+    return WXGMBTextureFor(photo,maximumSide,NULL);
+}
+- (void)prepareBannerMedia {
+    [self readBannerSelection];
+    WXGBannerItem *item=_bannerItem;
+    if(!item || _bannerPhoto || _videoOut || _videoLoading || _mediaLoadFailed)return;
     _videoLoading=YES;_videoNote=@"载入中";
     NSUInteger token=_videoToken;
-    AVURLAsset *asset=[AVURLAsset URLAssetWithURL:[NSURL fileURLWithPath:path] options:nil];
     __weak WXGMeHeader *weakSelf=self;
+    if(!item.isVideo) {
+        NSUInteger side=(NSUInteger)ceil(MIN(2560.,MAX(UIScreen.mainScreen.nativeBounds.size.width,640.)));
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED,0),^{
+            id<MTLTexture> texture=WXGMeBannerImageTexture(item.fileURL,side);
+            dispatch_async(dispatch_get_main_queue(),^{
+                WXGMeHeader *me=weakSelf;
+                if(!me || me->_videoToken!=token)return;
+                me->_videoLoading=NO;me->_mediaLoadFailed=!texture;me->_bannerPhoto=texture;
+                me->_videoFirstAt=CACurrentMediaTime();
+                me->_videoNote=texture?@"图片已载入":@"无法读取图片";
+                me->_haveLast=NO;me->_haveSig=NO;
+            });
+        });
+        return;
+    }
+    if(!_textureCache && CVMetalTextureCacheCreate(kCFAllocatorDefault,NULL,WXGSharedDevice(),NULL,&_textureCache)!=kCVReturnSuccess) {
+        _videoLoading=NO;_mediaLoadFailed=YES;_videoNote=@"纹理缓存失败";return;
+    }
+    AVURLAsset *asset=[AVURLAsset URLAssetWithURL:item.fileURL options:nil];
     [asset loadValuesAsynchronouslyForKeys:@[@"tracks"] completionHandler:^{
-        CGSize natural=CGSizeZero;
-        if([asset statusOfValueForKey:@"tracks" error:NULL]==AVKeyValueStatusLoaded)natural=[asset tracksWithMediaType:AVMediaTypeVideo].firstObject.naturalSize;
+        AVAssetTrack *track=nil;
+        if([asset statusOfValueForKey:@"tracks" error:NULL]==AVKeyValueStatusLoaded)
+            track=[asset tracksWithMediaType:AVMediaTypeVideo].firstObject;
+        CGSize natural=track.naturalSize;
+        CGAffineTransform preferred=track?track.preferredTransform:CGAffineTransformIdentity;
         dispatch_async(dispatch_get_main_queue(),^{
             WXGMeHeader *me=weakSelf;if(!me || me->_videoToken!=token)return;
-            me->_videoLoading=NO;[me makePlayerFor:asset natural:natural];
+            me->_videoLoading=NO;
+            if(!track || natural.width<=0 || natural.height<=0) {
+                me->_mediaLoadFailed=YES;me->_videoNote=@"视频轨道不可用";return;
+            }
+            [me makePlayerFor:asset natural:natural transform:preferred];me->_haveSig=NO;
         });
     }];
-    return NO;
 }
-- (void)makePlayerFor:(AVURLAsset *)asset natural:(CGSize)natural {
+- (void)setMediaMapping:(WXGMBUniforms *)u {
+    CGAffineTransform uv=_bannerItem.isVideo?_videoUV:CGAffineTransformIdentity;
+    u->video[2]=.5f;
+    u->videoUV[0]=uv.a;u->videoUV[1]=uv.c;u->videoUV[2]=uv.b;u->videoUV[3]=uv.d;
+    u->videoLayout[0]=uv.tx;u->videoLayout[1]=uv.ty;u->videoLayout[2]=_videoAspect;
+}
+- (void)makePlayerFor:(AVURLAsset *)asset natural:(CGSize)natural transform:(CGAffineTransform)preferred {
+    // AVPlayerItemVideoOutput supplies encoded pixels. Normalize the inverse
+    // track transform to map oriented banner UVs to this video's buffer.
+    _videoUV=CGAffineTransformIdentity;_videoAspect=0;
+    if(fabs(preferred.a*preferred.d-preferred.b*preferred.c)>.00001) {
+        CGRect display=CGRectApplyAffineTransform((CGRect){CGPointZero,natural},preferred);
+        CGAffineTransform inv=CGAffineTransformInvert(preferred);
+        CGPoint origin=CGPointApplyAffineTransform(display.origin,inv);
+        _videoAspect=display.size.width/MAX(display.size.height,1.);
+        _videoUV=CGAffineTransformMake(inv.a*display.size.width/natural.width,inv.b*display.size.width/natural.height,
+            inv.c*display.size.height/natural.width,inv.d*display.size.height/natural.height,
+            origin.x/natural.width,origin.y/natural.height);
+    }
     if(_videoOut)return;
     NSMutableDictionary *attributes=[@{(id)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_32BGRA),(id)kCVPixelBufferMetalCompatibilityKey:@YES} mutableCopy];
     CGFloat box=MAX(UIScreen.mainScreen.nativeBounds.size.width,320);
@@ -1241,9 +1267,14 @@ static NSString *WXGMeVideoPath(void) {
     [item addOutput:_videoOut];
     _player=[AVPlayer playerWithPlayerItem:item];_player.muted=YES;_player.actionAtItemEnd=AVPlayerActionAtItemEndNone;
     if(@available(iOS 12.0,*))_player.preventsDisplaySleepDuringVideoPlayback=NO;
-    __weak AVPlayer *weakPlayer=_player;
+    __weak WXGMeHeader *weakSelf=self;
     _loopObserver=[NSNotificationCenter.defaultCenter addObserverForName:AVPlayerItemDidPlayToEndTimeNotification object:item queue:NSOperationQueue.mainQueue
-        usingBlock:^(__unused NSNotification *n){[weakPlayer seekToTime:kCMTimeZero];[weakPlayer play];}];
+        usingBlock:^(NSNotification *n){
+            WXGMeHeader *me=weakSelf;
+            if(!me || n.object!=me->_player.currentItem)return;
+            [me->_player seekToTime:kCMTimeZero];
+            if(me->_videoPlaying && me->_pageShown)[me->_player play];
+        }];
     [_player seekToTime:kCMTimeZero toleranceBefore:kCMTimeZero toleranceAfter:kCMTimeZero];   // (the first frame decoded now)
     _videoNote=@"已载入";
 }
@@ -1258,76 +1289,44 @@ static NSString *WXGMeVideoPath(void) {
     CVReturn r=CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,_textureCache,buffer,NULL,MTLPixelFormatBGRA8Unorm,
         CVPixelBufferGetWidth(buffer),CVPixelBufferGetHeight(buffer),0,&texture);
     if(r!=kCVReturnSuccess || !texture){CVPixelBufferRelease(buffer);return _videoRef!=NULL;}
-    // (the frame before kept one frame longer: the GPU may still be reading it)
-    if(_videoRefOld)CFRelease(_videoRefOld);
-    if(_videoBufferOld)CVPixelBufferRelease(_videoBufferOld);
-    _videoRefOld=_videoRef;_videoBufferOld=_videoBuffer;_videoRef=texture;_videoBuffer=buffer;++_videoFrames;_videoFresh=YES;   // (FIX120 K)
+    if(_videoRef)CFRelease(_videoRef);
+    if(_videoBuffer)CVPixelBufferRelease(_videoBuffer);
+    _videoRef=texture;_videoBuffer=buffer;
+    _metal.frameTextureRef=texture;_metal.frameBuffer=buffer;
+    ++_videoFrames;_videoFresh=YES;
     if(_videoFrames%120==0)CVMetalTextureCacheFlush(_textureCache,0);
     return YES;
 }
-- (void)dropVideo {
+- (void)dropBannerMedia {
     [self pauseVideo];
     ++_videoToken;_videoLoading=NO;   // FIX120 J (one being loaded is not used)
     if(_loopObserver){[NSNotificationCenter.defaultCenter removeObserver:_loopObserver];_loopObserver=nil;}
-    _player=nil;_videoOut=nil;_metal.videoTexture=nil;
+    _player=nil;_videoOut=nil;_metal.bannerTexture=nil;_metal.frameTextureRef=NULL;_metal.frameBuffer=NULL;_bannerPhoto=nil;
+    _mediaLoadFailed=NO;_videoFresh=NO;_videoFrames=0;_videoMixBase=0;_videoFirstAt=0;_videoWantedAt=0;
+    _videoNatural=CGSizeZero;_videoOutSize=CGSizeZero;_videoUV=CGAffineTransformIdentity;_videoAspect=0;
     if(_videoRef){CFRelease(_videoRef);_videoRef=NULL;}
-    if(_videoRefOld){CFRelease(_videoRefOld);_videoRefOld=NULL;}
     if(_videoBuffer){CVPixelBufferRelease(_videoBuffer);_videoBuffer=NULL;}
-    if(_videoBufferOld){CVPixelBufferRelease(_videoBufferOld);_videoBufferOld=NULL;}
 }
-- (void)pickBannerVideoFrom:(UIViewController *)controller {
-    PHPickerConfiguration *configuration=[PHPickerConfiguration new];
-    configuration.filter=PHPickerFilter.videosFilter;configuration.selectionLimit=1;
-    configuration.preferredAssetRepresentationMode=PHPickerConfigurationAssetRepresentationModeCurrent;
-    PHPickerViewController *picker=[[PHPickerViewController alloc]initWithConfiguration:configuration];picker.delegate=self;
-    [controller presentViewController:picker animated:YES completion:nil];
-}
-- (void)picker:(PHPickerViewController *)picker didFinishPicking:(NSArray<PHPickerResult *> *)results {
-    [picker dismissViewControllerAnimated:YES completion:nil];
-    NSItemProvider *provider=results.firstObject.itemProvider;if(!provider)return;
-    __weak WXGMeHeader *weakSelf=self;
-    [provider loadFileRepresentationForTypeIdentifier:@"public.movie" completionHandler:^(NSURL *url,NSError *error){
-        NSString *path=WXGMeVideoPath(),*note=nil;
-        if(url) {
-            NSString *temp=[path stringByAppendingString:@".tmp"];
-            [NSFileManager.defaultManager removeItemAtPath:temp error:NULL];
-            NSError *copyError=nil;
-            if([NSFileManager.defaultManager copyItemAtURL:url toURL:[NSURL fileURLWithPath:temp] error:&copyError]) {
-                [NSFileManager.defaultManager removeItemAtPath:path error:NULL];
-                [NSFileManager.defaultManager moveItemAtPath:temp toPath:path error:NULL];
-                note=@"横幅视频已更新";
-            }else note=[@"复制视频失败：" stringByAppendingString:copyError.localizedDescription?:@"?"];
-        }else note=[@"读取视频失败：" stringByAppendingString:error.localizedDescription?:@"?"];
-        dispatch_async(dispatch_get_main_queue(),^{
-            WXGMeHeader *me=weakSelf;[me dropVideo];me->_videoNote=note;WXGLog(@"我页横幅：%@",note);
-            [NSNotificationCenter.defaultCenter postNotificationName:WXGSettingsChanged object:nil];
-        });
-    }];
-}
-- (void)clearBannerVideo {
-    [self dropVideo];[NSFileManager.defaultManager removeItemAtPath:WXGMeVideoPath() error:NULL];_videoNote=@"已清除";
-}
-
 - (NSDictionary *)evidence {
     UITableView *table=_table;
     return @{@"on":@(WXGMeOn()),@"status":_status_?:@"",@"page":_page?NSStringFromClass(_page.class):@"",@"table":table?NSStringFromClass(table.class):@"",
              @"parts":@{@"header":@(_header!=nil),@"avatar":@(_avatar!=nil),@"photo":@(_photoView!=nil),@"name":@(_name!=nil),@"id":@(_wxid!=nil),@"qr":@(_qr!=nil),
                         @"chevron":@(_chevron!=nil),@"status":@([self statusViews].count),@"weChatDrag":@(_dragPan!=nil)},
              @"cutout":@{@"kind":@(_cutout.kind),@"fromTable":@(_cutout.known),@"rect":NSStringFromCGRect(CGRectMake(_cutout.x,_cutout.y,_cutout.w,_cutout.h)),@"merge":@(_merge)},
-             @"banner":@(_banner),@"shift":@(_shift),@"collapse":@(_collapse),@"travel":@(round(_travel*10)/10),
+             @"banner":@(_banner),@"bannerSource":_bannerItem?(_bannerItem.isVideo?@"video":@"image"):@"avatar",@"shift":@(_shift),@"collapse":@(_collapse),@"travel":@(round(_travel*10)/10),
              @"insets":@{@"wechat":NSStringFromUIEdgeInsets(_baseInsets),@"applied":_insetsApplied?NSStringFromUIEdgeInsets(_appliedInsets):@""},
              @"photo":_shownPhoto?[NSString stringWithFormat:@"%.0fx%.0f",_shownPhoto.size.width*_shownPhoto.scale,_shownPhoto.size.height*_shownPhoto.scale]:@"",
              @"metal":@{@"frames":@(_metal.frames),@"failure":_metal.failure?:@""},
              @"pull":@{@"pull":@(round(_pull)),@"locked":@(_locked),@"locks":@(_locks),@"visual":@(round(_pullVisual))},
-             @"video":@{@"file":[self bannerVideoName],@"note":_videoNote?:@"",@"frames":@(_videoFrames),@"playing":@(_videoPlaying),
+             @"video":@{@"file":(_bannerItem.isVideo?_bannerItem.identifier:@""),@"note":_videoNote?:@"",@"frames":@(_videoFrames),@"playing":@(_videoPlaying),
                         @"natural":NSStringFromCGSize(_videoNatural),@"decodedAt":NSStringFromCGSize(_videoOutSize)},   // FIX120 J
              @"canvasResizes":@(_canvasResizes),@"clockPasses":@(_clockPasses),@"clockRenders":@(_clockRenders),   // FIX120 K
              @"gpu":@{@"lastMS":@(round(_metal.lastGPUMS*100)/100),@"worstMS":@(round(_metal.worstGPUMS*100)/100)},@"secondDrawsSkipped":@(_twiceSkipped),   // FIX120 L
-             @"photoSource":WXGSelfAvatarState(),@"avatarTaps":@(_avatarTaps),@"edgeStyle":@(WXGMeEdgeStyle()),@"dripRoom":@(round(_dripRoom)),@"renders":@(_renders),@"snaps":@(_snaps),@"passes":@(_passes),
+             @"photoSource":WXGSelfAvatarState(),@"avatarTaps":@(_avatarTaps),@"edgeStyle":@1,@"renders":@(_renders),@"snaps":@(_snaps),@"passes":@(_passes),
              @"fullPasses":@(_fullPasses),@"skippedPasses":@(_skips),@"canvasHeight":@(round(_canvasHeight)),   // FIX119 B
              @"statusMovedByWeChat":@(_statusMoves),@"statusMovedToY":@(round(_statusMovedY)),   // FIX120 F
              @"flicker":@{@"restores":@(_restores),@"insetRetakes":@(_insetRetakes),@"overlayCovered":@(_overlayCovered),@"coveredBy":_coveredBy?:@"",
-                          @"gateSkips":@(_gateSkips),@"worstRenderMS":@(round(_worstRenderMS*10)/10),
+                          @"worstRenderMS":@(round(_worstRenderMS*10)/10),
                           @"traceKey":@"t 屏幕上的行程 抬 微信把列表容器抬起的距离 o 偏移 in 当前/微信 inset.top tc 标题收起点 end 终点 名y 名字中心 顶=层在最上 表y/层y 窗口坐标 画布高 R画了 g闸门跳过 s没变 m静止 f失败 -没画 状 状态行 alpha 慢=整套 按/惯"},
              @"trace":[_trace copy]?:@[],   // FIX120 G
              @"weChatDrag":@{@"targetHolds":@(_targetHolds),@"held":@(_heldTargets.count),@"panTargets":_panTargetsSeen?:@"",@"helperMethods":_helperMethods?:@"",

@@ -67,6 +67,8 @@ typedef struct {const char *key; char kind; double def,lo,hi; const char *inheri
 static const WXGExtraSpec WXGExtraSpecs[]={
     {"bubbleFullGlass",'b',0,0,1,NULL,NULL},
     {"bubbleSharedBackdrop",'b',1,0,1,NULL,NULL},   // FIX119 B
+    {"bubbleQuoteHideNativeBackground",'b',1,0,1,NULL,NULL},
+    {"bubbleQuoteDivider",'b',1,0,1,NULL,NULL},
     {"rimStyle",'n',3,2,3,NULL,NULL},
     {"dockRimStyle",'n',3,2,3,"rimStyle",NULL},
     {"bubbleRimStyle",'n',3,2,3,"rimStyle",NULL},
@@ -114,8 +116,8 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"bubbleDarkRim27Sharpness",'n',2,0.5,6,"bubbleRim27Sharpness",NULL},   // FIX89: the second highlight's own
     // FIX88: the lens's colour split has its own band and top / bottom ratio
     // (first: the refraction band's).
-    {"dockIconTitleGap",'n',5,0,16,NULL,NULL},    // FIX89: the dock's icons: icon to title (pt)
-    {"dockIconOffset",'n',0,-12,12,NULL,NULL},    // FIX89: icon and title together, + down (pt)
+    {"dockIconScalePercent",'n',100,60,140,NULL,NULL},
+    {"dockHideTitles",'b',0,0,1,NULL,NULL},
     {"dockIconHeight",'n',0,0,36,NULL,NULL},      // FIX135: > 0: the icons fitted to this height (iOS 26: 26 pt); 0: as before (WeChat's own size)
     {"dockTitleSize",'n',10,8,13,NULL,NULL},      // FIX91: the titles' size (pt; 10.5 before)
     {"dockTitleWeight",'n',1,0,4,NULL,NULL},      // FIX91: 0 light .. 4 bold (2 medium); FIX114 B: regular, as WeChat's own tab titles
@@ -198,14 +200,10 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // first 3:1), range 1-12, nothing moved: a value a phone has stays.
     {"pressStretchRatio",'n',3,1,12,NULL,NULL},
     {"pressStretchRatioBack",'b',1,0,1,NULL,NULL},   // FIX115 O: N's 8 moved back to 3 (once)
-    // FIX116 A (user, 10-29: the home "+" menu as in his reference video: a
-    // glass capsule with the title on the left, a round glass icon on the
-    // right in line with the "+"; each row fading in, "but not the flip",
-    // the entrance designed again; WXGMenuCascade.h, WXGDecorations.m):
-    // the switch (off: the one glass plate behind WeChat's own rows, as
-    // before), the icon's size (pt at the "+"'s own size; the capsule is 0.78
-    // of it), the gap between two rows' starts (ms) and the speed of it all.
-    {"homeMenuCapsules",'b',1,0,1,NULL,NULL},
+    // Keep the two existing identifiers in saved settings and exports.
+    {"homeMenuCapsules",'n',WXGHomeMenuStyleMorph,WXGHomeMenuStyleCapsules,WXGHomeMenuStyleMorph,NULL,NULL},
+    {"homeMenuMorphWidth",'n',200,160,320,NULL,NULL},
+    {"homeMenuMorphCornerExtra",'n',0,0,12,NULL,NULL},
     {"homeMenuIconSize",'n',44,34,56,NULL,NULL},
     {"homeMenuStagger",'n',45,0,80,NULL,NULL},
     {"homeMenuSpeed",'n',1,.5,2,NULL,NULL},
@@ -225,7 +223,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // Telegram), and nudges of the cut-out's place / width (pt).
     {"meHeader",'b',1,0,1,NULL,NULL},
     {"meBanner",'b',0,0,1,NULL,NULL},
-    {"meBannerEdgeStyle",'n',0,0,2,NULL,NULL},   // FIX118 F (user: keep the drips, and a natural fade into WeChat's page): 0 drips, 1 fade, 2 plain
     {"meAvatarSize",'n',100,70,130,NULL,NULL},
     {"meNotchMerge",'b',1,0,1,NULL,NULL},
     {"meCutoutY",'n',0,-8,8,NULL,NULL},
@@ -1302,6 +1299,9 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
         double v=[value isKindOfClass:NSNumber.class]?[value doubleValue]:spec->def;
         if(!isfinite(v))v=spec->def;
         if(spec->kind=='b'){_extra[key]=@(v>.5);continue;}
+        // An old panel (0) becomes morph glass, including when importing a preset.
+        if(!strcmp(spec->key,"homeMenuCapsules"))
+            v=round(v)==WXGHomeMenuStyleCapsules?WXGHomeMenuStyleCapsules:WXGHomeMenuStyleMorph;
         v=WXGClamp(v,spec->lo,spec->hi);
         if(strlen(spec->key)>=8 && !strcmp(spec->key+strlen(spec->key)-8,"RimStyle"))v=lround(v)==WXGRimStyleGlow?WXGRimStyleGlow:WXGRimStyle26;   // FIX130 ("rimStyle" too: compared from its R)
         if(!strcmp(spec->key,"rimStyle"))v=lround(v)==WXGRimStyleGlow?WXGRimStyleGlow:WXGRimStyle26;
@@ -1370,6 +1370,7 @@ NSUInteger WXGConfigRevision(void) {return WXGConfigRevisionCounter;}
 }
 - (BOOL)bubbleFullGlass {return [self extraNumber:@"bubbleFullGlass"]>.5;}
 - (BOOL)glassShadowOn {return [self extraNumber:@"glassShadowOn"]>.5;}
+- (WXGHomeMenuStyle)homeMenuStyle {return (WXGHomeMenuStyle)[self extraNumber:@"homeMenuCapsules"];}
 - (CGFloat)homeMenuAutoClose {return WXGClamp([self extraNumber:@"homeMenuAutoClose"],0,30);}
 - (BOOL)homeTitleSegments {return [self extraNumber:@"homeTitleSegments"]>.5;}
 - (BOOL)homeTitleSegmentsEnglish {return [self extraNumber:@"homeTitleSegmentsEnglish"]>.5;}
@@ -1404,10 +1405,9 @@ static NSString *const WXGGlassKeys[6][WXGGlassValueCount]={WXG_GLASS_KEYS("g","
 - (WXGScopeOptics)opticsForScope:(WXGGlassScope)scope {
     return (WXGScopeOptics){0,0,10,[self glassBlurForScope:scope side:scope==WXGGlassScopeDock?_height:44],100};
 }
-// The system's blur for a glass whose short side is `side` points (unified to 其余玻璃 defaults in R20).
+// Interpolate this range's two blur radii over the measured short-side sizes.
 - (CGFloat)glassBlurForScope:(WXGGlassScope)scope side:(CGFloat)side {
-    (void)scope;
-    CGFloat small=WXGClamp([self glass:WXGGlassBlurSmall scope:WXGGlassScopeOther],0,10),large=WXGClamp([self glass:WXGGlassBlurLarge scope:WXGGlassScopeOther],0,20);
+    CGFloat small=WXGClamp([self glass:WXGGlassBlurSmall scope:scope],0,10),large=WXGClamp([self glass:WXGGlassBlurLarge scope:scope],0,20);
     if(!(side>48))return small;
     return WXGClamp(small+(large-small)*(side-48)/42.,MIN(small,large),MAX(MAX(small,large)*1.5,small));
 }
@@ -1433,13 +1433,12 @@ static NSString *const WXGGlassKeys[6][WXGGlassValueCount]={WXG_GLASS_KEYS("g","
     return (WXGDropShadowSettings){WXGClamp([self glass:dark?WXGGlassDarkShadow:WXGGlassShadow scope:scope],0,.6),
                                    WXGClamp([self glass:WXGGlassShadowBlur scope:scope],.5,40),WXGClamp([self glass:WXGGlassShadowOffset scope:scope],-10,30),0};
 }
-// The refraction of a glass' body (WXGLensCurve.h): unified across all scopes to validated 其余玻璃 defaults in R20.
+// Each body's range can tune the measured iOS 26 refraction curve.
 - (WXGGlassCurve)glassCurveForScope:(WXGGlassScope)scope {
-    (void)scope;
     WXGGlassCurve k;
-    k.height=WXGClamp([self glass:WXGGlassBand scope:WXGGlassScopeOther],.02,.5);k.amount=WXGClamp([self glass:WXGGlassDepth scope:WXGGlassScopeOther],0,1);
-    k.maxHeight=WXGClamp([self glass:WXGGlassBandMax scope:WXGGlassScopeOther],4,80);k.squeeze=WXGClamp([self glass:WXGGlassSqueeze scope:WXGGlassScopeOther],0,20);
-    k.dispersion=WXGClamp([self glass:WXGGlassDispersion scope:WXGGlassScopeOther],0,3);
+    k.height=WXGClamp([self glass:WXGGlassBand scope:scope],.02,.5);k.amount=WXGClamp([self glass:WXGGlassDepth scope:scope],0,1);
+    k.maxHeight=WXGClamp([self glass:WXGGlassBandMax scope:scope],4,80);k.squeeze=WXGClamp([self glass:WXGGlassSqueeze scope:scope],0,20);
+    k.dispersion=WXGClamp([self glass:WXGGlassDispersion scope:scope],0,3);
     return k;
 }
 // FIX127: iOS 26's tab bar in the dock's own settings.
@@ -1486,7 +1485,7 @@ static NSString *const WXGGlassKeys[6][WXGGlassValueCount]={WXG_GLASS_KEYS("g","
              @"dockTouchGlow":@YES,@"dockTouchGlowSpot":@(WXG_DOCK26_GLOW_SPOT),@"dockTouchGlowBar":@(WXG_DOCK26_GLOW_BAR),
              // FIX135: its icons and titles (probe 2's view dump: the icons 26 pt high, their middle 7 pt above the bar's;
              // the titles 10 pt, their box from 6 pt under the bar's middle, 14 pt high; medium, as a tab bar's are).
-             @"dockIconHeight":@(WXG_DOCK26_ICON_HEIGHT),@"dockIconTitleGap":@(WXG_DOCK26_ICON_TITLE_GAP),@"dockIconOffset":@(WXG_DOCK26_ICON_OFFSET),
+             @"dockIconHeight":@(WXG_DOCK26_ICON_HEIGHT),@"dockIconScalePercent":@100,@"dockHideTitles":@NO,
              @"dockTitleSize":@(WXG_DOCK26_TITLE_SIZE),@"dockTitleWeight":@2,@"dockTitleBolderSelected":@NO};
 }
 // FIX131: the colours that go with them: the resting selection, black at 0.07 in light and white at 0.14 in dark
@@ -1622,8 +1621,8 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
 }
 // FIX113 O: a key this configuration holds (a property of the list or a table key).
 - (BOOL)knowsKey:(NSString *)key {return key && (WXGExtraIndex()[key]!=nil || [self.keys containsObject:key]);}
-- (CGFloat)dockIconTitleGap {return [self extraNumber:@"dockIconTitleGap"];}
-- (CGFloat)dockIconOffset {return [self extraNumber:@"dockIconOffset"];}
+- (CGFloat)dockArtworkScale {return [self extraNumber:@"dockIconScalePercent"]/100.;}
+- (BOOL)dockTitlesHidden {return [self extraNumber:@"dockHideTitles"]>.5;}
 - (CGFloat)dockTitleSize {return [self extraNumber:@"dockTitleSize"];}
 - (NSInteger)dockTitleWeight {return (NSInteger)lround([self extraNumber:@"dockTitleWeight"]);}
 - (BOOL)dockTitleBolderSelected {return [self extraNumber:@"dockTitleBolderSelected"]>.5;}

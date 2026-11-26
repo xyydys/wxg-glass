@@ -4,6 +4,7 @@
 #import "WXGIntegration.h"
 #import <Metal/Metal.h>
 #import <MetalKit/MTKTextureLoader.h>
+#import <objc/runtime.h>
 typedef float WXGFloat4 __attribute__((ext_vector_type(4)));
 _Static_assert(sizeof(WXGFloat4)==16,"Float4 ABI");
 // FIX103: the glass shader (WXGGlass.metal) is not compiled into the plugin;
@@ -24,6 +25,7 @@ _Static_assert(sizeof(WXGFloat4)==16,"Float4 ABI");
 #include "WXGRimDetail.h"
 #include "WXGCapsule26.h"
 #include "WXGDropShadow.h"
+#import "WXGMenuMorphMaterial.h"
 #include <pthread.h>
 
 /* One GPU device and one compiled TEST9 pipeline for every capsule. */
@@ -177,6 +179,7 @@ typedef struct { unsigned int indices[4]; float w[4]; } WXGMeshFace;
 @protocol WXGMeshTransformFactory <NSObject>
 + (id)meshTransformWithVertexCount:(NSUInteger)vertexCount vertices:(WXGMeshVertex *)vertices
                          faceCount:(NSUInteger)faceCount faces:(WXGMeshFace *)faces depthNormalization:(NSString *)depthNormalization;
+- (id)CA_interpolateValue:(id)other byFraction:(float)fraction;
 @end
 static Class WXGMeshTransformClass(void) {
     static Class cls;static dispatch_once_t once;
@@ -301,18 +304,7 @@ static id WXGMakeMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUIn
     if(subdivision)*subdivision=steps;
     return mesh;
 }
-static id WXGBuildMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUInteger *vertexCount,NSMutableData **storage,NSInteger *subdivision) {
-    if(subdivision)*subdivision=-99;
-    Class cls=WXGMeshTransformClass();if(!cls)return nil;
-    static WXGMeshPoint points[WXGMeshCapacity];static unsigned int indices[WXGMeshCapacity][4];
-    int faceCount=0,count=WXGBuildContourMesh(optics,quality,points,WXGMeshCapacity,indices,WXGMeshCapacity,&faceCount);
-    if(count<4 || faceCount<1)return nil;
-    NSUInteger faces=(NSUInteger)faceCount;
-    // Kept alive alongside the mesh, in case the transform references it.
-    NSMutableData *data=[NSMutableData dataWithLength:sizeof(WXGMeshVertex)*(NSUInteger)count+sizeof(WXGMeshFace)*faces];
-    WXGMeshVertex *vertices=data.mutableBytes;WXGMeshFace *quads=(WXGMeshFace *)(vertices+count);
-    for(int k=0;k<count;k++)vertices[k]=(WXGMeshVertex){CGPointMake(points[k].fromX,points[k].fromY),{points[k].toX,points[k].toY,0}};
-    for(NSUInteger n=0;n<faces;n++)quads[n]=(WXGMeshFace){{indices[n][0],indices[n][1],indices[n][2],indices[n][3]},{0,0,0,0}};
+static id WXGCreateMesh(Class cls,NSUInteger count,WXGMeshVertex *vertices,NSUInteger faces,WXGMeshFace *quads,NSInteger *subdivision) {
     id mesh=nil;
     @try {
         mesh=[(Class<WXGMeshTransformFactory>)cls meshTransformWithVertexCount:(NSUInteger)count vertices:vertices
@@ -334,6 +326,21 @@ static id WXGBuildMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUI
             *subdivision=[steps respondsToSelector:@selector(integerValue)]?[steps integerValue]:-98;
         }
     } @catch(__unused NSException *error) {mesh=nil;}
+    return mesh;
+}
+static id WXGBuildMeshTransform(WXGMeshOptics optics,WXGMeshQuality quality,NSUInteger *vertexCount,NSMutableData **storage,NSInteger *subdivision) {
+    if(subdivision)*subdivision=-99;
+    Class cls=WXGMeshTransformClass();if(!cls)return nil;
+    static WXGMeshPoint points[WXGMeshCapacity];static unsigned int indices[WXGMeshCapacity][4];
+    int faceCount=0,count=WXGBuildContourMesh(optics,quality,points,WXGMeshCapacity,indices,WXGMeshCapacity,&faceCount);
+    if(count<4 || faceCount<1)return nil;
+    NSUInteger faces=(NSUInteger)faceCount;
+    // Kept alive alongside the mesh, in case the transform references it.
+    NSMutableData *data=[NSMutableData dataWithLength:sizeof(WXGMeshVertex)*(NSUInteger)count+sizeof(WXGMeshFace)*faces];
+    WXGMeshVertex *vertices=data.mutableBytes;WXGMeshFace *quads=(WXGMeshFace *)(vertices+count);
+    for(int k=0;k<count;k++)vertices[k]=(WXGMeshVertex){CGPointMake(points[k].fromX,points[k].fromY),{points[k].toX,points[k].toY,0}};
+    for(NSUInteger n=0;n<faces;n++)quads[n]=(WXGMeshFace){{indices[n][0],indices[n][1],indices[n][2],indices[n][3]},{0,0,0,0}};
+    id mesh=WXGCreateMesh(cls,(NSUInteger)count,vertices,faces,quads,subdivision);
     if(vertexCount)*vertexCount=(NSUInteger)count;
     if(storage)*storage=data;
     return mesh;
@@ -569,6 +576,195 @@ static id WXGMakeSpectralFilter(NSInteger tapIndex) {
     return YES;
 }
 @end
+// A moving compositor lens and the regular dock use the same padded R8 field.
+// bar and lens are in the same coordinate space, size is the rounded mesh size.
+static WXGMeshOptics WXGPureDockLensOptics(WXGConfig *c, CGRect lens, CGRect bar, CGSize size,
+                                           CGFloat radius, CGFloat restHeight, float press, CGFloat dockScale,
+                                           BOOL shrink, CGFloat *padding) {
+    float shortSide=(float)MIN(size.width,size.height);
+    CGFloat barH=MAX(1.,bar.size.height);
+    float r8Band=(float)([c pureDockR8Band]*dockScale),r8Depth=(float)([c pureDockR8Depth]*dockScale),r8Disp=(float)[c pureDockR8Dispersion];
+    WXGMeshOptics lensOptics=(WXGMeshOptics){(float)size.width,(float)size.height,1.f,radius,MAX(.5f,r8Band*press),0.f,1.f,
+        1.f,1.f,r8Disp,0.f,0.f,0.f};
+    lensOptics.kyantMode=1.f;
+    lensOptics.zoomAfter=1.f;
+    lensOptics.kyantHeight=r8Band*press;
+    lensOptics.kyantAmount=r8Depth*press;
+    lensOptics.shrinkFlat=[c pureDockInnerFlat]?1.f:0.f;
+    CGFloat pad=0;
+    if(shrink && press>0.f) {
+        CGFloat pinch=WXGClamp([c pureDockInnerBarShrink],0.,.55);
+        CGFloat full=barH*.5*pinch;
+        CGFloat refShort=MIN((CGFloat)shortSide,restHeight>1?restHeight*.82:(CGFloat)shortSide);
+        CGFloat spectralDisp=r8Disp>0.f && WXGFilterFactoryAvailable()?r8Disp:0.;
+        CGFloat ring=spectralDisp>0?4.5*spectralDisp/(1.+.25*spectralDisp):0.;
+        CGFloat farSide=MAX(0.,1.55*(CGFloat)r8Depth-refShort);
+        pad=MIN(64.,ceil((full+MAX(ring,farSide)+4.)/2.)*2.);
+        CGFloat reach=barH*.65+4.;
+        CGFloat left=CGRectGetMinX(bar)-CGRectGetMinX(lens),right=CGRectGetMaxX(bar)-CGRectGetMinX(lens);
+        lensOptics.sbLeft=left<-reach?-10000.f:(float)(round(left*2)/2);
+        lensOptics.sbRight=right>size.width+reach?10000.f:(float)(round(right*2)/2);
+        lensOptics.sbTop=(float)(round((CGRectGetMinY(bar)-CGRectGetMinY(lens))*2)/2);
+        lensOptics.sbBottom=(float)(round((CGRectGetMaxY(bar)-CGRectGetMinY(lens))*2)/2);
+        lensOptics.sbRadius=0;
+        lensOptics.shrinkPress=press;
+        lensOptics.shrinkPinch=(float)(round(pinch*1000.)/1000.);
+        CGFloat restH=restHeight>1?round(restHeight*2)/2:size.height;
+        lensOptics.shrinkExtra=(float)((restH-size.height)*.5);
+        lensOptics.padX=lensOptics.padY=(float)pad;lensOptics.width+=(float)(2*pad);lensOptics.height+=(float)(2*pad);
+        lensOptics.sbLeft+=(float)pad;lensOptics.sbRight+=(float)pad;lensOptics.sbTop+=(float)pad;lensOptics.sbBottom+=(float)pad;
+    }
+    *padding=pad;
+    return lensOptics;
+}
+
+@interface WXGTravelMeshPhases : NSObject
+@property(nonatomic,copy) NSArray *meshes,*storage;
+@property(nonatomic) CGFloat peakPress;
+@end
+@implementation WXGTravelMeshPhases
+@end
+static char WXGTravelMeshPhasesKey;
+enum { WXGTravelLiftSteps=4 };
+
+// Animate the sampling coordinates. All phases use the lifted mesh's topology:
+// QuartzCore interpolates compatible CAMeshTransforms on the render server.
+static BOOL WXGPrepareTravelMeshPhases(CALayer *layer,WXGMeshOptics optics,CGFloat peakPress) {
+    NSUInteger count=0;NSMutableData *source=nil;
+    id full=WXGMakeMeshTransform(optics,WXGMeshQualityLensMove,&count,&source,NULL);
+    if(![full respondsToSelector:@selector(CA_interpolateValue:byFraction:)] || !count ||
+       source.length<=count*sizeof(WXGMeshVertex))return NO;
+    NSUInteger faces=(source.length-count*sizeof(WXGMeshVertex))/sizeof(WXGMeshFace);
+    NSMutableArray *meshes=[NSMutableArray array],*storage=[NSMutableArray array];
+    for(int phase=0;phase<WXGTravelLiftSteps;phase++) {
+        float t=(float)phase/WXGTravelLiftSteps;
+        WXGMeshOptics state=optics;
+        state.kyantHeight*=t;state.kyantAmount*=t;state.shrinkPress*=t;
+        NSMutableData *data=[source mutableCopy];
+        WXGMeshVertex *vertices=data.mutableBytes;
+        for(NSUInteger j=0;j<count;j++) {
+            WXGMeshVertex *v=&vertices[j];
+            if(phase==0) {v->from=CGPointMake(v->to.x,v->to.y);continue;}
+            float sx,sy;
+            WXGMeshSource(state,(float)v->to.x*state.width,(float)v->to.y*state.height,&sx,&sy);
+            v->from=CGPointMake(WXGMeshUnit(sx,state.width),WXGMeshUnit(sy,state.height));
+        }
+        id mesh=WXGCreateMesh(WXGMeshTransformClass(),count,vertices,faces,(WXGMeshFace *)(vertices+count),NULL);
+        if(!mesh)return NO;
+        [meshes addObject:mesh];[storage addObject:data];
+    }
+    [meshes addObject:full];[storage addObject:source];
+    WXGTravelMeshPhases *track=[WXGTravelMeshPhases new];
+    track.meshes=meshes;track.storage=storage;track.peakPress=peakPress;
+    objc_setAssociatedObject(layer,&WXGTravelMeshPhasesKey,track,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    return YES;
+}
+
+void WXGAnimatePureTravelRefraction(CALayer *layer,NSArray<NSNumber *> *press,NSArray<NSNumber *> *times,
+                                    CFTimeInterval start,CFTimeInterval duration) {
+    WXGTravelMeshPhases *track=objc_getAssociatedObject(layer,&WXGTravelMeshPhasesKey);
+    if(!track || press.count<2 || press.count!=times.count || duration<=0)return;
+    NSMutableArray *values=[NSMutableArray array],*keys=[NSMutableArray array];
+    double (^phaseAt)(NSUInteger)=^double(NSUInteger i){return WXGTravelLiftSteps*WXGClamp(press[i].doubleValue/track.peakPress,0,1);};
+    void (^add)(double,double)=^(double time,double phase) {
+        if(keys.count && fabs(time-[keys.lastObject doubleValue])<1e-6)return;
+        int nearest=(int)round(phase),lo=(int)floor(phase);
+        id mesh=track.meshes[nearest];
+        if(fabs(phase-nearest)>.001 && lo<WXGTravelLiftSteps) {
+            @try {mesh=[track.meshes[lo] CA_interpolateValue:track.meshes[lo+1] byFraction:(float)(phase-lo)]?:mesh;}
+            @catch(__unused NSException *e) {}
+        }
+        [keys addObject:@(time)];[values addObject:mesh];
+    };
+    // Submit only the lift thresholds and local extrema. During a hold the
+    // render server needs two copies of the held mesh, regardless of its FPS.
+    add(0,phaseAt(0));
+    double a=phaseAt(0);
+    int previousDirection=0;
+    for(NSUInteger i=1;i<press.count;i++) {
+        double b=phaseAt(i),t0=times[i-1].doubleValue,t1=times[i].doubleValue;
+        int direction=(b>a+1e-7)-(b<a-1e-7);
+        if(i>1 && direction!=previousDirection)add(t0,a);
+        if(direction) {
+            int knot=direction>0?(int)floor(a)+1:(int)ceil(a)-1;
+            for(;direction>0?knot<=b:knot>=b;knot+=direction)
+                add(t0+(t1-t0)*(knot-a)/(b-a),knot);
+        }
+        a=b;previousDirection=direction;
+    }
+    add(1,a);
+    CAKeyframeAnimation *animation=[CAKeyframeAnimation animationWithKeyPath:@"meshTransform"];
+    animation.values=values;animation.keyTimes=keys;animation.duration=duration;
+    animation.beginTime=[layer convertTime:start fromLayer:nil];animation.calculationMode=kCAAnimationLinear;
+    animation.fillMode=kCAFillModeBoth;animation.removedOnCompletion=NO;
+    [layer addAnimation:animation forKey:@"meshTransform"];
+}
+
+BOOL WXGApplyPureTravelGlyphRefraction(CALayer *canvas,CGSize size,CGFloat padding,CGFloat press) {
+    if (!canvas || !WXGShaderKyantOptics || ![canvas respondsToSelector:NSSelectorFromString(@"setMeshTransform:")] ||
+        size.width<2 || size.height<2 || padding<0 || press<=0) return NO;
+    CGSize rounded=CGSizeMake(round(size.width),round(size.height));
+    CGRect rect=(CGRect){CGPointZero,size};
+    CGFloat unused=0;
+    WXGMeshOptics optics=WXGPureDockLensOptics(WXGConfig.shared,rect,rect,rounded,0,0,
+                                               roundf((float)WXGClamp(press,0,1)*32.f)/32.f,1,NO,&unused);
+    // wxgKyantLensOverlay: the glyph's central ray never takes the bar end
+    // warp or the inner selection's vertical shrink. Tile zoom happens in
+    // the canvas before the mesh, around each tile's own stationary anchor.
+    optics.padX=optics.padY=(float)padding;
+    optics.width+=(float)(2*padding);optics.height+=(float)(2*padding);
+    optics.dispersion=0;
+    NSMutableData *storage=nil;
+    id mesh=WXGMakeMeshTransform(optics,WXGMeshQualityLensMove,NULL,&storage,NULL);
+    if(!mesh)return NO;
+    @try {
+        [canvas setValue:mesh forKey:@"meshTransform"];
+        if(![canvas valueForKey:@"meshTransform"])return NO;
+    } @catch(__unused NSException *error) {return NO;}
+    return WXGPrepareTravelMeshPhases(canvas,optics,press);
+}
+
+NSArray<UIView *> *WXGMakePureTravelLensBackdrops(CGRect lens,CGRect bar,CGFloat restHeight,CGFloat press,
+                                                  NSString *group,CGFloat *padding) {
+    if (padding) *padding=0;
+#ifdef WXG_MESH_OFF
+    return @[];
+#else
+    WXGConfig *c=WXGConfig.shared;
+    if (!WXGShaderKyantOptics || WXGEffectiveRenderMode()<2 || !c.syncMeshRefraction ||
+        !c.dockPureGlassMode || !WXGBackdropLayerClass() || !WXGMeshTransformClass() ||
+        lens.size.width<2 || lens.size.height<2 || CGRectIsEmpty(bar) || press<=0) return @[];
+    CGSize meshSize=CGSizeMake(round(lens.size.width),round(lens.size.height));
+    CGFloat pad=0;
+    float lift=roundf((float)WXGClamp(press,0,1)*32.f)/32.f;
+    WXGMeshOptics optics=WXGPureDockLensOptics(c,lens,bar,meshSize,0,restHeight,lift,1,YES,&pad);
+    BOOL spectral=optics.dispersion>0 && WXGFilterFactoryAvailable();
+    NSInteger count=spectral?WXG_KYANT_SPECTRAL_TAPS:1;
+    NSString *captureGroup=group.length?group:NSUUID.UUID.UUIDString;
+    NSMutableArray<UIView *> *views=[NSMutableArray arrayWithCapacity:count];
+    CGRect rect=CGRectInset((CGRect){CGPointZero,lens.size},-pad,-pad);
+    for (NSInteger i=0;i<count;i++) {
+        WXGSyncBackdropView *view=[[WXGSyncBackdropView alloc] initWithFrame:rect];
+        if (!view.live) return @[];
+        if (spectral) {
+            [view configureSpectralGroup:captureGroup tapIndex:i radius:0];
+            if (!view.layer.filters.count || (i>0 && !view.layer.compositingFilter)) return @[];
+        } else {
+            [view configureGroup:captureGroup radius:0 channel:0 plain:YES tone:(WXGBackdropTone){1,0}];
+            optics.dispersion=0;
+        }
+        view.captureLimit=c.performanceMode?2:0;
+        [view applyCaptureScale];
+        optics.kyantChannel=spectral?WXGKyantSpectralOffset((int)i):0;
+        [view applyRefraction:optics quality:WXGMeshQualityLensMove enabled:YES];
+        if (!view.meshAccepted || !WXGPrepareTravelMeshPhases(view.layer,optics,press)) return @[];
+        [views addObject:view];
+    }
+    if (padding) *padding=pad;
+    return views;
+#endif
+}
+
 NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString *group,BOOL seesBar,CGFloat barHeight) {
     if(size.width<2 || size.height<2 || !NSClassFromString(@"CABackdropLayer"))return @[];
     WXGConfig *c=WXGConfig.shared;
@@ -993,6 +1189,7 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
 // three earlier styles is used but their two layer kinds.
 @interface WXGRim26View : UIView
 @property(nonatomic) CGFloat maximumCornerRadius;
+@property(nonatomic,readonly) CALayer *strengthMask;
 - (void)configureOn:(BOOL)on settings:(WXGRim26Settings)settings solid:(UIColor *)solid strength:(CGFloat)strength;
 - (NSDictionary *)rim26Evidence;
 @end
@@ -1024,6 +1221,7 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
     [CATransaction commit];
     if(changed)[self setNeedsLayout];
 }
+- (CALayer *)strengthMask {return _paint.layer.mask;}
 - (void)layoutSubviews {
     [super layoutSubviews];
     if(!_on)return;
@@ -1047,6 +1245,31 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
              @"size":@[@(round(self.bounds.size.width*10)/10),@(round(self.bounds.size.height*10)/10)]};
 }
 @end
+
+UIView *WXGMakePureTravelLensRim(CGSize size,BOOL dark,CALayer **strengthLayer) {
+    if(strengthLayer)*strengthLayer=nil;
+    if(size.width<2 || size.height<2)return nil;
+    WXGConfig *c=WXGConfig.shared;
+    CGRect rect=(CGRect){CGPointZero,size};
+    if([c rimStyleForScope:WXGGlassScopeLens]==WXGRimStyleGlow) {
+        WXGRimView *rim=[[WXGRimView alloc] init];
+        rim.frame=rect;
+        WXGRimGlowShape shapes[WXGRimGlowCount];
+        for (NSInteger i=0;i<WXGRimGlowCount;i++)
+            shapes[i]=[c rimGlowForScope:WXGGlassScopeLens index:i dark:dark];
+        [rim configureGlows:shapes count:WXGRimGlowCount];
+        [rim layoutIfNeeded];
+        if(strengthLayer)*strengthLayer=rim.layer;
+        return rim;
+    }
+    WXGRim26View *rim=[[WXGRim26View alloc] initWithFrame:rect];
+    [rim configureOn:YES settings:[c rim26ForScope:WXGGlassScopeLens dark:dark] solid:nil strength:1];
+    [rim layoutIfNeeded];
+    if(strengthLayer)*strengthLayer=rim.strengthMask;
+    return rim;
+}
+#include "WXGMenuMorphMaterial.inc"
+
 // Every iOS 27 rim at once, for the diagnostics export (any page).
 NSDictionary *WXGRimSummary(void) {
     NSUInteger shown=0;NSMutableArray *samples=[NSMutableArray array];
@@ -1595,6 +1818,14 @@ static void WXGShadowInstall(void) {
         WXGShadowHeldLayers=[NSHashTable hashTableWithOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality];
         WXGShadowGlasses=[NSHashTable hashTableWithOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality];
         WXGAllLiveGlasses=[NSHashTable hashTableWithOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality];
+        __block BOOL shadowsEnabled=WXGConfig.shared.glassShadowOn;
+        [NSNotificationCenter.defaultCenter addObserverForName:WXGSettingsChanged object:nil queue:NSOperationQueue.mainQueue
+            usingBlock:^(__unused NSNotification *note) {
+                BOOL enabled=WXGConfig.shared.glassShadowOn;
+                if(enabled==shadowsEnabled)return;
+                shadowsEnabled=enabled;
+                for(WXGGlassView *glass in WXGAllLiveGlasses.allObjects)[glass setNeedsLayout];
+            }];
         Method m=class_getInstanceMethod(CALayer.class,@selector(setMasksToBounds:));
         // The original is kept before the swap (another thread may set a layer meanwhile).
         if(m){WXGShadowSetMasksOriginal=(void (*)(id,SEL,BOOL))method_getImplementation(m);method_setImplementation(m,(IMP)WXGShadowSetMasks);}
@@ -1734,24 +1965,30 @@ static BOOL WXGShadowGlassShownIgnoringAlpha(UIView *glass) {
     _shadowClips=now;
     if(dropped)WXGShadowClipSweep();
 }
-// R24: ignore glasses belonging to a pushed-away / non-top view controller (e.g.
-// Home's WCSearchBar sitting at x=-132 during/right after push into Chat) so
-// departing pages can never punch holes into the active page's shadows.
-static BOOL WXGShadowGlassOnActivePage(UIView *glass) {
-    UIViewController *vc=nil;
-    for(UIResponder *r=glass;r;r=r.nextResponder)if([r isKindOfClass:UIViewController.class]){vc=(UIViewController *)r;break;}
-    if(!vc)return YES;
-    for(UIViewController *c=vc;c;c=c.parentViewController) {
+static UIViewController *WXGShadowOwner(UIView *view) {
+    for(UIResponder *r=view;r && ![r isKindOfClass:UIWindow.class];r=r.nextResponder)
+        if([r isKindOfClass:UIViewController.class])return (UIViewController *)r;
+    return nil;
+}
+// Presented controllers have a separate containment tree even for over-full-screen
+// and page sheets, where the entire presenter can stay mounted in the same window.
+static UIViewController *WXGShadowPageRoot(WXGGlassView *glass) {
+    UIWindow *window=glass.window;
+    UIViewController *owner=WXGShadowOwner(glass);
+    if((!owner || owner==window.rootViewController) && glass.sourceView.window==window)
+        owner=WXGShadowOwner(glass.sourceView)?:owner;
+    for(UIViewController *c=owner?:window.rootViewController;c;c=c.parentViewController) {
         UIViewController *p=c.parentViewController;
+        if(!p)return c;
         if([p isKindOfClass:UINavigationController.class]) {
             UIViewController *top=((UINavigationController *)p).topViewController;
-            if(top && top!=c)return NO;
+            if(top && top!=c)return nil;
         }else if([p isKindOfClass:UITabBarController.class]) {
             UIViewController *sel=((UITabBarController *)p).selectedViewController;
-            if(sel && sel!=c)return NO;
+            if(sel && sel!=c)return nil;
         }
     }
-    return YES;
+    return nil;
 }
 // R20/R24: keep every glass's drop shadow strictly below any nearby/lower glass in
 // visual priority by punching out overlapping visible glass silhouettes via a true
@@ -1764,17 +2001,19 @@ static BOOL WXGShadowGlassOnActivePage(UIView *glass) {
         return;
     }
     CGRect shadowWin=[self.layer convertRect:_dropShadow.frame toLayer:w.layer];
-    if(CGRectIsEmpty(shadowWin)){if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}return;}
+    UIViewController *pageRoot=WXGShadowPageRoot(self);
+    if(CGRectIsEmpty(shadowWin) || !pageRoot){if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}return;}
     typedef struct { CGRect rect; CGFloat radius; } WXGShadowHole;
     WXGShadowHole holes[16];NSUInteger holeCount=0;
     NSMutableString *key=nil;
     for(WXGGlassView *other in WXGAllLiveGlasses.allObjects) {
         if(holeCount>=16)break;
-        if(other==self || other.window!=w || !WXGShadowGlassShown(other) || !WXGShadowGlassOnActivePage(other))continue;
+        if(other==self || other.window!=w || !WXGShadowGlassShown(other))continue;
         CGRect otherLocal=[other drawnBarRect];
         if(otherLocal.size.width<2 || otherLocal.size.height<2)continue;
         CGRect otherWin=[other convertRect:otherLocal toView:w];
         if(!CGRectIntersectsRect(otherWin,w.bounds) || !CGRectIntersectsRect(shadowWin,otherWin))continue;
+        if(WXGShadowPageRoot(other)!=pageRoot)continue;
         CGRect hole=[w.layer convertRect:otherWin toLayer:_dropShadow];
         if(CGRectIsEmpty(hole))continue;
         CGFloat rad=MIN([other radiusForRect:otherLocal scale:other.barScale],MIN(hole.size.width,hole.size.height)*.5);
@@ -1862,10 +2101,11 @@ NSDictionary *WXGDropShadowEvidence(void) {
 }
 - (void)didMoveToWindow {
     [super didMoveToWindow];
+    WXGShadowRecheckWanted=YES;
     // FIX114 M: leaving the window keeps the views open (see above).
     if(!self.window){[WXGAllLiveGlasses removeObject:self];[self dropShadowClipsNotAbove];return;}
     WXGShadowInstall();[WXGAllLiveGlasses addObject:self];
-    WXGShadowRecheckWanted=YES;[self setNeedsLayout];   // FIX114 L
+    [self setNeedsLayout];
 }
 - (void)didMoveToSuperview {
     [super didMoveToSuperview];
@@ -2316,44 +2556,12 @@ id<MTLTexture> WXGMakeIconTexture(UIImage *image) {
         size.width=moving?round(size.width):round(size.width*2)/2;
         size.height=moving?round(size.height):round(size.height*2)/2;
         float radius=(float)(_maximumCornerRadius*_lensRect.size.height/MAX(1,_glassRect.size.height));
-        float shortSide=(float)MIN(size.width,size.height);
         CGRect bar=[self drawnBarRect];
-        CGFloat barH=MAX(1.,bar.size.height);
-        CGFloat dockScale=self.glassScope==WXGGlassScopeSegment?WXGClamp(barH/62.,.35,1.):1.;
-        float r8Band=(float)([c pureDockR8Band]*dockScale),r8Depth=(float)([c pureDockR8Depth]*dockScale),r8Disp=(float)[c pureDockR8Dispersion];
-        lensOptics=(WXGMeshOptics){(float)size.width,(float)size.height,1.f,radius,MAX(.5f,r8Band*press),0.f,1.f,
-            1.f,1.f,r8Disp,0.f,0.f,0.f};
-        lensOptics.kyantMode=1.f;
-        lensOptics.zoomAfter=1.f;
-        lensOptics.kyantHeight=r8Band*press;
-        lensOptics.kyantAmount=r8Depth*press;
-        lensOptics.shrinkFlat=[c pureDockInnerFlat]?1.f:0.f;
-        lensBlur=0;
-        lensMesh=mesh && size.width>1 && size.height>1;
-        lensSplit=NO;
+        CGFloat dockScale=self.glassScope==WXGGlassScopeSegment?WXGClamp(bar.size.height/62.,.35,1.):1.;
+        lensBlur=0; lensMesh=mesh && size.width>1 && size.height>1; lensSplit=NO;
         CGFloat pad=0;
-        if(seesBar && _dockSurface && press>0.f && lensMesh) {
-            CGFloat pinch=WXGClamp([c pureDockInnerBarShrink],0.,.55);
-            CGFloat full=barH*.5*pinch;
-            CGFloat refShort=MIN((CGFloat)shortSide,_lensRestHeight>1?_lensRestHeight*.82:(CGFloat)shortSide);
-            CGFloat spectralDisp=r8Disp>0.f && WXGFilterFactoryAvailable()?r8Disp:0.;
-            CGFloat ring=spectralDisp>0?4.5*spectralDisp/(1.+.25*spectralDisp):0.;
-            CGFloat farSide=MAX(0.,1.55*(CGFloat)r8Depth-refShort);
-            pad=MIN(64.,ceil((full+MAX(ring,farSide)+4.)/2.)*2.);
-            CGFloat reach=barH*.65+4.;
-            CGFloat left=CGRectGetMinX(bar)-CGRectGetMinX(_lensRect),right=CGRectGetMaxX(bar)-CGRectGetMinX(_lensRect);
-            lensOptics.sbLeft=left<-reach?-10000.f:(float)(round(left*2)/2);
-            lensOptics.sbRight=right>size.width+reach?10000.f:(float)(round(right*2)/2);
-            lensOptics.sbTop=(float)(round((CGRectGetMinY(bar)-CGRectGetMinY(_lensRect))*2)/2);
-            lensOptics.sbBottom=(float)(round((CGRectGetMaxY(bar)-CGRectGetMinY(_lensRect))*2)/2);
-            lensOptics.sbRadius=0;
-            lensOptics.shrinkPress=press;
-            lensOptics.shrinkPinch=(float)(round(pinch*1000.)/1000.);
-            CGFloat restH=_lensRestHeight>1?round(_lensRestHeight*2)/2:size.height;
-            lensOptics.shrinkExtra=(float)((restH-size.height)*.5);
-            lensOptics.padX=lensOptics.padY=(float)pad;lensOptics.width+=(float)(2*pad);lensOptics.height+=(float)(2*pad);
-            lensOptics.sbLeft+=(float)pad;lensOptics.sbRight+=(float)pad;lensOptics.sbTop+=(float)pad;lensOptics.sbBottom+=(float)pad;
-        }
+        lensOptics=WXGPureDockLensOptics(c,_lensRect,bar,size,radius,_lensRestHeight,press,dockScale,
+                                         seesBar && _dockSurface && lensMesh,&pad);
         if(fabs(pad-_lensPad)>.01) {
             _lensPad=pad;
             [CATransaction begin];[CATransaction setDisableActions:YES];
