@@ -12,6 +12,9 @@ int main(void) {
     assert(WXGHomeNeighbor(0,0,1)==-1);
     assert(!WXGHomePageHorizontal(0,-190) && !WXGHomePageHorizontal(95,100));
     assert(WXGHomePageHorizontal(-180,30));
+    assert(WXGHomePageClearlyVertical(1,4) && WXGHomePageClearlyVertical(-2,-6));
+    assert(!WXGHomePageClearlyVertical(0,3) && !WXGHomePageClearlyVertical(-4,4));
+    assert(!WXGHomePageClearlyVertical(7,4));
     assert(!WXGHomePageCommits(48,0,440,true));
     assert(WXGHomePageCommits(155,0,440,true));
     assert(WXGHomePageCommits(-20,-161,440,true));

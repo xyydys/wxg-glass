@@ -1,5 +1,30 @@
 #import "WXGHomeCategories.h"
+#import "WXGIntegration.h"
 #import "WXGHomePagingMath.h"
+#import <UIKit/UIGestureRecognizerSubclass.h>
+
+// The table's vertical pan normally waits for this horizontal pan to fail.
+// Release a clear vertical movement before UIPan reaches its recognition threshold.
+@interface WXGHomePagePan : UIPanGestureRecognizer
+@end
+@implementation WXGHomePagePan {
+    CGPoint _firstTouch;
+}
+- (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    _firstTouch=[touches.anyObject locationInView:self.view.window];
+    [super touchesBegan:touches withEvent:event];
+}
+- (void)touchesMoved:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    if(self.state==UIGestureRecognizerStatePossible) {
+        CGPoint p=[touches.anyObject locationInView:self.view.window];
+        if(WXGHomePageClearlyVertical(p.x-_firstTouch.x,p.y-_firstTouch.y)) {
+            self.state=UIGestureRecognizerStateFailed;
+            return;
+        }
+    }
+    [super touchesMoved:touches withEvent:event];
+}
+@end
 
 @interface WXGHomePageTransition : UIView
 @end
@@ -25,7 +50,7 @@
 - (instancetype)initWithTable:(UITableView *)table delegate:(id<WXGHomePagerDelegate>)delegate {
     if((self=[super init])) {
         _table=table;_delegate=delegate;_depths=[NSMutableDictionary dictionary];
-        _pan=[[UIPanGestureRecognizer alloc] initWithTarget:self action:@selector(panned:)];
+        _pan=[[WXGHomePagePan alloc] initWithTarget:self action:@selector(panned:)];
         _pan.maximumNumberOfTouches=1;_pan.delegate=self;[table addGestureRecognizer:_pan];
         [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(interrupted:) name:UIApplicationWillResignActiveNotification object:nil];
     }
@@ -70,7 +95,7 @@
         ![other isKindOfClass:UIScreenEdgePanGestureRecognizer.class] && [other.view isDescendantOfView:_table];
 }
 - (CGFloat)depth {
-    return MAX(0,_table.contentOffset.y+_table.adjustedContentInset.top);
+    return MAX(0,_table.contentOffset.y+WXGHomeListTop(_table));
 }
 - (void)restoreDepth:(NSInteger)index {
     UITableView *t=_table;
@@ -79,7 +104,7 @@
     // First visit keeps a collapsed header collapsed without inheriting the
     // originating group's arbitrary conversation depth.
     CGFloat depth=saved?saved.doubleValue:MIN([_depths[@(_origin)] doubleValue],t.tableHeaderView.bounds.size.height);
-    CGFloat lo=-t.adjustedContentInset.top,hi=MAX(lo,t.contentSize.height+t.adjustedContentInset.bottom-t.bounds.size.height);
+    CGFloat lo=-WXGHomeListTop(t),hi=MAX(lo,t.contentSize.height+t.adjustedContentInset.bottom-t.bounds.size.height);
     CGFloat y=MIN(hi,MAX(lo,lo+depth));
     if(fabs(t.contentOffset.y-y)>.5/MAX(1.,t.window.screen.scale))
         [t setContentOffset:CGPointMake(t.contentOffset.x,y) animated:NO];

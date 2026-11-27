@@ -11,6 +11,9 @@ static inline int WXGHomeNeighbor(int current,int count,int step) {
 static inline bool WXGHomePageHorizontal(double x,double y) {
     return fabs(x)>fabs(y)*1.15;
 }
+static inline bool WXGHomePageClearlyVertical(double x,double y) {
+    return fabs(y)>=4. && WXGHomePageHorizontal(y,x);
+}
 static inline bool WXGHomePageCommits(double shift,double velocity,double width,bool interactive) {
     if(width<=0)return false;
     if(!interactive)return fabs(shift)>=48. || fabs(velocity)>=160.;

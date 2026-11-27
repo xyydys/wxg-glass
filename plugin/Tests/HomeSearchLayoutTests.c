@@ -68,31 +68,49 @@ int main(void) {
     assert(!WXGHomeShouldReveal(240,-88,96,false));
     assert(WXGHomeShouldReveal(0,-88,64,false));
     assert(!WXGHomeShouldReveal(0,-88,64,true));
-    // ui21 diagnostic 10: rest at 100 1/3 pt, then a second full navigation
-    // inset appeared while decelerating. Test both native and automatic writers.
-    const double nav=100.+1./3.;
-    assert(WXGHomeRestInset(nav,nav,3)==nav);
-    assert(WXGHomeRestInset(nav,2*nav,3)==nav);
-    assert(WXGHomeRestInset(nav,nav+24,3)==0);
-    assert(WXGHomeRestInset(0,0,3)==0);
-    assert(WXGHomeDuplicateInset(nav,nav+44,3)==0);
-    assert(WXGHomeDuplicateInset(nav,2*nav+.4,3)==0);
-    assert(WXGHomeDuplicateInset(0,2*nav,3)==0);
-    WXGHomeInsetPlan inset=WXGHomePlanInset(nav,nav,nav,3,0,0);
-    assert(fabs(inset.raw)<1e-9 && fabs(inset.credit-nav)<1e-9);
-    inset=WXGHomePlanInset(nav,nav,inset.raw,3,inset.raw,inset.credit); // bottom-only update
-    assert(fabs(inset.raw)<1e-9 && fabs(inset.credit-nav)<1e-9);
-    inset=WXGHomePlanInset(nav,0,inset.raw,3,inset.raw,inset.credit); // UIKit released its share
-    assert(fabs(inset.raw-nav)<1e-9 && inset.credit==0);
-    inset=WXGHomePlanInset(nav,0,2*nav,3,inset.raw,0); // entirely native raw inset
-    assert(fabs(inset.raw-nav)<1e-9 && fabs(inset.credit-nav)<1e-9);
-    inset=WXGHomePlanInset(nav,0,nav+12,3,inset.raw,inset.credit); // a different real inset
-    assert(fabs(inset.raw-nav-12)<1e-9 && inset.credit==0);
-    assert(WXGHomePullTranslation(-nav-18,nav,3)==18);
-    assert(WXGHomeAtDuplicateRest(nav,nav,-2*nav,3));
-    assert(!WXGHomeAtDuplicateRest(nav,nav,-nav-18,3));
-    assert(!WXGHomeAtDuplicateRest(nav,2*nav,-2*nav,3));
-    assert(!WXGHomeAtDuplicateRest(nav,nav,300,3));
+    // ui22 capture 11: the return callback was already at -100 1/3 before
+    // restoring the bookmark. Both inset sources then reported the same top.
+    const double nav=100.+1./3., panel=956., panelRaw=panel-nav;
+    assert(WXGHomeRestInset(nav,0,nav,3)==nav);
+    assert(WXGHomeRestInset(nav,nav,2*nav,3)==nav);
+    assert(WXGHomeRestInset(nav,nav+24,nav+24,3)==0);
+    assert(WXGHomeRestInset(0,0,0,3)==0);
+    assert(WXGHomeHasTwoNavigationInsets(nav,nav,2*nav,3));
+    assert(!WXGHomeHasTwoNavigationInsets(nav,0,2*nav,3));
+    assert(!WXGHomeHasTwoNavigationInsets(nav,2*nav,2*nav,3));
+    assert(!WXGHomeHasTwoNavigationInsets(nav,nav+1,2*nav,3));
+    assert(!WXGHomeHasTwoNavigationInsets(nav,panelRaw,panel,3));
+    assert(!WXGHomeHasTwoNavigationInsets(nav,nav,2*nav+.4,3));
+    assert(WXGHomeEffectiveTop(nav,0,nav,3)==nav);
+    assert(WXGHomeEffectiveTop(nav,nav,2*nav,3)==nav);
+    assert(WXGHomeEffectiveTop(nav,nav,nav,3)==nav);
+    assert(WXGHomeEffectiveTop(nav,panelRaw,panel,3)==panel);
+    assert(WXGHomeEffectiveTop(nav,24,nav+24,3)==nav+24);
+    // UIKit can initially ignore a write or report the old policy for a layout.
+    // A bookmark must never convert that transient duplicate into a scroll target.
+    for(int i=0;i<3;i++) {
+        double adjusted=i==2?nav:2*nav;
+        double top=WXGHomeEffectiveTop(nav,nav,adjusted,3);
+        assert(WXGHomeOffsetAtDepth(0,108,108,top,34,1600,panel)==-nav);
+        assert(fabs(WXGHomeOffsetAtDepth(300,108,105,top,34,1600,panel)-(297-nav))<1e-7);
+        assert(fabs(WXGHomePullTranslation(-nav-18,top,3)-18)<1e-7);
+    }
+    // A normal raw top remains valid while dragging. A native search, a real
+    // panel or refresh, a changed viewport or app-owned policy releases it.
+    assert(WXGHomeKeepsNativeInset(nav,nav,3,true,true,true));
+    assert(!WXGHomeKeepsNativeInset(nav,0,3,true,true,true));
+    assert(!WXGHomeKeepsNativeInset(nav,panelRaw,3,true,true,true));
+    assert(!WXGHomeKeepsNativeInset(nav,nav,3,false,true,true));
+    assert(!WXGHomeKeepsNativeInset(nav,nav,3,true,false,true));
+    assert(!WXGHomeKeepsNativeInset(nav,nav,3,true,true,false));
+    // Preserve horizontal and bottom insets across the hand-off. An ignored
+    // write must never create a fictitious credit or subtract a native update.
+    assert(WXGHomeConfirmedExtra(54,54,20,20,0)==34);
+    assert(WXGHomeNativeEdge(54,54,34)==20);
+    assert(WXGHomeNativeEdge(64,54,34)==64);
+    assert(WXGHomeConfirmedExtra(20,54,20,20,0)==0);
+    assert(WXGHomeConfirmedExtra(54,20,20,54,34)==34);
+    assert(WXGHomeConfirmedExtra(20,20,20,54,34)==0);
     puts("HomeSearchLayoutTests: native field readiness and vertical header reservation passed.");
     return 0;
 }

@@ -463,7 +463,7 @@ static UIView *WXGFinderLiveContainer(WXGFinderLink *link) {
 @property(nonatomic) NSUInteger bindingRecoveries,samplingLayoutSkips;
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *navigationRequests;
 @property(nonatomic,strong) NSHashTable<UIView *> *homeGestureHosts,*navigationChromeHosts;
-@property(nonatomic) NSUInteger navigationRepairs,homeReattachments;
+@property(nonatomic) NSUInteger navigationRepairs,homeReattachments,otherBarLayoutsSkipped;
 @property(nonatomic) NSUInteger homeMovesThisTurn,homeMoveLoopBreaks,homeHostConflicts;   // FIX114 M (crash)
 @property(nonatomic) NSUInteger directSearchOpens;   // FIX114 M: the search box capsule straight to WeChat's search page
 @property(nonatomic,weak) UIViewController *dockPrimaryOwner;
@@ -1433,6 +1433,19 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
     if(_needsEarlyLayout && controller==_pendingController && controller.view.window && !_refreshing){
         _needsEarlyLayout=NO;[self schedule];
     }
+}
+- (void)navigationBarDidLayout:(UINavigationBar *)bar {
+    // A cached tab can lay out its own bar while the conversation list scrolls.
+    // Its layout has no geometry for the visible Home controls to rebind.
+    UINavigationController *nav=_route.nav;
+    if(_window && _route.primary && nav.topViewController==_route.leaf &&
+       [_route.leaf isKindOfClass:NSClassFromString(@"NewMainFrameViewController")] &&
+       !_nativeTransition && !_pendingController && !nav.transitionCoordinator &&
+       nav.navigationBar.window==_window && bar!=nav.navigationBar) {
+        ++_otherBarLayoutsSkipped;
+        return;
+    }
+    [self nativeNavigationLaidOut];
 }
 - (void)nativeNavigationLaidOut {
     if(WXGBackdropCaptureInProgress()){++_samplingLayoutSkips;return;}
@@ -5070,7 +5083,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     CGFloat pull=0,h=_window.bounds.size.height,w=_window.bounds.size.width;
     for(UIScrollView *scroll in _scrollViews)
         if(scroll.window==_window && scroll.bounds.size.height>h*.5 && scroll.bounds.size.width>w*.8)
-            pull=MAX(pull,-(scroll.contentOffset.y+scroll.adjustedContentInset.top));
+            pull=MAX(pull,-(scroll.contentOffset.y+WXGHomeListTop(scroll)));
     return pull;
 }
 // FIX93: pulling the home list down (toward the mini-program panel), WeChat
@@ -5700,7 +5713,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
       @"postCommit":@{@"observer":@(_commitObserver!=NULL),@"order":@1999500,@"phase":@"beforeCoreAnimationCommit",@"frames":@(_postCommitFrames),@"inlineFallbacks":@(_postCommitFallbacks),@"dropped":@(_droppedPendingFrames),
         @"delayFromCallbackMS":@(_postCommitDelayMS),@"presentScheduleWaitMS":@(WXGGlassScheduleWaitMS()),@"costMS":@(_postCommitCost),@"maxCostMS":@(_maxPostCommitCost)},
       @"callbackIntervalms":@(_lastTickTime*1000),@"callbackCount":@(_frames),@"refreshCount":@(_refreshes),@"covered":@(_suspendedByCover),
-      @"navigationRepairs":@(_navigationRepairs),@"homeReattachments":@(_homeReattachments),@"homeMoveLoopBreaks":@(_homeMoveLoopBreaks),@"homeHostConflicts":@(_homeHostConflicts),@"decorations":WXGDecorations.shared.evidence,@"meHeader":WXGMeHeader.shared.evidence,@"bubbles":WXGBubbles.shared.evidence,@"localGlass":WXGLocalGlass.shared.evidence,@"chatSegments":WXGChatSegments.shared.evidence,
+      @"navigationRepairs":@(_navigationRepairs),@"otherBarLayoutsSkipped":@(_otherBarLayoutsSkipped),@"homeReattachments":@(_homeReattachments),@"homeMoveLoopBreaks":@(_homeMoveLoopBreaks),@"homeHostConflicts":@(_homeHostConflicts),@"decorations":WXGDecorations.shared.evidence,@"meHeader":WXGMeHeader.shared.evidence,@"bubbles":WXGBubbles.shared.evidence,@"localGlass":WXGLocalGlass.shared.evidence,@"chatSegments":WXGChatSegments.shared.evidence,
       @"bindingRecoveries":@(_bindingRecoveries),@"samplingLayoutSkips":@(_samplingLayoutSkips),@"navigationSetupDeferrals":@(_navigationSetupDeferrals),@"transitionSamplingSkips":@(_transitionSamplingSkips),@"navigationRequests":_navigationRequests?:@[],
       @"transition":@{ @"active":@(_nativeTransition!=nil),@"interactive":@(_nativeTransition.isInteractive),@"percent":@(_nativeTransition.percentComplete),
         @"serial":@(_transitionSerial),@"cancelled":@(_transitionCancellations),@"completed":@(_transitionCompletions),@"events":_transitionLog?:@[]},
@@ -6318,7 +6331,7 @@ __attribute__((constructor)) static void WXGInitialize(void) {
             WXGPerfTimePluginWorkAs("localGlass.controller",^{[WXGLocalGlass.shared controllerLaidOut:controller];});   // FIX107: the emoji search sheet's field (fallback)
             WXGPerfTimePluginWorkAs("edgeFade.layout",^{WXGEdgeFadeNoteController(controller,NO);});   // FIX64/65: only the chat page and the other pages (WXGEdgeFade.m)
         });
-        WXGHookVoid(NSClassFromString(@"MMUINavigationBar"),@selector(layoutSubviews),^(__unused id object){[WXGIntegrationHost.shared nativeNavigationLaidOut];});
+        WXGHookVoid(NSClassFromString(@"MMUINavigationBar"),@selector(layoutSubviews),^(id object){[WXGIntegrationHost.shared navigationBarDidLayout:object];});
         WXGHookBarHits(UINavigationBar.class);WXGHookBarHits(NSClassFromString(@"MMUINavigationBar"));   // FIX114 C (review)
         for(NSString *name in @[@"_UIBarBackground",@"FakeNavigationBar"])
             for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToWindow"])

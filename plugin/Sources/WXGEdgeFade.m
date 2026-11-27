@@ -870,7 +870,7 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
     // Drive the top edge from the same scroll sample as the Home controls.
     CGFloat panel=_homePanel?WXGHomePanelProgressForController(_controller):0;
     _topBarInList=_homePanel && WXGHomeTopBarInList(list);
-    CGFloat relief=_homePanel?WXGHomeEdgeRelief(-(list.contentOffset.y+list.adjustedContentInset.top)):0;
+    CGFloat relief=_homePanel?WXGHomeEdgeRelief(-(list.contentOffset.y+WXGHomeListTop(list))):0;
     BOOL reliefChanged=relief!=_topRelief;
     _topRelief=relief;
     BOOL panelChanged=fabs(panel-_panel)>.004 || (panel==0)!=(_panel==0) || (panel==1)!=(_panel==1);
@@ -879,9 +879,13 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
         CGRect bounds=list.layer.bounds;
         if(!CGRectEqualToRect(bounds,_syncedBounds) || panelChanged || reliefChanged) {
             [CATransaction begin];[CATransaction setDisableActions:YES];
-            _mask.position=bounds.origin;_mask.bounds=CGRectMake(0,0,bounds.size.width,bounds.size.height);
-            _maskSolid.frame=_mask.bounds;_maskSolid.opacity=(float)_panel;
-            _maskTopRelief.frame=_mask.bounds;_maskTopRelief.opacity=_topRelief;
+            if(!CGPointEqualToPoint(bounds.origin,_syncedBounds.origin))_mask.position=bounds.origin;
+            if(CGRectIsNull(_syncedBounds) || !CGSizeEqualToSize(bounds.size,_syncedBounds.size)) {
+                _mask.bounds=(CGRect){CGPointZero,bounds.size};
+                _maskSolid.frame=_mask.bounds;_maskTopRelief.frame=_mask.bounds;
+            }
+            if(_maskSolid.opacity!=(float)_panel)_maskSolid.opacity=(float)_panel;
+            if(_maskTopRelief && _maskTopRelief.opacity!=(float)_topRelief)_maskTopRelief.opacity=(float)_topRelief;
             [CATransaction commit];
             _syncedBounds=bounds;++_maskSyncs;
         }

@@ -1748,12 +1748,14 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
 @property(nonatomic,weak) UITableView *owner;
 @property(nonatomic) UIViewAutoresizing nativeResize;
 @property(nonatomic) CGFloat leading,reservedHeight;
-@property(nonatomic) CGFloat restInset,rawCredit,correctedRaw,restSafe,checkedRaw,checkedAdjusted;
+@property(nonatomic) CGFloat restInset;
+@property(nonatomic) UIEdgeInsets restSafe,checkedRaw,checkedAdjusted;
 @property(nonatomic) CGSize restViewport;
-@property(nonatomic) BOOL writingInset;
-@property(nonatomic) NSUInteger insetRepairs,deferredSearchAssignments;
-@property(nonatomic) CFTimeInterval nextCalibration,parkedSince;
-@property(nonatomic) BOOL checkRestAfterRepair;
+@property(nonatomic) BOOL changingAdjustment,ownsAdjustment,verifiedAdjustment,adjustmentDeclined,awaitingHomeAppearance;
+@property(nonatomic) UIScrollViewContentInsetAdjustmentBehavior nativeBehavior,checkedBehavior;
+@property(nonatomic) UIEdgeInsets nativeAutomatic,publishedInsets,addedInsets;
+@property(nonatomic) NSUInteger adjustmentAttempts,insetRepairs,deferredSearchAssignments;
+@property(nonatomic) CFTimeInterval nextCalibration;
 @property(nonatomic) BOOL holdingForSpacer;
 @property(nonatomic,strong) UIView *nativeSpacer;
 - (void)replaceSearch:(BOOL)replace;
@@ -1829,14 +1831,29 @@ UIView *WXGHomeNativeSearchHeader(UIView *header) {
 @interface WXGChatSegments (HomeHeaderAssignment)
 - (BOOL)reuseRowsForTable:(UITableView *)table nativeHeader:(UIView *)native;
 - (void)homeTableInsetChanged:(UITableView *)table;
-- (UIEdgeInsets)homeTable:(UITableView *)table willSetInset:(UIEdgeInsets)requested;
 @end
 
 static NSUInteger WXGHomeHeaderReuses;
 static __weak UITableView *WXGGroupedTable;
+CGFloat WXGHomeListTop(UIScrollView *list) {
+    CGFloat top=list.adjustedContentInset.top;
+    if(!list || list!=WXGGroupedTable)return top;
+    CGFloat raw=list.contentInset.top;
+    if(raw==0 || raw==top)return top;
+    WXGHomeGroupHeader *rows=(id)WXGGroupedTable.tableHeaderView;
+    if(![rows isKindOfClass:WXGHomeGroupHeader.class] || list.refreshControl.refreshing || !CGSizeEqualToSize(rows.restViewport,list.bounds.size) ||
+       !UIEdgeInsetsEqualToEdgeInsets(rows.restSafe,list.window.safeAreaInsets))return top;
+    return WXGHomeEffectiveTop(rows.restInset,raw,top,list.window.screen.scale);
+}
 static IMP WXGUIKitHeaderSetter;
 static BOOL WXGHomeWritesEnabled;
 static double WXGHomeTableLayoutMS,WXGHomeHeaderWorkMS;
+typedef struct {
+    double cellMS,navigationMS,reloadMS;
+    unsigned layouts,cells,navigations,reloads;
+} WXGHomeFrameWork;
+static WXGHomeFrameWork WXGHomeWork;
+static __weak UINavigationBar *WXGHomeWatchedNavigation;
 // The wrapper is our layout object. Only real native assignments should notify
 // MainFrameTableView's own search/taskbar bookkeeping.
 static void WXGPublishHomeRows(UITableView *table,WXGHomeGroupHeader *rows) {
@@ -1858,12 +1875,6 @@ static void WXGObserveHomeHeader(UITableView *table) {
             CFTimeInterval start=WXGHomeWritesEnabled?CACurrentMediaTime():0;
             if(![WXGChatSegments.shared reuseRowsForTable:list nativeHeader:header])((void(*)(id,SEL,id))put)(list,setter,header);
             if(start>0)WXGHomeHeaderWorkMS+=(CACurrentMediaTime()-start)*1000.;
-        }),method_getTypeEncoding(m));
-        SEL inset=@selector(setContentInset:);
-        m=class_getInstanceMethod(home,inset);IMP originalInset=method_getImplementation(m);
-        WXGInstallOverride(home,inset,imp_implementationWithBlock(^(UITableView *list,UIEdgeInsets requested){
-            if(list==WXGGroupedTable)requested=[WXGChatSegments.shared homeTable:list willSetInset:requested];
-            ((void(*)(id,SEL,UIEdgeInsets))originalInset)(list,inset,requested);
         }),method_getTypeEncoding(m));
         SEL adjusted=@selector(adjustedContentInsetDidChange);
         m=class_getInstanceMethod(home,adjusted);IMP originalAdjusted=method_getImplementation(m);
@@ -1889,20 +1900,24 @@ static BOOL WXGHomeInOffsetWrite;
 static double WXGHomeLastStack;
 static __weak UITableView *WXGHomeWatchedTable;
 typedef struct {
-    double time,raw,automatic,rest;
+    double time,raw,automatic,rest,actualRaw,actualAdjusted;
+    NSInteger policy;
     BOOL requested;
     int count;
     void *stack[WXGHomeStackDepth];
 } WXGHomeInsetWrite;
 static WXGHomeInsetWrite WXGHomeInsetWrites[16];
 static NSUInteger WXGHomeInsetWriteCount;
-static void WXGNoteInsetSource(BOOL requested,CGFloat raw,CGFloat automatic,CGFloat rest) {
-    if(!WXGHomeWritesEnabled)return;
+static void WXGNoteInsetSource(UITableView *table,BOOL requested,CGFloat raw,CGFloat rest) {
+    if(!WXGHomeWritesEnabled || table!=WXGHomeWatchedTable)return;
+    CGFloat actualRaw=table.contentInset.top,actualAdjusted=table.adjustedContentInset.top,automatic=actualAdjusted-actualRaw;
     double time=WXGSecondsSinceLoad();
     WXGHomeInsetWrite *last=WXGHomeInsetWriteCount?&WXGHomeInsetWrites[(WXGHomeInsetWriteCount-1)%16]:NULL;
-    if(last && last->requested==requested && last->raw==raw && last->automatic==automatic && time-last->time<.25)return;
+    if(last && last->requested==requested && last->raw==raw && last->actualRaw==actualRaw &&
+       last->automatic==automatic && last->policy==table.contentInsetAdjustmentBehavior && time-last->time<.25)return;
     WXGHomeInsetWrite *entry=&WXGHomeInsetWrites[WXGHomeInsetWriteCount++%16];
     entry->time=time;entry->raw=raw;entry->automatic=automatic;entry->rest=rest;entry->requested=requested;
+    entry->actualRaw=actualRaw;entry->actualAdjusted=actualAdjusted;entry->policy=table.contentInsetAdjustmentBehavior;
     entry->count=backtrace(entry->stack,WXGHomeStackDepth);
 }
 
@@ -1926,7 +1941,10 @@ static void WXGEndHomeWrite(WXGHomeOffsetWrite *write,UIScrollView *list) {
 }
 static void WXGObserveHomeOffsets(UITableView *table,BOOL enabled) {
     BOOL starting=enabled && !WXGHomeWritesEnabled;
-    if(WXGHomeWatchedTable!=table || starting)WXGHomeTableLayoutMS=WXGHomeHeaderWorkMS=0;
+    if(WXGHomeWatchedTable!=table || starting) {
+        WXGHomeTableLayoutMS=WXGHomeHeaderWorkMS=0;WXGHomeWork=(WXGHomeFrameWork){0};
+    }
+    if(!enabled)WXGHomeWatchedNavigation=nil;
     WXGHomeWritesEnabled=enabled;WXGHomeWatchedTable=enabled?table:nil;
     if(!enabled || !table)return;
     if(starting){WXGHomeWriteCount=0;WXGHomeInsetWriteCount=0;WXGHomeLastStack=-1.;}
@@ -1938,8 +1956,49 @@ static void WXGObserveHomeOffsets(UITableView *table,BOOL enabled) {
         WXGInstallOverride(home,layout,imp_implementationWithBlock(^(UITableView *list){
             CFTimeInterval start=(WXGHomeWritesEnabled && list==WXGHomeWatchedTable)?CACurrentMediaTime():0;
             ((void(*)(id,SEL))WXGThrough(layoutOwn,parent,layout))(list,layout);
-            if(start>0)WXGHomeTableLayoutMS+=(CACurrentMediaTime()-start)*1000.;
+            if(start>0){++WXGHomeWork.layouts;WXGHomeTableLayoutMS+=(CACurrentMediaTime()-start)*1000.;}
         }),method_getTypeEncoding(class_getInstanceMethod(home,layout)));
+        // Count work on the observed list only. Cell creation can be part of a
+        // table layout, so the durations are inclusive and should not be added.
+        SEL reload=@selector(reloadData);
+        IMP originalReload=WXGOwnImplementation(home,reload);
+        WXGInstallOverride(home,reload,imp_implementationWithBlock(^(UITableView *list){
+            CFTimeInterval start=(WXGHomeWritesEnabled && list==WXGHomeWatchedTable)?CACurrentMediaTime():0;
+            ((void(*)(id,SEL))WXGThrough(originalReload,parent,reload))(list,reload);
+            if(start>0){++WXGHomeWork.reloads;WXGHomeWork.reloadMS+=(CACurrentMediaTime()-start)*1000.;}
+        }),method_getTypeEncoding(class_getInstanceMethod(home,reload)));
+        SEL inset=@selector(setContentInset:);
+        IMP originalInset=WXGOwnImplementation(home,inset);
+        WXGInstallOverride(home,inset,imp_implementationWithBlock(^(UITableView *list,UIEdgeInsets requested){
+            BOOL changingTop=WXGHomeWritesEnabled && list==WXGHomeWatchedTable && fabs(requested.top-list.contentInset.top)>.01;
+            ((void(*)(id,SEL,UIEdgeInsets))WXGThrough(originalInset,parent,inset))(list,inset,requested);
+            if(changingTop) {
+                WXGHomeGroupHeader *rows=(id)list.tableHeaderView;
+                WXGNoteInsetSource(list,YES,requested.top,[rows isKindOfClass:WXGHomeGroupHeader.class]?rows.restInset:0);
+            }
+        }),method_getTypeEncoding(class_getInstanceMethod(home,inset)));
+        Class source=NSClassFromString(@"NewMainFrameViewController");
+        SEL cell=@selector(tableView:cellForRowAtIndexPath:);
+        Method getCell=class_getInstanceMethod(source,cell);
+        if(getCell) {
+            IMP own=WXGOwnImplementation(source,cell);Class sup=class_getSuperclass(source);
+            WXGInstallOverride(source,cell,imp_implementationWithBlock(^UITableViewCell *(id controller,UITableView *list,NSIndexPath *path){
+                CFTimeInterval start=(WXGHomeWritesEnabled && list==WXGHomeWatchedTable)?CACurrentMediaTime():0;
+                UITableViewCell *result=((id(*)(id,SEL,id,id))WXGThrough(own,sup,cell))(controller,cell,list,path);
+                if(start>0){++WXGHomeWork.cells;WXGHomeWork.cellMS+=(CACurrentMediaTime()-start)*1000.;}
+                return result;
+            }),method_getTypeEncoding(getCell));
+        }
+        Class nav=NSClassFromString(@"MMUINavigationBar");
+        Method navLayout=class_getInstanceMethod(nav,layout);
+        if(navLayout) {
+            IMP own=WXGOwnImplementation(nav,layout);Class sup=class_getSuperclass(nav);
+            WXGInstallOverride(nav,layout,imp_implementationWithBlock(^(UINavigationBar *bar){
+                CFTimeInterval start=(WXGHomeWritesEnabled && bar==WXGHomeWatchedNavigation)?CACurrentMediaTime():0;
+                ((void(*)(id,SEL))WXGThrough(own,sup,layout))(bar,layout);
+                if(start>0){++WXGHomeWork.navigations;WXGHomeWork.navigationMS+=(CACurrentMediaTime()-start)*1000.;}
+            }),method_getTypeEncoding(navLayout));
+        }
         SEL offset=@selector(setContentOffset:),animated=@selector(setContentOffset:animated:),bounds=@selector(setBounds:);
         Method m=class_getInstanceMethod(home,offset);IMP put=method_getImplementation(m);
         WXGInstallOverride(home,offset,imp_implementationWithBlock(^(UITableView *list,CGPoint p){
@@ -1975,7 +2034,8 @@ static NSArray *WXGHomeInsetEvidence(void) {
     for(NSUInteger i=WXGHomeInsetWriteCount-MIN(WXGHomeInsetWriteCount,16u);i<WXGHomeInsetWriteCount;i++) {
         WXGHomeInsetWrite e=WXGHomeInsetWrites[i%16];
         [events addObject:@{@"s":@(e.time),@"source":e.requested?@"setContentInset:":@"adjustedInsetObserved",
-            @"raw":@(e.raw),@"automatic":@(e.automatic),@"rest":@(e.rest),@"stack":WXGHomeStackEvidence(e.stack,e.count)}];
+            @"raw":@(e.raw),@"automatic":@(e.automatic),@"rest":@(e.rest),@"rawReadBack":@(e.actualRaw),
+            @"adjustedReadBack":@(e.actualAdjusted),@"policy":@(e.policy),@"stack":WXGHomeStackEvidence(e.stack,e.count)}];
     }
     return events;
 }
@@ -1994,6 +2054,8 @@ static NSArray *WXGHomeOffsetEvidence(void) {
 typedef struct {
     float t,dt,offset,inset,content,header,leading,chrome,search,group,listLens,titleLens,panel;
     float titleBottom,titleOpacity,searchOpacity,groupOpacity,rawInset,systemInset,restInset,insetCredit,layoutMS,headerWorkMS;
+    WXGHomeFrameWork work;
+    float callbackInterval;
     unsigned flags;
 } WXGHomeFrame;
 
@@ -2063,7 +2125,7 @@ typedef struct {
     NSMutableData *_motionBuffer;
     NSMutableArray<NSDictionary *> *_motionEvents;
     NSUInteger _motionWrite,_motionCount,_motionRevision;
-    CFTimeInterval _motionLastTime,_nextPresentationTrace;
+    CFTimeInterval _motionLastTime,_motionLastCallback,_nextPresentationTrace;
     WXGHomeFrame _lastMotion;
     __weak UITableView *_startupTable;
     CFTimeInterval _startupUntil;
@@ -2129,10 +2191,14 @@ typedef struct {
             else if((!published || published!=_unrelatedHeader) && ![self reuseRowsForTable:_table nativeHeader:published])
                 _unrelatedHeader=published;
         }
-        if(_groupHeader && _table.window && _table.tableHeaderView==_groupHeader &&
+        if(_groupHeader && _table.window && (_table.tableHeaderView==_groupHeader || _groupHeader.ownsAdjustment) &&
            ((_groupHeader.restInset==0 && !_table.tracking && !_table.decelerating && _lastTickPage==_page && CACurrentMediaTime()>=_groupHeader.nextCalibration) ||
-            _groupHeader.checkedAdjusted!=_table.adjustedContentInset.top || _groupHeader.checkedRaw!=_table.contentInset.top ||
-            !CGSizeEqualToSize(_groupHeader.restViewport,_table.bounds.size) || _groupHeader.restSafe!=_table.window.safeAreaInsets.top))
+            (_groupHeader.awaitingHomeAppearance && (_returnReady || _lastTickPage==_page) && WXGHomeSearchExposed(_page)) ||
+            !UIEdgeInsetsEqualToEdgeInsets(_groupHeader.checkedAdjusted,_table.adjustedContentInset) ||
+            !UIEdgeInsetsEqualToEdgeInsets(_groupHeader.checkedRaw,_table.contentInset) ||
+            _groupHeader.checkedBehavior!=_table.contentInsetAdjustmentBehavior ||
+            (_groupHeader.ownsAdjustment && (_table.tableHeaderView!=_groupHeader || _table.refreshControl.refreshing || _nativeSearching)) ||
+            !CGSizeEqualToSize(_groupHeader.restViewport,_table.bounds.size) || !UIEdgeInsetsEqualToEdgeInsets(_groupHeader.restSafe,_table.window.safeAreaInsets)))
             [self homeTableInsetChanged:_table];
         if(_returnAppearing && _returnReady)[self restoreChatPositionIfReady];
         if(_titleBar.superview && _lastTickPage==_page && _table.window &&
@@ -2344,7 +2410,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
 - (CGFloat)leadingForHeader:(UIView *)header table:(UITableView *)table {
     UIWindow *window=table.window;
     if(!window)return 0;
-    CGFloat inset=table.adjustedContentInset.top;
+    CGFloat inset=WXGHomeListTop(table);
     CGFloat safe=window.safeAreaInsets.top,navH=_page.navigationController.navigationBar.bounds.size.height;
     CGFloat viewport=CGRectGetMinY([table convertRect:table.bounds toView:window]);
     CGFloat pixel=1./MAX(1.,window.screen.scale)+1e-5;
@@ -2359,84 +2425,113 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     _layoutLeading=WXGHomePixel(WXGHomeHeaderLeading(viewport,inset,header.frame.origin.y,[self homeChromeBottomInWindow:window]),window.screen.scale);
     return _layoutLeading;
 }
-// A home table normally starts one navigation height below its viewport. Record that
-// while the real bar and the table agree, before WeChat reparents its search view.
-- (BOOL)canReconcileInsets:(UITableView *)table rows:(WXGHomeGroupHeader *)rows {
-    if(rows.restInset>0 && table.tracking && -table.contentOffset.y-rows.restInset>MAX(72.,rows.restInset*.75))return NO;
-    return rows && rows.owner==table && table.tableHeaderView==rows && !rows.writingInset &&
-        table.window && !_nativeSearching && !_bookmarkedHome && WXGHomeSearchExposed(_page) &&
-        !_page.navigationItem.searchController.isActive && !table.refreshControl.refreshing && _lastPanel<.12;
+// UIScrollView applies its adjustment policy to all four edges. Keep the
+// existing side and bottom contributions while the native top is in charge.
+static UIEdgeInsets WXGInsetDifference(UIEdgeInsets a,UIEdgeInsets b) {
+    return UIEdgeInsetsMake(a.top-b.top,a.left-b.left,a.bottom-b.bottom,a.right-b.right);
 }
-- (UIEdgeInsets)homeTable:(UITableView *)table willSetInset:(UIEdgeInsets)requested {
-    WXGHomeGroupHeader *rows=_groupHeader;
-    if(![self canReconcileInsets:table rows:rows] || rows.restInset<=0 ||
-       !CGSizeEqualToSize(rows.restViewport,table.bounds.size) || rows.restSafe!=table.window.safeAreaInsets.top)return requested;
-    CGFloat system=table.adjustedContentInset.top-table.contentInset.top;
-    WXGHomeInsetPlan plan=WXGHomePlanInset(rows.restInset,system,requested.top,table.window.screen.scale,rows.correctedRaw,rows.rawCredit);
-    if(plan.credit>0 && rows.rawCredit==0) {
-        ++rows.insetRepairs;rows.checkRestAfterRepair=YES;rows.parkedSince=0;WXGNoteInsetSource(YES,requested.top,system,rows.restInset);
-        [self traceHomeEvent:@"duplicateRequestedInset" before:requested.top after:plan.raw];
-    }
-    rows.rawCredit=plan.credit;rows.correctedRaw=plan.raw;requested.top=plan.raw;
-    return requested;
+static void WXGHomeApplyOtherEdges(WXGHomeGroupHeader *rows,BOOL restoring) {
+    UITableView *table=rows.owner;
+    UIEdgeInsets raw=table.contentInset,old=rows.publishedInsets,added=rows.addedInsets;
+    UIEdgeInsets native=UIEdgeInsetsMake(raw.top,WXGHomeNativeEdge(raw.left,old.left,added.left),
+        WXGHomeNativeEdge(raw.bottom,old.bottom,added.bottom),WXGHomeNativeEdge(raw.right,old.right,added.right));
+    UIEdgeInsets missing=restoring?UIEdgeInsetsZero:WXGInsetDifference(rows.nativeAutomatic,WXGInsetDifference(table.adjustedContentInset,raw));
+    UIEdgeInsets target=UIEdgeInsetsMake(raw.top,native.left+missing.left,native.bottom+missing.bottom,native.right+missing.right);
+    if(!UIEdgeInsetsEqualToEdgeInsets(target,raw))table.contentInset=target;
+    // Track only the amounts the scroll view actually accepted.
+    UIEdgeInsets actual=table.contentInset;
+    rows.addedInsets=UIEdgeInsetsMake(0,
+        WXGHomeConfirmedExtra(actual.left,target.left,native.left,old.left,added.left),
+        WXGHomeConfirmedExtra(actual.bottom,target.bottom,native.bottom,old.bottom,added.bottom),
+        WXGHomeConfirmedExtra(actual.right,target.right,native.right,old.right,added.right));
+    rows.publishedInsets=actual;
+}
+static void WXGHomeReleaseAdjustment(WXGHomeGroupHeader *rows) {
+    if(!rows.ownsAdjustment)return;
+    UITableView *table=rows.owner;
+    rows.ownsAdjustment=NO;rows.verifiedAdjustment=NO;
+    WXGHomeApplyOtherEdges(rows,YES);
+    if(table.contentInsetAdjustmentBehavior==UIScrollViewContentInsetAdjustmentNever)
+        table.contentInsetAdjustmentBehavior=rows.nativeBehavior;
+    rows.addedInsets=UIEdgeInsetsZero;
 }
 - (void)homeTableInsetChanged:(UITableView *)table {
     WXGHomeGroupHeader *rows=_groupHeader;
-    if(![self canReconcileInsets:table rows:rows])return;
+    if(!rows || table!=WXGGroupedTable || rows.owner!=table || rows.changingAdjustment || !table.window)return;
     UIWindow *window=table.window;
-    CGFloat adjusted=table.adjustedContentInset.top,raw=table.contentInset.top,scale=MAX(1.,window.screen.scale);
-    if(rows.restInset>0 && fabs(adjusted-rows.checkedAdjusted)>20)
-        WXGNoteInsetSource(NO,raw,adjusted-raw,rows.restInset);
-    rows.checkedRaw=raw;rows.checkedAdjusted=adjusted;
-    CGFloat tolerance=1./scale+.01,system=adjusted-raw;
-    BOOL owns=rows.rawCredit>0 && fabs(raw-rows.correctedRaw)<=tolerance;
-    BOOL sameViewport=CGSizeEqualToSize(rows.restViewport,table.bounds.size) && rows.restSafe==window.safeAreaInsets.top;
-    if(!sameViewport) {
-        rows.restInset=0;rows.restViewport=table.bounds.size;rows.restSafe=window.safeAreaInsets.top;
-    }
-    if(rows.restInset==0) {
-        rows.nextCalibration=CACurrentMediaTime()+.25;
-        UINavigationBar *nav=_page.navigationController.navigationBar;
-        if(nav.window==window && !nav.hidden && !_page.navigationController.navigationBarHidden) {
-            CGFloat bottom=CGRectGetMaxY([nav convertRect:nav.bounds toView:window]);
-            CGFloat viewport=[table convertPoint:table.bounds.origin toView:window].y;
-            if(!owns)rows.restInset=WXGHomeRestInset(bottom-viewport,adjusted,scale);
-        }
-    }
-    WXGHomeInsetPlan plan=WXGHomePlanInset(rows.restInset,system,raw,scale,rows.correctedRaw,rows.rawCredit);
-    CGFloat credit=plan.credit,wanted=plan.raw;
-    rows.rawCredit=credit;rows.correctedRaw=wanted;
-    if(fabs(wanted-raw)<=tolerance)return;
-    if(credit>0){++rows.insetRepairs;rows.checkRestAfterRepair=YES;rows.parkedSince=0;}
-    CGPoint before=table.contentOffset;
-    BOOL atRest=!table.tracking && !table.dragging && !table.decelerating && fabs(before.y+adjusted)<=tolerance;
-    rows.writingInset=YES;
+    CGFloat scale=window.screen.scale;
+    UIEdgeInsets raw=table.contentInset,adjusted=table.adjustedContentInset;
+    BOOL newGeometry=!CGSizeEqualToSize(rows.restViewport,table.bounds.size) ||
+        !UIEdgeInsetsEqualToEdgeInsets(rows.restSafe,window.safeAreaInsets);
+    BOOL grouped=table.tableHeaderView==rows && !_nativeSearching && !_page.navigationItem.searchController.isActive && !table.refreshControl.refreshing;
+    if(rows.restInset>0 && fabs(adjusted.top-rows.checkedAdjusted.top)>20)
+        WXGNoteInsetSource(table,NO,raw.top,rows.restInset);
+    rows.changingAdjustment=YES;
+    rows.awaitingHomeAppearance=NO;
     @try {
-        [UIView performWithoutAnimation:^{
-            UIEdgeInsets inset=table.contentInset;inset.top=wanted;table.contentInset=inset;
-            CGFloat rest=-table.adjustedContentInset.top;
-            if(atRest && fabs(table.contentOffset.y-rest)>tolerance)
-                [table setContentOffset:CGPointMake(before.x,rest) animated:NO];
-        }];
-    } @finally {rows.writingInset=NO;}
-    [self traceHomeEvent:credit>0?@"duplicateNavigationInset":@"nativeInsetRestored" before:before.y after:table.contentOffset.y];
-}
-- (void)settleRepairedInset:(UITableView *)table time:(CFTimeInterval)time {
-    WXGHomeGroupHeader *rows=_groupHeader;
-    if(![self canReconcileInsets:table rows:rows] || table.tracking || table.dragging || table.decelerating) {
-        rows.parkedSince=0;return;
+        if(rows.ownsAdjustment && !WXGHomeKeepsNativeInset(rows.restInset,raw.top,scale,grouped,!newGeometry,
+               table.contentInsetAdjustmentBehavior==UIScrollViewContentInsetAdjustmentNever)) {
+            // A real full-screen pull panel supplies its own (much larger) raw
+            // inset. Hand all edges back to UIKit before it settles that scroll.
+            BOOL superseded=table.contentInsetAdjustmentBehavior!=UIScrollViewContentInsetAdjustmentNever;
+            WXGHomeReleaseAdjustment(rows);
+            rows.adjustmentDeclined=superseded;
+            raw=table.contentInset;adjusted=table.adjustedContentInset;
+            [self traceHomeEvent:@"restoreInsetPolicy" before:table.contentOffset.y after:table.contentOffset.y];
+        }
+        if(newGeometry) {
+            rows.restInset=0;rows.adjustmentDeclined=NO;
+            rows.restViewport=table.bounds.size;rows.restSafe=window.safeAreaInsets;
+        }
+        if(!grouped)return;
+        BOOL newNavigationHeight=!rows.ownsAdjustment && adjusted.top!=rows.checkedAdjusted.top &&
+            (WXGHomeSameInset(raw.top,0,scale) || WXGHomeSameInset(raw.top,adjusted.top-raw.top,scale));
+        if(rows.restInset==0 || newNavigationHeight) {
+            rows.nextCalibration=CACurrentMediaTime()+.25;
+            UINavigationBar *nav=_page.navigationController.navigationBar;
+            if(nav.window==window && !nav.hidden && !_page.navigationController.navigationBarHidden) {
+                CGFloat bottom=CGRectGetMaxY([nav convertRect:nav.bounds toView:window]);
+                CGFloat viewport=[table convertPoint:table.bounds.origin toView:window].y;
+                CGFloat rest=WXGHomeRestInset(bottom-viewport,raw.top,adjusted.top,scale);
+                if(rest>0)rows.restInset=rest;
+            }
+        }
+        if(!rows.ownsAdjustment) {
+            if(!WXGHomeHasTwoNavigationInsets(rows.restInset,raw.top,adjusted.top,scale)) {
+                rows.adjustmentDeclined=NO;return;
+            }
+            if(rows.adjustmentDeclined || table.contentInsetAdjustmentBehavior==UIScrollViewContentInsetAdjustmentNever)return;
+            if(!(WXGHomeSearchExposed(_page) || [self showingBookmarkedHome])) {
+                rows.awaitingHomeAppearance=YES;return;
+            }
+            rows.nativeBehavior=table.contentInsetAdjustmentBehavior;
+            rows.nativeAutomatic=WXGInsetDifference(adjusted,raw);
+            rows.publishedInsets=raw;rows.addedInsets=UIEdgeInsetsZero;
+            rows.ownsAdjustment=YES;++rows.adjustmentAttempts;
+            // WeChat retained the raw navigation inset after the pop. Yield the
+            // automatic copy; writing raw.top or snapping contentOffset cannot
+            // change the scroll range if WeChat immediately supplies it again.
+            table.contentInsetAdjustmentBehavior=UIScrollViewContentInsetAdjustmentNever;
+            if(table.contentInsetAdjustmentBehavior!=UIScrollViewContentInsetAdjustmentNever ||
+               !WXGHomeSameInset(table.contentInset.top,rows.restInset,scale)) {
+                WXGHomeReleaseAdjustment(rows);rows.adjustmentDeclined=YES;
+                [self traceHomeEvent:@"insetPolicyDeclined" before:adjusted.top after:table.adjustedContentInset.top];return;
+            }
+            [self traceHomeEvent:@"yieldAutomaticTop" before:adjusted.top after:table.adjustedContentInset.top];
+        }
+        if(rows.nativeAutomatic.left!=0 || rows.nativeAutomatic.right!=0 || rows.nativeAutomatic.bottom!=0 ||
+           !UIEdgeInsetsEqualToEdgeInsets(rows.addedInsets,UIEdgeInsetsZero))
+            WXGHomeApplyOtherEdges(rows,NO);
+        BOOL single=WXGHomeSameInset(table.adjustedContentInset.top,rows.restInset,scale);
+        if(single && !rows.verifiedAdjustment) {
+            ++rows.insetRepairs;
+            [self traceHomeEvent:@"singleInsetReadBack" before:raw.top after:table.adjustedContentInset.top];
+        }
+        rows.verifiedAdjustment=single;
+    } @finally {
+        rows.checkedRaw=table.contentInset;rows.checkedAdjusted=table.adjustedContentInset;
+        rows.checkedBehavior=table.contentInsetAdjustmentBehavior;rows.changingAdjustment=NO;
     }
-    CGFloat rest=rows.restInset,top=table.adjustedContentInset.top,y=table.contentOffset.y;
-    CGFloat pixel=1./MAX(1.,table.window.screen.scale)+.01;
-    if(rest<=0 || fabs(top-rest)>pixel || y>=-top-pixel) {rows.checkRestAfterRepair=NO;return;}
-    // A deceleration begun with the old inset can finish at its stale target.
-    // Intervene only at that exact idle target, after it stays there across frames.
-    if(!WXGHomeAtDuplicateRest(rest,top,y,table.window.screen.scale)){rows.parkedSince=0;return;}
-    if(rows.parkedSince==0){rows.parkedSince=time;return;}
-    if(time-rows.parkedSince<.05)return;
-    rows.checkRestAfterRepair=NO;
-    [UIView performWithoutAnimation:^{[table setContentOffset:CGPointMake(table.contentOffset.x,-top) animated:NO];}];
-    [self traceHomeEvent:@"settledRepairedInset" before:y after:table.contentOffset.y];
 }
 - (void)revealInitialRows:(UITableView *)table {
     if(_bookmarkedHome || (!_startupPending && !_startupUntil) || table!=_startupTable || table.tableHeaderView!=_groupHeader || _nativeSearching)return;
@@ -2447,7 +2542,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
         _startupPending=NO;
         _startupUntil=CACurrentMediaTime()+1.2;
     }
-    CGFloat rest=-table.adjustedContentInset.top;
+    CGFloat rest=-WXGHomeListTop(table);
     CGFloat offset=table.contentOffset.y;
     if(touched || _page.navigationItem.searchController.isActive || CACurrentMediaTime()>_startupUntil ||
        (offset-rest>_groupHeader.bounds.size.height+1 && fabs(offset)>.5) || offset<rest-.5){_startupUntil=0;return;}
@@ -2461,7 +2556,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     static Class chat;static dispatch_once_t once;dispatch_once(&once,^{chat=NSClassFromString(@"BaseMsgContentViewController");});
     if(!home || home!=_page || !chat || ![next isKindOfClass:chat] || (!_bar && !_titleBar) || !_table.window || _nativeSearching)return;
     [_pager cancel];_bookmarkedHome=home;_returnReady=NO;_returnAppearing=NO;_startupPending=NO;_startupUntil=0;
-    _savedDepth=MAX(0.,_table.contentOffset.y+_table.adjustedContentInset.top);
+    _savedDepth=MAX(0.,_table.contentOffset.y+WXGHomeListTop(_table));
     _savedHeaderHeight=_table.tableHeaderView.frame.size.height;
     [self traceHomeEvent:@"leaveForChat" before:_table.contentOffset.y after:_table.contentOffset.y];
 }
@@ -2498,8 +2593,10 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
        !(_returnAppearing?[self showingBookmarkedHome]:WXGHomeSearchExposed(_page)))return;
     if(table.contentSize.height<=0 && CACurrentMediaTime()<_returnWaitUntil)return;
     if(table.tracking || table.dragging || table.decelerating || _nativeSearching){_returnReady=NO;_returnAppearing=NO;_bookmarkedHome=nil;return;}
+    if(_groupHeader && WXGHomeHasTwoNavigationInsets(_groupHeader.restInset,table.contentInset.top,table.adjustedContentInset.top,table.window.screen.scale))
+        [self homeTableInsetChanged:table];
     CGFloat before=table.contentOffset.y;
-    CGFloat top=table.adjustedContentInset.top,height=table.tableHeaderView.frame.size.height;
+    CGFloat top=WXGHomeListTop(table),height=table.tableHeaderView.frame.size.height;
     if(_returnAppearing && _earlyPositionApplied && fabs(before+top)>.5)return;
     CGFloat depth=WXGHomeDepthAfterResize(_savedDepth,_savedHeaderHeight,height);
     CGFloat target=WXGHomeOffsetAtDepth(_savedDepth,_savedHeaderHeight,height,top,table.adjustedContentInset.bottom,
@@ -2520,7 +2617,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     if(header==_groupHeader)_groupHeader.reservedHeight=needed;
     if(fabs(header.frame.size.height-needed)<=.5)return;
     CGFloat before=table.contentOffset.y,oldHeight=header.frame.size.height;
-    CGFloat depth=before+table.adjustedContentInset.top;
+    CGFloat depth=before+WXGHomeListTop(table);
     _adjustingHeader=YES;++_headerWrites;
     @try {
         [UIView performWithoutAnimation:^{
@@ -2529,7 +2626,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
                 if(header==self->_groupHeader)WXGPublishHomeRows(table,self->_groupHeader);
                 else table.tableHeaderView=header;
                 if(!self->_bookmarkedHome && !table.tracking && !table.dragging && !table.decelerating && depth>=0) {
-                    CGFloat want=WXGHomeOffsetAtDepth(depth,oldHeight,needed,table.adjustedContentInset.top,
+                    CGFloat want=WXGHomeOffsetAtDepth(depth,oldHeight,needed,WXGHomeListTop(table),
                         table.adjustedContentInset.bottom,table.contentSize.height,table.bounds.size.height);
                     if(fabs(want-table.contentOffset.y)>.5)[table setContentOffset:CGPointMake(table.contentOffset.x,want) animated:NO];
                 }
@@ -2543,6 +2640,8 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     if(!wrapper)return;
     UIView *native=wrapper.nativeHeader;wrapper.reservedHeight=0;
     if(WXGGroupedTable==wrapper.owner)WXGGroupedTable=nil;
+    wrapper.changingAdjustment=YES;
+    @try {WXGHomeReleaseAdjustment(wrapper);} @finally {wrapper.changingAdjustment=NO;}
     for(WXGFloatSlot *slot in _floats.objectEnumerator)if(slot.ownedHeader==wrapper)[self unpin:slot];
     [UIView performWithoutAnimation:^{[wrapper replaceSearch:NO];[wrapper restoreNativeInk];}];
     BOOL ownsNative=native.superview==wrapper.nativeCanvas;
@@ -2555,13 +2654,6 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
         if(wrapper.owner.tableHeaderView==wrapper)
             wrapper.owner.tableHeaderView=wrapper.pendingNativeHeader?:(wrapper.holdingForSpacer?wrapper.nativeSpacer:(ownsNative?native:nil));
     } @finally {_adjustingHeader=NO;}
-    if(wrapper.rawCredit>0 && fabs(wrapper.owner.contentInset.top-wrapper.correctedRaw)<.5) {
-        UITableView *owner=wrapper.owner;
-        UIEdgeInsets nativeInset=owner.contentInset;
-        WXGHomeInsetPlan plan=WXGHomePlanInset(wrapper.restInset,owner.adjustedContentInset.top-nativeInset.top,
-            nativeInset.top,owner.window.screen.scale,wrapper.correctedRaw,wrapper.rawCredit);
-        if(fabs(plan.raw-nativeInset.top)>.01){nativeInset.top=plan.raw;owner.contentInset=nativeInset;}
-    }
     _groupHeader=nil;_nativeHeaderHeight=0;
 }
 // Normalize the native assignment before UITableView ever lays out a shorter header.
@@ -2629,6 +2721,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
             }
         }];
     } @finally {_adjustingHeader=NO;}
+    [self homeTableInsetChanged:table];
     [self traceHomeEvent:(search?@"nativeSearchAssigned":@"nativeSearchSpacer") before:table.contentOffset.y after:table.contentOffset.y];
     return YES;
 }
@@ -2636,7 +2729,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     if(_groupHeader && table.tableHeaderView==_groupHeader)return _groupHeader;
     CGFloat previousHeight=_groupHeader.owner==table?_groupHeader.bounds.size.height:0;
     CGFloat before=table.contentOffset.y;
-    CGFloat depth=before+table.adjustedContentInset.top;
+    CGFloat depth=before+WXGHomeListTop(table);
     [self restoreResizedHeader];
     UIView *native=table.tableHeaderView;
     if(!native || native.bounds.size.height<20)return nil;
@@ -2664,7 +2757,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
             wrapper.nativeCanvas=canvas;[wrapper addSubview:canvas];[canvas addSubview:native];
             if(previousHeight>0 && depth>0 && !self->_bookmarkedHome && !self->_startupPending && !self->_startupUntil &&
                !table.tracking && !table.dragging && !table.decelerating) {
-                CGFloat target=WXGHomeOffsetAtDepth(depth,previousHeight,height,table.adjustedContentInset.top,
+                CGFloat target=WXGHomeOffsetAtDepth(depth,previousHeight,height,WXGHomeListTop(table),
                     table.adjustedContentInset.bottom,table.contentSize.height,table.bounds.size.height);
                 if(fabs(target-table.contentOffset.y)>.5)[table setContentOffset:CGPointMake(table.contentOffset.x,target) animated:NO];
             }
@@ -3134,7 +3227,7 @@ static NSString *WXGLoginPlatform(NSString *text) {
     CGRect rect=_titleRestRect;
     if(listDriven) {
         CGFloat sc=w.screen.scale;
-        CGFloat pull=WXGHomePullTranslation(_table.contentOffset.y,_table.adjustedContentInset.top,sc);
+        CGFloat pull=WXGHomePullTranslation(_table.contentOffset.y,WXGHomeListTop(_table),sc);
         if(!_titleHasRestDelta && pull==0 && navTitle.window==w) {
             CGFloat mid=CGRectGetMidY([navTitle convertRect:navTitle.bounds toView:overlay]);
             CGFloat delta=mid-CGRectGetMidY(_titleRestRect);
@@ -3397,7 +3490,7 @@ static CGRect WXGHomeFloatingFrame(UITableView *table,UIView *header,CGRect row,
     CGRect content=CGRectOffset(row,header.frame.origin.x,header.frame.origin.y);
     CGRect view=[table convertRect:content toView:host];
     CGFloat viewport=CGRectGetMinY([table convertRect:table.bounds toView:host]);
-    view.origin.y=WXGHomeFloatingRowY(viewport,table.adjustedContentInset.top,header.frame.origin.y,row.origin.y,
+    view.origin.y=WXGHomeFloatingRowY(viewport,WXGHomeListTop(table),header.frame.origin.y,row.origin.y,
         table.contentOffset.y,host.window.screen.scale);
     return view;
 }
@@ -3641,10 +3734,10 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
             CGFloat y=[window convertPoint:CGPointMake(0,row) toView:host].y;chrome=isfinite(chrome)?MAX(chrome,y):y;expectsNav=YES;
         }
         CGFloat safe=[window convertPoint:CGPointMake(0,window.safeAreaInsets.top) toView:host].y;
-        CGFloat pin=WXGFloatSearchPlacement(-CGFLOAT_MAX,custom.origin.y-header.bounds.origin.y,viewport,table.adjustedContentInset.top,
+        CGFloat pin=WXGFloatSearchPlacement(-CGFLOAT_MAX,custom.origin.y-header.bounds.origin.y,viewport,WXGHomeListTop(table),
             expectsNav,chrome,safe,&atNative);
         if(!isfinite(pin)){[self unpin:slot];return;}
-        CGFloat inset=table.adjustedContentInset.top;
+        CGFloat inset=WXGHomeListTop(table);
         CGFloat rest=WXGHomeFloatingRowY(viewport,inset,header.frame.origin.y,custom.origin.y-header.bounds.origin.y,-inset,scale);
         frame.origin.y=MAX(rest,WXGHomePixel(pin,scale))+WXGHomePullTranslation(table.contentOffset.y,inset,scale);
         atNative=fabs(frame.origin.y-natural.origin.y)<=.5;
@@ -3686,7 +3779,7 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
         [self coverHomeSearchFor:slot.page];
         if([WXGIntegrationHost.shared openWeChatSearchOn:slot.page]){++_directSearches;break;}
         [self unpin:slot];
-        if(table && header)[table setContentOffset:CGPointMake(table.contentOffset.x,CGRectGetMinY(header.frame)-table.adjustedContentInset.top) animated:NO];
+        if(table && header)[table setContentOffset:CGPointMake(table.contentOffset.x,CGRectGetMinY(header.frame)-WXGHomeListTop(table)) animated:NO];
         dispatch_async(dispatch_get_main_queue(),^{
             UITextField *field=[bar isKindOfClass:UISearchBar.class]?((UISearchBar *)bar).searchTextField:nil;
             if(!field)for(UIView *v in WXGViews(bar,160))if([v isKindOfClass:UITextField.class] && !v.hidden){field=(UITextField *)v;break;}
@@ -3713,8 +3806,6 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     if(_categories && leaf==_page && !transitioning && !_nativeSearching && !_pager.busy && !_bookmarkedHome &&
        !table.tracking && !table.dragging && !table.decelerating && table.window)
         [self updateCategoriesAt:time];
-    if(_groupHeader.checkRestAfterRepair && leaf==_page && !transitioning)
-        [self settleRepairedInset:table time:time];
     BOOL returning=[self showingBookmarkedHome];
     BOOL homeVisible=returning || (!transitioning && (floatOn || _segmentCovered) && WXGHomeSearchExposed(leaf));
     BOOL onPage=returning || leaf==_page;
@@ -3744,7 +3835,10 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     static Class homeClass;static dispatch_once_t homeOnce;dispatch_once(&homeOnce,^{homeClass=NSClassFromString(@"NewMainFrameViewController");});
     BOOL arrived=leaf && _lastTickPage!=leaf;
     if(arrived && homeClass && [leaf isKindOfClass:homeClass]){_returnedAt=time;_returnTrace=[NSMutableArray array];}
-    if(arrived)_fieldRechecks=0;
+    if(arrived) {
+        _fieldRechecks=0;
+        if(leaf==_page && table.tableHeaderView==_groupHeader && _groupHeader)[self homeTableInsetChanged:table];
+    }
     _lastTickPage=leaf;
     // FIX114 F: measured before WeChat laid out its box (the field's 32.7 pt
     // instead): measured again twice a second, 6 times per arrival / bar, not
@@ -3802,6 +3896,7 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     [_motionEvents addObject:@{@"s":@(WXGSecondsSinceLoad()),@"event":event,@"before":@(before),@"after":@(after),
         @"inset":@(_table.adjustedContentInset.top),@"rawTop":@(_table.contentInset.top),
         @"automaticTop":@(_table.adjustedContentInset.top-_table.contentInset.top),@"header":@(_groupHeader.bounds.size.height),
+        @"insetPolicy":@(_table.contentInsetAdjustmentBehavior),@"nativeTopOwnsRest":@(_groupHeader.ownsAdjustment),
         @"depthSaved":@(_savedDepth),@"group":@(_selected)}];
 }
 // Full captures include the presentation tree so navigation alpha and geometry
@@ -3817,13 +3912,13 @@ static float WXGHomeTraceY(UIView *view,CGFloat y,UIWindow *window,BOOL full) {
 // Scalars only on the display link. Boxing takes place once at export.
 - (void)traceHomeFrame:(CFTimeInterval)time transitioning:(BOOL)transitioning panel:(CGFloat)panel {
     UITableView *table=_table;UIWindow *window=table.window;
-    if(!window || (!_bar && !_titleBar)){_motionLastTime=0;return;}
+    if(!window || (!_bar && !_titleBar)){_motionLastTime=_motionLastCallback=0;return;}
     NSUInteger revision=WXGConfigRevision();
     if(!_motionBuffer || revision!=_motionRevision) {
         NSUInteger cap=[WXGConfig.shared extraNumber:@"homeMotionTrace"]>.5?14400:960;
         if(_motionBuffer.length!=cap*sizeof(WXGHomeFrame)) {
             _motionBuffer=[NSMutableData dataWithLength:cap*sizeof(WXGHomeFrame)];
-            _motionWrite=_motionCount=0;_motionLastTime=0;
+            _motionWrite=_motionCount=0;_motionLastTime=_motionLastCallback=0;
         }
         _motionRevision=revision;
     }
@@ -3831,6 +3926,7 @@ static float WXGHomeTraceY(UIView *view,CGFloat y,UIWindow *window,BOOL full) {
     BOOL full=cap==14400;
     if(full!=WXGHomeWritesEnabled || (WXGHomeWritesEnabled && WXGHomeWatchedTable!=table))
         WXGObserveHomeOffsets(table,full);
+    if(full)WXGHomeWatchedNavigation=_page.navigationController.navigationBar;
     BOOL presentation=full && time>=_nextPresentationTrace &&
         (transitioning || table.tracking || table.dragging || table.decelerating || panel>.001);
     if(presentation)_nextPresentationTrace=time+1./30.;
@@ -3839,15 +3935,17 @@ static float WXGHomeTraceY(UIView *view,CGFloat y,UIWindow *window,BOOL full) {
         ((_groupHeader && table.tableHeaderView==_groupHeader)<<8);
     float dt=_motionLastTime?(float)((time-_motionLastTime)*1000):0;_motionLastTime=time;
     WXGFloatSlot *slot=[_floats objectForKey:_page];
-    WXGHomeFrame frame={.t=(float)WXGSecondsSinceLoad(),.dt=dt,.offset=(float)table.contentOffset.y,
+    CFTimeInterval now=WXGSecondsSinceLoad();
+    WXGHomeFrame frame={.t=(float)now,.dt=dt,.offset=(float)table.contentOffset.y,
+        .work=WXGHomeWork,.callbackInterval=_motionLastCallback?(now-_motionLastCallback)*1000.:0,
         .inset=(float)table.adjustedContentInset.top,.content=(float)table.contentSize.height,
         .header=(float)table.tableHeaderView.frame.size.height,.leading=(float)_groupHeader.leading,
         .chrome=(float)[WXGIntegrationHost.shared homeRowBottomForPage:_page window:window],
         .search=-1,.group=-1,.listLens=_bar?(float)_bar.currentLensX:-1,.titleLens=_titleBar?(float)_titleBar.currentLensX:-1,
         .rawInset=table.contentInset.top,.systemInset=table.adjustedContentInset.top-table.contentInset.top,
-        .restInset=_groupHeader.restInset,.insetCredit=_groupHeader.rawCredit,.layoutMS=WXGHomeTableLayoutMS,.headerWorkMS=WXGHomeHeaderWorkMS,
+        .restInset=_groupHeader.restInset,.insetCredit=_groupHeader.verifiedAdjustment?_groupHeader.nativeAutomatic.top:0,.layoutMS=WXGHomeTableLayoutMS,.headerWorkMS=WXGHomeHeaderWorkMS,
         .titleBottom=-1,.titleOpacity=-1,.searchOpacity=-1,.groupOpacity=-1,.panel=(float)panel,.flags=flags};
-    WXGHomeTableLayoutMS=WXGHomeHeaderWorkMS=0;
+    _motionLastCallback=now;WXGHomeTableLayoutMS=WXGHomeHeaderWorkMS=0;WXGHomeWork=(WXGHomeFrameWork){0};
     if(!isfinite(frame.chrome))frame.chrome=-1;
     if(_searchBar.window==window && !_searchBar.hidden && _groupHeader.window==window && !_groupHeader.nativeCanvas.hidden && !_nativeSearching) {
         frame.search=WXGHomeTraceY(_groupHeader,_searchRow.origin.y,window,presentation);
@@ -3883,14 +3981,18 @@ static float WXGHomeTraceY(UIView *view,CGFloat y,UIWindow *window,BOOL full) {
         WXGHomeFrame f=ring[(_motionWrite-_motionCount+i)%cap];
         [frames addObject:@[@(f.t),@(f.dt),@(f.offset),@(f.inset),@(f.content),@(f.header),@(f.leading),@(f.chrome),
                             @(f.search),@(f.group),@(f.listLens),@(f.titleLens),@(f.panel),@(f.flags),
-                            @(f.titleBottom),@(f.titleOpacity),@(f.searchOpacity),@(f.groupOpacity),@(f.rawInset),@(f.systemInset),@(f.restInset),@(f.insetCredit),@(f.layoutMS),@(f.headerWorkMS)]];
+                            @(f.titleBottom),@(f.titleOpacity),@(f.searchOpacity),@(f.groupOpacity),@(f.rawInset),@(f.systemInset),@(f.restInset),@(f.insetCredit),@(f.layoutMS),@(f.headerWorkMS),
+                            @(f.callbackInterval),@(f.work.layouts),@(f.work.cells),@(f.work.cellMS),@(f.work.reloads),@(f.work.reloadMS),@(f.work.navigations),@(f.work.navigationMS)]];
     }
     return @{@"columns":@[@"seconds",@"intervalMS",@"offsetY",@"adjustedTop",@"contentHeight",@"headerHeight",@"leading",
                          @"titleRowBottom",@"searchWindowY",@"groupWindowY",@"groupLensX",@"titleLensX",@"pullPanel",@"flags",
-                         @"visibleTitleBottomY",@"titleAlpha",@"searchAlpha",@"groupAlpha",@"rawContentTop",@"automaticTop",@"restTop",@"duplicateTopRemoved",@"tableLayoutMS",@"nativeHeaderAssignmentMS"],
+                         @"visibleTitleBottomY",@"titleAlpha",@"searchAlpha",@"groupAlpha",@"rawContentTop",@"automaticTop",@"restTop",@"duplicateTopRemoved",@"tableLayoutMS",@"nativeHeaderAssignmentMS",
+                         @"callbackIntervalMS",@"tableLayouts",@"cellsConfigured",@"cellConfigurationMS",@"tableReloads",@"tableReloadMS",@"navigationLayouts",@"navigationLayoutMS"],
              @"flagBits":@[@"tracking",@"dragging",@"decelerating",@"transition",@"floating",@"replaceSearch",@"pendingReturn",@"nativeSearch",@"groupHeaderInstalled",@"presentationGeometry"],
              @"full":@(cap==14400),@"capacity":@(cap),@"written":@(_motionWrite),@"frames":frames,@"events":_motionEvents.copy?:@[],
-             @"offsetWrites":WXGHomeOffsetEvidence(),@"insetWrites":WXGHomeInsetEvidence(),@"headerReuses":@(WXGHomeHeaderReuses),@"insetRepairs":@(_groupHeader.insetRepairs),@"deferredSearchAssignments":@(_groupHeader.deferredSearchAssignments),@"returnCorrections":@(_returnRestores)};
+             @"offsetWrites":WXGHomeOffsetEvidence(),@"insetWrites":WXGHomeInsetEvidence(),@"headerReuses":@(WXGHomeHeaderReuses),@"insetPolicyAttempts":@(_groupHeader.adjustmentAttempts),@"insetRepairs":@(_groupHeader.insetRepairs),
+             @"insetPolicy":@(_table.contentInsetAdjustmentBehavior),@"rawInsets":NSStringFromUIEdgeInsets(_table.contentInset),
+             @"adjustedInsets":NSStringFromUIEdgeInsets(_table.adjustedContentInset),@"deferredSearchAssignments":@(_groupHeader.deferredSearchAssignments),@"returnCorrections":@(_returnRestores)};
 }
 - (void)suspendFloating {
     [_pager cancel];

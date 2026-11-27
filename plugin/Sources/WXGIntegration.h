@@ -363,6 +363,7 @@ void WXGInstallNativeIconGuard(void);
 @end
 // The floating clone owns search paint in this table header until unpinned.
 FOUNDATION_EXPORT UIView *WXGHomeNativeSearchHeader(UIView *header);
+FOUNDATION_EXPORT CGFloat WXGHomeListTop(UIScrollView *list);
 FOUNDATION_EXPORT void WXGReleaseLocalSearchHeaderHeight(UITableView *table);
 FOUNDATION_EXPORT void WXGSetSearchHeaderFloating(UIView *header,BOOL floating);
 // FIX114 V: a WeChat title-bar button's glass as the local glass sizes it (in

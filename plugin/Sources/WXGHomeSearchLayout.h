@@ -84,36 +84,38 @@ static inline double WXGHomePixel(double value,double scale) {
     return scale>0 ? round(value*scale)/scale : value;
 }
 
-// Only the repeated full navigation inset seen in the ui21 capture qualifies.
-static inline double WXGHomeDuplicateInset(double rest,double total,double scale) {
-    if(!isfinite(rest) || !isfinite(total) || rest<20.)return 0.;
-    double tolerance=1./fmax(1.,scale)+.01;
-    return fabs(total-2.*rest)<=tolerance ? total-rest : 0.;
+static inline bool WXGHomeSameInset(double a,double b,double scale) {
+    return fabs(a-b)<=1./fmax(1.,scale)+.01;
 }
 
-typedef struct {double raw,credit;} WXGHomeInsetPlan;
-
-// Remember which raw value we changed. A UIKit update of the other edges can
-// echo that value; if the automatic contribution goes away, return the credit.
-static inline WXGHomeInsetPlan WXGHomePlanInset(double rest,double system,double raw,double scale,
-                                                double previousRaw,double previousCredit) {
-    double tolerance=1./fmax(1.,scale)+.01;
-    bool owns=previousCredit>0. && fabs(previousRaw-raw)<=tolerance;
-    double native=raw+(owns?previousCredit:0.);
-    double credit=WXGHomeDuplicateInset(rest,native+system,scale);
-    return (WXGHomeInsetPlan){native-credit,credit};
+// A full-screen taskbar or refresh inset can also exceed the navigation height.
+// Only the independently observed native AND automatic copies identify the duplicate.
+static inline bool WXGHomeHasTwoNavigationInsets(double rest,double raw,double adjusted,double scale) {
+    return rest>=20. && WXGHomeSameInset(raw,rest,scale) && WXGHomeSameInset(adjusted-raw,rest,scale);
+}
+static inline bool WXGHomeKeepsNativeInset(double rest,double raw,double scale,bool grouped,bool sameViewport,bool automaticDisabled) {
+    return grouped && sameViewport && automaticDisabled && rest>=20. && WXGHomeSameInset(raw,rest,scale);
 }
 
-// An already doubled inset can also be the first observation after a rotation or pop.
-static inline double WXGHomeRestInset(double chrome,double observed,double scale) {
-    if(!isfinite(chrome) || !isfinite(observed) || chrome<20. || observed<20.)return 0.;
-    if(fabs(chrome-observed)<=2.)return observed;
-    return WXGHomeDuplicateInset(chrome,observed,scale)>0.?observed*.5:0.;
+static inline double WXGHomeRestInset(double chrome,double raw,double adjusted,double scale) {
+    if(!isfinite(chrome) || chrome<20.)return 0.;
+    if(fabs(chrome-adjusted)<=2.)return adjusted;
+    if(fabs(chrome-raw)<=2. && WXGHomeHasTwoNavigationInsets(raw,raw,adjusted,scale))return raw;
+    return 0.;
 }
 
-static inline bool WXGHomeAtDuplicateRest(double rest,double current,double offset,double scale) {
-    return isfinite(current) && fabs(current-rest)<=1./fmax(1.,scale)+.01 &&
-        WXGHomeDuplicateInset(rest,-offset,scale)>0.;
+static inline double WXGHomeEffectiveTop(double rest,double raw,double adjusted,double scale) {
+    return WXGHomeHasTwoNavigationInsets(rest,raw,adjusted,scale)?raw:adjusted;
+}
+
+// A new value from the application supersedes our compensation on that edge.
+// When UIKit echoes the last write, recover the application's original value.
+static inline double WXGHomeNativeEdge(double observed,double published,double extra) {
+    return fabs(observed-published)<.001?observed-extra:observed;
+}
+static inline double WXGHomeConfirmedExtra(double actual,double target,double native,double oldPublished,double oldExtra) {
+    if(fabs(actual-target)<.001)return actual-native;
+    return actual-WXGHomeNativeEdge(actual,oldPublished,oldExtra);
 }
 
 // The list has already rubber-banded contentOffset. Sample it once in this
