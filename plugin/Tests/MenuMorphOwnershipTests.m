@@ -10,6 +10,11 @@
 
 @class WXGDecoration;
 @interface WXGDecorations (MenuMorphFixture)
+@property(nonatomic) uint64_t commitSerial;
+@property(nonatomic,strong) WXGDecoration *activeHomeMenu;
+@property(nonatomic) CFTimeInterval menuLastTime;
+@property(nonatomic) double menuSpeed;
+- (void)menuTick:(CADisplayLink *)link;
 - (void)prepareMenuMorph:(WXGDecoration *)entry;
 - (void)renderMenuMorph:(WXGDecoration *)entry;
 - (void)resetMenuMorph:(WXGDecoration *)entry;
@@ -31,6 +36,26 @@
 @end
 
 static CGRect BoxRect(WXGMenuBox box) {return CGRectMake(box.x,box.y,box.w,box.h);}
+
+static void CheckOpeningContour(UIWindow *window) {
+    WXGMenuBox button={379.675877,57.598839,41.468988,41.468988};
+    WXGMenuBox menu={195.811532,57.598839,225.333333,164.};
+    WXGMenuMorph motion;
+    WXGMenuMorphInitialize(&motion,button,menu,28.85235,button,false);
+    WXGMenuMorphSetExpanded(&motion,true);
+    for (int i=0; i<13; ++i) WXGMenuMorphAdvance(&motion,.840334/120.);
+
+    WXGMenuMorphView *portal=[[WXGMenuMorphView alloc] initWithFrame:window.bounds];
+    [window addSubview:portal];
+    [portal useSurfaceFromButton:nil];
+    [portal setOpticalSessionBounds:CGRectUnion(BoxRect(button),BoxRect(menu))];
+    [portal applyMorphFrame:motion.frame inParent:window];
+    CGRect outline=portal.currentOutline.bounds;
+    // 3x zero-contour samples from upstream RoundedField/GlassGaussianField.
+    // The reference passes the spring radii even when they exceed half the size.
+    assert(fabs(outline.size.width-109.7)<1. && fabs(outline.size.height-99.7)<1.);
+    [portal removeFromSuperview];
+}
 
 static CALayer *LayerNamed(CALayer *root, NSString *name, NSUInteger *count) {
     CALayer *found = nil;
@@ -138,9 +163,46 @@ static void RunAppearance(UIWindow *window, UIUserInterfaceStyle style) {
     WXGMenuMorphInitialize(motion,anchor,panel,radius,anchor,false);
     WXGMenuMorphSetAbsorbDuration(motion,.48);
     entry.phase=1; // WXGMenuPhaseOpen
+    manager.commitSerial=1;
     [manager renderMenuMorph:entry];
     BOOL usingMetal = foreground.hidden;
     CheckLayers(surface,rim,paint,window);
+    if (usingMetal) {
+        NSUInteger first=[portal.presentationEvidence[@"inkSubmissions"] unsignedIntegerValue];
+        CGRect firstOutline=portal.currentOutline.bounds;
+        WXGMenuMorph second=*motion;
+        WXGMenuMorphSetExpanded(&second,true);
+        WXGMenuMorphAdvance(&second,.09);
+        [portal applyMorphFrame:second.frame inParent:page settledOpen:NO showsForeground:YES];
+        assert(first>0 && [portal.presentationEvidence[@"inkSubmissions"] unsignedIntegerValue]==first);
+        assert(CGRectEqualToRect(portal.currentOutline.bounds,firstOutline));
+        portal.presentationSerial++;
+        for (int i=0; i<12 && [portal.presentationEvidence[@"inkSubmissions"] unsignedIntegerValue]==first; ++i) {
+            [CATransaction flush];
+            [NSRunLoop.mainRunLoop runUntilDate:[NSDate dateWithTimeIntervalSinceNow:1./60.]];
+            [portal applyMorphFrame:second.frame inParent:page settledOpen:NO showsForeground:YES];
+        }
+        assert([portal.presentationEvidence[@"inkSubmissions"] unsignedIntegerValue]==first+1);
+        assert(portal.currentOutline.bounds.size.width>firstOutline.size.width+10.);
+        // Layout reasserts B before the open-ink cache exists. A fresh batch
+        // can accept a drawable, but B is already visible.
+        portal.presentationSerial++;
+        [portal applyMorphFrame:second.frame inParent:page settledOpen:NO showsForeground:YES];
+        assert([portal.presentationEvidence[@"inkSubmissions"] unsignedIntegerValue]==first+1);
+    }
+    // The layout pass immediately preceding a display callback must not
+    // consume that callback's elapsed time, even when they share a batch.
+    WXGMenuMorph initial=*motion;
+    WXGMenuMorphSetExpanded(motion,true);
+    manager.activeHomeMenu=entry;manager.menuSpeed=1.;manager.commitSerial=4;
+    [manager renderMenuMorph:entry];
+    CADisplayLink *link=[CADisplayLink displayLinkWithTarget:manager selector:@selector(menuTick:)];
+    manager.menuLastTime=CACurrentMediaTime()-1./120.;
+    [manager menuTick:link];
+    assert(motion->elapsed>=1./120.-.00001);
+    [link invalidate];
+    *motion=initial;
+    manager.activeHomeMenu=nil;manager.commitSerial=0;
     bool targets[] = {true,false,true,false};
     for (int phase=0; phase<4; ++phase) {
         entry.phase=targets[phase]?1:2; // Open or exiting.
@@ -214,6 +276,7 @@ static void RunAppearance(UIWindow *window, UIUserInterfaceStyle style) {
 
 void WXGTestMenuMorphOwnershipInWindow(UIWindow *window) {
     assert([NSThread isMainThread] && window && !window.hidden);
+    CheckOpeningContour(window);
     RunAppearance(window,UIUserInterfaceStyleLight);
     RunAppearance(window,UIUserInterfaceStyleDark);
 }
