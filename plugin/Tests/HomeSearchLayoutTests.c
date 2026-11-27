@@ -68,6 +68,31 @@ int main(void) {
     assert(!WXGHomeShouldReveal(240,-88,96,false));
     assert(WXGHomeShouldReveal(0,-88,64,false));
     assert(!WXGHomeShouldReveal(0,-88,64,true));
+    // ui21 diagnostic 10: rest at 100 1/3 pt, then a second full navigation
+    // inset appeared while decelerating. Test both native and automatic writers.
+    const double nav=100.+1./3.;
+    assert(WXGHomeRestInset(nav,nav,3)==nav);
+    assert(WXGHomeRestInset(nav,2*nav,3)==nav);
+    assert(WXGHomeRestInset(nav,nav+24,3)==0);
+    assert(WXGHomeRestInset(0,0,3)==0);
+    assert(WXGHomeDuplicateInset(nav,nav+44,3)==0);
+    assert(WXGHomeDuplicateInset(nav,2*nav+.4,3)==0);
+    assert(WXGHomeDuplicateInset(0,2*nav,3)==0);
+    WXGHomeInsetPlan inset=WXGHomePlanInset(nav,nav,nav,3,0,0);
+    assert(fabs(inset.raw)<1e-9 && fabs(inset.credit-nav)<1e-9);
+    inset=WXGHomePlanInset(nav,nav,inset.raw,3,inset.raw,inset.credit); // bottom-only update
+    assert(fabs(inset.raw)<1e-9 && fabs(inset.credit-nav)<1e-9);
+    inset=WXGHomePlanInset(nav,0,inset.raw,3,inset.raw,inset.credit); // UIKit released its share
+    assert(fabs(inset.raw-nav)<1e-9 && inset.credit==0);
+    inset=WXGHomePlanInset(nav,0,2*nav,3,inset.raw,0); // entirely native raw inset
+    assert(fabs(inset.raw-nav)<1e-9 && fabs(inset.credit-nav)<1e-9);
+    inset=WXGHomePlanInset(nav,0,nav+12,3,inset.raw,inset.credit); // a different real inset
+    assert(fabs(inset.raw-nav-12)<1e-9 && inset.credit==0);
+    assert(WXGHomePullTranslation(-nav-18,nav,3)==18);
+    assert(WXGHomeAtDuplicateRest(nav,nav,-2*nav,3));
+    assert(!WXGHomeAtDuplicateRest(nav,nav,-nav-18,3));
+    assert(!WXGHomeAtDuplicateRest(nav,2*nav,-2*nav,3));
+    assert(!WXGHomeAtDuplicateRest(nav,nav,300,3));
     puts("HomeSearchLayoutTests: native field readiness and vertical header reservation passed.");
     return 0;
 }

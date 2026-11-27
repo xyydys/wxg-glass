@@ -93,7 +93,14 @@ static NSDictionary *WXGHomeMenuGroup(NSString *title,WXGHomeMenuStyle style,NSA
     group[@"homeMenuStyle"]=@(style);
     return group;
 }
+static NSDictionary *WXGHomeFormGroup(BOOL categories,NSString *title,NSArray *rows,NSString *footer) {
+    NSMutableDictionary *spec=[WXGGroup(title,nil,rows,footer) mutableCopy];
+    spec[@"homeGroupForm"]=@(categories);
+    return spec;
+}
 static BOOL WXGShowsHomeMenuGroup(NSDictionary *group) {
+    NSNumber *form=group[@"homeGroupForm"];
+    if(form && form.boolValue!=([WXGConfig.shared extraNumber:@"homeGroupForm"]>.5))return NO;
     NSNumber *required=group[@"homeMenuStyle"];
     return !required || required.integerValue==WXGConfig.shared.homeMenuStyle;
 }
@@ -279,6 +286,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                  @"直接按现有首页标题大小拓展为分组栏（默认 全部 / 未读，支持英文 All / Unread），复用与底栏等比同步的选中胶囊与按压透镜，点击即可筛选聊天列表。"),
         WXGGroup(@"分组栏与搜索框尺寸",nil,@[
                  WXGSwitch(@"显示列表分组栏",@"chatSegments",nil),
+                 WXGChoice3(@"分组形式",@"homeGroupForm",nil,nil,@[@"自定义分组",@"分类分页"],YES),
                  WXGChoice3(@"显示方式",@"homeGroupCoexists",nil,nil,@[@"替换搜索框",@"搜索与分组共存"],YES),
                  WXGSwitch(@"仅在首页悬浮",@"searchFloat",nil),
                  WXGSlider(@"搜索框宽度（0 = 原生）",@"homeSearchWidthPct",nil,0,98,@"%.0f%%"),
@@ -290,7 +298,9 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                  @"两行共存时，搜索在上，分组在下。替换搜索框时，分组单独占一行。两种方式都保留列表原有的底部留白。"),
         WXGGroup(@"首页滚动诊断",nil,@[WXGSwitch(@"记录首页逐帧轨迹",@"homeMotionTrace",nil)],
                  @"记录列表偏移、顶部各行位置和分组透镜进度。导出诊断会包含最近 14400 帧，可用于排查回弹和返回位置。"),
-        WXGGroup(@"分组列表",nil,@[WXGAction(@"管理分组（新建 / 改名 / 选聊天 / 排序）",@"manageGroups",NO)],
+        WXGHomeFormGroup(YES,@"分类分页",@[WXGChoice3(@"滑动模式",@"homeGroupPaging",nil,nil,@[@"淡入",@"分页"],NO)],
+                 @"置顶、私聊、群聊、服务、企业按会话类型筛选。点标签或在消息列表中左右滑动切组，屏幕右边缘保留给会话操作。"),
+        WXGHomeFormGroup(NO,@"分组列表",@[WXGAction(@"管理分组（新建 / 改名 / 选聊天 / 排序）",@"manageGroups",NO)],
                  @"分组是你自己的：最多 6 个，每个可以是 全部 / 未读 / 单聊 / 群聊，或者“自定义”——自己选里面有哪些聊天。分组栏上从左到右就是这里的顺序。"),
         WXGGroup(@"选中胶囊",nil,@[WXGSlider(@"内边距",@"segmentSelectionInset",nil,2,14,@"%.1f pt"),WXGSwitch(@"用页面的背景色",@"segmentPillAuto",nil),
                                  WXGColorRow(@"浅色模式颜色",@"segmentPillHex",nil),WXGSlider(@"浅色模式不透明度",@"segmentPillOpacity",nil,0,1,nil),
@@ -833,7 +843,7 @@ static NSString *WXGLastScope=@"dock";
     NSMutableArray<NSDictionary *> *_groups;   // label, card, rows, separators, footer (as present)
     WXGRimStyle _builtStyle;                   // FIX85: the rim style the groups were built for (FIX86: the range's)
     WXGHomeMenuStyle _builtHomeMenuStyle;
-    BOOL _builtHomeCoexists;
+    BOOL _builtHomeCoexists,_builtHomeForm;
     // FIX113 O: opened from the settings search: scroll to this group (spec
     // index) and flash the row (or the group's card).
     NSInteger _focusGroup,_focusRow;
@@ -958,6 +968,7 @@ static NSString *WXGLastScope=@"dock";
     _builtStyle=[self scopeRimStyle];NSNumber *style=@(_builtStyle);
     if([_module isEqual:@"home"]) {
         _builtHomeMenuStyle=WXGConfig.shared.homeMenuStyle;
+        _builtHomeForm=[WXGConfig.shared extraNumber:@"homeGroupForm"]>.5;
         _builtHomeCoexists=[WXGConfig.shared extraNumber:@"homeGroupCoexists"]>.5;
     }
     NSArray *specGroups=_spec[@"groups"];
@@ -1026,6 +1037,7 @@ static NSString *WXGLastScope=@"dock";
 - (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];[self refreshRows];}
 - (BOOL)homeChoicesChanged {
     return [_module isEqual:@"home"] && (_builtHomeMenuStyle!=WXGConfig.shared.homeMenuStyle ||
+        _builtHomeForm!=([WXGConfig.shared extraNumber:@"homeGroupForm"]>.5) ||
         _builtHomeCoexists!=([WXGConfig.shared extraNumber:@"homeGroupCoexists"]>.5));
 }
 - (void)refreshRows {

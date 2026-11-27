@@ -212,6 +212,8 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"homeSearchHeight",'n',0,0,64,NULL,NULL},
     {"homeGroupWidthPct",'n',0,0,98,NULL,NULL},
     {"homeGroupHeight",'n',0,0,64,NULL,NULL},
+    {"homeGroupForm",'b',0,0,1,NULL,NULL},
+    {"homeGroupPaging",'b',1,0,1,NULL,NULL},
     {"homeGroupCoexists",'b',1,0,1,NULL,NULL},
     {"homeMotionTrace",'b',0,0,1,NULL,NULL},
     {"homeSearchGroupGap",'n',8,0,32,NULL,NULL},

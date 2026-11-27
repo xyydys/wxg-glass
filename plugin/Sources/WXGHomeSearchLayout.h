@@ -84,6 +84,38 @@ static inline double WXGHomePixel(double value,double scale) {
     return scale>0 ? round(value*scale)/scale : value;
 }
 
+// Only the repeated full navigation inset seen in the ui21 capture qualifies.
+static inline double WXGHomeDuplicateInset(double rest,double total,double scale) {
+    if(!isfinite(rest) || !isfinite(total) || rest<20.)return 0.;
+    double tolerance=1./fmax(1.,scale)+.01;
+    return fabs(total-2.*rest)<=tolerance ? total-rest : 0.;
+}
+
+typedef struct {double raw,credit;} WXGHomeInsetPlan;
+
+// Remember which raw value we changed. A UIKit update of the other edges can
+// echo that value; if the automatic contribution goes away, return the credit.
+static inline WXGHomeInsetPlan WXGHomePlanInset(double rest,double system,double raw,double scale,
+                                                double previousRaw,double previousCredit) {
+    double tolerance=1./fmax(1.,scale)+.01;
+    bool owns=previousCredit>0. && fabs(previousRaw-raw)<=tolerance;
+    double native=raw+(owns?previousCredit:0.);
+    double credit=WXGHomeDuplicateInset(rest,native+system,scale);
+    return (WXGHomeInsetPlan){native-credit,credit};
+}
+
+// An already doubled inset can also be the first observation after a rotation or pop.
+static inline double WXGHomeRestInset(double chrome,double observed,double scale) {
+    if(!isfinite(chrome) || !isfinite(observed) || chrome<20. || observed<20.)return 0.;
+    if(fabs(chrome-observed)<=2.)return observed;
+    return WXGHomeDuplicateInset(chrome,observed,scale)>0.?observed*.5:0.;
+}
+
+static inline bool WXGHomeAtDuplicateRest(double rest,double current,double offset,double scale) {
+    return isfinite(current) && fabs(current-rest)<=1./fmax(1.,scale)+.01 &&
+        WXGHomeDuplicateInset(rest,-offset,scale)>0.;
+}
+
 // The list has already rubber-banded contentOffset. Sample it once in this
 // coordinate system; title, search and groups must use the same displacement.
 static inline double WXGHomePullTranslation(double offset,double inset,double scale) {
