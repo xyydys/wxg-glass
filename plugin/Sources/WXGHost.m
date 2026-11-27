@@ -5035,7 +5035,7 @@ static BOOL WXGShownInside(UIView *v,UIView *list) {
     for(WXGSurface *s in _buttons)if(WXGShownInside(s.motionHost?:s.original,list))return YES;
     return NO;
 }
-// What the edge fade asks: the top fade and blur of this list step aside.
+// Record when WeChat actually reparents the native title controls.
 BOOL WXGHomeTopBarInList(UIView *list) {
     WXGIntegrationHost *h=WXGIntegrationHost.shared;
     return list && h.homeTopBarInList && h.homeTopBarList==list;
@@ -5058,9 +5058,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     if(inList==_homeTopBarInList && (!inList || found==_homeTopBarList))return;
     UIViewController *page=_homeTopBarPage;
     _homeTopBarInList=inList;_homeTopBarList=inList?found:nil;_homeTopBarPage=inList?_route.leaf:nil;
-    if(++_homeTopBarMoves<=6)WXGLog(@"顶栏：微信的顶部按钮%@首页列表（下拉 %.0f pt）%@",found?@"在":@"不在",_homePull,inList?@"，列表顶部的渐隐和模糊让开":@"，恢复渐隐和模糊");
-    // The list's top fade and blur step aside / come back now (on the home
-    // page they were taken from, also when the change is leaving it).
+    if(++_homeTopBarMoves<=6)WXGLog(@"顶栏：微信的顶部按钮%@首页列表（下拉 %.0f pt）",inList?@"进入":@"离开",_homePull);
     WXGEdgeFadeSyncController(_route.leaf);
     if(page && page!=_route.leaf)WXGEdgeFadeSyncController(page);
 }
@@ -6271,7 +6269,8 @@ __attribute__((constructor)) static void WXGInitialize(void) {
                 // FIX113 Z: timed (the page-switch log's "appear"; also the hooks' total).
                 WXGPerfTimePluginWorkAs(will?"appear":"didAppear",^{
                     WXGEdgeFadeNoteController(controller,YES);   // FIX64 (FIX65: our own settings pages too)
-                    if(!will){[WXGChatSegments.shared didShowHome:controller];WXGNotePageAppeared(controller);}   // FIX106 I: 聊天信息 / 设置 rest at their top
+                    if(will)[WXGChatSegments.shared willShowHome:controller];
+                    else {[WXGChatSegments.shared didShowHome:controller];WXGNotePageAppeared(controller);}   // FIX106 I: 聊天信息 / 设置 rest at their top
                     if([NSStringFromClass(controller.class) hasPrefix:@"WXG"])return;
                     WXGIntegrationHost *host=WXGIntegrationHost.shared;[host start];
                     if(will)[host prepareController:controller];

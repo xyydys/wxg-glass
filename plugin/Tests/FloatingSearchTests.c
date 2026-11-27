@@ -22,19 +22,20 @@ int main(void) {
     assert(passThrough);
     assert(WXGFloatSearchPlacement(-25.,8.,62.,12.,false,NAN,62.,&passThrough)==82.);
     assert(!passThrough);
-    // On a shallow pull the table and the selected native title host can step
-    // on different frames. The gap to the drawn title stays exact in pixels.
-    static const double titles[]={78.,78.33,78.68,79.66,79.66,78.9,78.};
-    static const double search[]={108.33,110.,110.1,111.9,112.6,110.,108.33};
-    for(int scale=2;scale<=3;scale++) {
-        double titleAtRest=WXGHomePixel(titles[0],scale);
-        double gap=WXGHomePixel(search[0],scale)-titleAtRest;
-        for(unsigned i=0;i<sizeof(titles)/sizeof(titles[0]);i++) {
-            double title=WXGHomePixel(titles[i],scale);
-            double attached=WXGHomePulledSearchY(search[i],title,gap,0.);
-            assert(fabs((WXGHomePixel(attached,scale)-title)-gap)<1e-6);
-            assert(fabs(WXGHomePulledSearchY(search[i],title,gap,1.)-search[i])<1e-6);
-            assert(fabs(WXGHomePulledSearchY(search[i],title,gap,.5)-(attached+search[i])*.5)<1e-6);
+    // Captured 440 pt list. Pull, reversal, return and deep scrolling all use the
+    // same pixel displacement, even if the native title host changes between calls.
+    const double inset=100.+1./3., offsets[]={437.+2./3.,10.3,-20.3,-100.-1./3.,-100.5,-105.67,-173.67,-104.,-100.-1./3.};
+    for(int scale=1;scale<=3;scale++) {
+        double titleRest=WXGHomePixel(58.,scale);
+        double searchRest=WXGHomeFloatingRowY(0,inset,0,11,-inset,scale);
+        double groupRest=WXGHomeFloatingRowY(0,inset,0,55,-inset,scale);
+        for(unsigned i=0;i<sizeof(offsets)/sizeof(offsets[0]);i++) {
+            double pull=WXGHomePullTranslation(offsets[i],inset,scale);
+            double searchY=WXGHomeFloatingRowY(0,inset,0,11,offsets[i],scale);
+            double groupY=WXGHomeFloatingRowY(0,inset,0,55,offsets[i],scale);
+            assert(fabs((searchY-(titleRest+pull))-(searchRest-titleRest))<1e-6);
+            assert(fabs((groupY-searchY)-(groupRest-searchRest))<1e-6);
+            if(offsets[i]>=-inset)assert(pull==0);
         }
     }
     puts("FloatingSearchTests: cold navigation, live header scroll, pull-down and native tap geometry passed.");

@@ -227,7 +227,7 @@ static BOOL WXGEdgeListLeads(UIScrollView *list) {
 @property(nonatomic,strong) CALayer *maskSolid;          // FIX67: opacity = the panel's progress
 @property(nonatomic) BOOL homePanel;                      // the home page: its list holds the mini-program panel
 @property(nonatomic) BOOL topBarInList;                   // FIX94: WeChat's title bar buttons are in the list (pulled down)
-@property(nonatomic,strong) CALayer *maskTopSolid;        // FIX94: over the top fade only, opacity 1 while they are
+@property(nonatomic,strong) CAGradientLayer *maskTopRelief;
 @property(nonatomic) CGFloat panel,topRadius,bottomRadius;
 @property(nonatomic,strong) CALayer *originalMask;
 @property(nonatomic,strong) WXGEdgeBlurView *topBlur,*bottomBlur;
@@ -235,11 +235,11 @@ static BOOL WXGEdgeListLeads(UIScrollView *list) {
 @property(nonatomic,strong) UIImageView *cover;
 @property(nonatomic,weak) UIImageView *resolvedWallpaper;
 @property(nonatomic,copy) NSString *fadeSource;
-@property(nonatomic) BOOL coverTopInList;
+@property(nonatomic) CGFloat topRelief;
 @property(nonatomic,strong) UIView *plate;               // the list's background colour, under the list
 @property(nonatomic,strong) UIColor *plateFallback;      // FIX69: nothing opaque behind a see-through list
 @property(nonatomic,copy) NSString *plateSource;
-@property(nonatomic,strong) CAGradientLayer *coverMask;
+@property(nonatomic,strong) CAGradientLayer *coverMask,*coverTopMask;
 @property(nonatomic) CGSize maskSize,appliedSize,coverSize;
 @property(nonatomic) CGFloat maskTop,maskBottom,blurTopExtent,blurBottomExtent,fadeTop,fadeBottom;
 @property(nonatomic) CGFloat coverListY,coverListHeight,coverTop,coverBottom;
@@ -565,7 +565,7 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
     _plate=nil;_plateFallback=nil;_cover=nil;_topBlur=_bottomBlur=nil;
     _resolvedWallpaper=nil;_fadeSource=nil;
     _paintParent=nil;_paintBackground=nil;_lastPaintInspection=0;
-    _scrollView=nil;_mask=nil;_maskSolid=nil;_maskTopSolid=nil;_originalMask=nil;_panel=0;_topBarInList=NO;
+    _scrollView=nil;_mask=nil;_maskSolid=nil;_maskTopRelief=nil;_originalMask=nil;_coverMask=nil;_coverTopMask=nil;_panel=0;_topRelief=0;_topBarInList=NO;
     _maskSize=_appliedSize=_coverSize=CGSizeMake(-1,-1);_maskTop=_maskBottom=-1;_syncedBounds=CGRectNull;
     _coverListY=_coverListHeight=_coverTop=_coverBottom=-1;
     _fadeTop=_fadeBottom=_blurTopExtent=_blurBottomExtent=0;
@@ -723,9 +723,11 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
             _maskSolid=[CALayer layer];_maskSolid.backgroundColor=UIColor.whiteColor.CGColor;
             _maskSolid.anchorPoint=CGPointZero;_maskSolid.opacity=0;
             [_mask addSublayer:_maskSolid];
-            _maskTopSolid=[CALayer layer];_maskTopSolid.backgroundColor=UIColor.whiteColor.CGColor;
-            _maskTopSolid.anchorPoint=CGPointZero;_maskTopSolid.opacity=0;
-            [_mask addSublayer:_maskTopSolid];
+            if(_homePanel) {
+                _maskTopRelief=[CAGradientLayer layer];
+                _maskTopRelief.opacity=_topRelief;
+                [_mask addSublayer:_maskTopRelief];
+            }
         }
         if(current!=_mask) {
             // The list's own mask (WeChat's, if any) comes back with the fade off.
@@ -751,8 +753,14 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
             _cover=[WXGEdgeCoverView new];_cover.userInteractionEnabled=NO;_cover.clipsToBounds=YES;
             _coverMask=[CAGradientLayer layer];_coverMask.anchorPoint=CGPointZero;
             _coverMask.startPoint=CGPointMake(.5,0);_coverMask.endPoint=CGPointMake(.5,1);
+            _coverTopMask=nil;
+            if(_homePanel) {
+                _coverTopMask=[CAGradientLayer layer];
+                _coverTopMask.opacity=1-_topRelief;
+                [_coverMask addSublayer:_coverTopMask];
+            }
             _cover.layer.mask=_coverMask;
-            _coverListY=-1;
+            _coverListHeight=-1;
         }
         _cover.image=wallpaper.image;_cover.contentMode=wallpaper?wallpaper.contentMode:UIViewContentModeScaleToFill;
         _cover.backgroundColor=coverColor?:UIColor.clearColor;
@@ -779,7 +787,7 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
     _blurTopExtent=placeable && topRadius>.01?WXGEdgeBand(v.blurTop,size.height):0;
     _blurBottomExtent=placeable && bottomRadius>.01?WXGEdgeBand(v.blurBottom,size.height):0;
     UIView *anchor=_cover?:list;
-    _topBlur=[self band:_topBlur wanted:_blurTopExtent>0 bottom:NO radius:topRadius*(1-_panel) parent:parent anchor:anchor];
+    _topBlur=[self band:_topBlur wanted:_blurTopExtent>0 bottom:NO radius:(_homePanel?topRadius:topRadius*(1-_panel)) parent:parent anchor:anchor];
     _bottomBlur=[self band:_bottomBlur wanted:_blurBottomExtent>0 bottom:YES radius:bottomRadius*(1-_panel) parent:parent anchor:anchor];
     [self syncGeometry];
     if(record && list.window) {
@@ -791,15 +799,21 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
 - (void)buildMaskForSize:(CGSize)size top:(CGFloat)top bottom:(CGFloat)bottom force:(BOOL)force {
     if(!force && CGSizeEqualToSize(size,_maskSize) && fabs(top-_maskTop)<=.1 && fabs(bottom-_maskBottom)<=.1)return;
     NSMutableArray *colors=[NSMutableArray arrayWithCapacity:WXG_EDGE_FADE_STOPS],*locations=[NSMutableArray arrayWithCapacity:WXG_EDGE_FADE_STOPS];
+    NSMutableArray *relief=_maskTopRelief?[NSMutableArray arrayWithCapacity:WXG_EDGE_FADE_STOPS]:nil;
     CGFloat height=MAX(size.height,1);
     for(NSUInteger i=0;i<WXG_EDGE_FADE_STOPS;i++) {
         CGFloat location=(CGFloat)i/(WXG_EDGE_FADE_STOPS-1);
-        CGFloat alpha=WXGEdgeFadeAlpha(location*height,height,top,bottom);
+        CGFloat y=location*height,alpha=WXGEdgeFadeAlpha(y,height,top,bottom);
+        if(relief) {
+            CGFloat extra=WXGEdgeOverlayAlpha(alpha,WXGEdgeFadeAlpha(y,height,0,bottom));
+            [relief addObject:(__bridge id)[UIColor colorWithWhite:1 alpha:extra].CGColor];
+        }
         [colors addObject:(__bridge id)[UIColor colorWithWhite:1 alpha:alpha].CGColor];
         [locations addObject:@(location)];
     }
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _mask.colors=colors;_mask.locations=locations;
+    _maskTopRelief.colors=relief;_maskTopRelief.locations=locations;
     [CATransaction commit];
     _maskSize=size;_maskTop=top;_maskBottom=bottom;++_maskBuilds;
 }
@@ -807,15 +821,23 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
    (opaque at the list's edges), nothing outside it. */
 - (void)buildCoverMaskForHeight:(CGFloat)height listY:(CGFloat)listY listHeight:(CGFloat)listHeight {
     NSMutableArray *colors=[NSMutableArray arrayWithCapacity:WXG_EDGE_FADE_STOPS],*locations=[NSMutableArray arrayWithCapacity:WXG_EDGE_FADE_STOPS];
+    NSMutableArray *topColors=_coverTopMask?[NSMutableArray arrayWithCapacity:WXG_EDGE_FADE_STOPS]:nil;
     CGFloat h=MAX(height,1);
     for(NSUInteger i=0;i<WXG_EDGE_FADE_STOPS;i++) {
         CGFloat location=(CGFloat)i/(WXG_EDGE_FADE_STOPS-1),y=location*h-listY;
-        CGFloat alpha=WXGEdgeCoverAlpha(y,listHeight,_fadeTop,_fadeBottom,_topBarInList);
+        CGFloat alpha=WXGEdgeCoverAlpha(y,listHeight,_fadeTop,_fadeBottom,0);
+        if(topColors) {
+            CGFloat bottom=WXGEdgeCoverAlpha(y,listHeight,0,_fadeBottom,0);
+            CGFloat extra=WXGEdgeOverlayAlpha(bottom,alpha);
+            [topColors addObject:(__bridge id)[UIColor colorWithWhite:1 alpha:extra].CGColor];
+            alpha=bottom;
+        }
         [colors addObject:(__bridge id)[UIColor colorWithWhite:1 alpha:alpha].CGColor];
         [locations addObject:@(location)];
     }
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _coverMask.colors=colors;_coverMask.locations=locations;
+    _coverTopMask.colors=topColors;_coverTopMask.locations=locations;
     [CATransaction commit];
     _coverListY=listY;_coverListHeight=listHeight;_coverTop=_fadeTop;_coverBottom=_fadeBottom;++_maskBuilds;
 }
@@ -844,20 +866,22 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
     UIScrollView *list=_scrollView;if(!list)return;
     CGSize size=list.bounds.size;
     if(size.width>=1 && size.height>=1 && !CGSizeEqualToSize(size,_appliedSize)){[self applyValues:NO];return;}
-    // FIX67: the mini-program panel opening on the home list. FIX94: also
-    // while WeChat has its title bar buttons (and title) in the list's header
-    // (pulled down): no fade, no blur over them.
+    // Native title views can change parents several times on a tiny pull.
+    // Drive the top edge from the same scroll sample as the Home controls.
     CGFloat panel=_homePanel?WXGHomePanelProgressForController(_controller):0;
-    BOOL topBar=_homePanel && WXGHomeTopBarInList(list);
-    BOOL panelChanged=fabs(panel-_panel)>.004 || (panel==0)!=(_panel==0) || (panel==1)!=(_panel==1) || topBar!=_topBarInList;
-    if(panelChanged){_panel=panel;_topBarInList=topBar;}
+    _topBarInList=_homePanel && WXGHomeTopBarInList(list);
+    CGFloat relief=_homePanel?WXGHomeEdgeRelief(-(list.contentOffset.y+list.adjustedContentInset.top)):0;
+    BOOL reliefChanged=relief!=_topRelief;
+    _topRelief=relief;
+    BOOL panelChanged=fabs(panel-_panel)>.004 || (panel==0)!=(_panel==0) || (panel==1)!=(_panel==1);
+    if(panelChanged)_panel=panel;
     if(_mask && list.layer.mask==_mask) {
         CGRect bounds=list.layer.bounds;
-        if(!CGRectEqualToRect(bounds,_syncedBounds) || panelChanged) {
+        if(!CGRectEqualToRect(bounds,_syncedBounds) || panelChanged || reliefChanged) {
             [CATransaction begin];[CATransaction setDisableActions:YES];
             _mask.position=bounds.origin;_mask.bounds=CGRectMake(0,0,bounds.size.width,bounds.size.height);
             _maskSolid.frame=_mask.bounds;_maskSolid.opacity=(float)_panel;
-            if(_maskTopSolid){_maskTopSolid.frame=CGRectMake(0,0,bounds.size.width,MIN(bounds.size.height,_fadeTop+1));_maskTopSolid.opacity=_topBarInList?1:0;}
+            _maskTopRelief.frame=_mask.bounds;_maskTopRelief.opacity=_topRelief;
             [CATransaction commit];
             _syncedBounds=bounds;++_maskSyncs;
         }
@@ -889,16 +913,17 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
         CGRect rect=[list convertRect:list.bounds toView:coverParent];
         CGRect frame=source?[source convertRect:source.bounds toView:coverParent]:rect;
         if(!CGRectEqualToRect(_cover.frame,frame))_cover.frame=frame;
-        if(!CGRectEqualToRect(_coverMask.frame,_cover.bounds)) {
+        if(!CGRectEqualToRect(_coverMask.frame,_cover.bounds) || (_coverTopMask && reliefChanged)) {
             [CATransaction begin];[CATransaction setDisableActions:YES];
-            _coverMask.frame=_cover.bounds;
+            _coverMask.frame=_cover.bounds;_coverTopMask.frame=_coverMask.bounds;
+            _coverTopMask.opacity=1-_topRelief;
             [CATransaction commit];
         }
         CGFloat listY=CGRectGetMinY(rect)-CGRectGetMinY(frame);
         if(_cover.alpha!=1-_panel)_cover.alpha=1-_panel;
-        if(_coverTopInList!=_topBarInList || fabs(listY-_coverListY)>.1 || fabs(rect.size.height-_coverListHeight)>.1 || !CGSizeEqualToSize(frame.size,_coverSize) ||
+        if(fabs(listY-_coverListY)>.1 || fabs(rect.size.height-_coverListHeight)>.1 || !CGSizeEqualToSize(frame.size,_coverSize) ||
            fabs(_fadeTop-_coverTop)>.1 || fabs(_fadeBottom-_coverBottom)>.1) {
-            _coverSize=frame.size;_coverTopInList=_topBarInList;
+            _coverSize=frame.size;
             [self buildCoverMaskForHeight:frame.size.height listY:listY listHeight:rect.size.height];
         }
         if(_cover.hidden!=hidden)_cover.hidden=hidden;
@@ -907,10 +932,11 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
         if(![band isKindOfClass:WXGEdgeBlurView.class])continue;
         CGRect frame=[self bandFrame:band.bottomEdge];
         if(!CGRectEqualToRect(band.frame,frame))band.frame=frame;
-        // FIX94: the top band also gives way to WeChat's title bar in the list.
-        CGFloat cover=band.bottomEdge?_panel:(_topBarInList?1:_panel);
-        if(panelChanged)[band setBlurRadius:(band.bottomEdge?_bottomRadius:_topRadius)*(1-cover)];
-        BOOL bandHidden=hidden || cover>.99;
+        BOOL homeTop=_homePanel && !band.bottomEdge;
+        CGFloat opacity=homeTop?(1-_panel)*(1-_topRelief):1;
+        if(homeTop && band.alpha!=opacity)[UIView performWithoutAnimation:^{band.alpha=opacity;}];
+        if(!homeTop && panelChanged)[band setBlurRadius:(band.bottomEdge?_bottomRadius:_topRadius)*(1-_panel)];
+        BOOL bandHidden=hidden || (homeTop?opacity<=0:_panel>.99);
         if(band.hidden!=bandHidden)band.hidden=bandHidden;
     }
 }
@@ -921,7 +947,7 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
         @"list":list?NSStringFromClass(list.class):@"none",@"resolves":@(_resolves),@"paintInspections":@(_paintPasses),@"geometryOnly":@(_geometryOnly),@"attaches":@(_attaches),@"maskBuilds":@(_maskBuilds),
         @"settings":@{@"fadeTop":@(v.fadeTop),@"fadeBottom":@(v.fadeBottom),@"blurTop":@(v.blurTop),@"blurBottom":@(v.blurBottom),
                       @"blurTopRadius":@(v.blurTopRadius),@"blurBottomRadius":@(v.blurBottomRadius)},
-        @"blur":_blurNote?:@"none",@"fade":_fadeSource?:@"off",@"miniProgramPanel":@(_panel),@"topBarInList":@(_topBarInList)} mutableCopy];
+        @"blur":_blurNote?:@"none",@"fade":_fadeSource?:@"off",@"miniProgramPanel":@(_panel),@"topBarInList":@(_topBarInList),@"topRelief":@(_topRelief)} mutableCopy];
     if(list) {
         d[@"listFrame"]=NSStringFromCGRect(list.frame);d[@"listInWindow"]=@(list.window!=nil);
         d[@"maskAttached"]=@(_mask && list.layer.mask==_mask);d[@"keptOriginalMask"]=@(_originalMask!=nil);

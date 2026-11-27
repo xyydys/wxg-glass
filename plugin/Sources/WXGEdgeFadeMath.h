@@ -37,6 +37,14 @@ static inline float WXGEdgeCoverAlpha(float y,float height,float top,float botto
     if(y<0.f || y>height)return 0.f;
     return 1.f-WXGEdgeFadeAlpha(y,height,nativeTopBar?0.f:top,bottom);
 }
+// UIKit swaps the Home title's native host during the first few points of pull.
+static inline float WXGHomeEdgeRelief(float pull) {
+    return WXGEdgeFadeSmooth(pull/44.f);
+}
+// Foreground alpha needed to raise a background alpha to the given target.
+static inline float WXGEdgeOverlayAlpha(float base,float target) {
+    return base<1.f && target>base ? (target-base)/(1.f-base) : 0.f;
+}
 /* Blur strength at u (0 = the screen edge, 1 = the band's inner end): 1 .. 0,
    linear between the table's stops (as the shared project's CGGradient). */
 static inline float WXGEdgeBlurStrength(float u) {

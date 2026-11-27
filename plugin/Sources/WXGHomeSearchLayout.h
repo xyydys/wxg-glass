@@ -50,6 +50,14 @@ static inline WXGHomeGroupLayout WXGHomeGroupBelowSearch(double nativeHeight,dou
     return (WXGHomeGroupLayout){groupY,groupY+groupHeight+bottomGap,bottomGap};
 }
 
+// Preserve the reservation for another search instance or for the native
+// search-sized spacer. Unrelated native headers keep their own size.
+static inline bool WXGHomeKeepsReservation(bool hasHeader,bool same,bool hasSearch,bool emptySpacer,bool keepEmpty,
+                                           double height,double nativeHeight) {
+    if(!hasHeader)return keepEmpty;
+    return same || hasSearch || (emptySpacer && nativeHeight>0 && fabs(height-nativeHeight)<=1.);
+}
+
 // A replacement occupies exactly one row and uses the same bottom margin.
 static inline WXGHomeGroupLayout WXGHomeRows(bool coexist,WXGRect native,double nativeHeight,
                                              WXGRect search,double groupHeight,double gap) {
@@ -76,19 +84,14 @@ static inline double WXGHomePixel(double value,double scale) {
     return scale>0 ? round(value*scale)/scale : value;
 }
 
-// During overscroll UIKit can move the title and the list header independently.
-// Keep the measured screen gap until WeChat starts revealing its pull-down panel,
-// then hand position back to that panel's native header continuously.
-static inline double WXGHomePulledSearchY(double naturalY,double titleY,double gap,double panel) {
-    double attached=titleY+gap;
-    return attached+(naturalY-attached)*WXGBound(panel,0.,1.);
+// The list has already rubber-banded contentOffset. Sample it once in this
+// coordinate system; title, search and groups must use the same displacement.
+static inline double WXGHomePullTranslation(double offset,double inset,double scale) {
+    return WXGHomePixel(fmax(0.,-(offset+inset)),scale);
 }
-
-// On the last few points of the bounce, return smoothly to the natural rest position.
-static inline double WXGHomeReboundSearchY(double naturalY,double titleY,double gap,double panel,double overscroll) {
-    double followed=WXGHomePulledSearchY(naturalY,titleY,gap,panel);
-    double weight=WXGBound(overscroll/4.,0.,1.);
-    return naturalY+(followed-naturalY)*weight;
+static inline double WXGHomeFloatingRowY(double viewportTop,double inset,double headerY,double rowY,
+                                         double offset,double scale) {
+    return WXGHomePixel(viewportTop+inset+headerY+rowY,scale)+WXGHomePullTranslation(offset,inset,scale);
 }
 
 // The header's natural position follows contentOffset. The pin line only

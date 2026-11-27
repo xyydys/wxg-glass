@@ -48,10 +48,17 @@ int main(void) {
     assert(WXGHomeOffsetAtDepth(0,118,142,88,34,3000,844)==-88);
     assert(WXGHomeOffsetAtDepth(1000,118,118,88,34,1000,844)==190);
     assert(WXGHomeOffsetAtDepth(1000,118,118,88,34,600,844)==-88);
-    assert(WXGHomeReboundSearchY(111,90,20,0,0)==111);
-    assert(fabs(WXGHomeReboundSearchY(111,90,20,0,1./3.)-111)<1./6.);
-    assert(WXGHomeReboundSearchY(118,90,20,0,8)==110);
-    assert(WXGHomeReboundSearchY(118,90,20,1,8)==118);
+    // The ui20 trace alternated 108.67 and 52 on successive header assignments.
+    assert(WXGHomeKeepsReservation(true,true,false,false,false,52,52));
+    assert(WXGHomeKeepsReservation(true,false,true,false,false,55,52));
+    assert(WXGHomeKeepsReservation(true,false,false,true,false,52,52));
+    assert(!WXGHomeKeepsReservation(true,false,false,true,false,250,52));
+    assert(!WXGHomeKeepsReservation(true,false,false,false,false,52,52));
+    assert(WXGHomeKeepsReservation(false,false,false,false,true,0,52));
+    assert(!WXGHomeKeepsReservation(false,false,false,false,false,0,52));
+    WXGHomeGroupLayout ui20=WXGHomeRows(true,field,52,field,45.76948547,8);
+    double reserved=WXGHomePixel(3.+ui20.headerHeight,3);
+    assert(fabs(reserved-(108.+2./3.))<1e-7);
     assert(WXGHomeHeaderLeading(0,0,0,88)==88);
     assert(WXGHomeHeaderLeading(0,88,0,88)==0);
     assert(WXGHomeHeaderLeading(88,0,0,88)==0);

@@ -400,6 +400,7 @@ FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我
 - (void)hostTick:(CFTimeInterval)time page:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome homePanel:(CGFloat)homePanel rowOffset:(CGFloat)rowOffset;
 - (void)coverHomeSearchFor:(UIViewController *)controller;
 - (void)willPushFrom:(UIViewController *)home to:(UIViewController *)next;
+- (void)willShowHome:(UIViewController *)page;
 - (void)didShowHome:(UIViewController *)page;
 - (NSDictionary *)homeMotionEvidence;
 - (void)suspendFloating;   // a page this host leaves native: nothing left floating, WeChat's bars back

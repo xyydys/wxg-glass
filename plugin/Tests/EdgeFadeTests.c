@@ -29,6 +29,29 @@ int main(void) {
         assert(near(WXGEdgeCoverAlpha(y,h,top,bottom,1)+WXGEdgeFadeAlpha(y,h,0,bottom),1));
     }
     assert(WXGEdgeCoverAlpha(-1,h,top,bottom,0)==0 && WXGEdgeCoverAlpha(h+1,h,top,bottom,0)==0);
+    // A native host swap on a 2–4 pt pull may not switch an entire blur band.
+    assert(WXGHomeEdgeRelief(0)==0 && WXGHomeEdgeRelief(-10)==0 && WXGHomeEdgeRelief(44)==1);
+    assert(WXGHomeEdgeRelief(4)-WXGHomeEdgeRelief(2)<.025f);
+    previous=0;
+    for(int i=1;i<=132;i++) {
+        float a=WXGHomeEdgeRelief(i/3.f);
+        assert(a>=previous && a-previous<.012f);
+        previous=a;
+    }
+    // Compositing the fixed gradients reproduces the selected fade at both
+    // ends of the pull, even with top and bottom extents overlapping.
+    for(int i=0;i<=100;i++) {
+        float combined=WXGEdgeCoverAlpha(i,100,95,90,0),bottomOnly=WXGEdgeCoverAlpha(i,100,0,90,0);
+        float coverTop=WXGEdgeOverlayAlpha(bottomOnly,combined);
+        float maskTop=WXGEdgeOverlayAlpha(1-combined,1-bottomOnly);
+        for(int step=0;step<=10;step++) {
+            float relief=step/10.f;
+            float cover=bottomOnly+(1-bottomOnly)*(1-relief)*coverTop;
+            float mask=1-combined+combined*relief*maskTop;
+            assert(near(cover+mask,1));
+            assert(near(cover,combined*(1-relief)+bottomOnly*relief));
+        }
+    }
     /* Blur strength: 1 at the edge, 0 at the inner end, never rising, the
        table's own values at its stops. */
     assert(WXGEdgeBlurStrength(0.f)==1.f && WXGEdgeBlurStrength(-1.f)==1.f && WXGEdgeBlurStrength(1.f)==0.f);
