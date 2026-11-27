@@ -5,7 +5,8 @@
 #import "WXGBackdropSample.h"
 #import "WXGCommon.h"
 #import "WXGIntegration.h"
-#import <QuartzCore/CAMetalLayer.h>
+#import <CoreVideo/CoreVideo.h>
+#import <QuartzCore/QuartzCore.h>
 
 typedef float WXGMenuFloat4 __attribute__((ext_vector_type(4)));
 typedef struct {
@@ -354,16 +355,28 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
 - (BOOL)drawGlass;
 @end
 
+enum {WXGMenuMorphSurfaceRing=3};
+
 @implementation WXGMenuMorphView {
     WXGMenuMorphSurface *_surface;
     __weak WXGSurface *_sourceButton;
     BOOL _sessionUsesUIKit;
-    CAMetalLayer *_metal;
+    CALayer *_metal;
+    id<MTLDevice> _device;
     id<MTLCommandQueue> _queue;
     id<MTLRenderPipelineState> _pipeline;
     id<MTLComputePipelineState> _fieldPipeline,_smoothPipeline,_blurHPipeline,_blurVPipeline;
     id<MTLTexture> _texture,_rowsTexture,_triggerTexture;
     id<MTLTexture> _inkScratch,_inkRowsBlur,_inkTriggerBlur;
+    CVMetalTextureCacheRef _surfaceCache;
+    CVPixelBufferRef _surfaceBuffers[WXGMenuMorphSurfaceRing];
+    CVMetalTextureRef _surfaceMetalRefs[WXGMenuMorphSurfaceRing];
+    id<MTLTexture> _surfaceTextures[WXGMenuMorphSurfaceRing];
+    BOOL _slotBusy[WXGMenuMorphSurfaceRing];
+    NSLock *_slotLock;
+    NSUInteger _nextSurfaceSlot;
+    uint64_t _surfaceGeneration;
+    CGSize _drawableSize;
     UIImage *_rowsImage,*_triggerImage;
     NSArray<id<MTLTexture>> *_fieldTextures;
     dispatch_semaphore_t _inFlight;
@@ -384,6 +397,66 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     NSUInteger _stableRetryCount;
 }
 
+- (void)releaseSurfaceTargets {
+    [_slotLock lock];
+    ++_surfaceGeneration;
+    memset(_slotBusy,0,sizeof(_slotBusy));
+    _nextSurfaceSlot=0;
+    [_slotLock unlock];
+    for(int i=0;i<WXGMenuMorphSurfaceRing;i++) {
+        _surfaceTextures[i]=nil;
+        if(_surfaceMetalRefs[i]){CFRelease(_surfaceMetalRefs[i]);_surfaceMetalRefs[i]=NULL;}
+        if(_surfaceBuffers[i]){CVPixelBufferRelease(_surfaceBuffers[i]);_surfaceBuffers[i]=NULL;}
+    }
+    if(_surfaceCache)CVMetalTextureCacheFlush(_surfaceCache,0);
+}
+
+- (void)dealloc {
+    [self releaseSurfaceTargets];
+    if(_surfaceCache){CFRelease(_surfaceCache);_surfaceCache=NULL;}
+}
+
+- (BOOL)ensureSurfaceTargetsForSize:(CGSize)size {
+    NSUInteger width=(NSUInteger)size.width,height=(NSUInteger)size.height;
+    if(width<1 || height<1 || !_device)return NO;
+    if(_surfaceTextures[0].width==width && _surfaceTextures[0].height==height)return YES;
+    [self releaseSurfaceTargets];
+    if(!_surfaceCache && CVMetalTextureCacheCreate(kCFAllocatorDefault,NULL,_device,NULL,&_surfaceCache)!=kCVReturnSuccess)
+        return NO;
+    NSDictionary *attrs=@{
+        (id)kCVPixelBufferPixelFormatTypeKey:@(kCVPixelFormatType_32BGRA),
+        (id)kCVPixelBufferWidthKey:@(width),
+        (id)kCVPixelBufferHeightKey:@(height),
+        (id)kCVPixelBufferMetalCompatibilityKey:@YES,
+        (id)kCVPixelBufferIOSurfacePropertiesKey:@{}
+    };
+    CGColorSpaceRef srgb=CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    CFDataRef icc=srgb?CGColorSpaceCopyICCData(srgb):NULL;
+    if(srgb)CGColorSpaceRelease(srgb);
+    BOOL ok=YES;
+    for(int i=0;i<WXGMenuMorphSurfaceRing;i++) {
+        CVPixelBufferRef pb=NULL;
+        if(CVPixelBufferCreate(kCFAllocatorDefault,width,height,kCVPixelFormatType_32BGRA,
+            (__bridge CFDictionaryRef)attrs,&pb)!=kCVReturnSuccess || !pb){ok=NO;break;}
+        IOSurfaceRef ios=CVPixelBufferGetIOSurface(pb);
+        if(!ios){CVPixelBufferRelease(pb);ok=NO;break;}
+        if(icc)IOSurfaceSetValue(ios,CFSTR("IOSurfaceColorSpace"),icc);
+        CVMetalTextureRef cvTex=NULL;
+        if(CVMetalTextureCacheCreateTextureFromImage(kCFAllocatorDefault,_surfaceCache,pb,NULL,
+            MTLPixelFormatBGRA8Unorm,width,height,0,&cvTex)!=kCVReturnSuccess || !cvTex) {
+            CVPixelBufferRelease(pb);ok=NO;break;
+        }
+        id<MTLTexture> mtlTex=CVMetalTextureGetTexture(cvTex);
+        if(!mtlTex){CFRelease(cvTex);CVPixelBufferRelease(pb);ok=NO;break;}
+        _surfaceBuffers[i]=pb;
+        _surfaceMetalRefs[i]=cvTex;
+        _surfaceTextures[i]=mtlTex;
+    }
+    if(icc)CFRelease(icc);
+    if(!ok){[self releaseSurfaceTargets];return NO;}
+    return YES;
+}
+
 - (instancetype)initWithFrame:(CGRect)frame {
     if((self=[super initWithFrame:frame])) {
         self.userInteractionEnabled=NO;
@@ -391,19 +464,13 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         self.accessibilityElementsHidden=YES;
         self.opaque=NO;
         _lastCommittedSurfaceBounds=CGRectNull;
-        _inFlight=dispatch_semaphore_create(2);
-        _metal=[CAMetalLayer layer];
+        _device=WXGSharedDevice();
+        _slotLock=[NSLock new];
+        _inFlight=dispatch_semaphore_create(WXGMenuMorphSurfaceRing);
+        _metal=[CALayer layer];
         _metal.name=@"morph.foreground.metal";
         _metal.anchorPoint=CGPointZero;
         _metal.opaque=NO;
-        _metal.device=WXGSharedDevice();
-        _metal.pixelFormat=MTLPixelFormatBGRA8Unorm;
-        _metal.framebufferOnly=YES;
-        _metal.allowsNextDrawableTimeout=YES;
-        _metal.presentsWithTransaction=YES;
-        if([_metal respondsToSelector:@selector(setMaximumDrawableCount:)])_metal.maximumDrawableCount=3;
-        CGColorSpaceRef colorSpace=CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
-        if(colorSpace){_metal.colorspace=colorSpace;CGColorSpaceRelease(colorSpace);}
         __weak typeof(self) weakSelf=self;
         WXGPrepareMenuMorphMetal(NO,^(id<MTLRenderPipelineState> state,id<MTLComputePipelineState> field,
             id<MTLComputePipelineState> smooth,id<MTLComputePipelineState> blurH,id<MTLComputePipelineState> blurV,
@@ -436,8 +503,9 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         _metal.position=self.bounds.origin;
         _metal.bounds=(CGRect){CGPointZero,self.bounds.size};
         _metal.contentsScale=scale;
-        if(!CGSizeEqualToSize(_metal.drawableSize,size)) {
-            _metal.drawableSize=size;
+        if(!CGSizeEqualToSize(_drawableSize,size)) {
+            _drawableSize=size;
+            [self releaseSurfaceTargets];
             _fieldTextures=nil;
             _inkScratch=nil;_inkRowsBlur=nil;_inkTriggerBlur=nil;
             _stableRetryCount=0;
@@ -465,6 +533,7 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         _plate.anchorPoint=CGPointZero;_plate.cornerCurve=kCACornerCurveContinuous;_plate.masksToBounds=YES;_plate.hidden=YES;
         [_surface.inkHost.layer addSublayer:_plate];
         [_metal removeAllAnimations];
+        _metal.contents=nil;
         [_surface.inkHost.layer addSublayer:_metal];
         if(_fallbackForeground)[_surface.inkHost addSubview:_fallbackForeground];
         _hasLastDrawnPose=NO;
@@ -498,6 +567,7 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         [_surface setOpticalSessionStep:0];
         [_plate removeFromSuperlayer];[_metal removeFromSuperlayer];[_fallbackForeground removeFromSuperview];
         [_metal removeAllAnimations];
+        _metal.contents=nil;
         _plate=nil;_plateShine=nil;_plateTintReady=NO;_hasCachedInk=NO;_hasLastDrawnPose=NO;_drawableHasForeground=NO;
         _lastCommittedSurfaceBounds=CGRectNull;_triggerSide=0;_menuSide=0;
         _metal.affineTransform=CGAffineTransformIdentity;
@@ -573,13 +643,13 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
 
 - (void)setForegroundRowsImage:(UIImage *)rowsImage triggerImage:(UIImage *)triggerImage {
     if(_rowsImage!=rowsImage) {
-        _rowsImage=rowsImage;_rowsTexture=WXGMenuPremultipliedTexture(rowsImage,_metal.device);
+        _rowsImage=rowsImage;_rowsTexture=WXGMenuPremultipliedTexture(rowsImage,_device);
         _rowsNeedMips=_rowsTexture.mipmapLevelCount>1;
         _needsOpenInk=YES;
         _hasLastDrawnPose=NO;
     }
     if(_triggerImage!=triggerImage) {
-        _triggerImage=triggerImage;_triggerTexture=WXGMenuPremultipliedTexture(triggerImage,_metal.device);
+        _triggerImage=triggerImage;_triggerTexture=WXGMenuPremultipliedTexture(triggerImage,_device);
         _triggerNeedsMips=_triggerTexture.mipmapLevelCount>1;
         _hasLastDrawnPose=NO;
     }
@@ -676,9 +746,9 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
             width:allocW height:allocH mipmapped:NO];
         descriptor.storageMode=MTLStorageModePrivate;
         descriptor.usage=MTLTextureUsageShaderRead|MTLTextureUsageShaderWrite;
-        id<MTLTexture> raw=[_metal.device newTextureWithDescriptor:descriptor];
-        id<MTLTexture> horizontal=[_metal.device newTextureWithDescriptor:descriptor];
-        id<MTLTexture> gaussian=[_metal.device newTextureWithDescriptor:descriptor];
+        id<MTLTexture> raw=[_device newTextureWithDescriptor:descriptor];
+        id<MTLTexture> horizontal=[_device newTextureWithDescriptor:descriptor];
+        id<MTLTexture> gaussian=[_device newTextureWithDescriptor:descriptor];
         if(!raw || !horizontal || !gaussian)return nil;
         _fieldTextures=@[raw,horizontal,gaussian];
     }
@@ -713,9 +783,9 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         width:width height:height mipmapped:NO];
     desc.storageMode=MTLStorageModePrivate;
     desc.usage=MTLTextureUsageShaderRead|MTLTextureUsageShaderWrite;
-    _inkScratch=[_metal.device newTextureWithDescriptor:desc];
-    _inkRowsBlur=[_metal.device newTextureWithDescriptor:desc];
-    _inkTriggerBlur=[_metal.device newTextureWithDescriptor:desc];
+    _inkScratch=[_device newTextureWithDescriptor:desc];
+    _inkRowsBlur=[_device newTextureWithDescriptor:desc];
+    _inkTriggerBlur=[_device newTextureWithDescriptor:desc];
     return _inkScratch && _inkRowsBlur && _inkTriggerBlur;
 }
 
@@ -781,8 +851,9 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     if(_sessionUsesUIKit || !_hasFrame || !self.window || self.hidden || CGRectIsEmpty(self.bounds))return NO;
     BOOL foreground=_showsForeground && (_rowsTexture || _triggerTexture) &&
         (!_rowsImage || _rowsTexture) && (!_triggerImage || _triggerTexture);
-    CGSize drawSize=_metal.drawableSize;
+    CGSize drawSize=_drawableSize;
     if(!_texture || !_pipeline || !_queue || drawSize.width<1. || drawSize.height<1.)return NO;
+    if(![self ensureSurfaceTargetsForSize:drawSize])return NO;
     float pixelX=(float)(self.bounds.size.width/drawSize.width),pixelY=(float)(self.bounds.size.height/drawSize.height);
     CGRect rowsInk=WXGMenuMorphZoomedRect(_menu,_frame.contentZoom),triggerInk=WXGMenuMorphZoomedRect(_sourceLobe,_frame.sourceZoom);
     CGFloat rowsScaleX=rowsInk.size.width/MAX(1.,_rowsImage.size.width),rowsScaleY=rowsInk.size.height/MAX(1.,_rowsImage.size.height);
@@ -797,8 +868,6 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         float t=(float)WXGClamp(_frame.portalBlur/2.4,0.,1.);
         fgLensRamp=t*t*(3.f-2.f*t);
     }
-    CGFloat effRX=MIN(_frame.radiusX,MAX(.01,_menu.size.width*.5));
-    CGFloat effRY=MIN(_frame.radiusY,MAX(.01,_menu.size.height*.5));
     const float kBlurToSigma=0.57735027f;
     float portalSigma=kBlurToSigma*(float)_frame.portalBlur;
     float rowsSigmaX=hypotf(kBlurToSigma*(float)(rowsBlur*rowsScaleX),portalSigma);
@@ -809,7 +878,7 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     WXGMenuMorphUniforms baseU={
         {pixelX,pixelY,MAX(pixelX,pixelY),(float)MAX(0.,MIN(1.,_frame.contentProgress))},
         WXGMenuFloatRect(_menu),WXGMenuFloatRect(_sourceLobe),
-        {(float)effRX,(float)effRY,(float)_frame.sourceRadius,(float)_frame.smoothing},
+        {(float)_frame.radiusX,(float)_frame.radiusY,(float)_frame.sourceRadius,(float)_frame.smoothing},
         {(float)_frame.lensHeight*fgLensRamp,(float)(_frame.lensAmount*refractionScale)*fgLensRamp,
          self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark?1.f:0.f,0.f},
         {0,0,0,0},
@@ -826,9 +895,7 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     CGPoint winOrigin=self.window?[self convertPoint:CGPointZero toView:self.window]:CGPointZero;
     CGFloat sessionStep=_surface.opticalSessionStep;
     BOOL wantsCached=foreground && _wantsOpenInk;
-    // Skip duplicate drawable acquisition & CAImageQueue enqueue when the pose
-    // already on _metal is identical (e.g. observer reasserts or exit trigger).
-    if(_hasLastDrawnPose && !generatingMips && !_needsOpenInk && !_metal.hidden &&
+    if(_hasLastDrawnPose && !generatingMips && (!wantsCached || !_needsOpenInk) && !_metal.hidden && _metal.contents &&
        _drawableHasForeground==foreground && _hasCachedInk==wantsCached &&
        CGSizeEqualToSize(drawSize,_lastDrawnDrawableSize) &&
        CGPointEqualToPoint(winOrigin,_lastDrawnWinOrigin) &&
@@ -843,38 +910,79 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     }
 
     if(dispatch_semaphore_wait(_inFlight,DISPATCH_TIME_NOW)!=0)return NO;
-    id<CAMetalDrawable> drawable=[_metal nextDrawable];
+    NSInteger chosenSlot=-1;
+    uint64_t chosenGen=0;
+    id currentContents=_metal.contents;
+    [_slotLock lock];
+    chosenGen=_surfaceGeneration;
+    for(NSUInteger k=0;k<WXGMenuMorphSurfaceRing;k++) {
+        NSUInteger cand=(_nextSurfaceSlot+k)%WXGMenuMorphSurfaceRing;
+        IOSurfaceRef candIOS=CVPixelBufferGetIOSurface(_surfaceBuffers[cand]);
+        if(!_slotBusy[cand] && candIOS && (__bridge id)candIOS!=currentContents) {
+            chosenSlot=(NSInteger)cand;
+            _slotBusy[cand]=YES;
+            _nextSurfaceSlot=(cand+1)%WXGMenuMorphSurfaceRing;
+            break;
+        }
+    }
+    if(chosenSlot<0) {
+        for(NSUInteger k=0;k<WXGMenuMorphSurfaceRing;k++) {
+            NSUInteger cand=(_nextSurfaceSlot+k)%WXGMenuMorphSurfaceRing;
+            if(!_slotBusy[cand] && CVPixelBufferGetIOSurface(_surfaceBuffers[cand])) {
+                chosenSlot=(NSInteger)cand;
+                _slotBusy[cand]=YES;
+                _nextSurfaceSlot=(cand+1)%WXGMenuMorphSurfaceRing;
+                break;
+            }
+        }
+    }
+    [_slotLock unlock];
+    if(chosenSlot<0){dispatch_semaphore_signal(_inFlight);return NO;}
+
+    CVPixelBufferRef targetBuffer=CVPixelBufferRetain(_surfaceBuffers[chosenSlot]);
+    IOSurfaceRef targetSurface=CVPixelBufferGetIOSurface(targetBuffer);
+    id<MTLTexture> targetTexture=_surfaceTextures[chosenSlot];
     id<MTLCommandBuffer> command=[_queue commandBuffer];
-    if(!drawable || !command){dispatch_semaphore_signal(_inFlight);return NO;}
+    if(!targetSurface || !targetTexture || !command) {
+        CVPixelBufferRelease(targetBuffer);
+        [_slotLock lock];if(_surfaceGeneration==chosenGen)_slotBusy[chosenSlot]=NO;[_slotLock unlock];
+        dispatch_semaphore_signal(_inFlight);
+        return NO;
+    }
     if(generatingMips) {
         id<MTLBlitCommandEncoder> blit=[command blitCommandEncoder];
-        if(!blit){dispatch_semaphore_signal(_inFlight);return NO;}
+        if(!blit) {
+            CVPixelBufferRelease(targetBuffer);
+            [_slotLock lock];if(_surfaceGeneration==chosenGen)_slotBusy[chosenSlot]=NO;[_slotLock unlock];
+            dispatch_semaphore_signal(_inFlight);
+            return NO;
+        }
         if(_rowsNeedMips)[blit generateMipmapsForTexture:_rowsTexture];
         if(_triggerNeedsMips)[blit generateMipmapsForTexture:_triggerTexture];
         [blit endEncoding];
     }
     WXGMenuMorphUniforms u=baseU;
-    if(drawable.texture.width!=(NSUInteger)drawSize.width || drawable.texture.height!=(NSUInteger)drawSize.height) {
-        pixelX=(float)(self.bounds.size.width/drawable.texture.width);
-        pixelY=(float)(self.bounds.size.height/drawable.texture.height);
-        u.viewport=(WXGMenuFloat4){pixelX,pixelY,MAX(pixelX,pixelY),u.viewport[3]};
-    }
     id<MTLTexture> field=[self encodeSmoothedField:command uniforms:&u];
     BOOL wantRowsBlur=foreground && _rowsTexture && _frame.rowsOpacity>.001 && fmaxf(rowsSigmaX,rowsSigmaY)>=.08f;
     BOOL wantTrigBlur=foreground && _triggerTexture && _frame.sourceOpacity>.001 && fmaxf(trigSigmaX,trigSigmaY)>=.08f;
-    if((wantRowsBlur || wantTrigBlur) && [self ensureInkBlurTexturesForWidth:drawable.texture.width height:drawable.texture.height]) {
+    if((wantRowsBlur || wantTrigBlur) && [self ensureInkBlurTexturesForWidth:targetTexture.width height:targetTexture.height]) {
         if(wantRowsBlur)u.rowsBlurBox=[self encodeInkBlur:command source:_rowsTexture destination:_inkRowsBlur
             rect:rowsInk sigmaX:rowsSigmaX sigmaY:rowsSigmaY pixelX:pixelX pixelY:pixelY];
         if(wantTrigBlur)u.triggerBlurBox=[self encodeInkBlur:command source:_triggerTexture destination:_inkTriggerBlur
             rect:triggerInk sigmaX:trigSigmaX sigmaY:trigSigmaY pixelX:pixelX pixelY:pixelY];
     }
     MTLRenderPassDescriptor *pass=[MTLRenderPassDescriptor renderPassDescriptor];
-    pass.colorAttachments[0].texture=drawable.texture;
+    pass.colorAttachments[0].texture=targetTexture;
     pass.colorAttachments[0].loadAction=MTLLoadActionClear;
     pass.colorAttachments[0].storeAction=MTLStoreActionStore;
     pass.colorAttachments[0].clearColor=MTLClearColorMake(0,0,0,0);
     id<MTLRenderCommandEncoder> encoder=[command renderCommandEncoderWithDescriptor:pass];
-    if(!encoder){dispatch_semaphore_signal(_inFlight);return NO;}
+    if(!encoder) {
+        CVPixelBufferRelease(targetBuffer);
+        [_slotLock lock];if(_surfaceGeneration==chosenGen)_slotBusy[chosenSlot]=NO;[_slotLock unlock];
+        dispatch_semaphore_signal(_inFlight);
+        return NO;
+    }
     [encoder setRenderPipelineState:_pipeline];
     [encoder setFragmentBytes:&u length:sizeof(u) atIndex:0];
     [encoder setFragmentTexture:field?:_texture atIndex:0];
@@ -882,15 +990,15 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     [encoder setFragmentTexture:_triggerTexture?:_texture atIndex:2];
     [encoder setFragmentTexture:_inkRowsBlur?:_texture atIndex:3];
     [encoder setFragmentTexture:_inkTriggerBlur?:_texture atIndex:4];
-    // The render pass clears the entire drawable. Only shade the ink inside
+    // The render pass clears the entire target. Only shade the ink inside
     // this frame's silhouette (also when the compute shader is unavailable).
-    CGFloat rx=MAX(.01,effRX),ry=MAX(.01,effRY);
+    CGFloat rx=MAX(.01,_frame.radiusX),ry=MAX(.01,_frame.radiusY);
     CGFloat ratio=MAX(rx,ry)/MIN(rx,ry);
     CGFloat margin=MAX(4.,_frame.smoothing*(.25*ratio+.5)+4.);
     CGRect silhouette=CGRectInset(MIN(_sourceLobe.size.width,_sourceLobe.size.height)>=.01?
         CGRectUnion(_menu,_sourceLobe):_menu,-margin,-margin);
     CGRect pixels=CGRectIntegral(CGRectApplyAffineTransform(silhouette,CGAffineTransformMakeScale(1./pixelX,1./pixelY)));
-    pixels=CGRectIntersection(pixels,CGRectMake(0,0,drawable.texture.width,drawable.texture.height));
+    pixels=CGRectIntersection(pixels,CGRectMake(0,0,targetTexture.width,targetTexture.height));
     if(!CGRectIsEmpty(pixels)){
         [encoder setScissorRect:(MTLScissorRect){(NSUInteger)pixels.origin.x,(NSUInteger)pixels.origin.y,
             (NSUInteger)pixels.size.width,(NSUInteger)pixels.size.height}];
@@ -898,24 +1006,42 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     }
     [encoder endEncoding];
     dispatch_semaphore_t inFlight=_inFlight;
-    [command addCompletedHandler:^(__unused id<MTLCommandBuffer> done){dispatch_semaphore_signal(inFlight);}];
-    // Publish with the caller's layer updates, so neither a plain UIKit copy
-    // nor the previous frame's tint remains visible across the handoff.
+    NSLock *slotLock=_slotLock;
+    __weak typeof(self) weakSelf=self;
+    [command addCompletedHandler:^(__unused id<MTLCommandBuffer> done){
+        CVPixelBufferRelease(targetBuffer);
+        WXGMenuMorphView *strongSelf=weakSelf;
+        if(strongSelf){
+            [slotLock lock];
+            if(strongSelf->_surfaceGeneration==chosenGen)strongSelf->_slotBusy[chosenSlot]=NO;
+            [slotLock unlock];
+        }
+        dispatch_semaphore_signal(inFlight);
+    }];
+    // Commit, wait until scheduled on the GPU, and assign the IOSurface directly
+    // to CALayer.contents inside the exact same CATransaction as _bodyMask and
+    // _rimClip, eliminating CAImageQueue's 1-vsync FIFO lag completely.
     [command commit];
     [command waitUntilScheduled];
     if(command.status==MTLCommandBufferStatusError)return NO;
     if(generatingMips){_rowsNeedMips=NO;_triggerNeedsMips=NO;}
+    CGFloat scale=self.window.screen.scale?:UIScreen.mainScreen.scale;
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _metal.affineTransform=CGAffineTransformIdentity;
+    _metal.position=self.bounds.origin;
+    _metal.bounds=(CGRect){CGPointZero,self.bounds.size};
+    _metal.contentsScale=scale;
     _hasCachedInk=wantsCached;
     if(_hasCachedInk){
         _cachedMenu=_menu;_needsOpenInk=NO;
         [self placeCachedOpenInk];
     }else _plate.hidden=YES;
-    _metal.hidden=NO;[drawable present];++_inkSubmissions;
+    _metal.hidden=NO;
+    _metal.contents=(__bridge id)targetSurface;
+    ++_inkSubmissions;
     [CATransaction commit];
     _lastDrawnUniforms=baseU;
-    _lastDrawnDrawableSize=CGSizeMake(drawable.texture.width,drawable.texture.height);
+    _lastDrawnDrawableSize=CGSizeMake(targetTexture.width,targetTexture.height);
     _lastDrawnWinOrigin=winOrigin;
     _lastDrawnSessionStep=sessionStep;
     _hasLastDrawnPose=YES;
@@ -928,13 +1054,15 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     if(_sessionUsesUIKit || !_stableFrameMissed || !_pipeline || !_queue || !_texture || !self.requestFrame ||
         _stableRetryPending || _stableRetryCount>=2)return;
     _stableRetryPending=YES;
-    ++_stableRetryCount;
     __weak typeof(self) weakSelf=self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW,16*NSEC_PER_MSEC),dispatch_get_main_queue(),^{
         WXGMenuMorphView *view=weakSelf;
         if(!view)return;
         view->_stableRetryPending=NO;
-        if(view->_stableFrameMissed && view.window && view.requestFrame)view.requestFrame();
+        if(view->_stableFrameMissed && view.window && view.requestFrame) {
+            ++view->_stableRetryCount;
+            view.requestFrame();
+        }
     });
 }
 
@@ -970,16 +1098,18 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         [CATransaction begin];[CATransaction setDisableActions:YES];
         BOOL rendered=reused || [self drawGlass];
         if(reused){[self placeCachedOpenInk];++_openInkReuses;}
-        // Select one ink backend at first presentation. A late Metal completion
-        // must not replace the visible UIKit labels midway through a session.
-        if(showsForeground && !rendered && !_drawableHasForeground){_sessionUsesUIKit=YES;_metal.hidden=YES;}
-        if(rendered || settled || !_drawableHasForeground || _sessionUsesUIKit || !CGRectEqualToRect(self.bounds,_lastCommittedSurfaceBounds)) {
-            CGFloat effRX=MIN(frame.radiusX,MAX(.01,menu.size.width*.5));
-            CGFloat effRY=MIN(frame.radiusY,MAX(.01,menu.size.height*.5));
+        // Hold the last visible pair through a missed surface slot. If the final
+        // static image cannot be obtained after retrying, settle both in UIKit.
+        if(showsForeground && !rendered && (!_drawableHasForeground || (_wantsOpenInk && _stableRetryCount>=2))) {
+            if(!_inkSubmissions)_sessionUsesUIKit=YES;
+            _metal.hidden=YES;_plate.hidden=YES;
+            _hasCachedInk=NO;_drawableHasForeground=NO;
+        }
+        if(rendered || !_drawableHasForeground || !CGRectEqualToRect(self.bounds,_lastCommittedSurfaceBounds)) {
             CGFloat trigSide=_triggerSide>1.?_triggerSide:MIN(source.size.width,source.size.height);
             CGFloat menuSide=_menuSide>1.?_menuSide:MIN(menu.size.width,menu.size.height);
             WXGMenuMorphSurfaceOptics optics={frame.contentProgress,frame.lensHeight,frame.lensAmount,frame.portalBlur,trigSide,menuSide};
-            [_surface placeMenuRect:menu radiusX:effRX radiusY:effRY sourceRect:source
+            [_surface placeMenuRect:menu radiusX:frame.radiusX radiusY:frame.radiusY sourceRect:source
                 radius:frame.sourceRadius smoothing:frame.smoothing optics:optics];
             [_surface placeTouchLight:_lightPoint strength:_lightStrength];
             _lastCommittedSurfaceBounds=self.bounds;
@@ -987,7 +1117,7 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         [CATransaction commit];
         BOOL stable=_wantsOpenInk;
         if(!stable)_stableRetryCount=0;
-        _stableFrameMissed=stable && !rendered;
+        _stableFrameMissed=stable && !rendered && !_sessionUsesUIKit;
         [self retryStableFrame];
         hasForeground=_drawableHasForeground;
     }];

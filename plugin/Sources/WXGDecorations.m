@@ -287,7 +287,6 @@ static char WXGDecorationKey;
 @property(nonatomic) CGRect lastPlus;                       // the "+" as last found, in the menu parent's coordinates
 @property(nonatomic) CFTimeInterval plusSearchedAt,openAt,exitAt,partsSince,lastPlaced,lastNudge;
 @property(nonatomic) NSUInteger entrances,exits,tickRetries;
-@property(nonatomic) uint64_t lastMorphStepSerial;
 @property(nonatomic) BOOL watching;                         // a layout the observer asked for (not one WeChat did)
 @end
 @implementation WXGDecoration
@@ -321,7 +320,6 @@ static char WXGDecorationKey;
 @property(nonatomic) CGFloat settledMenuGap;
 @property(nonatomic) CFTimeInterval menuLastTime,scrubLastTimestamp;
 @property(nonatomic) NSUInteger menuToken;
-@property(nonatomic) uint64_t commitSerial;
 - (void)reassertVisiblePaint;
 - (void)placeAnimatedHomeMenu:(WXGDecoration *)entry items:(NSArray<UIView *> *)items;
 - (void)watchHomeMenu:(WXGDecoration *)entry;
@@ -514,7 +512,7 @@ static UIImage *WXGMenuMorphTriggerInk(UIView *trigger,CGRect anchor) {
     static WXGDecorations *manager;static dispatch_once_t once;
     dispatch_once(&once,^{
         manager=[self new];manager.entries=[NSHashTable weakObjectsHashTable];
-        manager.menuSpeed=1.;manager.menuStagger=.045;manager.commitSerial=1;
+        manager.menuSpeed=1.;manager.menuStagger=.045;
         [NSNotificationCenter.defaultCenter addObserver:manager selector:@selector(cancelInterruptedMenuSelection:)
             name:UIApplicationWillResignActiveNotification object:nil];
         // FIX29: just before every Core Animation commit, re-assert the cleared
@@ -525,12 +523,6 @@ static UIImage *WXGMenuMorphTriggerInk(UIView *trigger,CGRect anchor) {
         CFRunLoopObserverRef observer=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,1999800,
             ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity activity){WXGPerfTimePluginWorkAs("decorations",^{[weakManager reassertVisiblePaint];});});   // FIX102: timed
         if(observer){CFRunLoopAddObserver(CFRunLoopGetMain(),observer,kCFRunLoopCommonModes);CFRelease(observer);}
-        // Advance the commit serial immediately after Core Animation's implicit
-        // transaction observer (order 2000000) flushes, keeping CAMetalLayer's
-        // CAImageQueue strictly 1:1 with CAShapeLayer contours on every vsync.
-        CFRunLoopObserverRef postCommit=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,2000100,
-            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity activity){WXGDecorations *m=weakManager;if(m)m.commitSerial++;});
-        if(postCommit){CFRunLoopAddObserver(CFRunLoopGetMain(),postCommit,kCFRunLoopCommonModes);CFRelease(postCommit);}
     });
     return manager;
 }
@@ -970,7 +962,6 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
 }
 - (void)resetMenuMorph:(WXGDecoration *)entry {
     entry.pendingRow=nil;
-    entry.lastMorphStepSerial=0;
     [UIView performWithoutAnimation:^{
         for(WXGMenuRow *row in entry.rows)[row removeActionButton];
         if(entry.morphMode)[WXGIntegrationHost.shared updateHomeMenuFloatingToolsForOwner:entry inWindow:nil occupiedRect:CGRectNull];
@@ -1170,7 +1161,6 @@ static BOOL WXGMenuMapTransform(UIView *view,UIView *space,CGRect target,CGAffin
 - (void)renderMenuMorph:(WXGDecoration *)entry {
     WXGMenuMorphView *view=entry.morphView;
     if(!view || !entry->_morphMotion.initialized)return;
-    if(_commitSerial>0 && view.window)entry.lastMorphStepSerial=_commitSerial;
     WXGMenuMorphFrame frame=entry->_morphMotion.frame;
     WXGMenuScrub *scrub=&entry->_scrub;
     BOOL calm=UIAccessibilityIsReduceMotionEnabled();
@@ -1386,10 +1376,6 @@ static BOOL WXGMenuMapTransform(UIView *view,UIView *space,CGRect target,CGAffin
     double dt=_menuLastTime>0.?WXGMenuClamp(now-_menuLastTime,0.,.05):(1./120.);
     _menuLastTime=now;
     if(entry.morphMode) {
-        if(_commitSerial>0 && entry.lastMorphStepSerial==_commitSerial) {
-            _scrubLastTimestamp=link.timestamp;
-            return;
-        }
         double seconds=dt*_menuSpeed;
         BOOL settled=entry.morphSettled || WXGMenuMorphAdvance(&entry->_morphMotion,seconds);
         double interval=WXGMenuClamp(link.targetTimestamp-link.timestamp,1./240.,1./30.);
@@ -1664,8 +1650,7 @@ static UIControl *WXGMenuForwardableRow(UIView *row) {
     entry.lastPlaced=time;
     if(!entry.rowsReady)return;
     if(!entry.entranceDone){entry.entranceDone=YES;++entry.entrances;[self playEntrance:entry];}
-    else if(entry==_activeHomeMenu && (!entry.morphMode || _commitSerial==0 || entry.lastMorphStepSerial!=_commitSerial))
-        [self applyHomeMenuProgress:_menuProgress];
+    else if(entry==_activeHomeMenu)[self applyHomeMenuProgress:_menuProgress];
 }
 - (void)placeAnimatedHomeMenu:(WXGDecoration *)entry items:(NSArray<UIView *> *)items {
     UIView *host=entry.host,*body=entry.body,*parent=host.superview;

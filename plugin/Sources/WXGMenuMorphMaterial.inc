@@ -373,7 +373,7 @@ static BOOL WXGInstallMorphMesh(CALayer *layer,id mesh) {
     float morphAmount=(float)fabs(optics.lensAmount)*refractionScale;
     float band=fmaxf(restBand,morphBand);
     float amount=fmaxf(restAmount,morphAmount);
-    float squeeze=(band>restBand+.01f && band>.01f)?curve.squeeze*(restBand/band):curve.squeeze;
+    float squeeze=curve.squeeze;
     WXGMenuMorphFieldBox box={(float)b.origin.x,(float)b.origin.y,(float)b.size.width,(float)b.size.height,0};
     const WXGMenuMorphField *opticalField=field;
     // Reuse the window-anchored Gaussian session field already sampled for the
