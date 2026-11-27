@@ -114,7 +114,7 @@ FOUNDATION_EXPORT NSDictionary *WXGRimSummary(void);
 /* FIX67: how far the home page's mini-program panel is open, 0 .. 1. */
 FOUNDATION_EXPORT CGFloat WXGHomePanelProgressForController(UIViewController *home);
 typedef struct {
-    float windowWidth,headerBottom,sectionBoundsWidth,sectionScreenWidth,cellBoundsWidth,cellScreenWidth;
+    float windowWidth,headerBottom,sectionBoundsWidth,sectionScreenWidth,cellBoundsWidth,cellScreenWidth,iconBoundsWidth,iconScreenWidth;
 } WXGHomePanelGeometry;
 FOUNDATION_EXPORT WXGHomePanelGeometry WXGReadHomePanelGeometry(UIViewController *home);
 FOUNDATION_EXPORT void WXGRecordHomeNavigationWork(UINavigationBar *bar,double buildMS,double traceMS);

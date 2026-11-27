@@ -992,8 +992,8 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
    progress (WXGHomePanelProgress). The view is looked up once (again at most
    twice a second while missing) and kept weakly per controller. */
 @interface WXGHomePanelProbe : NSObject
-@property(nonatomic,weak) UIView *header,*grid,*cell;
-@property(nonatomic) CFTimeInterval lastSearch,nextGridSearch;
+@property(nonatomic,weak) UIView *header,*grid,*cell,*icon,*iconCell;
+@property(nonatomic) CFTimeInterval lastSearch,nextGridSearch,nextIconSearch;
 @end
 @implementation WXGHomePanelProbe
 @end
@@ -1018,7 +1018,7 @@ static WXGHomePanelProbe *WXGFindHomePanel(UIViewController *home) {
             if([v isKindOfClass:UITableViewCell.class] || [v isKindOfClass:UICollectionViewCell.class] || WXGIsPluginView(v))continue;
             [queue addObjectsFromArray:v.subviews];
         }
-        probe.header=header;probe.grid=nil;probe.cell=nil;probe.nextGridSearch=0;
+        probe.header=header;probe.grid=nil;probe.cell=nil;probe.icon=nil;probe.iconCell=nil;probe.nextGridSearch=0;
     }
     return header && !header.hidden?probe:nil;
 }
@@ -1034,11 +1034,24 @@ static CGRect WXGHomePanelScreenRect(UIView *view,UIWindow *window) {
     CALayer *layer=view.layer.presentationLayer,*screen=window.layer.presentationLayer;
     return layer && screen?[layer convertRect:layer.bounds toLayer:screen]:[view convertRect:view.bounds toView:window];
 }
+// Read only view geometry. The icon may be scaled inside an unchanged cell.
+static UIView *WXGHomeCellIcon(UIView *cell) {
+    NSMutableArray<UIView *> *queue=[cell.subviews mutableCopy];UIView *icon=nil;
+    for(NSUInteger i=0;i<queue.count && i<48;i++) {
+        UIView *v=queue[i];
+        if(v.hidden || v.alpha<=.001 || WXGIsPluginView(v))continue;
+        CGSize s=v.bounds.size;
+        if([v isKindOfClass:UIImageView.class] && s.width>=12 && fabs(s.width-s.height)<=2 &&
+           s.width<=cell.bounds.size.width+1 && (!icon || s.width>icon.bounds.size.width))icon=v;
+        [queue addObjectsFromArray:v.subviews];
+    }
+    return icon;
+}
 // Read real native grid geometry only for full diagnostic captures. A full
 // scroll range alone cannot distinguish the reduced preview from an open grid.
 WXGHomePanelGeometry WXGReadHomePanelGeometry(UIViewController *home) {
     UIWindow *w=home.viewIfLoaded.window;
-    WXGHomePanelGeometry sample={w.bounds.size.width,-1,-1,-1,-1,-1};
+    WXGHomePanelGeometry sample={w.bounds.size.width,-1,-1,-1,-1,-1,-1,-1};
     WXGHomePanelProbe *probe=WXGFindHomePanel(home);
     UIView *header=probe.header;
     if(!header || !w)return sample;
@@ -1061,12 +1074,21 @@ WXGHomePanelGeometry WXGReadHomePanelGeometry(UIViewController *home) {
                 while(parent && parent!=header && ![parent isKindOfClass:sectionClass])parent=parent.superview;
                 if([parent isKindOfClass:sectionClass]){grid=parent;cell=v;break;}
             }
-            if(![v isKindOfClass:UICollectionViewCell.class] || [v isKindOfClass:sectionClass])[queue addObjectsFromArray:v.subviews];
+            [queue addObjectsFromArray:v.subviews];
         }
         probe.grid=grid;probe.cell=cell;
     }
     if(grid){sample.sectionBoundsWidth=grid.bounds.size.width;sample.sectionScreenWidth=WXGHomePanelScreenRect(grid,w).size.width;}
-    if(cell){sample.cellBoundsWidth=cell.bounds.size.width;sample.cellScreenWidth=WXGHomePanelScreenRect(cell,w).size.width;}
+    if(cell) {
+        sample.cellBoundsWidth=cell.bounds.size.width;sample.cellScreenWidth=WXGHomePanelScreenRect(cell,w).size.width;
+        UIView *icon=probe.icon;
+        if(icon && (icon.hidden || icon.alpha<=.001 || ![icon isDescendantOfView:cell]))icon=nil;
+        if(probe.iconCell!=cell || (!icon && now>=probe.nextIconSearch)) {
+            probe.iconCell=cell;probe.nextIconSearch=now+.25;probe.icon=icon=WXGHomeCellIcon(cell);
+        }
+        CGRect screen=WXGHomePanelScreenRect(icon,w);
+        if(icon && !CGRectIsNull(screen)){sample.iconBoundsWidth=icon.bounds.size.width;sample.iconScreenWidth=screen.size.width;}
+    }
     return sample;
 }
 

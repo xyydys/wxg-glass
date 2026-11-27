@@ -4038,13 +4038,13 @@ static float WXGHomeTraceY(UIView *view,CGFloat y,UIWindow *window,BOOL full) {
                             @(f.titleBottom),@(f.titleOpacity),@(f.searchOpacity),@(f.groupOpacity),@(f.rawInset),@(f.systemInset),@(f.restInset),@(f.conversationTop),@(f.layoutMS),@(f.headerWorkMS),
                             @(f.callbackInterval),@(f.work.layouts),@(f.work.cells),@(f.work.cellMS),@(f.work.reloads),@(f.work.reloadMS),@(f.work.navigations),@(f.work.navigationMS),@(f.work.navigationBuildMS),@(f.work.navigationTraceMS)]];
         WXGHomePanelGeometry p=f.panelGeometry;
-        if(p.windowWidth>0)[panelSamples addObject:@[@(f.t),@(f.offset),@(p.windowWidth),@(p.headerBottom),@(p.sectionBoundsWidth),@(p.sectionScreenWidth),@(p.cellBoundsWidth),@(p.cellScreenWidth)]];
+        if(p.windowWidth>0)[panelSamples addObject:@[@(f.t),@(f.offset),@(p.windowWidth),@(p.headerBottom),@(p.sectionBoundsWidth),@(p.sectionScreenWidth),@(p.cellBoundsWidth),@(p.cellScreenWidth),@(p.iconBoundsWidth),@(p.iconScreenWidth)]];
     }
     return @{@"columns":@[@"seconds",@"intervalMS",@"offsetY",@"adjustedTop",@"contentHeight",@"headerHeight",@"leading",
                          @"titleRowBottom",@"searchWindowY",@"groupWindowY",@"groupLensX",@"titleLensX",@"pullPanel",@"flags",
                          @"visibleTitleBottomY",@"titleAlpha",@"searchAlpha",@"groupAlpha",@"rawContentTop",@"automaticTop",@"restTop",@"conversationTop",@"tableLayoutMS",@"nativeHeaderAssignmentMS",
                          @"callbackIntervalMS",@"tableLayouts",@"cellsConfigured",@"cellConfigurationMS",@"tableReloads",@"tableReloadMS",@"navigationLayouts",@"navigationLayoutMS",@"pluginNavigationBuildMS",@"navigationTraceMS"],
-             @"panelGeometry":@{@"columns":@[@"seconds",@"offsetY",@"windowWidth",@"headerScreenBottom",@"gridBoundsWidth",@"gridScreenWidth",@"cellBoundsWidth",@"cellScreenWidth"],@"samples":panelSamples},
+             @"panelGeometry":@{@"columns":@[@"seconds",@"offsetY",@"windowWidth",@"headerScreenBottom",@"gridBoundsWidth",@"gridScreenWidth",@"cellBoundsWidth",@"cellScreenWidth",@"iconBoundsWidth",@"iconScreenWidth"],@"samples":panelSamples},
              @"flagBits":@[@"tracking",@"dragging",@"decelerating",@"transition",@"floating",@"replaceSearch",@"pendingReturn",@"nativeSearch",@"groupHeaderInstalled",@"presentationGeometry"],
              @"full":@(cap==14400),@"capacity":@(cap),@"written":@(_motionWrite),@"frames":frames,@"events":_motionEvents.copy?:@[],
              @"offsetWrites":WXGHomeOffsetEvidence(),@"insetWrites":WXGHomeInsetEvidence(),@"headerReuses":@(WXGHomeHeaderReuses),@"restInsetAttempts":@(_groupHeader.insetAttempts),@"insetRepairs":@(_groupHeader.insetRepairs),
