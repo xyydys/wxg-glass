@@ -143,6 +143,7 @@ static inline bool WXGHomeUsesPullControls(double navAlpha,double listAlpha,bool
     if(navAlpha<0.)return true;
     if(listAlpha<=.01 && navAlpha>.01)return false;
     if(navAlpha<=.01 && listAlpha>.01)return true;
+    if(fabs(listAlpha-navAlpha)>.02)return listAlpha>navAlpha;
     return pulling;
 }
 static inline bool WXGHomeWaitsForSearchArtwork(bool currentHasBox,bool nextHasBox,bool editing,bool hasPlaceholder) {

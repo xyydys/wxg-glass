@@ -467,6 +467,7 @@ static UIView *WXGFinderLiveContainer(WXGFinderLink *link) {
 @property(nonatomic,strong) NSHashTable<UIView *> *homeRightRows,*homePlusControls,*homeSearchControls;
 @property(nonatomic,weak) WXGSurface *homePlusSurface,*homeSearchSurface;
 @property(nonatomic) BOOL homeControlsChanged,homeShowingPullControls;
+@property(nonatomic) NSInteger homeIconBranch;
 @property(nonatomic) NSUInteger navigationRepairs,homeReattachments,otherBarLayoutsSkipped;
 @property(nonatomic) NSUInteger homeNavigationLayoutsReused,homeNavigationRevision;
 @property(nonatomic) BOOL homeNavigationNeedsFinalLayout,homeNavigationHidden;
@@ -1952,7 +1953,7 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
         CGFloat dy=[host isDescendantOfView:_route.nav.navigationBar]?[self navigationHomePullFor:host]:round(WXGTitleRowOffset(m.scale)*scale)/scale;
         [_navStates shiftContents:host x:fabs(dx)>=.5 && fabs(dx)<=32?dx:0 y:dy];
         if(dy>.01)[self openRowClipsFrom:host upTo:nil metrics:m];else WXGCloseRowClips(host,nil);
-        _homeIconHost=host;_homeIconSurface=surface;   // (review) measured when the diagnostics are exported
+        _homeIconHost=host;_homeIconSurface=surface;_homeIconBranch=[self homeBranchForHost:host];
     }
     if(host.subviews.firstObject!=surface)[host insertSubview:surface atIndex:0];
     [surface observeTouchesInView:host];   // FIX70: the button's own view takes the touches
@@ -2082,13 +2083,13 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
     if(_refreshing || !_route.primary || _nativeTransition || _pendingController || WXGNavigationCallDepth ||
        _navCapsuleLeaf!=_route.leaf || !WXGPreferences.shared.nav)return;
     BOOL pulling=[self currentHomePull]>.5;
-    if(!_homeControlsChanged && !pulling && !_homeShowingPullControls && CACurrentMediaTime()-_homePullSeenAt>.65)return;
-    _homeControlsChanged=NO;_homeShowingPullControls=pulling;
+    if(!_homeControlsChanged && !pulling && !_homeShowingPullControls)return;
+    _homeControlsChanged=NO;
     [self followHomeAction:_homePlusSurface hosts:_homePlusControls pulling:pulling];
     [self followHomeAction:_homeSearchSurface hosts:_homeSearchControls pulling:pulling];
     WXGSurface *left=_surfacePool[@"nativeLeft0"];
     UIView *wanted=[self homeHostFrom:_homeGestureHosts current:left.motionHost pulling:pulling];
-    if(wanted && left.active && (left.superview!=wanted || left.motionHost!=wanted)) {
+    if(wanted && left.active && (left.superview!=wanted || left.motionHost!=wanted || _homeIconBranch!=[self homeBranchForHost:wanted])) {
         _refreshing=YES;
         @try {
             [self bindHomeGesture:wanted diameter:left.materialRect.size.height slot:@"nativeLeft0"];
@@ -2106,20 +2107,22 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
             [_navStates shiftContents:left.superview x:shift.x y:pull];
         }
     }
+    _homeShowingPullControls=pulling || [self homeBranchForHost:left.motionHost]==1 ||
+        [self homeBranchForHost:_homePlusSurface.original]==1 || [self homeBranchForHost:_homeSearchSurface.original]==1;
 }
 - (void)followHomeSurfaces {
     if(![NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"])return;
     [self syncHomeControls];
     for(WXGSurface *surface in _buttons) {
         UIView *native=surface.original?:surface.motionHost;
-        if(!native || native.window!=_window)continue;
+        if((!native || native.window!=_window) && !surface.homePlusAnchor)continue;
         if([surface.role isEqual:@"nativeGesture"]) {
             // Geometry and alpha now inherit from the actual native host. Only
             // a genuine rehome requires reattachment, not every display frame.
             if(surface.superview!=native)[self bindHomeGesture:native diameter:surface.materialRect.size.height slot:@"nativeLeft0"];
         }else if((surface.original || surface.homePlusAnchor) && surface.superview.window==_window) {
             // Preserve TEST4's corrected x grid and raster-centered icon, follow native y.
-            CGFloat y=[self homeCenterForSurface:surface fallback:CGRectGetMidY(surface.restingFrame)];
+            CGFloat y=[self homeCenterForSurface:surface fallback:_homeRowBottom-surface.materialRect.size.height*.5];
             CGPoint center=[_window convertPoint:CGPointMake(0,y) toView:surface.superview];
             CGRect frame=surface.followsNative?surface.restingFrame:surface.frame;
             frame.origin.y=center.y-frame.size.height*.5;
@@ -2127,6 +2130,9 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
             if(surface.followsNative)WXGResetOwnedTransform(surface);
             if(!CGRectEqualToRect(frame,surface.frame))surface.frame=frame;
             if(surface.followsNative)surface.restingFrame=frame;
+            else if(surface.homePlusAnchor && !_nativeTransition) {
+                surface.alpha=WXGClamp(1.-_homePanel,0.,1.);surface.hidden=surface.alpha<.001;
+            }
             [CATransaction commit];
         }
     }
@@ -4003,6 +4009,7 @@ static UIView *WXGNativeClone(UIView *control) {
         _departingButtons=outgoing;
     }
     [self clearNavigationPaint];[_overlay bringSubviewToFront:_launcher];
+    if(home)_homeControlsChanged=YES;
     if(home && _homePlusSurface)[self concealHomeTwins:_homePlusControls except:nil];
     if(home && (_homeSearchSurface || [self dockSearchAvailable]))[self concealHomeTwins:_homeSearchControls except:nil];
     _navigationBindingKey=[self currentNavigationBindingKey];

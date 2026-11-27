@@ -8,6 +8,8 @@ int main(void) {
     assert(WXGHomeUsesPullControls(-1.,1.,false));
     assert(!WXGHomeUsesPullControls(1.,0.,true));
     assert(WXGHomeUsesPullControls(0.,1.,false));
+    assert(WXGHomeUsesPullControls(.03,.97,false));
+    assert(!WXGHomeUsesPullControls(.97,.03,true));
     assert(WXGHomeUsesPullControls(.5,.5,true));
     assert(!WXGHomeUsesPullControls(.5,.5,false));
     assert(WXGHomeUsesPullControls(0.,0.,true));

@@ -1774,7 +1774,7 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
     if(pending.superview==_nativeCanvas) {
         if(pending!=next)[pending removeFromSuperview];
         pending.autoresizingMask=_pendingResize;
-    }
+    }else if(pending.autoresizingMask==UIViewAutoresizingFlexibleWidth)pending.autoresizingMask=_pendingResize;
     [_pendingPaint restore];_pendingPaint=nil;
 }
 // Native callers may size their search field by assigning the frame of tableHeaderView.
