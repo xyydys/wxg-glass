@@ -1860,16 +1860,15 @@ CGFloat WXGHomeConversationTop(UIScrollView *list) {
     if(!WXGHomeIsConversationTable(list))return list.adjustedContentInset.top;
     WXGHomeGroupHeader *rows=list==WXGGroupedTable?WXGGroupedRows:nil;
     if(rows.restInset>0 && WXGHomeSameViewport(rows,list))return rows.restInset;
-    CGFloat automatic=list.adjustedContentInset.top-list.contentInset.top;
-    return automatic>=20.?automatic:list.adjustedContentInset.top;
+    return WXGHomeInitialConversationTop(list.contentInset.top,list.adjustedContentInset.top,list.bounds.size.height,list.window.screen.scale);
 }
 BOOL WXGHomeListInNativePull(UIScrollView *list) {
     if(!WXGHomeIsConversationTable(list))return NO;
     CGFloat adjusted=list.adjustedContentInset.top,raw=list.contentInset.top;
     WXGHomeGroupHeader *rows=list==WXGGroupedTable?WXGGroupedRows:nil;
     CGFloat rest=WXGHomeSameViewport(rows,list)?rows.restInset:0.;
-    if(rest<=0)rest=adjusted-raw;
     CGFloat offset=list.contentOffset.y,scale=list.window.screen.scale;
+    if(rest<=0)rest=WXGHomeInitialConversationTop(raw,adjusted,list.bounds.size.height,scale);
     if(list.refreshControl.refreshing)return YES;
     if(list==WXGGroupedTable && WXGHasNativeInsetRequest && rest>=20. && WXGNativeInsetRequest>rest+1.)return YES;
     // At cold launch UIKit may already be resting at two copies of the chrome

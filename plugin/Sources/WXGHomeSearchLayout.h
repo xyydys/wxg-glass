@@ -105,11 +105,20 @@ static inline double WXGHomeEffectiveTop(double rest,double raw,double adjusted,
     return WXGHomeHasTwoNavigationInsets(rest,raw,adjusted,scale)?raw:adjusted;
 }
 
+// Before the conversation row has calibrated, keep a legitimate app-supplied
+// top (including zero). Only a duplicated chrome or a full-screen range gives
+// independent evidence that the adjusted top is not the resting position.
+static inline double WXGHomeInitialConversationTop(double raw,double adjusted,double viewport,double scale) {
+    double automatic=adjusted-raw;
+    if((viewport>0 && adjusted>=viewport-1./fmax(1.,scale)) || WXGHomeHasTwoNavigationInsets(automatic,raw,adjusted,scale))
+        return fmax(0.,automatic);
+    return adjusted;
+}
 // A native animated scroll does not set tracking, dragging or decelerating.
 // Its enlarged range remains authoritative all the way through the close.
 static inline bool WXGHomeNativePull(double rest,double raw,double adjusted,double offset,double viewport,double scale) {
     double pixel=1./fmax(1.,scale)+.01;
-    if(rest<20.)return viewport>0. && adjusted>=viewport-pixel;
+    if(rest<20.)return offset < -rest-pixel || (viewport>0. && adjusted>=viewport-pixel);
     return offset < -rest-pixel || WXGHomeEffectiveTop(rest,raw,adjusted,scale)>rest+pixel;
 }
 

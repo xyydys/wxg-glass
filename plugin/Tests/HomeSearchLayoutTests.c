@@ -126,6 +126,14 @@ int main(void) {
     assert(WXGHomeAtDuplicatedRest(nav,nav,2*nav,-2*nav,3));
     assert(!WXGHomeAtDuplicatedRest(nav,nav,2*nav,-2*nav-1,3));
     assert(!WXGHomeAtDuplicatedRest(nav,panelRaw,panel,-panel,3));
+    assert(WXGHomeInitialConversationTop(nav,nav,panel,3)==nav);
+    assert(WXGHomeInitialConversationTop(nav,2*nav,panel,3)==nav);
+    assert(fabs(WXGHomeInitialConversationTop(panelRaw,panel,panel,3)-nav)<1e-7);
+    assert(WXGHomeInitialConversationTop(24,nav+24,panel,3)==nav+24);
+    assert(!WXGHomeNativePull(nav+24,24,nav+24,-nav-24,panel,3));
+    assert(WXGHomeInitialConversationTop(0,0,panel,3)==0);
+    assert(WXGHomeNativePull(0,0,0,-12,panel,3));
+    assert(!WXGHomeNativePull(0,0,0,0,panel,3));
     puts("HomeSearchLayoutTests: native field readiness and vertical header reservation passed.");
     return 0;
 }
