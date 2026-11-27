@@ -450,20 +450,26 @@ static NSInteger WXGLoadMenuDotCount(void) {
 }
 - (WXGMenuMorphSurface *)borrowHomeMenuMorphSurface {
     if(_homeMorphBorrowed || ![self usesHomeMenuMorphSurface])return nil;
-    [self resetPressAndStretchForMorph];
-    [self layoutHomeMenuMorphSurface];
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        [self resetPressAndStretchForMorph];
+        [self layoutHomeMenuMorphSurface];
+        [CATransaction commit];
+    }];
     if(!_homeMorphSurface)return nil;
     _homeMorphBorrowed=YES;
     return _homeMorphSurface;
 }
 - (void)returnHomeMenuMorphSurface:(WXGMenuMorphSurface *)surface {
     if(!_homeMorphBorrowed || surface!=_homeMorphSurface)return;
-    [CATransaction begin];[CATransaction setDisableActions:YES];
-    _homeMorphBorrowed=NO;
-    [self resetPressAndStretchForMorph];
-    [self layoutHomeMenuMorphSurface];
-    [self setNeedsLayout];[self layoutIfNeeded];
-    [CATransaction commit];
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        _homeMorphBorrowed=NO;
+        [self resetPressAndStretchForMorph];
+        [self layoutHomeMenuMorphSurface];
+        [self setNeedsLayout];[self layoutIfNeeded];
+        [CATransaction commit];
+    }];
 }
 - (void)setHomePlusTrigger:(BOOL)trigger {
     if(_homePlusTrigger==trigger)return;

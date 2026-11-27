@@ -287,6 +287,7 @@ static char WXGDecorationKey;
 @property(nonatomic) CGRect lastPlus;                       // the "+" as last found, in the menu parent's coordinates
 @property(nonatomic) CFTimeInterval plusSearchedAt,openAt,exitAt,partsSince,lastPlaced,lastNudge;
 @property(nonatomic) NSUInteger entrances,exits,tickRetries;
+@property(nonatomic) uint64_t lastMorphStepSerial;
 @property(nonatomic) BOOL watching;                         // a layout the observer asked for (not one WeChat did)
 @end
 @implementation WXGDecoration
@@ -320,6 +321,7 @@ static char WXGDecorationKey;
 @property(nonatomic) CGFloat settledMenuGap;
 @property(nonatomic) CFTimeInterval menuLastTime,scrubLastTimestamp;
 @property(nonatomic) NSUInteger menuToken;
+@property(nonatomic) uint64_t commitSerial;
 - (void)reassertVisiblePaint;
 - (void)placeAnimatedHomeMenu:(WXGDecoration *)entry items:(NSArray<UIView *> *)items;
 - (void)watchHomeMenu:(WXGDecoration *)entry;
@@ -512,7 +514,7 @@ static UIImage *WXGMenuMorphTriggerInk(UIView *trigger,CGRect anchor) {
     static WXGDecorations *manager;static dispatch_once_t once;
     dispatch_once(&once,^{
         manager=[self new];manager.entries=[NSHashTable weakObjectsHashTable];
-        manager.menuSpeed=1.;manager.menuStagger=.045;
+        manager.menuSpeed=1.;manager.menuStagger=.045;manager.commitSerial=1;
         [NSNotificationCenter.defaultCenter addObserver:manager selector:@selector(cancelInterruptedMenuSelection:)
             name:UIApplicationWillResignActiveNotification object:nil];
         // FIX29: just before every Core Animation commit, re-assert the cleared
@@ -523,6 +525,12 @@ static UIImage *WXGMenuMorphTriggerInk(UIView *trigger,CGRect anchor) {
         CFRunLoopObserverRef observer=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,1999800,
             ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity activity){WXGPerfTimePluginWorkAs("decorations",^{[weakManager reassertVisiblePaint];});});   // FIX102: timed
         if(observer){CFRunLoopAddObserver(CFRunLoopGetMain(),observer,kCFRunLoopCommonModes);CFRelease(observer);}
+        // Advance the commit serial immediately after Core Animation's implicit
+        // transaction observer (order 2000000) flushes, keeping CAMetalLayer's
+        // CAImageQueue strictly 1:1 with CAShapeLayer contours on every vsync.
+        CFRunLoopObserverRef postCommit=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,2000100,
+            ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity activity){WXGDecorations *m=weakManager;if(m)m.commitSerial++;});
+        if(postCommit){CFRunLoopAddObserver(CFRunLoopGetMain(),postCommit,kCFRunLoopCommonModes);CFRelease(postCommit);}
     });
     return manager;
 }
@@ -962,23 +970,26 @@ static NSString *WXGDecorationRow(UIView *v,UIView *window,NSString *place) {
 }
 - (void)resetMenuMorph:(WXGDecoration *)entry {
     entry.pendingRow=nil;
-    for(WXGMenuRow *row in entry.rows)[row removeActionButton];
-    if(entry.morphMode)[WXGIntegrationHost.shared updateHomeMenuFloatingToolsForOwner:entry inWindow:nil occupiedRect:CGRectNull];
-    // WeChat can take a transition snapshot inside its own action handler.
-    // Keep its underlying native artwork concealed until its menu is gone.
-    if(!entry.retirement) {
-        [self clearMorphRowsMask:entry];
-        entry.morphOwner=nil;entry.hasMorphOwner=NO;
-    }
-    [CATransaction begin];[CATransaction setDisableActions:YES];
-    [self clearMorphTriggerMask:entry];
-    NSDictionary *returned=[entry.morphView returnSurfaceToButton];
-    if(returned && [returned[@"surface"] isEqual:_morphLayerSamples[@"pickup"][@"surface"]])
-        _morphLayerSamples[@"returned"]=returned;
-    [self restoreMorphBodyPosition:entry];
-    [entry.morphTouch.view removeGestureRecognizer:entry.morphTouch];entry.morphTouch=nil;
-    [entry.morphView removeFromSuperview];entry.morphView=nil;
-    [CATransaction commit];
+    entry.lastMorphStepSerial=0;
+    [UIView performWithoutAnimation:^{
+        for(WXGMenuRow *row in entry.rows)[row removeActionButton];
+        if(entry.morphMode)[WXGIntegrationHost.shared updateHomeMenuFloatingToolsForOwner:entry inWindow:nil occupiedRect:CGRectNull];
+        // WeChat can take a transition snapshot inside its own action handler.
+        // Keep its underlying native artwork concealed until its menu is gone.
+        if(!entry.retirement) {
+            [self clearMorphRowsMask:entry];
+            entry.morphOwner=nil;entry.hasMorphOwner=NO;
+        }
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        [self clearMorphTriggerMask:entry];
+        NSDictionary *returned=[entry.morphView returnSurfaceToButton];
+        if(returned && [returned[@"surface"] isEqual:_morphLayerSamples[@"pickup"][@"surface"]])
+            _morphLayerSamples[@"returned"]=returned;
+        [self restoreMorphBodyPosition:entry];
+        [entry.morphTouch.view removeGestureRecognizer:entry.morphTouch];entry.morphTouch=nil;
+        [entry.morphView removeFromSuperview];entry.morphView=nil;
+        [CATransaction commit];
+    }];
     entry.morphForeground=nil;
     entry.morphRows=nil;entry.morphRowsImage=nil;entry.morphTriggerImage=nil;
     entry.morphHighlight=nil;entry.morphSelectedRow=nil;entry.scrubHaptic=nil;
@@ -1107,56 +1118,59 @@ static BOOL WXGMenuMapTransform(UIView *view,UIView *space,CGRect target,CGAffin
         CGAffineTransformMakeScale(scale,scale))),CGAffineTransformMakeScale(1./scale,1./scale));
     BOOL newPortal=!entry.morphView || entry.morphView.superview!=window;
     BOOL canvasChanged=newPortal || !CGRectEqualToRect(entry.morphView.frame,windowCanvas);
-    [CATransaction begin];[CATransaction setDisableActions:YES];
-    if(newPortal) {
-        WXGMenuMorphView *old=entry.morphView;
-        WXGHomeMenuPortal *view=[[WXGHomeMenuPortal alloc]initWithFrame:windowCanvas];
-        view.entry=entry;view.userInteractionEnabled=YES;view.isAccessibilityElement=NO;view.accessibilityElementsHidden=NO;
-        view.layer.zPosition=20000;
-        [old returnSurfaceToButton];[old removeFromSuperview];
-        [window addSubview:view];
-        entry.morphView=view;
-        __weak WXGDecoration *weakEntry=entry;
-        __weak WXGMenuMorphView *weakView=view;
-        __weak WXGDecorations *weakSelf=self;
-        view.requestFrame=^{
-            WXGDecoration *active=weakEntry;WXGDecorations *manager=weakSelf;
-            if(active && active==manager.activeHomeMenu && active.morphView==weakView && active.morphView.window)
-                [manager renderMenuMorph:active];
-        };
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        if(newPortal) {
+            WXGMenuMorphView *old=entry.morphView;
+            WXGHomeMenuPortal *view=[[WXGHomeMenuPortal alloc]initWithFrame:windowCanvas];
+            view.entry=entry;view.userInteractionEnabled=YES;view.isAccessibilityElement=NO;view.accessibilityElementsHidden=NO;
+            view.layer.zPosition=20000;
+            [old returnSurfaceToButton];[old removeFromSuperview];
+            [window addSubview:view];
+            entry.morphView=view;
+            __weak WXGDecoration *weakEntry=entry;
+            __weak WXGMenuMorphView *weakView=view;
+            __weak WXGDecorations *weakSelf=self;
+            view.requestFrame=^{
+                WXGDecoration *active=weakEntry;WXGDecorations *manager=weakSelf;
+                if(active && active==manager.activeHomeMenu && active.morphView==weakView && active.morphView.window)
+                    [manager renderMenuMorph:active];
+            };
 
-        UIView *foreground=entry.morphForeground;
-        if(!foreground) {
-            foreground=[UIView new];entry.morphForeground=foreground;
-            foreground.userInteractionEnabled=NO;foreground.accessibilityElementsHidden=YES;
-            UIView *rows=[UIView new];entry.morphRows=rows;[foreground addSubview:rows];
-            UIView *highlight=[UIView new];entry.morphHighlight=highlight;
-            highlight.layer.cornerCurve=kCACornerCurveContinuous;highlight.alpha=0.;
-            [rows addSubview:highlight];
-            entry.morphRowsImage=[UIImageView new];[rows addSubview:entry.morphRowsImage];
-            entry.morphTriggerImage=[UIImageView new];[foreground addSubview:entry.morphTriggerImage];
+            UIView *foreground=entry.morphForeground;
+            if(!foreground) {
+                foreground=[UIView new];entry.morphForeground=foreground;
+                foreground.userInteractionEnabled=NO;foreground.accessibilityElementsHidden=YES;
+                UIView *rows=[UIView new];entry.morphRows=rows;[foreground addSubview:rows];
+                UIView *highlight=[UIView new];entry.morphHighlight=highlight;
+                highlight.layer.cornerCurve=kCACornerCurveContinuous;highlight.alpha=0.;
+                [rows addSubview:highlight];
+                entry.morphRowsImage=[UIImageView new];[rows addSubview:entry.morphRowsImage];
+                entry.morphTriggerImage=[UIImageView new];[foreground addSubview:entry.morphTriggerImage];
+            }
+            [view useSurfaceFromButton:[trigger isKindOfClass:WXGSurface.class]?(WXGSurface *)trigger:nil];
+            view.fallbackForeground=foreground;
         }
-        [view useSurfaceFromButton:[trigger isKindOfClass:WXGSurface.class]?(WXGSurface *)trigger:nil];
-        view.fallbackForeground=foreground;
-    }
-    entry.morphView.overrideUserInterfaceStyle=host.traitCollection.userInterfaceStyle;
-    if(canvasChanged) {
-        entry.morphView.frame=windowCanvas;
-        [entry.morphView setNeedsLayout];[entry.morphView layoutIfNeeded];
-        [entry.morphView captureBackdropFromView:window excludingViews:trigger?@[host,trigger]:@[host]];
-    }
-    if(!entry.morphTriggerImage.image || (entry.morphMaskedTrigger && entry.morphMaskedTrigger!=trigger))
-        entry.morphTriggerImage.image=WXGMenuMorphTriggerInk(trigger,anchor);
-    entry.morphRowsImage.image=entry.morphContent.image;
-    [entry.morphView setSessionTriggerSide:MIN(anchor.size.width,anchor.size.height)
-                                  menuSide:MIN(target.size.width,target.size.height)];
-    [entry.morphView setOpticalSessionBounds:[parent convertRect:CGRectUnion(anchor,target) toView:window]];
-    [entry.morphView setForegroundRowsImage:entry.morphContent.image triggerImage:entry.morphTriggerImage.image];
-    [CATransaction commit];
+        entry.morphView.overrideUserInterfaceStyle=host.traitCollection.userInterfaceStyle;
+        if(canvasChanged) {
+            entry.morphView.frame=windowCanvas;
+            [entry.morphView setNeedsLayout];[entry.morphView layoutIfNeeded];
+            [entry.morphView captureBackdropFromView:window excludingViews:trigger?@[host,trigger]:@[host]];
+        }
+        if(!entry.morphTriggerImage.image || (entry.morphMaskedTrigger && entry.morphMaskedTrigger!=trigger))
+            entry.morphTriggerImage.image=WXGMenuMorphTriggerInk(trigger,anchor);
+        entry.morphRowsImage.image=entry.morphContent.image;
+        [entry.morphView setSessionTriggerSide:MIN(anchor.size.width,anchor.size.height)
+                                      menuSide:MIN(target.size.width,target.size.height)];
+        [entry.morphView setOpticalSessionBounds:[parent convertRect:CGRectUnion(anchor,target) toView:window]];
+        [entry.morphView setForegroundRowsImage:entry.morphContent.image triggerImage:entry.morphTriggerImage.image];
+        [CATransaction commit];
+    }];
 }
 - (void)renderMenuMorph:(WXGDecoration *)entry {
     WXGMenuMorphView *view=entry.morphView;
     if(!view || !entry->_morphMotion.initialized)return;
+    if(_commitSerial>0 && view.window)entry.lastMorphStepSerial=_commitSerial;
     WXGMenuMorphFrame frame=entry->_morphMotion.frame;
     WXGMenuScrub *scrub=&entry->_scrub;
     BOOL calm=UIAccessibilityIsReduceMotionEnabled();
@@ -1169,56 +1183,58 @@ static BOOL WXGMenuMapTransform(UIView *view,UIView *space,CGRect target,CGAffin
     BOOL settled=entry.morphSettled && entry.phase==WXGMenuPhaseOpen;
     UIView *trigger=[self resolveHomePlusFor:entry]?:entry.plusControl;
     UIView *body=entry.body;
-    [CATransaction begin];[CATransaction setDisableActions:YES];
-    CGRect row=entry.morphContent.rowFrames.firstObject.CGRectValue;
-    row.origin.y=scrub->top.value;row.size.height=scrub->height.value;
-    CGFloat alpha=WXGMenuClamp(scrub->alpha.value,0.,1.);
-    [view stageHighlightedRowRect:row opacity:alpha];
-    CGPoint light=CGPointMake(scrub->lightX.value,scrub->lightY.value);
-    [view stageMenuLightAtPoint:light inParent:entry.menuParent artworkX:light.x-CGRectGetMinX(entry.morphRect) strength:WXGMenuClamp(scrub->glow.value,0.,1.)*frame.contentProgress];
-    BOOL renderedInk=[view applyMorphFrame:frame inParent:entry.menuParent settledOpen:settled showsForeground:YES];
-    entry.morphForeground.hidden=renderedInk;
-    if(entry.morphMaskedTrigger!=trigger)[self clearMorphTriggerMask:entry];
-    if(trigger.window==view.window && (!trigger.layer.mask || trigger.layer.mask==entry.morphTriggerMask)) {
-        if(!entry.morphTriggerMask)entry.morphTriggerMask=[CALayer layer];
-        trigger.layer.mask=entry.morphTriggerMask;entry.morphMaskedTrigger=trigger;
-    }
-    if(body!=entry.morphMaskedBody)[self clearMorphRowsMask:entry];
-    if(body.window && entry.morphRowsImage.image) {
-        if(!entry.morphRowsMask)entry.morphRowsMask=[CALayer layer];
-        if(body.layer.mask!=entry.morphRowsMask){entry.morphOriginalRowsMask=body.layer.mask;body.layer.mask=entry.morphRowsMask;}
-        entry.morphMaskedBody=body;
-    }
-    NSString *milestone=nil;
-    if(entry.phase==WXGMenuPhaseExiting) {
-        if(entry.morphSettled)milestone=@"collapsed";
-        else if(frame.contentProgress<.65 && frame.contentProgress>.08)milestone=@"closing";
-    } else if(settled)milestone=@"open";
-    else if(frame.contentProgress<.01)milestone=@"button";
-    else if(frame.contentProgress>.2 && frame.contentProgress<.8)milestone=@"opening";
-    if(milestone && _morphLayerSamples && !_morphLayerSamples[milestone])
-        _morphLayerSamples[milestone]=view.presentationEvidence;
-    if(renderedInk){[CATransaction commit];return;}
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        CGRect row=entry.morphContent.rowFrames.firstObject.CGRectValue;
+        row.origin.y=scrub->top.value;row.size.height=scrub->height.value;
+        CGFloat alpha=WXGMenuClamp(scrub->alpha.value,0.,1.);
+        [view stageHighlightedRowRect:row opacity:alpha];
+        CGPoint light=CGPointMake(scrub->lightX.value,scrub->lightY.value);
+        [view stageMenuLightAtPoint:light inParent:entry.menuParent artworkX:light.x-CGRectGetMinX(entry.morphRect) strength:WXGMenuClamp(scrub->glow.value,0.,1.)*frame.contentProgress];
+        BOOL renderedInk=[view applyMorphFrame:frame inParent:entry.menuParent settledOpen:settled showsForeground:YES];
+        entry.morphForeground.hidden=renderedInk;
+        if(entry.morphMaskedTrigger!=trigger)[self clearMorphTriggerMask:entry];
+        if(trigger.window==view.window && (!trigger.layer.mask || trigger.layer.mask==entry.morphTriggerMask)) {
+            if(!entry.morphTriggerMask)entry.morphTriggerMask=[CALayer layer];
+            trigger.layer.mask=entry.morphTriggerMask;entry.morphMaskedTrigger=trigger;
+        }
+        if(body!=entry.morphMaskedBody)[self clearMorphRowsMask:entry];
+        if(body.window && entry.morphRowsImage.image) {
+            if(!entry.morphRowsMask)entry.morphRowsMask=[CALayer layer];
+            if(body.layer.mask!=entry.morphRowsMask){entry.morphOriginalRowsMask=body.layer.mask;body.layer.mask=entry.morphRowsMask;}
+            entry.morphMaskedBody=body;
+        }
+        NSString *milestone=nil;
+        if(entry.phase==WXGMenuPhaseExiting) {
+            if(entry.morphSettled)milestone=@"collapsed";
+            else if(frame.contentProgress<.65 && frame.contentProgress>.08)milestone=@"closing";
+        } else if(settled)milestone=@"open";
+        else if(frame.contentProgress<.01)milestone=@"button";
+        else if(frame.contentProgress>.2 && frame.contentProgress<.8)milestone=@"opening";
+        if(milestone && _morphLayerSamples && !_morphLayerSamples[milestone])
+            _morphLayerSamples[milestone]=view.presentationEvidence;
+        if(renderedInk){[CATransaction commit];return;}
 
-    CGRect incoming=[view convertRect:WXGMenuMorphCGRect(frame.bounds) fromView:entry.menuParent];
-    CGRect lobe=[view convertRect:WXGMenuMorphCGRect(frame.sourceLobe) fromView:entry.menuParent];
-    WXGMenuSetLayerBlur(entry.morphForeground.layer,frame.portalBlur);
-    UIView *highlight=entry.morphHighlight;
-    highlight.frame=row;highlight.layer.cornerRadius=MAX(0.,row.size.height*.5);
-    highlight.backgroundColor=entry.morphContent.highlightColor;highlight.alpha=alpha;
-    UIView *rows=entry.morphRows;
-    CGSize size=entry.morphRect.size;
-    rows.bounds=(CGRect){CGPointZero,size};
-    rows.center=CGPointMake(CGRectGetMidX(incoming),CGRectGetMidY(incoming));
-    CGFloat sx=incoming.size.width/MAX(size.width,1)*frame.contentZoom,sy=incoming.size.height/MAX(size.height,1)*frame.contentZoom;
-    rows.transform=CGAffineTransformMakeScale(sx,sy);
-    rows.layer.opacity=(float)frame.rowsOpacity;
-    entry.morphRowsImage.frame=rows.bounds;
-    WXGMenuSetLayerBlur(entry.morphRowsImage.layer,frame.contentBlur/MAX(MIN(sx,sy),.25));
-    entry.morphTriggerImage.frame=CGRectInset(lobe,lobe.size.width*(1.-frame.sourceZoom)*.5,lobe.size.height*(1.-frame.sourceZoom)*.5);
-    entry.morphTriggerImage.layer.opacity=(float)frame.sourceOpacity;
-    WXGMenuSetLayerBlur(entry.morphTriggerImage.layer,frame.sourceBlur);
-    [CATransaction commit];
+        CGRect incoming=[view convertRect:WXGMenuMorphCGRect(frame.bounds) fromView:entry.menuParent];
+        CGRect lobe=[view convertRect:WXGMenuMorphCGRect(frame.sourceLobe) fromView:entry.menuParent];
+        WXGMenuSetLayerBlur(entry.morphForeground.layer,frame.portalBlur);
+        UIView *highlight=entry.morphHighlight;
+        highlight.frame=row;highlight.layer.cornerRadius=MAX(0.,row.size.height*.5);
+        highlight.backgroundColor=entry.morphContent.highlightColor;highlight.alpha=alpha;
+        UIView *rows=entry.morphRows;
+        CGSize size=entry.morphRect.size;
+        rows.bounds=(CGRect){CGPointZero,size};
+        rows.center=CGPointMake(CGRectGetMidX(incoming),CGRectGetMidY(incoming));
+        CGFloat sx=incoming.size.width/MAX(size.width,1)*frame.contentZoom,sy=incoming.size.height/MAX(size.height,1)*frame.contentZoom;
+        rows.transform=CGAffineTransformMakeScale(sx,sy);
+        rows.layer.opacity=(float)frame.rowsOpacity;
+        entry.morphRowsImage.frame=rows.bounds;
+        WXGMenuSetLayerBlur(entry.morphRowsImage.layer,frame.contentBlur/MAX(MIN(sx,sy),.25));
+        entry.morphTriggerImage.frame=CGRectInset(lobe,lobe.size.width*(1.-frame.sourceZoom)*.5,lobe.size.height*(1.-frame.sourceZoom)*.5);
+        entry.morphTriggerImage.layer.opacity=(float)frame.sourceOpacity;
+        WXGMenuSetLayerBlur(entry.morphTriggerImage.layer,frame.sourceBlur);
+        [CATransaction commit];
+    }];
 }
 // R24: single deterministic frame renderer for the entire "+" trigger, flying
 // ink dots, circular glass icons, and text capsules at progress p in [0, 1].
@@ -1370,6 +1386,10 @@ static BOOL WXGMenuMapTransform(UIView *view,UIView *space,CGRect target,CGAffin
     double dt=_menuLastTime>0.?WXGMenuClamp(now-_menuLastTime,0.,.05):(1./120.);
     _menuLastTime=now;
     if(entry.morphMode) {
+        if(_commitSerial>0 && entry.lastMorphStepSerial==_commitSerial) {
+            _scrubLastTimestamp=link.timestamp;
+            return;
+        }
         double seconds=dt*_menuSpeed;
         BOOL settled=entry.morphSettled || WXGMenuMorphAdvance(&entry->_morphMotion,seconds);
         double interval=WXGMenuClamp(link.targetTimestamp-link.timestamp,1./240.,1./30.);
@@ -1559,40 +1579,42 @@ static UIControl *WXGMenuForwardableRow(UIView *row) {
     UIView *portal=entry.morphView;
     if(!portal)return;
     NSArray<NSValue *> *frames=entry.morphContent.rowFrames;
-    for(NSUInteger i=0;i<entry.rows.count;i++) {
-        WXGMenuRow *row=entry.rows[i];
-        UIControl *control=WXGMenuForwardableRow(row.item);
-        if(!control || i>=frames.count){[row removeActionButton];continue;}
-        WXGMenuActionButton *button=row.actionButton;
-        if(!button) {
-            row.wasAccessibilityElement=row.item.isAccessibilityElement;
-            row.wereAccessibilityElementsHidden=row.item.accessibilityElementsHidden;
-            row.item.isAccessibilityElement=NO;
-            row.item.accessibilityElementsHidden=YES;
-            button=[[WXGMenuActionButton alloc] initWithFrame:CGRectZero];
-            [button addTarget:self action:@selector(selectMorphButton:) forControlEvents:UIControlEventTouchUpInside|UIControlEventPrimaryActionTriggered];
-            row.actionButton=button;
+    [UIView performWithoutAnimation:^{
+        for(NSUInteger i=0;i<entry.rows.count;i++) {
+            WXGMenuRow *row=entry.rows[i];
+            UIControl *control=WXGMenuForwardableRow(row.item);
+            if(!control || i>=frames.count){[row removeActionButton];continue;}
+            WXGMenuActionButton *button=row.actionButton;
+            if(!button) {
+                row.wasAccessibilityElement=row.item.isAccessibilityElement;
+                row.wereAccessibilityElementsHidden=row.item.accessibilityElementsHidden;
+                row.item.isAccessibilityElement=NO;
+                row.item.accessibilityElementsHidden=YES;
+                button=[[WXGMenuActionButton alloc] initWithFrame:CGRectZero];
+                [button addTarget:self action:@selector(selectMorphButton:) forControlEvents:UIControlEventTouchUpInside|UIControlEventPrimaryActionTriggered];
+                row.actionButton=button;
+            }
+            button.nativeControl=control;
+            button.accessibilityLabel=control.accessibilityLabel.length?control.accessibilityLabel:entry.morphContent.titles[i];
+            button.accessibilityHint=control.accessibilityHint;
+            button.accessibilityValue=control.accessibilityValue;
+            button.accessibilityTraits=control.accessibilityTraits|UIAccessibilityTraitButton;
+            if(button.superview!=portal)[portal addSubview:button];
+            CGRect frame=CGRectOffset(frames[i].CGRectValue,entry.morphRect.origin.x,entry.morphRect.origin.y);
+            button.frame=[entry.menuParent convertRect:frame toView:portal];
         }
-        button.nativeControl=control;
-        button.accessibilityLabel=control.accessibilityLabel.length?control.accessibilityLabel:entry.morphContent.titles[i];
-        button.accessibilityHint=control.accessibilityHint;
-        button.accessibilityValue=control.accessibilityValue;
-        button.accessibilityTraits=control.accessibilityTraits|UIAccessibilityTraitButton;
-        if(button.superview!=portal)[portal addSubview:button];
-        CGRect frame=CGRectOffset(frames[i].CGRectValue,entry.morphRect.origin.x,entry.morphRect.origin.y);
-        button.frame=[entry.menuParent convertRect:frame toView:portal];
-    }
-    if(entry.morphTouch.view!=portal) {
-        [entry.morphTouch.view removeGestureRecognizer:entry.morphTouch];
-        WXGMenuRowObserver *observer=[WXGMenuRowObserver new];
-        __weak WXGDecoration *weakEntry=entry;
-        __weak typeof(self) weakSelf=self;
-        observer.scrubTouch=^(UITouch *touch,UITouchPhase phase){
-            WXGDecoration *current=weakEntry;
-            if(current)[weakSelf scrubTouch:touch phase:phase inEntry:current];
-        };
-        entry.morphTouch=observer;[portal addGestureRecognizer:observer];
-    }
+        if(entry.morphTouch.view!=portal) {
+            [entry.morphTouch.view removeGestureRecognizer:entry.morphTouch];
+            WXGMenuRowObserver *observer=[WXGMenuRowObserver new];
+            __weak WXGDecoration *weakEntry=entry;
+            __weak typeof(self) weakSelf=self;
+            observer.scrubTouch=^(UITouch *touch,UITouchPhase phase){
+                WXGDecoration *current=weakEntry;
+                if(current)[weakSelf scrubTouch:touch phase:phase inEntry:current];
+            };
+            entry.morphTouch=observer;[portal addGestureRecognizer:observer];
+        }
+    }];
 }
 - (void)scrubTouch:(UITouch *)touch phase:(UITouchPhase)phase inEntry:(WXGDecoration *)entry {
     if(entry!=_activeHomeMenu || entry.phase!=WXGMenuPhaseOpen || !entry->_morphMotion.initialized)return;
@@ -1642,7 +1664,8 @@ static UIControl *WXGMenuForwardableRow(UIView *row) {
     entry.lastPlaced=time;
     if(!entry.rowsReady)return;
     if(!entry.entranceDone){entry.entranceDone=YES;++entry.entrances;[self playEntrance:entry];}
-    else if(entry==_activeHomeMenu)[self applyHomeMenuProgress:_menuProgress];
+    else if(entry==_activeHomeMenu && (!entry.morphMode || _commitSerial==0 || entry.lastMorphStepSerial!=_commitSerial))
+        [self applyHomeMenuProgress:_menuProgress];
 }
 - (void)placeAnimatedHomeMenu:(WXGDecoration *)entry items:(NSArray<UIView *> *)items {
     UIView *host=entry.host,*body=entry.body,*parent=host.superview;

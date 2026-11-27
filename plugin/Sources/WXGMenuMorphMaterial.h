@@ -5,6 +5,7 @@ typedef struct {
     CGFloat contentProgress;
     CGFloat lensHeight;
     CGFloat lensAmount;
+    CGFloat portalBlur;
     CGFloat triggerSide;
     CGFloat menuSide;
 } WXGMenuMorphSurfaceOptics;
@@ -14,8 +15,14 @@ typedef struct {
 @property(nonatomic) CGFloat opticalSessionStep;
 - (BOOL)needsRimBackdropImage;
 - (void)setRimBackdropImage:(UIImage *)image inRect:(CGRect)rect;
+- (const WXGMenuMorphField *)prepareSessionFieldForMenu:(WXGMenuMorphFieldBox)menu radiusY:(float)ry
+                                                 source:(WXGMenuMorphFieldBox)source smoothing:(float)smoothing
+                                           windowOrigin:(CGPoint)origin;
 - (void)applyField:(const WXGMenuMorphField *)field bounds:(CGRect)bounds outline:(UIBezierPath *)outline;
 - (void)applyField:(const WXGMenuMorphField *)field bounds:(CGRect)bounds outline:(UIBezierPath *)outline optics:(WXGMenuMorphSurfaceOptics)optics;
+- (void)applyField:(const WXGMenuMorphField *)field sessionField:(const WXGMenuMorphField *)session
+            bounds:(CGRect)bounds outline:(UIBezierPath *)outline optics:(WXGMenuMorphSurfaceOptics)optics;
+- (void)stripAnimations;
 - (NSDictionary *)rimEvidence;
 @end
 
@@ -32,6 +39,7 @@ typedef struct {
 - (void)placeMenuRect:(CGRect)menu radiusX:(CGFloat)rx radiusY:(CGFloat)ry
            sourceRect:(CGRect)source radius:(CGFloat)radius smoothing:(CGFloat)smoothing
                optics:(WXGMenuMorphSurfaceOptics)optics;
+- (void)stripAnimations;
 - (BOOL)needsRimBackdropImage;
 - (void)setRimBackdropImage:(UIImage *)image inRect:(CGRect)rect;
 - (NSDictionary *)presentationEvidence;

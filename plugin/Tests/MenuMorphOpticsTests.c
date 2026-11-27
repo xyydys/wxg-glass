@@ -73,6 +73,20 @@ int main(void) {
         assert(fabsf(one.distance-two.distance)<.0001f);
         assert(hypotf(one.dx-two.dx,one.dy-two.dy)<.0001f);
     }
+    // High-sigma collapse (IMG_0046): fine contour grid sampled from the session
+    // field must match the session zero-contour instead of truncating at 16 taps.
+    WXGMenuMorphField collapseShape,collapseSession,collapseFine;
+    WXGMenuMorphFieldBox cMenu={28,12,68,68,34},cPlus={54,12,41.5f,41.5f,20.75f};
+    WXGMenuMorphFieldBuildMode(&collapseShape,cMenu,34,cPlus,14.5f,1.5f,WXGMorphFieldGeometry);
+    WXGMenuMorphBuildSessionField(&collapseSession,&collapseShape,180.25f,45.5f,step);
+    WXGMenuMorphFieldSampleSession(&collapseFine,cMenu,34,cPlus,14.5f,1.5f,&collapseSession);
+    assert(collapseSession.gaussian && !collapseFine.gaussian);
+    float midX=cPlus.x+cPlus.width*.5f;
+    for(float y=2;y<90;y+=.25f){
+        float dSession=WXGMenuMorphOpticalRead(&collapseSession,midX,y).distance;
+        float dFine=WXGMenuMorphFieldRead(&collapseFine,midX,y).distance;
+        if(fabsf(dSession)<.2f)assert(fabsf(dFine-dSession)<.06f);
+    }
     WXGMorphOpticalFree(&m);
     return 0;
 }

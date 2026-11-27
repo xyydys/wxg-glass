@@ -289,6 +289,46 @@ static inline WXGMenuMorphFieldSample WXGMenuMorphOpticalRead(const WXGMenuMorph
     return s;
 }
 
+// Sample a fine contour grid directly from the cubic B-spline of the session
+// Gaussian field so CAShapeLayer masks/rims match the Metal & mesh zero-contour
+// without hitting the 16-tap kernel cutoff on fine cell spacings.
+static inline void WXGMenuMorphFieldSampleSession(WXGMenuMorphField *field,WXGMenuMorphFieldBox menu,
+        float radiusY,WXGMenuMorphFieldBox source,float smoothing,float gridStep,
+        const WXGMenuMorphField *session) {
+    float sigma=fmaxf(0.0f,smoothing);
+    float ratio=fmaxf(menu.radius,radiusY)/fmaxf(.01f,fminf(menu.radius,radiusY));
+    bool hasSource=fminf(source.width,source.height)>=.01f;
+    float grow=hasSource?sigma*.25f*ratio:0.f;
+    float left=(hasSource?fminf(menu.x,source.x):menu.x)-grow;
+    float top=(hasSource?fminf(menu.y,source.y):menu.y)-grow;
+    float right=(hasSource?fmaxf(menu.x+menu.width,source.x+source.width):menu.x+menu.width)+grow;
+    float bottom=(hasSource?fmaxf(menu.y+menu.height,source.y+source.height):menu.y+menu.height)+grow;
+    float step=fmaxf(gridStep,fmaxf(right-left,bottom-top)/64.0f);
+    field->step=step;
+    field->x=floorf(left/step)*step-step;
+    field->y=floorf(top/step)*step-step;
+    int width=(int)ceilf((right-field->x)/step)+2;
+    int height=(int)ceilf((bottom-field->y)/step)+2;
+    field->width=width;
+    field->height=height;
+    float rx=fmaxf(menu.radius,.001f),ry=fmaxf(radiusY,.001f);
+    float radiusMin=fminf(rx,ry),scaleX=radiusMin/rx,scaleY=radiusMin/ry;
+    float cx=menu.x+menu.width*.5f,cy=menu.y+menu.height*.5f;
+    WXGMenuMorphFieldBox local={-menu.width*scaleX*.5f,-menu.height*scaleY*.5f,
+                                menu.width*scaleX,menu.height*scaleY,radiusMin};
+    field->incoming=WXGMenuMorphFieldShapeForBox(local);
+    field->outgoing=WXGMenuMorphFieldShapeForBox(source);
+    field->centerX=cx; field->centerY=cy;
+    field->axisX=scaleX; field->axisY=scaleY; field->smoothing=sigma;
+    field->hasOutgoing=hasSource;
+    field->gaussian=false;
+    for(int row=0;row<height;row++) {
+        float py=field->y+row*step;
+        for(int col=0;col<width;col++)
+            field->values[row*width+col]=WXGMenuMorphOpticalRead(session,field->x+col*step,py).distance;
+    }
+}
+
 // The physical inward depth and outward normal of the interpolated field.
 static inline WXGMenuMorphFieldSample WXGMenuMorphFieldRead(const WXGMenuMorphField *f, float x, float y) {
     float u=fminf(fmaxf((x-f->x)/f->step,0.f),f->width-1.001f);

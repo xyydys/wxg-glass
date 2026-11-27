@@ -186,17 +186,30 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     if(_material.opticalSessionStep==step)return;
     _material.opticalSessionStep=step;_lastBounds=CGRectNull;
 }
+- (void)stripAnimations {
+    [self.layer removeAllAnimations];
+    [_movingShadow removeAllAnimations];
+    [_movingShadowMask removeAllAnimations];
+    [_bodyHost.layer removeAllAnimations];
+    [_bodyMask removeAllAnimations];
+    [_inkHost.layer removeAllAnimations];
+    [_rimClip removeAllAnimations];
+    [_touchFace removeAllAnimations];
+    [_touchEdge removeAllAnimations];
+    [_edgeStrip removeAllAnimations];
+    [_material stripAnimations];
+}
 - (void)placeButtonRect:(CGRect)button {
     CGFloat r=MIN(button.size.width,button.size.height)*.5,side=r*2.;
     [self placeMenuRect:button radiusX:r radiusY:r sourceRect:button radius:r smoothing:0
-        optics:(WXGMenuMorphSurfaceOptics){0.,0.,0.,side,side}];
+        optics:(WXGMenuMorphSurfaceOptics){0.,0.,0.,0.,side,side}];
 }
 - (void)placeMenuRect:(CGRect)menu radiusX:(CGFloat)rx radiusY:(CGFloat)ry
            sourceRect:(CGRect)source radius:(CGFloat)radius smoothing:(CGFloat)smoothing {
     CGFloat srcSide=MIN(source.size.width,source.size.height);
     CGFloat menuSide=MIN(menu.size.width,menu.size.height);
     [self placeMenuRect:menu radiusX:rx radiusY:ry sourceRect:source radius:radius smoothing:smoothing
-        optics:(WXGMenuMorphSurfaceOptics){smoothing>0?.5:1.,0.,0.,srcSide>0?srcSide:menuSide,menuSide}];
+        optics:(WXGMenuMorphSurfaceOptics){smoothing>0?.5:1.,0.,0.,0.,srcSide>0?srcSide:menuSide,menuSide}];
 }
 - (void)placeMenuRect:(CGRect)menu radiusX:(CGFloat)rx radiusY:(CGFloat)ry
            sourceRect:(CGRect)source radius:(CGFloat)radius smoothing:(CGFloat)smoothing
@@ -210,6 +223,7 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     BOOL sameOptics=fabs(optics.contentProgress-_lastOptics.contentProgress)<.0001 &&
         fabs(optics.lensHeight-_lastOptics.lensHeight)<.01 &&
         fabs(optics.lensAmount-_lastOptics.lensAmount)<.01 &&
+        fabs(optics.portalBlur-_lastOptics.portalBlur)<.01 &&
         fabs(optics.triggerSide-_lastOptics.triggerSide)<.01 &&
         fabs(optics.menuSide-_lastOptics.menuSide)<.01;
     if(sameOptics && CGPointEqualToPoint(opticalOrigin,_lastOpticalOrigin) && CGRectEqualToRect(self.bounds,_lastBounds) &&
@@ -217,30 +231,43 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         radius==_lastRadius && smoothing==_lastSmoothing && scale==_lastScale && revision==_revision && appearance==_appearance)return;
     _lastOptics=optics;_lastOpticalOrigin=opticalOrigin;_lastBounds=self.bounds;_lastMenu=menu;_lastSource=source;
     _lastRX=rx;_lastRY=ry;_lastRadius=radius;_lastSmoothing=smoothing;_lastScale=scale;_revision=revision;_appearance=appearance;
-    // Anchor the sample grid to the shape, not to its button/window parent.
-    // Reparenting across a fractional window origin must preserve the contour.
-    CGRect extent=CGRectUnion(menu,source);
+    // During active Gaussian smoothing, trace the fine contour directly from
+    // the cubic B-spline of the window-anchored session field so the body/rim
+    // silhouette matches Metal's foreground coverage without 16-tap truncation.
+    BOOL hasSource=MIN(source.size.width,source.size.height)>=.01;
+    CGRect extent=hasSource?CGRectUnion(menu,source):menu;
     CGFloat x=extent.origin.x,y=extent.origin.y;
+    const WXGMenuMorphField *session=(smoothing>0 && _material.opticalSessionStep>0 && self.window)?
+        [_material prepareSessionFieldForMenu:WXGMenuMorphFieldBoxFromRect(menu,rx) radiusY:(float)ry
+            source:WXGMenuMorphFieldBoxFromRect(source,radius) smoothing:(float)smoothing windowOrigin:opticalOrigin]:NULL;
     WXGMenuMorphField field;
-    CGFloat step=MIN(5.,MAX(1.25,MAX(extent.size.width,extent.size.height)/46.));
-    WXGMenuMorphFieldBuildMode(&field,WXGMenuMorphFieldBoxFromRect(CGRectOffset(menu,-x,-y),rx),ry,
-        WXGMenuMorphFieldBoxFromRect(CGRectOffset(source,-x,-y),radius),smoothing,step,WXGMorphFieldGeometry);
-    WXGMenuMorphFieldTranslate(&field,x,y);
+    if(session) {
+        CGFloat step=MIN(2.5,MAX(1.25,MAX(extent.size.width,extent.size.height)/56.));
+        WXGMenuMorphFieldSampleSession(&field,WXGMenuMorphFieldBoxFromRect(menu,rx),(float)ry,
+            WXGMenuMorphFieldBoxFromRect(source,radius),(float)smoothing,(float)step,session);
+    }else {
+        CGFloat step=MIN(5.,MAX(1.25,MAX(extent.size.width,extent.size.height)/46.));
+        WXGMenuMorphFieldBuildMode(&field,WXGMenuMorphFieldBoxFromRect(CGRectOffset(menu,-x,-y),rx),ry,
+            WXGMenuMorphFieldBoxFromRect(CGRectOffset(source,-x,-y),radius),smoothing,step,WXGMorphFieldGeometry);
+        WXGMenuMorphFieldTranslate(&field,x,y);
+    }
     _currentOutline=WXGMenuMorphMaskPath(&field);
     CGRect material=CGPathGetPathBoundingBox(_currentOutline.CGPath);
     if(CGRectIsEmpty(material))return;
-    [CATransaction begin];[CATransaction setDisableActions:YES];
-    _bodyHost.frame=self.bounds;_bodyMask.frame=_bodyHost.bounds;_bodyMask.contentsScale=scale;
-    _inkHost.frame=_bodyHost.bounds;_bodyMask.path=_currentOutline.CGPath;
-    _movingShadow.frame=self.bounds;_movingShadowMask.frame=self.bounds;
-    [_material applyField:&field bounds:material outline:_currentOutline optics:optics];
-    CGRect local=_material.rimView.bounds;_rimClip.frame=local;_rimClip.contentsScale=scale;
-    CGAffineTransform shift=CGAffineTransformMakeTranslation(-material.origin.x,-material.origin.y);
-    CGPathRef path=CGPathCreateCopyByTransformingPath(_currentOutline.CGPath,&shift);
-    _rimClip.path=path;CGPathRelease(path);
-    if(_edgeStrip)_edgeStrip.path=_rimClip.path;
-    [self placeShadowAround:material];
-    [CATransaction commit];
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        _bodyHost.frame=self.bounds;_bodyMask.frame=_bodyHost.bounds;_bodyMask.contentsScale=scale;
+        _inkHost.frame=_bodyHost.bounds;_bodyMask.path=_currentOutline.CGPath;
+        _movingShadow.frame=self.bounds;_movingShadowMask.frame=self.bounds;
+        [_material applyField:&field sessionField:session bounds:material outline:_currentOutline optics:optics];
+        CGRect local=_material.rimView.bounds;_rimClip.frame=local;_rimClip.contentsScale=scale;
+        CGAffineTransform shift=CGAffineTransformMakeTranslation(-material.origin.x,-material.origin.y);
+        CGPathRef path=CGPathCreateCopyByTransformingPath(_currentOutline.CGPath,&shift);
+        _rimClip.path=path;CGPathRelease(path);
+        if(_edgeStrip)_edgeStrip.path=_rimClip.path;
+        [self placeShadowAround:material];
+        [CATransaction commit];
+    }];
 }
 - (void)placeTouchLight:(CGPoint)point strength:(CGFloat)strength {
     if(strength<=.001) {
@@ -345,9 +372,13 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     CGFloat _highlightOpacity,_lightStrength,_plateLightX,_triggerSide,_menuSide;
     CGPoint _lightPoint;
     CALayer *_plate,*_plateShine;
-    BOOL _hasCachedInk,_needsOpenInk,_wantsOpenInk,_plateDark,_plateTintReady;
+    BOOL _hasCachedInk,_needsOpenInk,_wantsOpenInk,_plateDark,_plateTintReady,_hasLastDrawnPose;
     NSUInteger _openInkReuses,_inkSubmissions;
     WXGMenuMorphFrame _frame;
+    WXGMenuMorphUniforms _lastDrawnUniforms;
+    CGSize _lastDrawnDrawableSize;
+    CGPoint _lastDrawnWinOrigin;
+    CGFloat _lastDrawnSessionStep;
     BOOL _hasFrame,_showsForeground,_drawableHasForeground,_rowsNeedMips,_triggerNeedsMips;
     BOOL _stableFrameMissed,_stableRetryPending;
     NSUInteger _stableRetryCount;
@@ -360,7 +391,7 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         self.accessibilityElementsHidden=YES;
         self.opaque=NO;
         _lastCommittedSurfaceBounds=CGRectNull;
-        _inFlight=dispatch_semaphore_create(3);
+        _inFlight=dispatch_semaphore_create(2);
         _metal=[CAMetalLayer layer];
         _metal.name=@"morph.foreground.metal";
         _metal.anchorPoint=CGPointZero;
@@ -398,37 +429,47 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     [super layoutSubviews];
     CGFloat scale=self.window.screen.scale?:UIScreen.mainScreen.scale;
     CGSize size=CGSizeMake(ceil(self.bounds.size.width*scale),ceil(self.bounds.size.height*scale));
-    [CATransaction begin];[CATransaction setDisableActions:YES];
-    if(_surface.superview==self)_surface.frame=self.bounds;
-    _fallbackForeground.frame=self.bounds;
-    _metal.position=self.bounds.origin;
-    _metal.bounds=(CGRect){CGPointZero,self.bounds.size};
-    _metal.contentsScale=scale;
-    if(!CGSizeEqualToSize(_metal.drawableSize,size)) {
-        _metal.drawableSize=size;
-        _fieldTextures=nil;
-        _inkScratch=nil;_inkRowsBlur=nil;_inkTriggerBlur=nil;
-        _stableRetryCount=0;
-        _needsOpenInk=YES;
-    }
-    [CATransaction commit];
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        if(_surface.superview==self)_surface.frame=self.bounds;
+        _fallbackForeground.frame=self.bounds;
+        _metal.position=self.bounds.origin;
+        _metal.bounds=(CGRect){CGPointZero,self.bounds.size};
+        _metal.contentsScale=scale;
+        if(!CGSizeEqualToSize(_metal.drawableSize,size)) {
+            _metal.drawableSize=size;
+            _fieldTextures=nil;
+            _inkScratch=nil;_inkRowsBlur=nil;_inkTriggerBlur=nil;
+            _stableRetryCount=0;
+            _needsOpenInk=YES;
+            _hasLastDrawnPose=NO;
+        }
+        [CATransaction commit];
+    }];
 }
 
 - (UIBezierPath *)currentOutline {return _surface.currentOutline;}
 - (void)useSurfaceFromButton:(WXGSurface *)button {
     if(_surface)return;
-    WXGMenuMorphSurface *lent=[button borrowHomeMenuMorphSurface];
-    _sourceButton=lent?button:nil;
-    if(lent)_sourceAtPickup=lent.presentationEvidence;
-    _surface=lent?:[[WXGMenuMorphSurface alloc] initWithFrame:self.bounds];
-    _surface.transform=CGAffineTransformIdentity;
-    _surface.frame=self.bounds;
-    [self insertSubview:_surface atIndex:0];
-    _plate=[CALayer layer];_plate.name=@"morph.selection.plate";
-    _plate.anchorPoint=CGPointZero;_plate.cornerCurve=kCACornerCurveContinuous;_plate.masksToBounds=YES;_plate.hidden=YES;
-    [_surface.inkHost.layer addSublayer:_plate];
-    [_surface.inkHost.layer addSublayer:_metal];
-    if(_fallbackForeground)[_surface.inkHost addSubview:_fallbackForeground];
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        WXGMenuMorphSurface *lent=[button borrowHomeMenuMorphSurface];
+        _sourceButton=lent?button:nil;
+        if(lent)_sourceAtPickup=lent.presentationEvidence;
+        _surface=lent?:[[WXGMenuMorphSurface alloc] initWithFrame:self.bounds];
+        [_surface stripAnimations];
+        _surface.transform=CGAffineTransformIdentity;
+        _surface.frame=self.bounds;
+        [self insertSubview:_surface atIndex:0];
+        _plate=[CALayer layer];_plate.name=@"morph.selection.plate";
+        _plate.anchorPoint=CGPointZero;_plate.cornerCurve=kCACornerCurveContinuous;_plate.masksToBounds=YES;_plate.hidden=YES;
+        [_surface.inkHost.layer addSublayer:_plate];
+        [_metal removeAllAnimations];
+        [_surface.inkHost.layer addSublayer:_metal];
+        if(_fallbackForeground)[_surface.inkHost addSubview:_fallbackForeground];
+        _hasLastDrawnPose=NO;
+        [CATransaction commit];
+    }];
 }
 - (void)setOpticalSessionBounds:(CGRect)windowBounds {
     // The original session fixes its Gaussian spacing at a 48pt margin on
@@ -440,24 +481,33 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     _triggerSide=triggerSide;_menuSide=menuSide;
 }
 - (void)setFallbackForeground:(UIView *)fallbackForeground {
-    if(_fallbackForeground!=fallbackForeground)[_fallbackForeground removeFromSuperview];
-    _fallbackForeground=fallbackForeground;
-    if(fallbackForeground && _surface && fallbackForeground.superview!=_surface.inkHost)
-        [_surface.inkHost addSubview:fallbackForeground];
-    _fallbackForeground.frame=self.bounds;
+    [UIView performWithoutAnimation:^{
+        if(_fallbackForeground!=fallbackForeground)[_fallbackForeground removeFromSuperview];
+        _fallbackForeground=fallbackForeground;
+        if(fallbackForeground && _surface && fallbackForeground.superview!=_surface.inkHost)
+            [_surface.inkHost addSubview:fallbackForeground];
+        _fallbackForeground.frame=self.bounds;
+    }];
 }
 - (NSDictionary *)returnSurfaceToButton {
     if(!_surface)return nil;
-    [_surface placeTouchLight:CGPointZero strength:0];
-    [_surface setOpticalSessionStep:0];
-    [_plate removeFromSuperlayer];[_metal removeFromSuperlayer];[_fallbackForeground removeFromSuperview];
-    _plate=nil;_plateShine=nil;_plateTintReady=NO;_hasCachedInk=NO;
-    _lastCommittedSurfaceBounds=CGRectNull;_triggerSide=0;_menuSide=0;
-    _metal.affineTransform=CGAffineTransformIdentity;
-    if(_sourceButton)[_sourceButton returnHomeMenuMorphSurface:_surface];
-    else [_surface removeFromSuperview];
-    NSDictionary *returned=_sourceButton && _surface.superview==_sourceButton?_surface.presentationEvidence:nil;
-    _surface=nil;_sourceButton=nil;
+    __block NSDictionary *returned=nil;
+    [UIView performWithoutAnimation:^{
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        [_surface placeTouchLight:CGPointZero strength:0];
+        [_surface setOpticalSessionStep:0];
+        [_plate removeFromSuperlayer];[_metal removeFromSuperlayer];[_fallbackForeground removeFromSuperview];
+        [_metal removeAllAnimations];
+        _plate=nil;_plateShine=nil;_plateTintReady=NO;_hasCachedInk=NO;_hasLastDrawnPose=NO;_drawableHasForeground=NO;
+        _lastCommittedSurfaceBounds=CGRectNull;_triggerSide=0;_menuSide=0;
+        _metal.affineTransform=CGAffineTransformIdentity;
+        [_surface stripAnimations];
+        if(_sourceButton)[_sourceButton returnHomeMenuMorphSurface:_surface];
+        else [_surface removeFromSuperview];
+        returned=_sourceButton && _surface.superview==_sourceButton?_surface.presentationEvidence:nil;
+        _surface=nil;_sourceButton=nil;
+        [CATransaction commit];
+    }];
     return returned;
 }
 - (NSDictionary *)presentationEvidence {
@@ -526,10 +576,12 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         _rowsImage=rowsImage;_rowsTexture=WXGMenuPremultipliedTexture(rowsImage,_metal.device);
         _rowsNeedMips=_rowsTexture.mipmapLevelCount>1;
         _needsOpenInk=YES;
+        _hasLastDrawnPose=NO;
     }
     if(_triggerImage!=triggerImage) {
         _triggerImage=triggerImage;_triggerTexture=WXGMenuPremultipliedTexture(triggerImage,_metal.device);
         _triggerNeedsMips=_triggerTexture.mipmapLevelCount>1;
+        _hasLastDrawnPose=NO;
     }
     // These shader bindings are sampled only when the corresponding ink or
     // smoothed-field flag is set. An existing texture fills unused slots.
@@ -596,7 +648,7 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
 - (id<MTLTexture>)encodeSmoothedField:(id<MTLCommandBuffer>)command uniforms:(WXGMenuMorphUniforms *)uniforms {
     if(!_fieldPipeline || !_smoothPipeline || _frame.smoothing<=0)return nil;
     float sigma=(float)_frame.smoothing;
-    float rx=fmaxf((float)_frame.radiusX,.01f),ry=fmaxf((float)_frame.radiusY,.01f);
+    float rx=fmaxf(uniforms->radii[0],.01f),ry=fmaxf(uniforms->radii[1],.01f);
     float ratio=fmaxf(rx,ry)/fminf(rx,ry);
     BOOL hasSource=MIN(_sourceLobe.size.width,_sourceLobe.size.height)>=.01;
     float grow=hasSource?sigma*.25f*ratio:0.f;
@@ -729,20 +781,9 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     if(_sessionUsesUIKit || !_hasFrame || !self.window || self.hidden || CGRectIsEmpty(self.bounds))return NO;
     BOOL foreground=_showsForeground && (_rowsTexture || _triggerTexture) &&
         (!_rowsImage || _rowsTexture) && (!_triggerImage || _triggerTexture);
-    if(!_texture || !_pipeline || !_queue || _metal.drawableSize.width<1. || _metal.drawableSize.height<1. ||
-        dispatch_semaphore_wait(_inFlight,DISPATCH_TIME_NOW)!=0)return NO;
-    id<CAMetalDrawable> drawable=[_metal nextDrawable];
-    id<MTLCommandBuffer> command=[_queue commandBuffer];
-    if(!drawable || !command){dispatch_semaphore_signal(_inFlight);return NO;}
-    BOOL generatingMips=foreground && (_rowsNeedMips || _triggerNeedsMips);
-    if(generatingMips) {
-        id<MTLBlitCommandEncoder> blit=[command blitCommandEncoder];
-        if(!blit){dispatch_semaphore_signal(_inFlight);return NO;}
-        if(_rowsNeedMips)[blit generateMipmapsForTexture:_rowsTexture];
-        if(_triggerNeedsMips)[blit generateMipmapsForTexture:_triggerTexture];
-        [blit endEncoding];
-    }
-    float pixelX=self.bounds.size.width/drawable.texture.width,pixelY=self.bounds.size.height/drawable.texture.height;
+    CGSize drawSize=_metal.drawableSize;
+    if(!_texture || !_pipeline || !_queue || drawSize.width<1. || drawSize.height<1.)return NO;
+    float pixelX=(float)(self.bounds.size.width/drawSize.width),pixelY=(float)(self.bounds.size.height/drawSize.height);
     CGRect rowsInk=WXGMenuMorphZoomedRect(_menu,_frame.contentZoom),triggerInk=WXGMenuMorphZoomedRect(_sourceLobe,_frame.sourceZoom);
     CGFloat rowsScaleX=rowsInk.size.width/MAX(1.,_rowsImage.size.width),rowsScaleY=rowsInk.size.height/MAX(1.,_rowsImage.size.height);
     CGFloat rowsBlur=_frame.contentBlur/MAX(.25,MIN(rowsScaleX,rowsScaleY));
@@ -751,6 +792,13 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         rowsInk.origin.x,rowsInk.origin.y);
     WXGGlassCurve curve=[WXGConfig.shared glassCurveForScope:WXGGlassScopeOther];
     float refractionScale=(float)WXGClamp(curve.amount/.8,0.,2.);
+    float fgLensRamp=1.f;
+    if(_frame.contentProgress<.28 && _frame.portalBlur<2.4) {
+        float t=(float)WXGClamp(_frame.portalBlur/2.4,0.,1.);
+        fgLensRamp=t*t*(3.f-2.f*t);
+    }
+    CGFloat effRX=MIN(_frame.radiusX,MAX(.01,_menu.size.width*.5));
+    CGFloat effRY=MIN(_frame.radiusY,MAX(.01,_menu.size.height*.5));
     const float kBlurToSigma=0.57735027f;
     float portalSigma=kBlurToSigma*(float)_frame.portalBlur;
     float rowsSigmaX=hypotf(kBlurToSigma*(float)(rowsBlur*rowsScaleX),portalSigma);
@@ -758,11 +806,11 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     float trigSigmaX=hypotf(kBlurToSigma*(float)(_frame.sourceBlur*triggerScaleX),portalSigma);
     float trigSigmaY=hypotf(kBlurToSigma*(float)(_frame.sourceBlur*triggerScaleY),portalSigma);
 
-    WXGMenuMorphUniforms u={
+    WXGMenuMorphUniforms baseU={
         {pixelX,pixelY,MAX(pixelX,pixelY),(float)MAX(0.,MIN(1.,_frame.contentProgress))},
         WXGMenuFloatRect(_menu),WXGMenuFloatRect(_sourceLobe),
-        {(float)_frame.radiusX,(float)_frame.radiusY,(float)_frame.sourceRadius,(float)_frame.smoothing},
-        {(float)_frame.lensHeight,(float)(_frame.lensAmount*refractionScale),
+        {(float)effRX,(float)effRY,(float)_frame.sourceRadius,(float)_frame.smoothing},
+        {(float)_frame.lensHeight*fgLensRamp,(float)(_frame.lensAmount*refractionScale)*fgLensRamp,
          self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark?1.f:0.f,0.f},
         {0,0,0,0},
         WXGMenuFloatRect(rowsInk),WXGMenuFloatRect(triggerInk),
@@ -774,6 +822,43 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
         WXGMenuFloatRect(highlight),
         {(float)(_plateLightX-_highlightRect.origin.x),(float)rowsScaleX,(float)rowsScaleY,0}
     };
+    BOOL generatingMips=foreground && (_rowsNeedMips || _triggerNeedsMips);
+    CGPoint winOrigin=self.window?[self convertPoint:CGPointZero toView:self.window]:CGPointZero;
+    CGFloat sessionStep=_surface.opticalSessionStep;
+    BOOL wantsCached=foreground && _wantsOpenInk;
+    // Skip duplicate drawable acquisition & CAImageQueue enqueue when the pose
+    // already on _metal is identical (e.g. observer reasserts or exit trigger).
+    if(_hasLastDrawnPose && !generatingMips && !_needsOpenInk && !_metal.hidden &&
+       _drawableHasForeground==foreground && _hasCachedInk==wantsCached &&
+       CGSizeEqualToSize(drawSize,_lastDrawnDrawableSize) &&
+       CGPointEqualToPoint(winOrigin,_lastDrawnWinOrigin) &&
+       fabs(sessionStep-_lastDrawnSessionStep)<.0001 &&
+       memcmp(&baseU,&_lastDrawnUniforms,sizeof(baseU))==0) {
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        if(_hasCachedInk)[self placeCachedOpenInk];
+        else{_metal.affineTransform=CGAffineTransformIdentity;_plate.hidden=YES;}
+        [CATransaction commit];
+        _stableFrameMissed=NO;_stableRetryCount=0;
+        return YES;
+    }
+
+    if(dispatch_semaphore_wait(_inFlight,DISPATCH_TIME_NOW)!=0)return NO;
+    id<CAMetalDrawable> drawable=[_metal nextDrawable];
+    id<MTLCommandBuffer> command=[_queue commandBuffer];
+    if(!drawable || !command){dispatch_semaphore_signal(_inFlight);return NO;}
+    if(generatingMips) {
+        id<MTLBlitCommandEncoder> blit=[command blitCommandEncoder];
+        if(!blit){dispatch_semaphore_signal(_inFlight);return NO;}
+        if(_rowsNeedMips)[blit generateMipmapsForTexture:_rowsTexture];
+        if(_triggerNeedsMips)[blit generateMipmapsForTexture:_triggerTexture];
+        [blit endEncoding];
+    }
+    WXGMenuMorphUniforms u=baseU;
+    if(drawable.texture.width!=(NSUInteger)drawSize.width || drawable.texture.height!=(NSUInteger)drawSize.height) {
+        pixelX=(float)(self.bounds.size.width/drawable.texture.width);
+        pixelY=(float)(self.bounds.size.height/drawable.texture.height);
+        u.viewport=(WXGMenuFloat4){pixelX,pixelY,MAX(pixelX,pixelY),u.viewport[3]};
+    }
     id<MTLTexture> field=[self encodeSmoothedField:command uniforms:&u];
     BOOL wantRowsBlur=foreground && _rowsTexture && _frame.rowsOpacity>.001 && fmaxf(rowsSigmaX,rowsSigmaY)>=.08f;
     BOOL wantTrigBlur=foreground && _triggerTexture && _frame.sourceOpacity>.001 && fmaxf(trigSigmaX,trigSigmaY)>=.08f;
@@ -799,7 +884,7 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     [encoder setFragmentTexture:_inkTriggerBlur?:_texture atIndex:4];
     // The render pass clears the entire drawable. Only shade the ink inside
     // this frame's silhouette (also when the compute shader is unavailable).
-    CGFloat rx=MAX(.01,_frame.radiusX),ry=MAX(.01,_frame.radiusY);
+    CGFloat rx=MAX(.01,effRX),ry=MAX(.01,effRY);
     CGFloat ratio=MAX(rx,ry)/MIN(rx,ry);
     CGFloat margin=MAX(4.,_frame.smoothing*(.25*ratio+.5)+4.);
     CGRect silhouette=CGRectInset(MIN(_sourceLobe.size.width,_sourceLobe.size.height)>=.01?
@@ -822,13 +907,18 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
     if(generatingMips){_rowsNeedMips=NO;_triggerNeedsMips=NO;}
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _metal.affineTransform=CGAffineTransformIdentity;
-    _hasCachedInk=foreground && _wantsOpenInk;
+    _hasCachedInk=wantsCached;
     if(_hasCachedInk){
         _cachedMenu=_menu;_needsOpenInk=NO;
         [self placeCachedOpenInk];
     }else _plate.hidden=YES;
     _metal.hidden=NO;[drawable present];++_inkSubmissions;
     [CATransaction commit];
+    _lastDrawnUniforms=baseU;
+    _lastDrawnDrawableSize=CGSizeMake(drawable.texture.width,drawable.texture.height);
+    _lastDrawnWinOrigin=winOrigin;
+    _lastDrawnSessionStep=sessionStep;
+    _hasLastDrawnPose=YES;
     _drawableHasForeground=foreground;
     _stableFrameMissed=NO;_stableRetryCount=0;
     return YES;
@@ -849,53 +939,59 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
 }
 
 - (BOOL)applyMorphFrame:(WXGMenuMorphFrame)frame inParent:(UIView *)parent settledOpen:(BOOL)settled showsForeground:(BOOL)showsForeground {
-    CGRect menu=[self convertRect:WXGMenuMorphCGRect(frame.bounds) fromView:parent];
-    CGRect source=[self convertRect:WXGMenuMorphCGRect(frame.sourceLobe) fromView:parent];
-    _frame=frame; _menu=menu; _sourceLobe=source;
-    _hasFrame=YES; _showsForeground=showsForeground;
-    if(!_surface)[self useSurfaceFromButton:nil];
-    [self layoutIfNeeded];
-    if(showsForeground && !_sessionUsesUIKit && !_pipeline) {
-        __weak typeof(self) weakSelf=self;
-        WXGPrepareMenuMorphMetal(YES,^(id<MTLRenderPipelineState> state,id<MTLComputePipelineState> field,
-            id<MTLComputePipelineState> smooth,id<MTLComputePipelineState> blurH,id<MTLComputePipelineState> blurV,
-            id<MTLCommandQueue> commandQueue){
-            WXGMenuMorphView *view=weakSelf;
-            if(!view)return;
-            view->_pipeline=state;
-            view->_fieldPipeline=field;
-            view->_smoothPipeline=smooth;
-            view->_blurHPipeline=blurH;
-            view->_blurVPipeline=blurV;
-            view->_queue=commandQueue;
-        });
-    }
-    // A near-settled spring may still have visible portal blur or refraction.
-    // Cache only the exact final pose published when the motion has settled.
-    _wantsOpenInk=settled && showsForeground && frame.rowsOpacity>=.999999 && frame.contentBlur<.0001 &&
-        frame.sourceOpacity<.0001 && frame.portalBlur<.0001 && frame.lensHeight<.0001;
-    BOOL reused=_hasCachedInk && _wantsOpenInk && !_needsOpenInk;
-    [CATransaction begin];[CATransaction setDisableActions:YES];
-    BOOL rendered=reused || [self drawGlass];
-    if(reused){[self placeCachedOpenInk];++_openInkReuses;}
-    // Select one ink backend at first presentation. A late Metal completion
-    // must not replace the visible UIKit labels midway through a session.
-    if(showsForeground && !rendered && !_drawableHasForeground){_sessionUsesUIKit=YES;_metal.hidden=YES;}
-    if(rendered || settled || !_drawableHasForeground || _sessionUsesUIKit || !CGRectEqualToRect(self.bounds,_lastCommittedSurfaceBounds)) {
-        CGFloat trigSide=_triggerSide>1.?_triggerSide:MIN(source.size.width,source.size.height);
-        CGFloat menuSide=_menuSide>1.?_menuSide:MIN(menu.size.width,menu.size.height);
-        WXGMenuMorphSurfaceOptics optics={frame.contentProgress,frame.lensHeight,frame.lensAmount,trigSide,menuSide};
-        [_surface placeMenuRect:menu radiusX:frame.radiusX radiusY:frame.radiusY sourceRect:source
-            radius:frame.sourceRadius smoothing:frame.smoothing optics:optics];
-        [_surface placeTouchLight:_lightPoint strength:_lightStrength];
-        _lastCommittedSurfaceBounds=self.bounds;
-    }
-    [CATransaction commit];
-    BOOL stable=_wantsOpenInk;
-    if(!stable)_stableRetryCount=0;
-    _stableFrameMissed=stable && !rendered;
-    [self retryStableFrame];
-    return _drawableHasForeground;
+    __block BOOL hasForeground=NO;
+    [UIView performWithoutAnimation:^{
+        CGRect menu=[self convertRect:WXGMenuMorphCGRect(frame.bounds) fromView:parent];
+        CGRect source=[self convertRect:WXGMenuMorphCGRect(frame.sourceLobe) fromView:parent];
+        _frame=frame; _menu=menu; _sourceLobe=source;
+        _hasFrame=YES; _showsForeground=showsForeground;
+        if(!_surface)[self useSurfaceFromButton:nil];
+        [self layoutIfNeeded];
+        if(showsForeground && !_sessionUsesUIKit && !_pipeline) {
+            __weak typeof(self) weakSelf=self;
+            WXGPrepareMenuMorphMetal(YES,^(id<MTLRenderPipelineState> state,id<MTLComputePipelineState> field,
+                id<MTLComputePipelineState> smooth,id<MTLComputePipelineState> blurH,id<MTLComputePipelineState> blurV,
+                id<MTLCommandQueue> commandQueue){
+                WXGMenuMorphView *view=weakSelf;
+                if(!view)return;
+                view->_pipeline=state;
+                view->_fieldPipeline=field;
+                view->_smoothPipeline=smooth;
+                view->_blurHPipeline=blurH;
+                view->_blurVPipeline=blurV;
+                view->_queue=commandQueue;
+            });
+        }
+        // A near-settled spring may still have visible portal blur or refraction.
+        // Cache only the exact final pose published when the motion has settled.
+        _wantsOpenInk=settled && showsForeground && frame.rowsOpacity>=.999999 && frame.contentBlur<.0001 &&
+            frame.sourceOpacity<.0001 && frame.portalBlur<.0001 && frame.lensHeight<.0001;
+        BOOL reused=_hasCachedInk && _wantsOpenInk && !_needsOpenInk;
+        [CATransaction begin];[CATransaction setDisableActions:YES];
+        BOOL rendered=reused || [self drawGlass];
+        if(reused){[self placeCachedOpenInk];++_openInkReuses;}
+        // Select one ink backend at first presentation. A late Metal completion
+        // must not replace the visible UIKit labels midway through a session.
+        if(showsForeground && !rendered && !_drawableHasForeground){_sessionUsesUIKit=YES;_metal.hidden=YES;}
+        if(rendered || settled || !_drawableHasForeground || _sessionUsesUIKit || !CGRectEqualToRect(self.bounds,_lastCommittedSurfaceBounds)) {
+            CGFloat effRX=MIN(frame.radiusX,MAX(.01,menu.size.width*.5));
+            CGFloat effRY=MIN(frame.radiusY,MAX(.01,menu.size.height*.5));
+            CGFloat trigSide=_triggerSide>1.?_triggerSide:MIN(source.size.width,source.size.height);
+            CGFloat menuSide=_menuSide>1.?_menuSide:MIN(menu.size.width,menu.size.height);
+            WXGMenuMorphSurfaceOptics optics={frame.contentProgress,frame.lensHeight,frame.lensAmount,frame.portalBlur,trigSide,menuSide};
+            [_surface placeMenuRect:menu radiusX:effRX radiusY:effRY sourceRect:source
+                radius:frame.sourceRadius smoothing:frame.smoothing optics:optics];
+            [_surface placeTouchLight:_lightPoint strength:_lightStrength];
+            _lastCommittedSurfaceBounds=self.bounds;
+        }
+        [CATransaction commit];
+        BOOL stable=_wantsOpenInk;
+        if(!stable)_stableRetryCount=0;
+        _stableFrameMissed=stable && !rendered;
+        [self retryStableFrame];
+        hasForeground=_drawableHasForeground;
+    }];
+    return hasForeground;
 }
 
 - (void)applyMorphFrame:(WXGMenuMorphFrame)frame inParent:(UIView *)parent {

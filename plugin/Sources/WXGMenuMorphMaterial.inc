@@ -300,12 +300,45 @@ static BOOL WXGInstallMorphMesh(CALayer *layer,id mesh) {
     } @catch(__unused NSException *error) {return NO;}
 }
 
+- (void)stripAnimations {
+    [self.layer removeAllAnimations];
+    [_veil removeAllAnimations];
+    [_rimView.layer removeAllAnimations];
+    [_rimLayer removeAllAnimations];
+    [_livePaint.layer removeAllAnimations];
+    [_edgeMask removeAllAnimations];
+    [_directionField removeAllAnimations];
+    [_fallback.layer removeAllAnimations];
+    for(NSUInteger k=0;k<3;k++)[_backdrops[k].layer removeAllAnimations];
+}
+
+- (const WXGMenuMorphField *)prepareSessionFieldForMenu:(WXGMenuMorphFieldBox)menu radiusY:(float)ry
+                                                 source:(WXGMenuMorphFieldBox)source smoothing:(float)smoothing
+                                           windowOrigin:(CGPoint)origin {
+    float step=(float)_opticalSessionStep;
+    float weights[WXGMenuMorphFieldKernel+1];
+    if(step<=0.f || smoothing<=0.f || WXGMenuMorphKernel(smoothing/step,WXGMorphFieldSessionTexture,weights)<=0)return NULL;
+    if(!_sessionField)_sessionField=malloc(sizeof(*_sessionField));
+    if(!_sessionField)return NULL;
+    WXGMenuMorphFieldBox winMenu={menu.x+(float)origin.x,menu.y+(float)origin.y,menu.width,menu.height,menu.radius};
+    WXGMenuMorphFieldBox winSource={source.x+(float)origin.x,source.y+(float)origin.y,source.width,source.height,source.radius};
+    WXGMenuMorphFieldBuildMode(_sessionField,winMenu,ry,winSource,smoothing,step,WXGMorphFieldSessionTexture);
+    WXGMenuMorphFieldTranslate(_sessionField,-(float)origin.x,-(float)origin.y);
+    return _sessionField->gaussian?_sessionField:NULL;
+}
+
 - (void)applyField:(const WXGMenuMorphField *)field bounds:(CGRect)b outline:(UIBezierPath *)outline {
     CGFloat side=MIN(b.size.width,b.size.height);
-    [self applyField:field bounds:b outline:outline optics:(WXGMenuMorphSurfaceOptics){0.,0.,0.,side,side}];
+    [self applyField:field sessionField:NULL bounds:b outline:outline optics:(WXGMenuMorphSurfaceOptics){0.,0.,0.,0.,side,side}];
 }
 
 - (void)applyField:(const WXGMenuMorphField *)field bounds:(CGRect)b outline:(UIBezierPath *)outline optics:(WXGMenuMorphSurfaceOptics)optics {
+    [self applyField:field sessionField:NULL bounds:b outline:outline optics:optics];
+}
+
+- (void)applyField:(const WXGMenuMorphField *)field sessionField:(const WXGMenuMorphField *)session
+            bounds:(CGRect)b outline:(UIBezierPath *)outline optics:(WXGMenuMorphSurfaceOptics)optics {
+    [UIView performWithoutAnimation:^{
     self.frame=b;
     WXGConfig *c=WXGConfig.shared;
     BOOL dark=self.traitCollection.userInterfaceStyle==UIUserInterfaceStyleDark;
@@ -331,7 +364,10 @@ static BOOL WXGInstallMorphMesh(CALayer *layer,id mesh) {
     enabled=NO;
 #endif
     float restBand=MIN(curve.height*side,curve.maxHeight);
-    float restAmount=curve.height>0?restBand*curve.amount/curve.height:0.f;
+    float rawRestAmount=curve.height>0?restBand*curve.amount/curve.height:0.f;
+    float morphAmountCap=(float)(.52*side);
+    float morphGate=(float)WXGClamp(optics.portalBlur/3.0,0.,1.);
+    float restAmount=rawRestAmount>morphAmountCap?rawRestAmount+(morphAmountCap-rawRestAmount)*morphGate:rawRestAmount;
     float refractionScale=(float)WXGClamp(curve.amount/.8,0.,2.);
     float morphBand=refractionScale>.001f?(float)MAX(0.,optics.lensHeight):0.f;
     float morphAmount=(float)fabs(optics.lensAmount)*refractionScale;
@@ -340,17 +376,20 @@ static BOOL WXGInstallMorphMesh(CALayer *layer,id mesh) {
     float squeeze=(band>restBand+.01f && band>.01f)?curve.squeeze*(restBand/band):curve.squeeze;
     WXGMenuMorphFieldBox box={(float)b.origin.x,(float)b.origin.y,(float)b.size.width,(float)b.size.height,0};
     const WXGMenuMorphField *opticalField=field;
-    // Only moving necks need a Gaussian texture. The mask remains anchored
-    // to the shape at both ends, while these optical samples use the original
-    // session lattice in window coordinates. Reuse one heap buffer per menu.
-    float step=_opticalSessionStep>0?(float)_opticalSessionStep:field->step;
-    float weights[WXGMenuMorphFieldKernel+1];
-    if(enabled && field->smoothing>0 && WXGMenuMorphKernel(field->smoothing/step,WXGMorphFieldSessionTexture,weights)>0){
-        if(!_sessionField)_sessionField=malloc(sizeof(*_sessionField));
-        if(_sessionField){
-            CGPoint origin=self.window?[self.superview convertPoint:CGPointZero toView:self.window]:CGPointZero;
-            WXGMenuMorphBuildSessionField(_sessionField,field,(float)origin.x,(float)origin.y,step);
-            opticalField=_sessionField;
+    // Reuse the window-anchored Gaussian session field already sampled for the
+    // contour when present; otherwise build it on demand for direct callers.
+    if(enabled && session && session->gaussian) {
+        opticalField=session;
+    }else {
+        float step=_opticalSessionStep>0?(float)_opticalSessionStep:field->step;
+        float weights[WXGMenuMorphFieldKernel+1];
+        if(enabled && field->smoothing>0 && WXGMenuMorphKernel(field->smoothing/step,WXGMorphFieldSessionTexture,weights)>0){
+            if(!_sessionField)_sessionField=malloc(sizeof(*_sessionField));
+            if(_sessionField){
+                CGPoint origin=self.window?[self.superview convertPoint:CGPointZero toView:self.window]:CGPointZero;
+                WXGMenuMorphBuildSessionField(_sessionField,field,(float)origin.x,(float)origin.y,step);
+                opticalField=_sessionField;
+            }
         }
     }
     _opticsGaussian=opticalField->gaussian;
@@ -395,9 +434,10 @@ static BOOL WXGInstallMorphMesh(CALayer *layer,id mesh) {
     _meshMS=(CACurrentMediaTime()-begin)*1000;
     UIColor *tint=WXGColor([c materialHexForScope:WXGGlassScopeOther dark:dark]);
     CGFloat baseAlpha=CGColorGetAlpha(tint.CGColor)*[c materialOpacityForScope:WXGGlassScopeOther dark:dark];
-    CGFloat domeClear=WXGClamp((band-restBand)/32.,0.,1.);
-    CGFloat alpha=baseAlpha*(1.-.28*domeClear);
+    CGFloat morphActivity=WXGClamp(MAX((band-restBand)/28.,optics.portalBlur/4.0),0.,1.);
+    CGFloat alpha=baseAlpha*(1.-(dark?.42:.28)*morphActivity);
     _veil.frame=self.bounds;_veil.backgroundColor=[tint colorWithAlphaComponent:WXGClamp(alpha,0,1)].CGColor;
     [self placeRimForField:field bounds:b outline:outline config:c dark:dark];
+    }];
 }
 @end
