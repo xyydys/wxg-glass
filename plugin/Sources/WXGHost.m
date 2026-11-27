@@ -1806,6 +1806,7 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
         WXGSurface *cover=hosts==_homePlusControls?_homePlusSurface:hosts==_homeSearchControls?_homeSearchSurface:nil;
         if(hosts && cover.active && cover.window==_window && cover.motionOwner==_route.leaf) {
             [_navStates conceal:view];
+            if(cover.original!=view)_homeControlsChanged=YES;
             if(cover.original==view && cover.motionHost!=view && ![cover.motionHost isDescendantOfView:view])_navigationBindingPending=YES;
             return;
         }
@@ -1835,8 +1836,10 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
         NSHashTable *hosts=[self rememberHomeAction:(UIControl *)v verify:NO];
         if(!hosts)continue;
         WXGSurface *surface=hosts==_homePlusControls?_homePlusSurface:_homeSearchSurface;
-        if(surface.active && surface.window==_window && surface.motionOwner==_route.leaf)[_navStates conceal:v];
-        else if(hosts==_homePlusControls || ![self dockSearchAvailable])_navigationBindingPending=YES;
+        if(surface.active && surface.window==_window && surface.motionOwner==_route.leaf) {
+            [_navStates conceal:v];
+            if(surface.original!=v)_homeControlsChanged=YES;
+        }else if(!_refreshing && (hosts==_homePlusControls || ![self dockSearchAvailable]))_navigationBindingPending=YES;
     }
 }
 - (void)repairDetachedNavigationBindings {
