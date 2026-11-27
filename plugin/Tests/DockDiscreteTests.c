@@ -34,6 +34,24 @@ int main(void) {
     float need = WXGDiscreteNeededWidth(62, 1, 8, 2);
     WXGDiscreteMetrics enough = WXGDiscreteFit(need, 62, 1, 8, 2, 0);
     assert(fabsf(need - (4.6f * 62 + 3.6f * 8)) < .01f && fabsf(enough.cell - 62) < .01f && fabsf(enough.gap - 8) < .01f && fabsf(enough.wide - 1.6f) < .001f);
+    // A translated run needs the same local drawable. Its two optical margins
+    // survive the bridge growing and the spring overshooting.
+    for(int mask=0;mask<8;mask++) {
+        double bridges[3];for(int i=0;i<3;i++)bridges[i]=(mask&(1<<i))?1:.5;
+        float baseline[4]={0};
+        for(int frame=0;frame<=100;frame++) {
+            double t=1.25*frame/100,amount[4]={1-t,0,t,0};
+            float lx[4],lw[4];WXGDiscreteRun runs[4];
+            WXGDiscreteLayout(m,amount,0,lx,lw);
+            int count=WXGDiscreteRuns(lx,lw,bridges,m.gap,runs);
+            for(int i=0;i<count;i++) {
+                float canvas=WXGDiscreteCanvasWidth(m,runs[i],40);
+                assert(canvas>=runs[i].w+80);
+                if(frame==0)baseline[i]=canvas;
+                assert(canvas==baseline[i]);
+            }
+        }
+    }
     // Alignment toward the search button.
     WXGDiscreteMetrics left = WXGDiscreteFit(354, 62, .9f, 8, 2, -1), right = WXGDiscreteFit(354, 62, .9f, 8, 2, 1);
     assert(left.originX == 0.f && fabsf(right.originX + right.total - 354) < .01f);

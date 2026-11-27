@@ -276,7 +276,6 @@ typedef NS_ENUM(NSInteger,WXGHomeMenuStyle) {
 - (BOOL)dockTitlesHidden;
 // FIX91: the dock's titles: size (pt), weight (0 light, 1 regular, 2 medium,
 // 3 semibold, 4 bold) and whether the selected one is a step bolder.
-- (CGFloat)dockTitleSize;
 - (NSInteger)dockTitleWeight;
 - (BOOL)dockTitleBolderSelected;
 - (BOOL)dockTapSimpleTravel;   // FIX95
@@ -304,9 +303,6 @@ typedef NS_ENUM(NSInteger,WXGHomeMenuStyle) {
 - (CGFloat)dockDiscreteDamping;
 - (CGFloat)dockDiscreteResponse;
 - (BOOL)dockDiscreteLight;
-- (CGFloat)dockDiscreteIconSize;       // FIX106 B: pt
-- (CGFloat)dockDiscreteTitleSize;      // FIX106 B: 中文 title, pt
-- (CGFloat)dockDiscreteSubtitleSize;   // FIX106 B: English title, pt
 - (CGFloat)dockDiscreteGather;         // FIX106 C: connected, icons toward the run's middle (share of a cell)
 - (CGFloat)dockDiscreteContentShift;   // FIX106 H: wide capsule's icon + titles moved left (pt; 0 = centred)
 // FIX95: the chat title's avatar.

@@ -1411,7 +1411,21 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
     clip.layer.cornerCurve=kCACornerCurveContinuous;
     clip.layer.cornerRadius=MAX(0,radius);
 }
+// Compare screen geometry across scroll commits, including the native viewport.
+typedef struct { CGRect body, visible, caster; } WXGShadowFootprint;
+static BOOL WXGShadowRelativeHoleChanged(WXGShadowFootprint oldCaster,WXGShadowFootprint caster,
+                                        WXGShadowFootprint oldPeer,WXGShadowFootprint peer) {
+    BOOL was=CGRectIntersectsRect(oldCaster.caster,oldPeer.visible);
+    BOOL now=CGRectIntersectsRect(caster.caster,peer.visible);
+    if(was!=now)return YES;
+    if(!now)return NO;
+    CGFloat dx=oldCaster.caster.origin.x-caster.caster.origin.x;
+    CGFloat dy=oldCaster.caster.origin.y-caster.caster.origin.y;
+    return !CGRectEqualToRect(oldPeer.body,CGRectOffset(peer.body,dx,dy)) ||
+           !CGRectEqualToRect(oldPeer.visible,CGRectOffset(peer.visible,dx,dy));
+}
 @implementation WXGGlassView {
+    WXGShadowFootprint _oldFootprint,_footprint;
     CALayer *_dropShadow;NSString *_dropShadowKey;   // FIX114 K
     CALayer *_dropShadowMask;NSString *_dropShadowMaskKey;   // R20/R24: boolean alpha mask punching out overlapping sibling glasses so shadows never paint over nearby glass
     NSHashTable<UIView *> *_shadowClips;              // FIX114 L: ancestors opened for the shadow
@@ -1688,7 +1702,17 @@ static void WXGClipToGlass(UIView *clip,CGRect rect,CGFloat radius) {
    over one another, so each still sees only what is behind it. Off
    (气泡共用一次背景采样): one capture per bubble, as before. */
 - (NSString *)bodyGroup {
-    if(_bubbleSurface && _lightweight && [WXGConfig.shared extraNumber:@"bubbleSharedBackdrop"]>.5)return @"wxg.glass.bubbles";
+    if(_bubbleSurface && _lightweight && [WXGConfig.shared extraNumber:@"bubbleSharedBackdrop"]>.5) {
+        static char groupKey;
+        for(UIView *v=self.superview;v;v=v.superview)if([v isKindOfClass:UITableView.class]) {
+            NSString *name=objc_getAssociatedObject(v,&groupKey);
+            if(!name) {
+                name=[@"wxg.glass.bubbles." stringByAppendingString:NSUUID.UUID.UUIDString];
+                objc_setAssociatedObject(v,&groupKey,name,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            }
+            return name;
+        }
+    }
     return _syncGroup;
 }
 // FIX113 U (user: the lens should just refract what is under it, the bar's
@@ -1795,7 +1819,9 @@ static NSHashTable<CALayer *> *WXGShadowHeldLayers;               // their layer
 static NSHashTable<WXGGlassView *> *WXGShadowGlasses;             // glasses whose shadow shows
 static NSHashTable<WXGGlassView *> *WXGAllLiveGlasses;            // R20: all mounted glasses (for shadow-under-glass cutouts)
 static NSUInteger WXGShadowClipsOpened,WXGShadowReclips,WXGShadowRechecks;
-static BOOL WXGShadowRecheckWanted,WXGShadowWriting;
+static BOOL WXGShadowRecheckWanted,WXGShadowWriting,WXGShadowFootprintsCurrent;
+static NSMapTable<UIScrollView *,NSValue *> *WXGShadowScrollBounds;
+static NSUInteger WXGShadowScrollUpdates;
 static CFTimeInterval WXGShadowLastRecheck;
 static void WXGShadowObserve(void);
 static void (*WXGShadowSetMasksOriginal)(id,SEL,BOOL);
@@ -1813,6 +1839,7 @@ static void WXGShadowSetMasks(CALayer *layer,SEL cmd,BOOL masks) {
 }
 static void WXGShadowInstall(void) {
     static dispatch_once_t once;dispatch_once(&once,^{
+        WXGShadowScrollBounds=[NSMapTable weakToStrongObjectsMapTable];
         WXGShadowClipHolders=[NSMapTable mapTableWithKeyOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality valueOptions:NSPointerFunctionsStrongMemory];
         WXGShadowClipOriginal=[NSMapTable mapTableWithKeyOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality valueOptions:NSPointerFunctionsStrongMemory];
         WXGShadowHeldLayers=[NSHashTable hashTableWithOptions:NSPointerFunctionsWeakMemory|NSPointerFunctionsObjectPointerPersonality];
@@ -1990,6 +2017,34 @@ static UIViewController *WXGShadowPageRoot(WXGGlassView *glass) {
     }
     return nil;
 }
+- (WXGShadowFootprint)shadowFootprintTrackingScrolls:(BOOL)track {
+    UIWindow *window=self.window;
+    WXGShadowFootprint f={CGRectNull,CGRectNull,CGRectNull};
+    if(!window)return f;
+    CGRect clip=window.bounds;
+    for(UIView *v=self;v && v!=window;v=v.superview) {
+        if(v.hidden || v.alpha<.01 || [v.layer.mask.name isEqualToString:@"wxg.conceal"])return f;
+        if(track && [v isKindOfClass:UIScrollView.class]) {
+            UIScrollView *scroll=(UIScrollView *)v;
+            if(![WXGShadowScrollBounds objectForKey:scroll])[WXGShadowScrollBounds setObject:[NSValue valueWithCGRect:scroll.bounds] forKey:scroll];
+        }
+        if(v.clipsToBounds)clip=CGRectIntersection(clip,[v convertRect:v.bounds toView:window]);
+    }
+    f.body=[self convertRect:[self drawnBarRect] toView:window];
+    f.visible=CGRectIntersection(f.body,clip);
+    if(!_dropShadow.hidden)f.caster=[self.layer convertRect:_dropShadow.frame toLayer:window.layer];
+    return f;
+}
+static BOOL WXGShadowScrollMoved(void) {
+    BOOL changed=NO;
+    for(UIScrollView *scroll in WXGShadowScrollBounds.keyEnumerator) {
+        CGRect bounds=scroll.bounds;
+        if(!CGRectEqualToRect(bounds,[WXGShadowScrollBounds objectForKey:scroll].CGRectValue))changed=YES;
+    }
+    if(changed)for(UIScrollView *scroll in WXGShadowScrollBounds.keyEnumerator.allObjects)
+        [WXGShadowScrollBounds setObject:[NSValue valueWithCGRect:scroll.bounds] forKey:scroll];
+    return changed;
+}
 // R20/R24: keep every glass's drop shadow strictly below any nearby/lower glass in
 // visual priority by punching out overlapping visible glass silhouettes via a true
 // boolean alpha mask (kCGBlendModeClear). Never use kCAFillRuleEvenOdd, which
@@ -2003,23 +2058,25 @@ static UIViewController *WXGShadowPageRoot(WXGGlassView *glass) {
     CGRect shadowWin=[self.layer convertRect:_dropShadow.frame toLayer:w.layer];
     UIViewController *pageRoot=WXGShadowPageRoot(self);
     if(CGRectIsEmpty(shadowWin) || !pageRoot){if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}return;}
-    typedef struct { CGRect rect; CGFloat radius; } WXGShadowHole;
+    typedef struct { CGRect rect, clip; CGFloat radius; } WXGShadowHole;
     WXGShadowHole holes[16];NSUInteger holeCount=0;
     NSMutableString *key=nil;
     for(WXGGlassView *other in WXGAllLiveGlasses.allObjects) {
         if(holeCount>=16)break;
-        if(other==self || other.window!=w || !WXGShadowGlassShown(other))continue;
+        if(other==self || other.window!=w)continue;
         CGRect otherLocal=[other drawnBarRect];
         if(otherLocal.size.width<2 || otherLocal.size.height<2)continue;
-        CGRect otherWin=[other convertRect:otherLocal toView:w];
-        if(!CGRectIntersectsRect(otherWin,w.bounds) || !CGRectIntersectsRect(shadowWin,otherWin))continue;
+        WXGShadowFootprint footprint=WXGShadowFootprintsCurrent?other->_footprint:[other shadowFootprintTrackingScrolls:NO];
+        if(CGRectIsEmpty(footprint.visible) || !CGRectIntersectsRect(shadowWin,footprint.visible))continue;
         if(WXGShadowPageRoot(other)!=pageRoot)continue;
-        CGRect hole=[w.layer convertRect:otherWin toLayer:_dropShadow];
+        CGRect hole=[w.layer convertRect:footprint.body toLayer:_dropShadow];
+        CGRect clip=[w.layer convertRect:footprint.visible toLayer:_dropShadow];
         if(CGRectIsEmpty(hole))continue;
         CGFloat rad=MIN([other radiusForRect:otherLocal scale:other.barScale],MIN(hole.size.width,hole.size.height)*.5);
         if(!key)key=[NSMutableString stringWithFormat:@"%.0fx%.0f",round(_dropShadow.bounds.size.width),round(_dropShadow.bounds.size.height)];
-        holes[holeCount++]=(WXGShadowHole){hole,MAX(0.,rad)};
+        holes[holeCount++]=(WXGShadowHole){hole,clip,MAX(0.,rad)};
         [key appendFormat:@"|%.0f,%.0f,%.0f,%.0f,%.0f",round(hole.origin.x),round(hole.origin.y),round(hole.size.width),round(hole.size.height),round(rad)];
+        if(!CGRectEqualToRect(hole,clip))[key appendFormat:@"/%.1f,%.1f,%.1f,%.1f",clip.origin.x,clip.origin.y,clip.size.width,clip.size.height];
     }
     if(!holeCount) {
         if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}
@@ -2044,6 +2101,7 @@ static UIViewController *WXGShadowPageRoot(WXGGlassView *glass) {
             for(NSUInteger i=0;i<holeCount;i++) {
                 CGRect hr=CGRectStandardize(holes[i].rect);
                 if(hr.size.width<.5 || hr.size.height<.5)continue;
+                CGContextSaveGState(ctx);CGContextClipToRect(ctx,holes[i].clip);
                 CGFloat r=WXGClamp(holes[i].radius,0.,MIN(hr.size.width,hr.size.height)*.5);
                 if(r>=.5) {
                     CGPathRef rp=CGPathCreateWithRoundedRect(hr,r,r,NULL);
@@ -2051,6 +2109,7 @@ static UIViewController *WXGShadowPageRoot(WXGGlassView *glass) {
                 }else {
                     CGContextFillRect(ctx,hr);
                 }
+                CGContextRestoreGState(ctx);
             }
             CGImageRef img=CGBitmapContextCreateImage(ctx);
             CGContextRelease(ctx);
@@ -2075,9 +2134,29 @@ static void WXGShadowObserve(void) {
                 BOOL periodic=now-WXGShadowLastRecheck>.2;
                 if(!WXGShadowRecheckWanted && !periodic)
                     for(WXGGlassView *glass in WXGShadowGlasses.allObjects)if([glass shadowParkedNowShown]){WXGShadowRecheckWanted=YES;break;}
-                if(!WXGShadowRecheckWanted && !periodic)return;
-                WXGShadowRecheckWanted=NO;if(periodic)WXGShadowLastRecheck=now;++WXGShadowRechecks;
-                for(WXGGlassView *glass in WXGShadowGlasses.allObjects){[glass holdShadowClips];[glass updateShadowCutout];}
+                BOOL full=WXGShadowRecheckWanted || periodic;
+                if(!full && !WXGShadowScrollMoved())return;
+                WXGShadowRecheckWanted=NO;
+                if(periodic)WXGShadowLastRecheck=now;
+                if(full){++WXGShadowRechecks;[WXGShadowScrollBounds removeAllObjects];}
+                NSArray<WXGGlassView *> *casters=WXGShadowGlasses.allObjects;
+                if(full)for(WXGGlassView *glass in casters)[glass holdShadowClips];
+                NSArray<WXGGlassView *> *peers=WXGAllLiveGlasses.allObjects;
+                for(WXGGlassView *glass in peers) {
+                    glass->_oldFootprint=glass->_footprint;
+                    glass->_footprint=[glass shadowFootprintTrackingScrolls:full];
+                }
+                WXGShadowFootprintsCurrent=YES;
+                @try {
+                    for(WXGGlassView *glass in casters) {
+                        if(full){[glass updateShadowCutout];continue;}
+                        // Siblings translated together keep exactly the same hole.
+                        for(WXGGlassView *peer in peers)if(peer!=glass && peer.window==glass.window &&
+                            WXGShadowRelativeHoleChanged(glass->_oldFootprint,glass->_footprint,peer->_oldFootprint,peer->_footprint)) {
+                            [glass updateShadowCutout];++WXGShadowScrollUpdates;break;
+                        }
+                    }
+                } @finally {WXGShadowFootprintsCurrent=NO;}
                 if(periodic)WXGShadowClipSweep();   // glasses gone without a word (their weak entries)
             });
         if(o){CFRunLoopAddObserver(CFRunLoopGetMain(),o,kCFRunLoopCommonModes);CFRelease(o);}
@@ -2097,7 +2176,7 @@ NSDictionary *WXGDropShadowEvidence(void) {
     NSUInteger shown=0,inWindow=0;
     for(WXGGlassView *g in WXGShadowGlasses.allObjects){++shown;if(g.window)++inWindow;}
     return @{@"held":held,@"glassesWithShadow":@(shown),@"inWindow":@(inWindow),@"openedEver":@(WXGShadowClipsOpened),
-             @"reclipsKeptOpen":@(WXGShadowReclips),@"rechecks":@(WXGShadowRechecks),@"setterHooked":@(WXGShadowSetMasksOriginal!=NULL)};
+             @"reclipsKeptOpen":@(WXGShadowReclips),@"rechecks":@(WXGShadowRechecks),@"scrollMaskUpdates":@(WXGShadowScrollUpdates),@"trackedScrollViews":@(WXGShadowScrollBounds.count),@"setterHooked":@(WXGShadowSetMasksOriginal!=NULL)};
 }
 - (void)didMoveToWindow {
     [super didMoveToWindow];

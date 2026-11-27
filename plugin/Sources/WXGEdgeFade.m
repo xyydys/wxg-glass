@@ -233,6 +233,9 @@ static BOOL WXGEdgeListLeads(UIScrollView *list) {
 @property(nonatomic,strong) WXGEdgeBlurView *topBlur,*bottomBlur;
 @property(nonatomic,weak) UIImageView *coverSource;      // our settings pages: their wallpaper
 @property(nonatomic,strong) UIImageView *cover;
+@property(nonatomic,weak) UIImageView *resolvedWallpaper;
+@property(nonatomic,copy) NSString *fadeSource;
+@property(nonatomic) BOOL coverTopInList;
 @property(nonatomic,strong) UIView *plate;               // the list's background colour, under the list
 @property(nonatomic,strong) UIColor *plateFallback;      // FIX69: nothing opaque behind a see-through list
 @property(nonatomic,copy) NSString *plateSource;
@@ -250,6 +253,7 @@ static BOOL WXGEdgeListLeads(UIScrollView *list) {
 @end
 
 static NSHashTable<WXGEdgePage *> *WXGEdgePages;
+static NSMutableArray<NSDictionary *> *WXGEdgeRecent;
 static char WXGEdgePageKey;
 /* FIX84: which page a list belongs to, kept on the list itself (an associated
    link holding the page weakly). Until FIX83 this was a table of 16 list
@@ -357,8 +361,14 @@ static NSString *WXGEdgeLowerClassName(Class cls) {
     if(!name){name=NSStringFromClass(cls).lowercaseString?:@"";names[key]=name;}
     return name;
 }
+// Nested child controllers can have a second full-width list while presenting,
+// pushing, or dismissing. Only its own controller can install the edge bands.
+static UIViewController *WXGEdgeListOwner(UIView *list) {
+    for(UIResponder *r=list;r;r=r.nextResponder)if([r isKindOfClass:UIViewController.class])return (UIViewController *)r;
+    return nil;
+}
 static CGFloat WXGEdgeListScore(UIScrollView *list,UIView *root,BOOL chat) {
-    if(!list || !root || [list isKindOfClass:UITextView.class] || list.hidden || list.alpha<.01)return -CGFLOAT_MAX;
+    if(!list || !root || WXGEdgeListOwner(list)!=WXGEdgeListOwner(root) || [list isKindOfClass:UITextView.class] || list.hidden || list.alpha<.01)return -CGFLOAT_MAX;
     CGRect rect=[list convertRect:list.bounds toView:root];
     if(rect.size.width<root.bounds.size.width*.55 || rect.size.height<220)return -CGFLOAT_MAX;
     CGFloat rootArea=MAX(root.bounds.size.width*root.bounds.size.height,1);
@@ -469,6 +479,54 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
     return NO;
 }
 
+// Resolve only paint that is behind the scrolling content. A snapshot of
+// the list would duplicate its messages and carry them along the edges.
+static BOOL WXGEdgeResolvePaint(UIView *view,UIScrollView *list,NSInteger depth,UIImageView **image,UIColor **color) {
+    if(!view || depth>4 || view.hidden || view.alpha<.99 || WXGIsPluginView(view))return NO;
+    CGRect area=[view convertRect:view.bounds toView:list];
+    if(!CGRectContainsRect(CGRectInset(area,-1,-1),list.bounds))return NO;
+    for(UIView *child in view.subviews.reverseObjectEnumerator) {
+        if(child.hidden || child.alpha<.01 || WXGIsPluginView(child))continue;
+        if(!CGRectIntersectsRect([child convertRect:child.bounds toView:list],list.bounds))continue;
+        return WXGEdgeResolvePaint(child,list,depth+1,image,color);
+    }
+    if([view isKindOfClass:UIImageView.class] && ((UIImageView *)view).image && !((UIImageView *)view).isAnimating) {
+        *image=(UIImageView *)view;*color=view.backgroundColor;return YES;
+    }
+    if(view.subviews.count || view.layer.contents || view.layer.sublayers.count ||
+       class_getMethodImplementation(view.class,@selector(drawRect:))!=class_getMethodImplementation(UIView.class,@selector(drawRect:)))return NO;
+    if(view.backgroundColor && CGColorGetAlpha(view.backgroundColor.CGColor)>.99){*color=view.backgroundColor;return YES;}
+    return NO;
+}
+static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *listColor,UIColor *fallback,UIImageView **image,UIColor **color) {
+    UIView *background=[list isKindOfClass:UITableView.class]?((UITableView *)list).backgroundView:
+                       [list isKindOfClass:UICollectionView.class]?((UICollectionView *)list).backgroundView:nil;
+    if(background && !background.hidden && background.alpha>.01) {
+        if(WXGEdgeResolvePaint(background,list,0,image,color))return *image?@"listWallpaper":@"listBackground";
+        return nil;
+    }
+    if(listColor && CGColorGetAlpha(listColor.CGColor)>.99){*color=listColor;return @"listColor";}
+    if(list==root)return nil;
+    for(UIView *child=list,*parent=list.superview;parent;child=parent,parent=parent.superview) {
+        NSUInteger index=[parent.subviews indexOfObjectIdenticalTo:child];
+        if(index==NSNotFound)break;
+        while(index>0) {
+            UIView *sibling=parent.subviews[--index];
+            if(sibling.hidden || sibling.alpha<.01 || WXGIsPluginView(sibling))continue;
+            if(!CGRectIntersectsRect([sibling convertRect:sibling.bounds toView:list],list.bounds))continue;
+            if(WXGEdgeResolvePaint(sibling,list,0,image,color))return *image?@"pageWallpaper":@"pageBackground";
+            // A custom drawing or video behind the list must show through.
+            return nil;
+        }
+        if(parent.backgroundColor && CGColorGetAlpha(parent.backgroundColor.CGColor)>.99) {
+            *color=parent.backgroundColor;return @"pageColor";
+        }
+        if(parent==root)break;
+    }
+    if(fallback && CGColorGetAlpha(fallback.CGColor)>.99){*color=fallback;return @"pageFallbackColor";}
+    return nil;
+}
+
 #pragma mark Page
 
 @implementation WXGEdgePage
@@ -497,6 +555,7 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
     }
     [_plate removeFromSuperview];[_cover removeFromSuperview];[_topBlur removeFromSuperview];[_bottomBlur removeFromSuperview];
     _plate=nil;_plateFallback=nil;_cover=nil;_topBlur=_bottomBlur=nil;
+    _resolvedWallpaper=nil;_fadeSource=nil;
     _scrollView=nil;_mask=nil;_maskSolid=nil;_maskTopSolid=nil;_originalMask=nil;_panel=0;_topBarInList=NO;
     _maskSize=_appliedSize=_coverSize=CGSizeMake(-1,-1);_maskTop=_maskBottom=-1;_syncedBounds=CGRectNull;
     _coverListY=_coverListHeight=_coverTop=_coverBottom=-1;
@@ -506,6 +565,8 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
 - (void)attach:(UIScrollView *)list {
     [self detachList];
     if(!list)return;
+    WXGEdgePage *old=WXGEdgePageForList(list);
+    if(old && old!=self)[old detach];
     _scrollView=list;++_attaches;
     WXGEdgeListRegister(list,self);
     WXGEdgeHookListClass(list.class);
@@ -514,7 +575,7 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
     UIViewController *controller=_controller;
     if(!controller.isViewLoaded || !WXGEdgeFadeWanted()){[self detachList];return;}
     UIScrollView *list=_scrollView;UIView *root=controller.view;
-    BOOL stale=!list || ![list isDescendantOfView:root] || list.hidden || (root.window && !list.window);
+    BOOL stale=!list || WXGEdgeListOwner(list)!=controller || ![list isDescendantOfView:root] || list.hidden || (root.window && !list.window);
     CFTimeInterval now=CACurrentMediaTime();
     // Appearing, a lost list, or (while laying out) at most once a second:
     // WeChat builds some lists late.
@@ -589,9 +650,38 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
     _fadeTop=top;_fadeBottom=bottom;
     UIView *parent=list.superview;UIImageView *source=_coverSource;
     BOOL fading=top>0 || bottom>0;
+    // The mask fades the list's own background colour too; behind the list
+    // there may be nothing opaque (the chat without a wallpaper, WeChat's
+    // settings: black edges). A plate of that colour under the list keeps the
+    // background and hides only the content.
+    // FIX69: the list's own paint, else (nothing opaque behind it) the system background.
+    NSString *paintSource=nil;
+    UIColor *listColor=WXGEdgeListPaint(list,&paintSource),*cellColor=WXGEdgeCellPaint(list);
+    // FIX70: the cells are the page when the list's own paint is far from theirs (Moments).
+    if(listColor && cellColor) {
+        CGFloat a=WXGEdgeLuminance(listColor,list.traitCollection),b=WXGEdgeLuminance(cellColor,list.traitCollection);
+        if(a>=0 && b>=0 && fabs(a-b)>.35){listColor=nil;paintSource=@"cells";}
+    }
+    BOOL behind=WXGEdgeBackdropBehind(list,_controller.view);
+    _plateFallback=listColor?nil:[paintSource isEqual:@"cells"]?cellColor:!behind?(cellColor?:UIColor.systemBackgroundColor):nil;
+    if(!listColor && ![paintSource isEqual:@"cells"] && !behind)paintSource=cellColor?@"cells":@"systemBackground";
+    UIColor *plateColor=listColor?:_plateFallback;
+    _plateSource=plateColor?paintSource:@"none";
+    UIImageView *wallpaper=source;
+    UIColor *coverColor=source.backgroundColor;
+    NSString *coverKind=source?@"settingsWallpaper":nil;
+    BOOL rootList=list==_controller.view;
+    UIView *coverParent=rootList?list:parent;
+    if(!source && fading && coverParent && WXGEffectiveRenderMode()>=2) {
+        coverKind=WXGEdgeCoverPaint(list,_controller.view,listColor,_plateFallback,&wallpaper,&coverColor);
+    }
+    _resolvedWallpaper=wallpaper;
+    NSString *mode=!fading?@"off":coverKind?:@"listMask";
+    BOOL record=force || ![_fadeSource isEqual:mode];
+    _fadeSource=mode;
     // WeChat's pages: the list's own mask (WeChatFade).
     CALayer *current=list.layer.mask;
-    if(source || !fading) {
+    if(coverKind || !fading) {
         if(_mask && current==_mask) {
             [CATransaction begin];[CATransaction setDisableActions:YES];
             list.layer.mask=_originalMask;
@@ -611,7 +701,7 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
         }
         if(current!=_mask) {
             // The list's own mask (WeChat's, if any) comes back with the fade off.
-            if(current)_originalMask=current;
+            _originalMask=current;
             [CATransaction begin];[CATransaction setDisableActions:YES];
             list.layer.mask=_mask;
             [CATransaction commit];
@@ -619,24 +709,7 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
         }
         [self buildMaskForSize:size top:top bottom:bottom force:force];
     }
-    // The mask fades the list's own background colour too; behind the list
-    // there may be nothing opaque (the chat without a wallpaper, WeChat's
-    // settings: black edges). A plate of that colour under the list keeps the
-    // background and hides only the content.
-    // FIX69: the list's own paint, else (nothing opaque behind it) the system background.
-    NSString *paintSource=nil;
-    UIColor *listColor=WXGEdgeListPaint(list,&paintSource),*cellColor=WXGEdgeCellPaint(list);
-    // FIX70: the cells are the page when the list's own paint is far from theirs (Moments).
-    if(listColor && cellColor) {
-        CGFloat a=WXGEdgeLuminance(listColor,list.traitCollection),b=WXGEdgeLuminance(cellColor,list.traitCollection);
-        if(a>=0 && b>=0 && fabs(a-b)>.35){listColor=nil;paintSource=@"cells";}
-    }
-    BOOL behind=WXGEdgeBackdropBehind(list,_controller.view);
-    _plateFallback=listColor?nil:[paintSource isEqual:@"cells"]?cellColor:!behind?(cellColor?:UIColor.systemBackgroundColor):nil;
-    if(!listColor && ![paintSource isEqual:@"cells"] && !behind)paintSource=cellColor?@"cells":@"systemBackground";
-    UIColor *plateColor=listColor?:_plateFallback;
-    _plateSource=plateColor?paintSource:@"none";
-    if(!source && fading && parent && plateColor) {
+    if(!coverKind && fading && parent && plateColor) {
         if(!_plate){_plate=[WXGEdgePlateView new];_plate.userInteractionEnabled=NO;}
         if(![_plate.backgroundColor isEqual:plateColor])_plate.backgroundColor=plateColor;
         // FIX106 I: behind the list (after it, drawn lower) where the list leads
@@ -644,11 +717,8 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
         if(_scope!=WXGEdgeScopeChat && WXGEdgeListLeads(list))[self place:_plate behind:list parent:parent frame:[self listRect]];
         else [self place:_plate below:list parent:parent frame:[self listRect]];
     }else if(_plate){[_plate removeFromSuperview];_plate=nil;}
-    // Our settings pages: their glass cards sit in the list, and a mask above
-    // a backdrop breaks it. The list stays unmasked; a copy of the page's
-    // wallpaper comes in over it towards the edges instead (the wallpaper does
-    // not scroll, so this is what the faded list would show).
-    if(source && fading && parent && source.superview==parent) {
+    // Fade in the actual background over live glass without masking the scrolling hierarchy.
+    if(coverKind && fading && coverParent) {
         if(!_cover) {
             _cover=[WXGEdgeCoverView new];_cover.userInteractionEnabled=NO;_cover.clipsToBounds=YES;
             _coverMask=[CAGradientLayer layer];_coverMask.anchorPoint=CGPointZero;
@@ -656,8 +726,19 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
             _cover.layer.mask=_coverMask;
             _coverListY=-1;
         }
-        _cover.image=source.image;_cover.contentMode=source.contentMode;
-        [self place:_cover above:list parent:parent frame:source.frame];
+        _cover.image=wallpaper.image;_cover.contentMode=wallpaper?wallpaper.contentMode:UIViewContentModeScaleToFill;
+        _cover.backgroundColor=coverColor?:UIColor.clearColor;
+        CGRect frame=wallpaper?[wallpaper convertRect:wallpaper.bounds toView:coverParent]:[list convertRect:list.bounds toView:coverParent];
+        if(rootList) {
+            // A root table's superview belongs to the transition container. Keep
+            // its cover inside the viewport so it leaves with this page.
+            if(_cover.layer.zPosition!=1)_cover.layer.zPosition=1;
+            if(_cover.superview!=list)[list addSubview:_cover];
+            if(!CGRectEqualToRect(_cover.frame,frame))_cover.frame=frame;
+        }else {
+            if(_cover.layer.zPosition!=0)_cover.layer.zPosition=0;
+            [self place:_cover above:list parent:parent frame:frame];
+        }
     }else if(_cover){[_cover removeFromSuperview];_cover=nil;}
     // The blur bands, top and bottom each with its own strength.
     CGFloat topRadius=MAX(0,v.blurTopRadius),bottomRadius=MAX(0,v.blurBottomRadius);
@@ -673,6 +754,11 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
     _topBlur=[self band:_topBlur wanted:_blurTopExtent>0 bottom:NO radius:topRadius*(1-_panel) parent:parent anchor:anchor];
     _bottomBlur=[self band:_bottomBlur wanted:_blurBottomExtent>0 bottom:YES radius:bottomRadius*(1-_panel) parent:parent anchor:anchor];
     [self syncGeometry];
+    if(record && list.window) {
+        if(!WXGEdgeRecent)WXGEdgeRecent=[NSMutableArray array];
+        if(WXGEdgeRecent.count>=12)[WXGEdgeRecent removeObjectAtIndex:0];
+        [WXGEdgeRecent addObject:@{@"seconds":@(round(WXGSecondsSinceLoad()*10)/10),@"state":self.evidence}];
+    }
 }
 - (void)buildMaskForSize:(CGSize)size top:(CGFloat)top bottom:(CGFloat)bottom force:(BOOL)force {
     if(!force && CGSizeEqualToSize(size,_maskSize) && fabs(top-_maskTop)<=.1 && fabs(bottom-_maskBottom)<=.1)return;
@@ -696,7 +782,7 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
     CGFloat h=MAX(height,1);
     for(NSUInteger i=0;i<WXG_EDGE_FADE_STOPS;i++) {
         CGFloat location=(CGFloat)i/(WXG_EDGE_FADE_STOPS-1),y=location*h-listY;
-        CGFloat alpha=y<0 || y>listHeight?0:1-WXGEdgeFadeAlpha(y,listHeight,_fadeTop,_fadeBottom);
+        CGFloat alpha=WXGEdgeCoverAlpha(y,listHeight,_fadeTop,_fadeBottom,_topBarInList);
         [colors addObject:(__bridge id)[UIColor colorWithWhite:1 alpha:alpha].CGColor];
         [locations addObject:@(location)];
     }
@@ -749,8 +835,9 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
         }
     }
     if(!_plate && !_cover && !_topBlur && !_bottomBlur)return;
-    UIView *parent=list.superview;UIImageView *source=_coverSource;
-    if(!parent || (_plate && _plate.superview!=parent) || (_cover && (_cover.superview!=parent || source.superview!=parent)) ||
+    UIView *parent=list.superview,*coverParent=list==_controller.view?list:parent;
+    UIImageView *source=_resolvedWallpaper;
+    if(!parent || (_plate && _plate.superview!=parent) || (_cover && _cover.superview!=coverParent) ||
        (_topBlur && _topBlur.superview!=parent) || (_bottomBlur && _bottomBlur.superview!=parent)) {
         // Moved to another container: placed again on the next refresh.
         [_plate removeFromSuperview];[_cover removeFromSuperview];[_topBlur removeFromSuperview];[_bottomBlur removeFromSuperview];
@@ -771,18 +858,19 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
     }
     if(_cover) {
         if(_cover.image!=source.image)_cover.image=source.image;   // light / dark wallpaper
-        CGRect frame=source.frame;
+        CGRect rect=[list convertRect:list.bounds toView:coverParent];
+        CGRect frame=source?[source convertRect:source.bounds toView:coverParent]:rect;
         if(!CGRectEqualToRect(_cover.frame,frame))_cover.frame=frame;
         if(!CGRectEqualToRect(_coverMask.frame,_cover.bounds)) {
             [CATransaction begin];[CATransaction setDisableActions:YES];
             _coverMask.frame=_cover.bounds;
             [CATransaction commit];
         }
-        CGRect rect=[parent convertRect:list.bounds fromView:list];
         CGFloat listY=CGRectGetMinY(rect)-CGRectGetMinY(frame);
-        if(fabs(listY-_coverListY)>.1 || fabs(rect.size.height-_coverListHeight)>.1 || !CGSizeEqualToSize(frame.size,_coverSize) ||
+        if(_cover.alpha!=1-_panel)_cover.alpha=1-_panel;
+        if(_coverTopInList!=_topBarInList || fabs(listY-_coverListY)>.1 || fabs(rect.size.height-_coverListHeight)>.1 || !CGSizeEqualToSize(frame.size,_coverSize) ||
            fabs(_fadeTop-_coverTop)>.1 || fabs(_fadeBottom-_coverBottom)>.1) {
-            _coverSize=frame.size;
+            _coverSize=frame.size;_coverTopInList=_topBarInList;
             [self buildCoverMaskForHeight:frame.size.height listY:listY listHeight:rect.size.height];
         }
         if(_cover.hidden!=hidden)_cover.hidden=hidden;
@@ -805,11 +893,15 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
         @"list":list?NSStringFromClass(list.class):@"none",@"resolves":@(_resolves),@"attaches":@(_attaches),@"maskBuilds":@(_maskBuilds),
         @"settings":@{@"fadeTop":@(v.fadeTop),@"fadeBottom":@(v.fadeBottom),@"blurTop":@(v.blurTop),@"blurBottom":@(v.blurBottom),
                       @"blurTopRadius":@(v.blurTopRadius),@"blurBottomRadius":@(v.blurBottomRadius)},
-        @"blur":_blurNote?:@"none",@"fade":_coverSource?@"wallpaperCover":@"listMask",@"miniProgramPanel":@(_panel),@"topBarInList":@(_topBarInList)} mutableCopy];
+        @"blur":_blurNote?:@"none",@"fade":_fadeSource?:@"off",@"miniProgramPanel":@(_panel),@"topBarInList":@(_topBarInList)} mutableCopy];
     if(list) {
         d[@"listFrame"]=NSStringFromCGRect(list.frame);d[@"listInWindow"]=@(list.window!=nil);
         d[@"maskAttached"]=@(_mask && list.layer.mask==_mask);d[@"keptOriginalMask"]=@(_originalMask!=nil);
         d[@"fadeBands"]=@[@(_fadeTop),@(_fadeBottom)];
+        UIView *background=[list isKindOfClass:UITableView.class]?((UITableView *)list).backgroundView:
+            [list isKindOfClass:UICollectionView.class]?((UICollectionView *)list).backgroundView:nil;
+        if(background)d[@"nativeBackground"]=NSStringFromClass(background.class);
+        if(_resolvedWallpaper)d[@"wallpaperSource"]=NSStringFromClass(_resolvedWallpaper.class);
         // FIX84: the list leads back to this page; the mask sits on the list's
         // scroll position (lag 0 when it follows the scrolling).
         d[@"linked"]=@(WXGEdgePageForList(list)==self);d[@"maskSyncs"]=@(_maskSyncs);
@@ -823,6 +915,12 @@ static BOOL WXGEdgeBackdropBehind(UIScrollView *list,UIView *page) {
                                @"behindList":@(_plate.layer.zPosition<0)};   // FIX106 I: after the list, drawn lower
     }
     if(list.superview)d[@"listIndex"]=@([list.superview.subviews indexOfObjectIdenticalTo:list]);
+    NSUInteger matchingTop=0,matchingBottom=0;
+    for(UIView *peer in list.superview.subviews)if([peer isKindOfClass:WXGEdgeBlurView.class] && !peer.hidden) {
+        if(((WXGEdgeBlurView *)peer).bottomEdge)++matchingBottom;else ++matchingTop;
+    }
+    d[@"visibleSiblingBands"]=@{@"top":@(matchingTop),@"bottom":@(matchingBottom)};
+    if(_cover){d[@"coverOwnsMask"]=@(_cover.layer.mask==_coverMask);d[@"coverInsideRootList"]=@(_cover.superview==list);}
     if(_topBlur)d[@"topBlurFrame"]=NSStringFromCGRect(_topBlur.frame);
     if(_bottomBlur)d[@"bottomBlurFrame"]=NSStringFromCGRect(_bottomBlur.frame);
     return d;
@@ -904,5 +1002,5 @@ NSDictionary *WXGEdgeFadeEvidence(void) {
     NSMutableArray *pages=[NSMutableArray array];
     for(WXGEdgePage *page in WXGEdgePages.allObjects)if(page.controller)[pages addObject:page.evidence];
     return @{@"enabled":@(WXGPreferences.shared.edgeFade),@"active":@(WXGEdgeFadeWanted()),
-             @"variableBlur":@(WXGEdgeVariableBlurAvailable()),@"relinks":@(WXGEdgeRelinks),@"pages":pages};
+             @"variableBlur":@(WXGEdgeVariableBlurAvailable()),@"relinks":@(WXGEdgeRelinks),@"recent":WXGEdgeRecent.copy?:@[],@"pages":pages};
 }

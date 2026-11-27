@@ -178,10 +178,12 @@ static inline void WXGDockSpringConstants(double response,double damping,double 
 #define WXG_DOCK26_TITLE_DRAW_Y 7.
 #define WXG_DOCK26_TITLE_SIZE 10.
 
-/* Keep the 26 pt reference row's lower edge next to the title as the artwork
-   is scaled. Without a title both icon states sit on the platter midline. */
+/* Scale the entire measured icon/title layout about the tab's midline. */
 static inline double WXGDockArtworkCenterY(double middle, double scale, int hiddenTitles) {
-    return hiddenTitles ? middle : middle + WXG_DOCK26_ICON_CENTER_Y + WXG_DOCK26_ICON_HEIGHT * .5 * (1. - scale);
+    return hiddenTitles ? middle : middle + WXG_DOCK26_ICON_CENTER_Y * scale;
+}
+static inline double WXGDockTitleOriginY(double middle, double scale) {
+    return middle + WXG_DOCK26_TITLE_DRAW_Y * scale;
 }
 #define WXG_DOCK26_GLOW_SPOT .15
 #define WXG_DOCK26_GLOW_BAR .04

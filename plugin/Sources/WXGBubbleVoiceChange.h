@@ -5,7 +5,7 @@
 // Only changes that affect ownership, material discovery or the occupied rect
 // require repainting. Ignore intermediate opacity values during native fades.
 typedef struct {
-    uintptr_t parent, content, skin;
+    uintptr_t parent, content, skin, childSignature;
     double x, y, width, height;
     unsigned long children;
     bool visible, stretchable;
@@ -13,7 +13,7 @@ typedef struct {
 
 static inline bool WXGBubbleVoiceHierarchyChanged(WXGBubbleVoiceState old, WXGBubbleVoiceState now) {
     return old.parent != now.parent || old.content != now.content || old.skin != now.skin ||
-        old.children != now.children;
+        old.children != now.children || old.childSignature != now.childSignature;
 }
 
 static inline bool WXGBubbleVoiceChanged(WXGBubbleVoiceState old, WXGBubbleVoiceState now) {

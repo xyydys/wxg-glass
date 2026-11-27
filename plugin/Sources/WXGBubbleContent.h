@@ -17,5 +17,6 @@ FOUNDATION_EXPORT UIView *WXGBubbleCardBody(UIView *host);
 FOUNDATION_EXPORT NSArray<UIView *> *WXGBubbleCardBackgrounds(UIView *host, UIView *body);
 FOUNDATION_EXPORT void WXGBubbleStyleCardContents(UIView *host, UIView *body, WXGStateBag *bag, CGFloat radius);
 // In host coordinates. Place the glass just below the body, outside its content mask.
+FOUNDATION_EXPORT NSDictionary *WXGBubbleVoiceEvidence(UIView *host, UIView *body);
 FOUNDATION_EXPORT CGRect WXGBubbleCardGlassFrame(UIView *host, UIView *body);
 FOUNDATION_EXPORT void WXGBubbleRestoreCardContents(UIView *body, WXGStateBag *bag);

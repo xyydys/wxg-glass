@@ -10,13 +10,14 @@ static void near(double a,double b,double tolerance) {
 }
 int main(void) {
     // The title's draw origin matches the measured baseline. Scaling the
-    // reference artwork keeps its gap, and icon-only tabs stay centered.
+    // reference artwork scales its gap, and icon-only tabs stay centered.
     for(int height=38;height<=90;height++)for(int percent=60;percent<=140;percent++) {
         double mid=height*.5,scale=percent*.01;
         double iconY=WXGDockArtworkCenterY(mid,scale,0);
         double halfIcon=WXG_DOCK26_ICON_HEIGHT*.5*scale;
-        double titleY=mid+WXG_DOCK26_TITLE_DRAW_Y;
-        near(titleY-(iconY+halfIcon),1.,1e-10);
+        double titleY=WXGDockTitleOriginY(mid,scale);
+        near(titleY-(iconY+halfIcon),scale,1e-10);
+        near((iconY-mid)/scale,-7.,1e-10);
         near(WXGDockArtworkCenterY(mid,scale,1),mid,0);
         if(percent==100)near(iconY,mid-7.,0);
     }

@@ -118,8 +118,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // (first: the refraction band's).
     {"dockIconScalePercent",'n',100,60,140,NULL,NULL},
     {"dockHideTitles",'b',0,0,1,NULL,NULL},
-    {"dockIconHeight",'n',0,0,36,NULL,NULL},      // FIX135: > 0: the icons fitted to this height (iOS 26: 26 pt); 0: as before (WeChat's own size)
-    {"dockTitleSize",'n',10,8,13,NULL,NULL},      // FIX91: the titles' size (pt; 10.5 before)
     {"dockTitleWeight",'n',1,0,4,NULL,NULL},      // FIX91: 0 light .. 4 bold (2 medium); FIX114 B: regular, as WeChat's own tab titles
     {"dockTitleWeightNative",'b',0,0,1,NULL,NULL},   // FIX114 B: the one-time move from the old default (medium) to regular is done
     {"dockTitleBolderSelected",'b',0,0,1,NULL,NULL},   // FIX91: the selected title one step bolder (always before)
@@ -212,6 +210,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"homeTitleSegmentsEnglish",'b',0,0,1,NULL,NULL},
     {"homeSearchWidthPct",'n',0,0,98,NULL,NULL},
     {"homeSearchHeight",'n',0,0,64,NULL,NULL},
+    {"homeSearchGroupGap",'n',8,0,32,NULL,NULL},
     {"homeSearchTopGap",'n',-1,-1,32,NULL,NULL},
     {"contactsTitleCapsule",'b',1,0,1,NULL,NULL},
     {"discoverTitleCapsule",'b',1,0,1,NULL,NULL},
@@ -279,9 +278,6 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"dockDiscreteLight",'b',0,0,1,NULL,NULL},
     // FIX106 B (user: icons and titles a little small): the icon's size (pt;
     // A used the atlas's 26), the 中文 and English titles' sizes (A: 13 / 9.5).
-    {"dockDiscreteIconSize",'n',30,20,40,NULL,NULL},
-    {"dockDiscreteTitleSize",'n',15,10,20,NULL,NULL},
-    {"dockDiscreteSubtitleSize",'n',11,8,16,NULL,NULL},
     // FIX106 C (user: connected, the end icons sat too far out): how far the
     // joined balls' icons gather toward their run's middle (share of a cell).
     {"dockDiscreteGather",'n',.22,0,.45,NULL,NULL},
@@ -1485,8 +1481,8 @@ static NSString *const WXGGlassKeys[6][WXGGlassValueCount]={WXG_GLASS_KEYS("g","
              @"dockTouchGlow":@YES,@"dockTouchGlowSpot":@(WXG_DOCK26_GLOW_SPOT),@"dockTouchGlowBar":@(WXG_DOCK26_GLOW_BAR),
              // FIX135: its icons and titles (probe 2's view dump: the icons 26 pt high, their middle 7 pt above the bar's;
              // the titles 10 pt, their box from 6 pt under the bar's middle, 14 pt high; medium, as a tab bar's are).
-             @"dockIconHeight":@(WXG_DOCK26_ICON_HEIGHT),@"dockIconScalePercent":@100,@"dockHideTitles":@NO,
-             @"dockTitleSize":@(WXG_DOCK26_TITLE_SIZE),@"dockTitleWeight":@2,@"dockTitleBolderSelected":@NO};
+             @"dockIconScalePercent":@100,@"dockHideTitles":@NO,
+             @"dockTitleWeight":@2,@"dockTitleBolderSelected":@NO};
 }
 // FIX131: the colours that go with them: the resting selection, black at 0.07 in light and white at 0.14 in dark
 // (the alpha here x the 0.75 above).
@@ -1623,7 +1619,6 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
 - (BOOL)knowsKey:(NSString *)key {return key && (WXGExtraIndex()[key]!=nil || [self.keys containsObject:key]);}
 - (CGFloat)dockArtworkScale {return [self extraNumber:@"dockIconScalePercent"]/100.;}
 - (BOOL)dockTitlesHidden {return [self extraNumber:@"dockHideTitles"]>.5;}
-- (CGFloat)dockTitleSize {return [self extraNumber:@"dockTitleSize"];}
 - (NSInteger)dockTitleWeight {return (NSInteger)lround([self extraNumber:@"dockTitleWeight"]);}
 - (BOOL)dockTitleBolderSelected {return [self extraNumber:@"dockTitleBolderSelected"]>.5;}
 - (BOOL)dockTapSimpleTravel {return [self extraNumber:@"dockTapSimpleTravel"]>.5;}
@@ -1646,9 +1641,6 @@ static NSString *const WXGDockSystem26BackupKey=@"dockSystem26.before";
 - (CGFloat)dockDiscreteDamping {return WXGClamp([self extraNumber:@"dockDiscreteDamping"],.45,1);}
 - (CGFloat)dockDiscreteResponse {return WXGClamp([self extraNumber:@"dockDiscreteResponse"],.2,1);}
 - (BOOL)dockDiscreteLight {return [self extraNumber:@"dockDiscreteLight"]>.5;}
-- (CGFloat)dockDiscreteIconSize {return WXGClamp([self extraNumber:@"dockDiscreteIconSize"],20,40);}
-- (CGFloat)dockDiscreteTitleSize {return WXGClamp([self extraNumber:@"dockDiscreteTitleSize"],10,20);}
-- (CGFloat)dockDiscreteSubtitleSize {return WXGClamp([self extraNumber:@"dockDiscreteSubtitleSize"],8,16);}
 - (CGFloat)dockDiscreteGather {return WXGClamp([self extraNumber:@"dockDiscreteGather"],0,.45);}
 - (CGFloat)dockDiscreteContentShift {return WXGClamp([self extraNumber:@"dockDiscreteContentShift"],0,30);}
 - (CGFloat)avatarSize {return [self extraNumber:@"avatarSize"];}

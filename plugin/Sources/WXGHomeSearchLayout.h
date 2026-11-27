@@ -17,6 +17,14 @@ static inline double WXGHomeSearchRequiredHeaderHeight(WXGRect field,double nati
     return fmax(nativeHeight,y+height+bottomPadding);
 }
 
+typedef struct { double groupY, headerHeight, bottomGap; } WXGHomeGroupLayout;
+static inline WXGHomeGroupLayout WXGHomeGroupBelowSearch(double nativeHeight,double nativeFieldBottom,
+                                                          double searchBottom,double groupHeight,double gap) {
+    double bottomGap=fmax(0,nativeHeight-nativeFieldBottom);
+    double groupY=searchBottom+fmax(0,gap);
+    return (WXGHomeGroupLayout){groupY,groupY+groupHeight+bottomGap,bottomGap};
+}
+
 static inline double WXGHomePixel(double value,double scale) {
     return scale>0 ? round(value*scale)/scale : value;
 }

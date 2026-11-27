@@ -1714,6 +1714,18 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
     return hasLabel?WXGClamp(maxAlpha,0.,1.):1.;
 }
 
+// Keep the search view at its native height. Enlarging a UISearchBar or its
+// stack view recentres its contents and feeds that offset back into the next layout.
+@interface WXGHomeGroupHeader : UIView
+@property(nonatomic,strong) UIView *nativeHeader;
+@property(nonatomic) UIViewAutoresizing nativeResize;
+@end
+@implementation WXGHomeGroupHeader
+@end
+UIView *WXGHomeNativeSearchHeader(UIView *header) {
+    return [header isKindOfClass:WXGHomeGroupHeader.class]?((WXGHomeGroupHeader *)header).nativeHeader:header;
+}
+
 @interface WXGChatSegments ()
 - (void)followTitleBarInOverlay:(UIView *)overlay page:(UIViewController *)leaf transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome homePanel:(CGFloat)homePanel rowOffset:(CGFloat)rowOffset;
 @end
@@ -1732,23 +1744,21 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
     CGFloat _traceTitleY,_traceTitleAlpha;
     BOOL _traceTitleHome,_traceTitleTransition;
     __weak UIView *_searchBar,*_container;__weak UITableView *_table;__weak UIViewController *_page;
-    WXGStateBag *_states;
     NSString *_status,*_fieldSource,*_colorSource;
     NSUInteger _mounts,_moves,_switches,_restores,_nativeSearches;
     NSInteger _selected;
     BOOL _nativeSearching,_observing;
     CGRect _fieldRect;
     NSDictionary *_probe;CFTimeInterval _probeAt;
-    __weak UIView *_hiddenBar;   // the bar faded out by us (its alpha was WeChat's own then)
     __weak UIView *_floatHost;   // FIX114 B: where hostTick last floated the bar (the before-commit pass places it there too)
-    NSUInteger _rehides,_commitPlacements;   // FIX114 B: diagnostics
+    NSUInteger _commitPlacements;   // FIX114 B: diagnostics
     NSUInteger _transformMoves,_frameWrites,_skippedLaidOuts;   // R20: pull-down/scroll stutter diagnostics
     double _maxPlaceMS;
     CGPoint _floatBaseOrigin;
     CGSize _floatBaseSize;
     CGFloat _lastFloatY;
     BOOL _hasLastFloatY,_adjustingHeader;
-    __weak UIView *_resizedHeader;
+    WXGHomeGroupHeader *_groupHeader;
     CGFloat _nativeHeaderHeight,_lastCustomKey;
     CGSize _lastMeasuredBarSize;
     CGRect _naturalFrame;        // FIX113 O: the segment bar's frame in its container (in the list)
@@ -1758,7 +1768,7 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
     NSUInteger _floatMoves;
     NSUInteger _directSearches;   // FIX114 M: capsule taps that opened WeChat's search page at once
     NSMutableArray<NSString *> *_switchLog;
-    CGFloat _gapDelta;           // FIX114 E: moved down with the title row (顶部按钮往下移; 0: where WeChat's field is)
+    CGFloat _nativeBottomGap,_groupGap;
     // FIX114 E: the bar's place on screen for about a second after the list's
     // page comes back (from a chat): a jump shows there.
     NSMutableArray<NSString *> *_returnTrace;
@@ -1790,6 +1800,7 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
         ^(__unused CFRunLoopObserverRef o,__unused CFRunLoopActivity a){[weakSelf beforeCommit];});
     if(commit){CFRunLoopAddObserver(CFRunLoopGetMain(),commit,kCFRunLoopCommonModes);CFRelease(commit);}
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(fieldBegan:) name:UITextFieldTextDidBeginEditingNotification object:nil];
+    [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(fieldEnded:) name:UITextFieldTextDidEndEditingNotification object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(settingsChanged:) name:WXGSettingsChanged object:nil];
     [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(groupsChanged:) name:WXGChatGroupsChanged object:nil];   // FIX113 R
 }
@@ -1802,8 +1813,6 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
     if(WXGBackdropCaptureInProgress())return;
     @try {
         if(_bar && _bar.superview) {
-            UIView *hidden=_hiddenBar;
-            if(hidden && !_nativeSearching && hidden.alpha>.01 && _states){[_states hide:hidden];++_rehides;}
             UIView *host=_floatHost;
             if(_segmentFloating && host && host.window && _table.superview==host){[self placeSegmentIn:host];++_commitPlacements;}
         }
@@ -1857,8 +1866,14 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
             if([field isDescendantOfView:root]){slot.editingField=(UITextField *)field;[self unpin:slot];break;}
     if(!bar || ![field isKindOfClass:UIView.class] || ![field isDescendantOfView:bar])return;
     _nativeSearching=YES;++_nativeSearches;
-    [_states restore];_states=nil;_hiddenBar=nil;
+    _lastMeasuredBarSize=CGSizeZero;
+    if(_groupHeader)[self applyHeaderHeight:_nativeHeaderHeight onHeader:_groupHeader table:_table];
     _bar.hidden=YES;_bar.active=NO;_status=@"微信自己的搜索正在用搜索栏，暂时还给它";
+}
+- (void)fieldEnded:(NSNotification *)note {
+    if(!_nativeSearching || ![(UIView *)note.object isDescendantOfView:_searchBar])return;
+    // UIKit finishes cancelling its search after resignFirstResponder returns.
+    dispatch_async(dispatch_get_main_queue(),^{if(self->_nativeSearching && self->_page)[self updateOnPage:self->_page];});
 }
 // The chat list's table: WeChat's MainFrameTableView, else a table whose
 // header holds a search bar.
@@ -1973,10 +1988,6 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
 }
 - (void)applyHeaderHeight:(CGFloat)needed onHeader:(UIView *)header table:(UITableView *)table {
     if(!header || !table || needed<20)return;
-    if(_resizedHeader!=header) {
-        if(_resizedHeader && _resizedHeader!=header)[self restoreResizedHeader];
-        _resizedHeader=header;_nativeHeaderHeight=header.frame.size.height;
-    }
     if(fabs(header.frame.size.height-needed)<=.5)return;
     _adjustingHeader=YES;
     [UIView performWithoutAnimation:^{
@@ -1986,16 +1997,42 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
     _adjustingHeader=NO;
 }
 - (void)restoreResizedHeader {
-    UIView *header=_resizedHeader;UITableView *table=_table;
-    if(header && _nativeHeaderHeight>10 && fabs(header.frame.size.height-_nativeHeaderHeight)>.5) {
-        _adjustingHeader=YES;
+    WXGHomeGroupHeader *wrapper=_groupHeader;
+    if(!wrapper)return;
+    UIView *native=wrapper.nativeHeader;
+    for(WXGFloatSlot *slot in _floats.objectEnumerator)if(slot.ownedHeader==wrapper)[self unpin:slot];
+    BOOL ownsNative=native.superview==wrapper;
+    _adjustingHeader=YES;
+    @try {
+        if(ownsNative) {
+            [native removeFromSuperview];
+            native.autoresizingMask=wrapper.nativeResize;
+            if(_table.tableHeaderView==wrapper)_table.tableHeaderView=native;
+        }
+    } @finally {_adjustingHeader=NO;}
+    _groupHeader=nil;_nativeHeaderHeight=0;
+}
+- (WXGHomeGroupHeader *)groupHeaderFor:(UITableView *)table {
+    if(_groupHeader && table.tableHeaderView==_groupHeader)return _groupHeader;
+    [self restoreResizedHeader];
+    UIView *native=table.tableHeaderView;
+    if(!native || native.bounds.size.height<20)return nil;
+    for(WXGFloatSlot *slot in _floats.objectEnumerator)if(slot.ownedHeader==native)[self unpin:slot];
+    _adjustingHeader=YES;
+    @try {
+        WXGReleaseLocalSearchHeaderHeight(table);
+        CGRect frame=native.frame;
+        WXGHomeGroupHeader *wrapper=[[WXGHomeGroupHeader alloc] initWithFrame:frame];
+        wrapper.nativeResize=native.autoresizingMask;wrapper.nativeHeader=native;
+        _groupHeader=wrapper;
         [UIView performWithoutAnimation:^{
-            CGRect f=header.frame;f.size.height=self->_nativeHeaderHeight;header.frame=f;
-            if(table && table.tableHeaderView==header)table.tableHeaderView=header;
+            table.tableHeaderView=wrapper;
+            native.autoresizingMask=UIViewAutoresizingFlexibleWidth;
+            native.frame=(CGRect){CGPointZero,frame.size};
+            [wrapper addSubview:native];
         }];
-        _adjustingHeader=NO;
-    }
-    _resizedHeader=nil;_nativeHeaderHeight=0;
+    } @finally {_adjustingHeader=NO;}
+    return _groupHeader;
 }
 // The colours: the bar's background is its range's material (分组, the
 // settings); the pill the dock's own in R8-Aurora mode (or the page's/set
@@ -2031,7 +2068,7 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
 }
 - (void)applyColorsFrom:(UIView *)bar {[self applyColorsToBar:_bar from:bar];}
 - (void)updateOnPage:(UIViewController *)page {
-    if(!NSThread.isMainThread)return;
+    if(!NSThread.isMainThread || _adjustingHeader)return;
     if(![self wanted]){[self restore];return;}
     [self observe];
     if(!WXGHomeSearchExposed(page))return;
@@ -2039,6 +2076,7 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
     UITableView *table=_table && [_table isDescendantOfView:page.view]?_table:[self tableIn:page.view];
     UIView *header=table.tableHeaderView,*bar=[self searchBarIn:header];
     if(!table || !header || !bar){_status=!table?@"没有找到聊天列表":!header?@"列表没有表头":@"表头里没有搜索栏";return;}
+    if(_table!=table)[self restoreResizedHeader];
     _table=table;
     [self mountOver:bar header:header table:table];
 }
@@ -2048,7 +2086,7 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
     // hidden search bar even when its geometry hasn't changed; skip the
     // 200-view subview scan when cached size & custom dimensions match.
     CGFloat customKey=WXGHomeSearchCustomKey();
-    if(CGSizeEqualToSize(view.bounds.size,_lastMeasuredBarSize) && fabs(customKey-_lastCustomKey)<.01 &&
+    if(!_nativeSearching && _table.tableHeaderView==_groupHeader && _nativeHeaderHeight==_groupHeader.nativeHeader.bounds.size.height && CGSizeEqualToSize(view.bounds.size,_lastMeasuredBarSize) && fabs(customKey-_lastCustomKey)<.01 && fabs(_groupGap-[WXGConfig.shared extraNumber:@"homeSearchGroupGap"])<.01 &&
        [_fieldSource isEqualToString:WXGDrawnBoxSource]) {
         ++_skippedLaidOuts;return;
     }
@@ -2064,14 +2102,11 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
         if(using)return;
         _nativeSearching=NO;
     }
-    WXGFloatSlot *floated=nil;
-    for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects)if(slot.pinned && slot.bar==bar){floated=slot;break;}
-    if(bar!=_hiddenBar && bar.alpha<.01 && !floated){_status=@"搜索栏此刻是透明的（微信在做动画），稍后再取代";return;}
     NSString *source=nil;CGRect field=[self fieldRectIn:bar source:&source];
-    if(CGRectIsNull(field) || field.size.width<80){_status=@"搜索栏里没有找到输入框";return;}
-    if(floated)[self unpin:floated];
+    if(CGRectIsNull(field) || field.size.width<80){_status=@"等待原生搜索框布局";return;}
+    WXGHomeGroupHeader *container=[self groupHeaderFor:table];
+    if(!container)return;
     _fieldRect=field;_fieldSource=source;
-    UIView *container=header==bar?table:header;
     if(!_bar) {
         _bar=[[WXGSegmentBar alloc] initWithFrame:CGRectZero];
         [_bar addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
@@ -2088,14 +2123,20 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
         }
     }
     _bar.titles=[self groupNames];
-    if(_resizedHeader!=header){_resizedHeader=header;_nativeHeaderHeight=header.frame.size.height;}
-    CGFloat nativeH=_nativeHeaderHeight>10?_nativeHeaderHeight:header.frame.size.height;
-    CGRect naturalInContainer=[bar convertRect:field toView:container];
-    CGFloat neededH=nativeH;
-    CGRect targetField=WXGApplyHomeSearchGeometry(naturalInContainer,container.bounds.size.width,nativeH,&neededH);
-    if(WXGConfig.shared.homeSearchTopGap>=0)neededH=MAX(neededH,CGRectGetMaxY(targetField)+MAX(4,nativeH-CGRectGetMaxY(naturalInContainer))+MAX(0,_gapDelta));
-    [self applyHeaderHeight:neededH onHeader:header table:table];
-    _naturalFrame=CGRectInset(targetField,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
+    UIView *native=container.nativeHeader;
+    _nativeHeaderHeight=native.bounds.size.height;
+    CGRect measured=[bar convertRect:field toView:native];
+    WXGRect box={measured.origin.x,measured.origin.y,measured.size.width,measured.size.height};
+    if(!WXGHomeSearchFieldReady(box,native.bounds.size.width,_nativeHeaderHeight))return;
+    CGRect group=WXGApplyHomeSearchGeometry(measured,container.bounds.size.width,_nativeHeaderHeight,NULL);
+    CGRect search=([self floatWanted] || WXGPreferences.shared.localSearch)?group:measured;
+    _groupGap=[WXGConfig.shared extraNumber:@"homeSearchGroupGap"];
+    WXGHomeGroupLayout stack=WXGHomeGroupBelowSearch(_nativeHeaderHeight,CGRectGetMaxY(measured),
+        CGRectGetMaxY(search),group.size.height,_groupGap);
+    _nativeBottomGap=stack.bottomGap;
+    group.origin.y=stack.groupY;
+    [self applyHeaderHeight:stack.headerHeight onHeader:container table:table];
+    _naturalFrame=CGRectInset(group,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
     _lastMeasuredBarSize=bar.bounds.size;_lastCustomKey=WXGHomeSearchCustomKey();
     CGRect frame=[self listFrame];
     if(container!=_container)_segmentFloating=NO;
@@ -2106,40 +2147,15 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
         if(!CGRectEqualToRect(self->_bar.frame,frame)){self->_bar.frame=frame;++self->_moves;}
     }];
     _container=container;
-    if(bar!=_searchBar && _searchBar)[_states restoreView:_searchBar];
     if(bar!=_searchBar)_fieldRechecks=0;
     _searchBar=bar;
-    if(!_states)_states=[WXGStateBag new];
-    [_states hide:bar];_hiddenBar=bar;
     [self applyColorsFrom:bar];
     WXGInstallFilterHook();
     WXGFilterWatching=YES;
     _bar.hidden=_segmentCovered;_bar.active=!_segmentCovered;
-    _status=@"已取代搜索框";
+    _status=@"搜索框与分组栏共存";
 }
-- (CGRect)listFrame {return CGRectOffset(_naturalFrame,0,_gapDelta);}
-- (void)updateGapOn:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning {
-    if(leaf!=_page)return;
-    CGFloat follow=WXGPreferences.shared.nav?[WXGIntegrationHost.shared titleRowOffsetForPage:leaf]:0;
-    if(!isfinite(follow))return;
-    if(follow<.01){_gapDelta=0;return;}
-    UIView *container=_container;UITableView *table=_table;UIView *header=table.tableHeaderView;
-    if(!_bar || !container || leaf!=_page || !overlay.window || !table || !header || transitioning)return;
-    if(!(container==table || [container isDescendantOfView:table]))return;
-    // When custom top gap is locked, expand header downward as needed so the
-    // title row offset never compresses the bar against the chat list.
-    if(WXGConfig.shared.homeSearchTopGap>=0) {
-        _gapDelta=follow;
-        CGRect material=CGRectInset(_naturalFrame,WXGCanvasPaddingX,WXGCanvasPaddingY);
-        CGFloat needed=MAX(_nativeHeaderHeight,CGRectGetMaxY(material)+_gapDelta+6);
-        [self applyHeaderHeight:needed onHeader:header table:table];
-        return;
-    }
-    CGRect material=CGRectInset(_naturalFrame,WXGCanvasPaddingX,WXGCanvasPaddingY);
-    CGRect area=container==table?header.frame:container.bounds;
-    CGFloat lo=CGRectGetMinY(area)-CGRectGetMinY(material),hi=CGRectGetMaxY(area)-CGRectGetMaxY(material);
-    _gapDelta=hi>=lo?WXGClamp(follow,lo,hi):0;
-}
+- (CGRect)listFrame {return _naturalFrame;}
 - (void)takeProbe {
     UITableView *table=_table;if(!table)return;
     CFTimeInterval start=CACurrentMediaTime();
@@ -2549,14 +2565,14 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
     }
     CGRect natural=[container convertRect:inList toView:host];
     CGFloat fieldTop=CGRectGetMinY(natural)+WXGCanvasPaddingY;
-    CGFloat topGap=WXGConfig.shared.homeSearchTopGap;
-    CGFloat pinned;
-    if(topGap>=0) {
-        CGRect tableRect=[table convertRect:table.bounds toView:host];
-        pinned=CGRectGetMinY(tableRect)+table.adjustedContentInset.top+topGap+_gapDelta;
-    }else pinned=WXGFloatPinnedTop(table,table.tableHeaderView,fieldTop,host);
+    WXGFloatSlot *slot=[_floats objectForKey:_page];
     CGRect frame=natural;
-    if(fieldTop<pinned)frame.origin.y+=pinned-fieldTop;
+    if(slot.pinned && slot.clone.superview==host && !slot.clone.hidden) {
+        frame.origin.y=CGRectGetMaxY(slot.clone.frame)+_groupGap-WXGCanvasPaddingY;
+    }else {
+        CGFloat pinned=WXGFloatPinnedTop(table,table.tableHeaderView,fieldTop,host);
+        if(fieldTop<pinned)frame.origin.y+=pinned-fieldTop;
+    }
     BOOL movedParent=bar.superview!=host;
     if(movedParent)++_floatMoves;
     WXGRaiseAboveList(bar,host,table);
@@ -2763,7 +2779,8 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     frame.size.width=WXGHomePixel(frame.size.width,scale);
     frame.size.height=WXGHomePixel(frame.size.height,scale);
     slot.naturalFrame=natural;
-    clone.passThrough=atNative;
+    CGRect nativeField=WXGHomeRect(bar,slot.field,host,NO);
+    clone.passThrough=atNative && CGRectContainsRect(CGRectInset(nativeField,-.5,-.5),frame);
     WXGRaiseAboveList(clone,host,table);
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
@@ -2805,7 +2822,6 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
 // page itself, so also through a push / pop (the page carries them).
 - (void)hostTick:(CFTimeInterval)time page:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome homePanel:(CGFloat)homePanel rowOffset:(CGFloat)rowOffset {
     BOOL floatOn=[self floatWanted];
-    [self updateGapOn:leaf overlay:overlay transitioning:transitioning];   // FIX113 Q
     UITableView *table=_table;UIView *host=table.superview;
     BOOL homeVisible=!transitioning && (floatOn || _segmentCovered) && WXGHomeSearchExposed(leaf);
     BOOL exposed=floatOn && homeVisible;
@@ -2828,6 +2844,7 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
         _fieldRecheck=time;++_fieldRechecks;
         if(!CGRectIsNull(WXGVisibleSearchBox(_searchBar)))[self searchBarLaidOut:_searchBar];
     }
+    if(exposed)[self floatNativeOn:leaf time:time homePanel:homePanel];
     if(_bar && _bar.superview)[self placeSegmentIn:floatHost];
     [self followTitleBarInOverlay:overlay page:leaf transitioning:transitioning transitionInvolvesHome:transitionInvolvesHome homePanel:homePanel rowOffset:rowOffset];
     if(_bar.window && _returnTrace && time-_returnedAt<1.2 && _returnTrace.count<90) {
@@ -2837,8 +2854,6 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
         if(![_returnTrace.lastObject hasSuffix:line])   // only what changed
             [_returnTrace addObject:[NSString stringWithFormat:@"%.3f %@",time-_returnedAt,line]];
     }
-    UIView *hidden=_hiddenBar;   // FIX114 B: kept faded out
-    if(_bar.superview && hidden && !_nativeSearching && hidden.alpha>.01 && _states){[_states hide:hidden];++_rehides;}
     // FIX114 F: the floating capsule (分组栏 off) and WeChat's drawn box, from
     // the slide back on: “capsule hidden” = WeChat's own bar shows there.
     if(_returnTrace && time-_returnedAt<1.2 && _returnTrace.count<90 && time-_capsuleTraceAt>=.03 && homeClass && [leaf isKindOfClass:homeClass] && !(_bar && _page==leaf)) {
@@ -2856,12 +2871,7 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     for(WXGFloatSlot *slot in _floats.objectEnumerator) {
         if(slot.pinned && (!exposed || slot.page!=leaf))[self coverHomeSearchFor:slot.page];
     }
-    if(exposed) {
-        if(_bar && _page==leaf) {
-            WXGFloatSlot *slot=[_floats objectForKey:leaf];
-            if(slot.pinned || slot.parked)[self unpin:slot];
-        }else [self floatNativeOn:leaf time:time homePanel:homePanel];
-    }
+
 }
 - (void)suspendFloating {
     for(WXGFloatSlot *slot in _floats.objectEnumerator)[self coverHomeSearchFor:slot.page];
@@ -2875,11 +2885,11 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     if(![self titleModeWanted]){WXGFilterWatching=NO;WXGFilterSnapshot=nil;}
     [self restoreResizedHeader];
     _hasLastFloatY=NO;_floatBaseSize=CGSizeZero;_lastMeasuredBarSize=CGSizeZero;
-    if(!_bar && !_states)return;
+    if(!_bar)return;
     _segmentFloating=NO;_segmentCovered=NO;
     _bar.transform=CGAffineTransformIdentity;
     [_bar removeFromSuperview];_bar.active=NO;_bar=nil;
-    [_states restore];_states=nil;_searchBar=nil;_container=nil;_nativeSearching=NO;_hiddenBar=nil;
+    _searchBar=nil;_container=nil;_nativeSearching=NO;
     ++_restores;_status=@"已恢复微信的搜索栏";
 }
 - (NSDictionary *)evidence {
@@ -2904,7 +2914,7 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
              @"counts":@{@"mounts":@(_mounts),@"moves":@(_moves),@"switches":@(_switches),@"restores":@(_restores),@"nativeSearches":@(_nativeSearches)},
              @"stutter":@{@"transformMoves":@(_transformMoves),@"frameWrites":@(_frameWrites),@"skippedLaidOuts":@(_skippedLaidOuts),@"maxPlaceMS":@(round(_maxPlaceMS*100)/100)},
              @"customSearch":@{@"widthPct":@(cfg.homeSearchWidthPct),@"height":@(cfg.homeSearchHeight),@"topGap":@(cfg.homeSearchTopGap),
-                               @"nativeHeaderH":@(_nativeHeaderHeight),@"resizedHeaderH":@(_resizedHeader?_resizedHeader.frame.size.height:0)},
+                               @"nativeHeaderH":@(_nativeHeaderHeight),@"resizedHeaderH":@(_groupHeader.frame.size.height)},
              @"titleBar":@{@"wanted":@([self titleModeWanted]),@"mounted":@(_titleBar.superview!=nil),@"selected":@(_titleSelected),
                            @"navTitleInWindow":@(_titleNavView.window!=nil),
                            @"pullTitleInWindow":@(_titlePullView.window!=nil),
@@ -2913,8 +2923,8 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
              @"selected":@(_selected),@"groups":[self groupsEvidence],@"switchLog":_switchLog?:@[],
              @"bar":_bar?[_bar evidence]:@{},@"chatList":_probe?:@{},
              @"float":@{@"switch":@([cfg extraNumber:@"searchFloat"]>.5),@"segmentFloating":@(_segmentFloating),@"moves":@(_floatMoves),@"native":floats},
-             @"gap":@{@"delta":@(_gapDelta)},@"returnTrace":_returnTrace?:@[],
-             @"searchBarRehides":@(_rehides),@"commitPlacements":@(_commitPlacements),
+             @"gap":@{@"searchToGroup":@(_groupGap),@"groupToList":@(_nativeBottomGap)},@"returnTrace":_returnTrace?:@[],
+             @"searchBarRehides":@0,@"commitPlacements":@(_commitPlacements),
              @"sessionFilter":[self filterEvidence]};
 }
 // FIX113 Q: whether the grouping can work here and what it did (counts only).

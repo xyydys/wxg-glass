@@ -53,7 +53,7 @@ static void WXGUseModelMapping(WXGBackdropConsumer *consumer) {
 @property(nonatomic,strong) NSMutableArray<WXGBackdropConsumer *> *consumers;
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *slowBranches;
 @property(nonatomic) WXGROISet requestedCoverage;
-@property(nonatomic) NSUInteger epoch,captures,branches,fallbacks,busySkips,coverageRefreshes,coverageRejects,culledViews,unsplitExclusions,spatialSplits,atomicGuards,forcedSplitPaintApproximations;
+@property(nonatomic) NSUInteger presentationExclusions,epoch,captures,branches,fallbacks,busySkips,coverageRefreshes,coverageRejects,culledViews,unsplitExclusions,spatialSplits,atomicGuards,forcedSplitPaintApproximations;
 @property(nonatomic) NSUInteger layerReads,nativeReads,inspectedLayers;
 // FIX16 main-thread budget and animation-aware splitting.
 @property(nonatomic) NSUInteger budgetHolds,animationSplits;
@@ -223,6 +223,10 @@ static BOOL WXGNativeChrome(UIView *view) {
         [n isEqual:@"MMNewMsgContentNavBar"] || [n isEqual:@"FakeNavigationBar"] ||
         [n isEqual:@"MMInputToolView"] || [n isEqual:@"InputToolViewBar"];
 }
+static BOOL WXGExcludedPaintRoot(UIView *view,NSSet *blocked) {
+    return [blocked containsObject:view] || WXGIsPluginView(view) || WXGNativeChrome(view) ||
+        [view.layer.mask.name isEqualToString:@"wxg.conceal"];
+}
 static void WXGDrawContainerPaint(UIView *view,CGContextRef ctx) {
     // Split containers normally carry just a background. Do not manufacture a
     // detached copy of native drawing/Metal/video layers: it loses their pixels.
@@ -383,7 +387,7 @@ static void WXGClipPresentedContainer(CGContextRef ctx,CALayer *shown,CGAffineTr
 static BOOL WXGDrawClean(UIView *view,UIView *source,const WXGROISet *coverage,NSSet *blocked,NSSet *split,
                         CGContextRef ctx,CGFloat inheritedAlpha,WXGBackdropRegion *region) {
     ++WXGVisited;
-    if([blocked containsObject:view] || WXGIsPluginView(view) || WXGNativeChrome(view))return YES;
+    if(WXGExcludedPaintRoot(view,blocked))return YES;
     CALayer *shown=view.layer.presentationLayer?:view.layer;
     if(shown.hidden || shown.opacity<.001)return YES;
     CFTimeInterval evaluated=CACurrentMediaTime();
@@ -505,10 +509,15 @@ static BOOL WXGLayerNeedsCompositor(CALayer *layer) {
     return !CATransform3DIsAffine(layer.transform) || !CATransform3DIsAffine(layer.sublayerTransform);
 }
 static void WXGModelScanTree(UIView *view,UIView *source,const WXGROISet *coverage,NSSet *blocked,
-                             NSMutableArray<CALayer *> *prune,NSMutableArray<CALayer *> *animated,WXGModelScan *scan,BOOL movingAncestor) {
+                             NSMutableArray<CALayer *> *prune,NSMutableArray<CALayer *> *animated,NSMutableArray<UIView *> *excluded,WXGModelScan *scan,BOOL movingAncestor) {
     if(scan->overflow)return;
     if(++scan->visited>3000){scan->overflow=YES;return;}
     CALayer *layer=view.layer;
+    if(view!=source && WXGExcludedPaintRoot(view,blocked)){
+        [excluded addObject:view];
+        if(!layer.hidden)[prune addObject:layer];
+        return;
+    }
     if(layer.hidden || layer.opacity<.001)return;
     // Model rects are END positions while an ancestor animates (a page sliding
     // out has an off-screen model frame), so such subtrees are never pruned
@@ -516,7 +525,6 @@ static void WXGModelScanTree(UIView *view,UIView *source,const WXGROISet *covera
     BOOL moving=movingAncestor || layer.animationKeys.count>0;
     BOOL outside=NO;
     if(view!=source) {
-        if([blocked containsObject:view] || WXGIsPluginView(view) || WXGNativeChrome(view)){[prune addObject:layer];return;}
         CGRect rect=[view convertRect:view.bounds toView:source];
         outside=!WXGROIIntersects(coverage,WXGROIFromCGRect(CGRectInset(rect,-12,-12)));
         // Non-clipping containers can draw children outside their bounds.
@@ -535,7 +543,7 @@ static void WXGModelScanTree(UIView *view,UIView *source,const WXGROISet *covera
         if(outside && !movingAncestor)scan->animated=YES;else WXGScanLayerAnimations(layer,scan);
         [animated addObject:layer];
     }
-    for(UIView *child in view.subviews)WXGModelScanTree(child,source,coverage,blocked,prune,animated,scan,moving);
+    for(UIView *child in view.subviews)WXGModelScanTree(child,source,coverage,blocked,prune,animated,excluded,scan,moving);
 }
 // FIX22: FIX4's model tree with in-flight animations placed where they are on
 // screen. For one renderInContext each animating layer's model geometry is set
@@ -596,6 +604,12 @@ static void WXGRestoreOverrides(NSArray<WXGLayerOverride *> *saved) {
 static void WXGScanConsumerAncestors(WXGGlassView *glass,UIView *source,WXGModelScan *scan) {
     for(UIView *v=glass;v && v!=source.superview;v=v.superview)WXGScanLayerAnimations(v.layer,scan);
 }
+static void WXGCollectRemainingExclusions(UIView *view,NSSet *blocked,NSMutableArray<UIView *> *excluded) {
+    for(UIView *child in view.subviews) {
+        if(WXGExcludedPaintRoot(child,blocked)){[excluded addObject:child];continue;}
+        if(!child.hidden)WXGCollectRemainingExclusions(child,blocked,excluded);
+    }
+}
 static void WXGCaptureRegion(WXGBackdropRegion *r,NSSet *blocked,NSSet *split,CFTimeInterval frameTime) {
     UIView *source=r.source;if(!source.window)return;
     NSUInteger epoch=WXGSceneEpoch;
@@ -632,7 +646,8 @@ static void WXGCaptureRegion(WXGBackdropRegion *r,NSSet *blocked,NSSet *split,CF
         // FIX22: animations and native transitions stay on the model tree,
         // corrected per layer; only compositor-only content needs the other path.
         BOOL wantModel=WXGConfig.shared.samplerSource==0;
-        WXGModelScanTree(source,source,&coverage,blocked,prune,animatedLayers,&scan,NO);
+        NSMutableArray<UIView *> *excluded=[NSMutableArray array];
+        WXGModelScanTree(source,source,&coverage,blocked,prune,animatedLayers,excluded,&scan,NO);
         r.modelVisited=scan.visited;r.modelPruned=prune.count;
         // Never hold a frame that a hidden (resized) glass is waiting for.
         BOOL fresh=(scan.fresh || r.consumerFresh) && !r.consumerNeedsFrame;
@@ -665,7 +680,18 @@ static void WXGCaptureRegion(WXGBackdropRegion *r,NSSet *blocked,NSSet *split,CF
             }else {
                 if(scan.special || scan.overflow)++r.specialFallbacks;
                 r.lastPath=!wantModel?@"presentationSelected":scan.overflow?@"presentationTreeBudget":@"presentationCompositorContent";
-                good=WXGDrawClean(source,source,&coverage,blocked,split,ctx,1,r);++r.presentationReads;
+                // A compositor read of an atomic ancestor includes every descendant.
+                // Split on the same native chrome, conceal masks and plugin roots
+                // that the model path pruned, including masks without a glass.
+                if(scan.overflow){[excluded removeAllObjects];WXGCollectRemainingExclusions(source,blocked,excluded);}
+                NSMutableSet *boundaries=[split mutableCopy];
+                for(UIView *root in excluded)for(UIView *p=root.superview;p;p=p.superview){
+                    if([boundaries containsObject:p])break;
+                    [boundaries addObject:p];
+                    if(p==source)break;
+                }
+                r.presentationExclusions=excluded.count;
+                good=WXGDrawClean(source,source,&coverage,blocked,boundaries,ctx,1,r);++r.presentationReads;
             }
         }
         stage=CACurrentMediaTime();CGContextFlush(ctx);r.flushMS=(CACurrentMediaTime()-stage)*1000;
@@ -867,7 +893,7 @@ NSDictionary *WXGBackdropEvidence(void) {
             @"measuredCaptureFPS":@(r.intervalMS>0?1000/r.intervalMS:0),@"costMS":@(r.milliseconds),@"scale":@(r.sample.scale),
             @"branchDraws":@(r.branches),@"modelFallbacks":@(r.fallbacks),@"buffers":@(r.pool.count),@"leasedBuffers":@(leased),@"busySkips":@(r.busySkips),
             @"coverageRects":clips,@"activeROIPixels":@(activeArea*r.sample.scale*r.sample.scale),@"atlasPixels":@(r.sample.width*r.sample.height),@"roiFraction":@(atlasArea>0?activeArea/atlasArea:0),
-            @"spatialSplits":@(r.spatialSplits),@"atomicGuards":@(r.atomicGuards),@"forcedSplitPaintApproximations":@(r.forcedSplitPaintApproximations),@"nativeReadAreaPoints":@(r.nativeReadArea),@"coverageRefreshes":@(r.coverageRefreshes),@"coverageRejects":@(r.coverageRejects),@"culledViews":@(r.culledViews),@"unsplitExclusions":@(r.unsplitExclusions),
+            @"presentationExclusions":@(r.presentationExclusions),@"spatialSplits":@(r.spatialSplits),@"atomicGuards":@(r.atomicGuards),@"forcedSplitPaintApproximations":@(r.forcedSplitPaintApproximations),@"nativeReadAreaPoints":@(r.nativeReadArea),@"coverageRefreshes":@(r.coverageRefreshes),@"coverageRejects":@(r.coverageRejects),@"culledViews":@(r.culledViews),@"unsplitExclusions":@(r.unsplitExclusions),
             @"layerReads":@(r.layerReads),@"nativeReads":@(r.nativeReads),@"inspectedLayers":@(r.inspectedLayers),
             @"costAverageMS":@(r.costAverage),@"budgetHolds":@(r.budgetHolds),@"animationSplits":@(r.animationSplits),
             @"measuredMainThreadShare":@(r.measuredShare),@"budgetPercent":@(WXGConfig.shared.captureBudget),

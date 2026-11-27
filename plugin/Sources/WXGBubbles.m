@@ -113,7 +113,7 @@
 }
 @end
 
-static char WXGBubbleEntryKey,WXGBubbleTableKey;
+static char WXGBubbleEntryKey,WXGBubbleTableKey,WXGVoiceRowNumberKey;
 static BOOL WXGBubbleNamed(UIView *v,NSString *name) {
     return [NSStringFromClass(v.class) rangeOfString:name options:NSCaseInsensitiveSearch].location!=NSNotFound;
 }
@@ -201,28 +201,31 @@ static WXGBubbleVoiceState WXGVoiceNodeState(UIView *view, UIView *host) {
     CGRect frame = root ? view.bounds : view.frame;
     UIEdgeInsets caps=[view isKindOfClass:UIImageView.class] ? ((UIImageView *)view).image.capInsets : UIEdgeInsetsZero;
     BOOL stretchable=fabs(caps.top)+fabs(caps.left)+fabs(caps.bottom)+fabs(caps.right)>.5;
+    uintptr_t signature=0;
+    NSUInteger count=0;
+    for(UIView *child in view.subviews) {
+        if([child isKindOfClass:WXGBubbleGlass.class])continue;
+        signature=signature*31U+(uintptr_t)(__bridge void *)child;
+        ++count;
+    }
     return (WXGBubbleVoiceState){
         .parent=(uintptr_t)(__bridge void *)view.superview,
         .content=root ? (uintptr_t)(__bridge void *)WXGBubbleVoiceContent(host) : 0,
         .skin=root ? (uintptr_t)(__bridge void *)WXGBubbleVoiceSkin(host) : 0,
         .x=frame.origin.x,.y=frame.origin.y,.width=frame.size.width,.height=frame.size.height,
-        .children=view.subviews.count,.visible=view && !view.hidden && view.alpha>.01,.stretchable=stretchable
+        .children=count,.childSignature=signature,.visible=view && !view.hidden && view.alpha>.01,.stretchable=stretchable
     };
 }
 
 static void WXGVoiceCollectNodes(UIView *view, UIView *host, NSMutableOrderedSet<UIView *> *nodes,
                                  NSUInteger depth, NSUInteger *budget) {
-    if (!*budget || depth>9 || WXGIsPluginView(view) || [view isKindOfClass:UIControl.class]) return;
+    if (!*budget || depth>9 || WXGIsPluginView(view))return;
     --*budget;
-    NSString *name=NSStringFromClass(view.class);
-    BOOL renderer=[view isKindOfClass:UILabel.class] || [view isKindOfClass:UITextView.class] || [name containsString:@"RichText"];
-    if (renderer || [view isKindOfClass:UIImageView.class] || [name containsString:@"YYAsyncImageView"]) {
-        for (UIView *v=view; v && ![nodes containsObject:v]; v=v.superview) {
-            [nodes addObject:v];
-            if (v==host) break;
-        }
-        if (renderer) return;
-    }
+    // Empty native wrappers can acquire the entire transcript in one layout.
+    // Watching only ancestors of an existing text/image misses that insertion.
+    [nodes addObject:view];
+    if ([view isKindOfClass:UILabel.class] || [view isKindOfClass:UITextView.class] ||
+        [NSStringFromClass(view.class) containsString:@"RichText"])return;
     for (UIView *child in view.subviews) WXGVoiceCollectNodes(child,host,nodes,depth+1,budget);
 }
 
@@ -247,9 +250,11 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
     NSHashTable<UIView *> *_observedHosts;
     NSHashTable<UIView *> *_pendingVoiceHosts;
     NSMapTable<UIView *,UIView *> *_voiceTextOwners;
+    NSMapTable<UITableViewCell *,UIView *> *_voiceHostByCell;
     NSMapTable<UIView *,WXGStateBag *> *_voiceSkinOwners;
     NSMapTable<UIView *,NSArray<WXGVoiceNode *> *> *_voiceNodes;
-    NSUInteger _mounts,_layouts,_restores,_voiceAttachmentRefreshes,_voiceStateRefreshes;
+    NSUInteger _mounts,_layouts,_restores,_voiceAttachmentRefreshes,_voiceStateRefreshes,_nextVoiceRow;
+    NSMutableArray<NSDictionary *> *_voiceHistory;
 }
 + (instancetype)shared {
     static WXGBubbles *manager;static dispatch_once_t once;
@@ -257,6 +262,7 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
         manager=[self new];manager->_tables=[NSHashTable weakObjectsHashTable];manager->_observedHosts=[NSHashTable weakObjectsHashTable];
         manager->_pendingVoiceHosts=[NSHashTable weakObjectsHashTable];
         manager->_voiceTextOwners=[NSMapTable weakToWeakObjectsMapTable];
+        manager->_voiceHostByCell=[NSMapTable weakToWeakObjectsMapTable];
         manager->_voiceSkinOwners=[NSMapTable weakToWeakObjectsMapTable];
         manager->_voiceNodes=[NSMapTable weakToStrongObjectsMapTable];
         CFRunLoopObserverRef observer=CFRunLoopObserverCreateWithHandler(kCFAllocatorDefault,kCFRunLoopBeforeWaiting|kCFRunLoopExit,YES,1999800,
@@ -283,6 +289,7 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
 - (void)retire:(WXGBubbleEntry *)entry {
     if(!entry)return;
     [self unpaint:entry];
+    if(entry.cell && [_voiceHostByCell objectForKey:entry.cell]==entry.host)[_voiceHostByCell removeObjectForKey:entry.cell];
     WXGBubbleTable *state=objc_getAssociatedObject(entry.table,&WXGBubbleTableKey);
     [state.entries removeObject:entry];state.dirty=YES;
     WXGBubbleInvalidateQuoteLookup(entry.host);
@@ -294,6 +301,7 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
     if(!NSThread.isMainThread || !host)return;
     [_pendingVoiceHosts removeObject:host];
     [_voiceNodes removeObjectForKey:host];
+    objc_setAssociatedObject(host,&WXGVoiceRowNumberKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     WXGBubbleEntry *entry=objc_getAssociatedObject(host,&WXGBubbleEntryKey);
     ++entry.generation;entry.retryPending=NO;entry.attempts=0;entry.probeModel=nil;
     [self retire:entry];
@@ -306,24 +314,53 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
     for(WXGBubbleEntry *entry in state.entries)if(entry.cell==cell && entry.kind==WXGBubbleText)
         entry.quoteLayoutPending=YES;
 }
-- (void)refreshVoiceHost:(UIView *)host {
+- (void)recordVoiceHost:(UIView *)host event:(NSString *)event siblingRenderer:(UIView *)sibling {
+    WXGBubbleEntry *entry=objc_getAssociatedObject(host,&WXGBubbleEntryKey);
+    NSDictionary *binding=WXGBubbleVoiceEvidence(host,entry.body);
+    NSString *outcome=!entry.body?@"waitingForBody":!entry.view.superview?@"waitingForGlass":
+        [binding[@"materialCount"] unsignedIntegerValue]?@"transcriptMaterialBound":
+        [binding[@"lowerTextCount"] unsignedIntegerValue]?@"lowerTextWithoutPlate":@"audioOnly";
+    NSNumber *row=objc_getAssociatedObject(host,&WXGVoiceRowNumberKey);
+    if(!row){row=@(++_nextVoiceRow);objc_setAssociatedObject(host,&WXGVoiceRowNumberKey,row,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
+    NSMutableDictionary *state=[@{@"event":event,@"row":row,@"outcome":outcome,
+        @"binding":binding,@"glass":NSStringFromCGRect(entry.view.frame)} mutableCopy];
+    if(sibling)state[@"siblingRenderer"]=@{@"class":NSStringFromClass(sibling.class),
+        @"parent":NSStringFromClass(sibling.superview.class)?:@"",@"frameInVoiceHost":NSStringFromCGRect([sibling convertRect:sibling.bounds toView:host])};
+    if([_voiceHistory.lastObject[@"state"] isEqual:state])return;
+    if(!_voiceHistory)_voiceHistory=[NSMutableArray array];
+    if(_voiceHistory.count==32)[_voiceHistory removeObjectAtIndex:0];
+    [_voiceHistory addObject:@{@"seconds":@(round(WXGSecondsSinceLoad()*100)/100),@"state":state}];
+}
+- (void)recordVoiceHost:(UIView *)host event:(NSString *)event {
+    [self recordVoiceHost:host event:event siblingRenderer:nil];
+}
+- (void)refreshVoiceHost:(UIView *)host event:(NSString *)event {
     [self messageCellLaidOut:host];
     WXGBubbleEntry *entry=objc_getAssociatedObject(host,&WXGBubbleEntryKey);
-    if(!entry.body || !entry.table || entry.kind!=WXGBubbleNonText)return;
+    if(!entry.body || !entry.table || entry.kind!=WXGBubbleNonText){[self recordVoiceHost:host event:event];return;}
     WXGBubbleTable *state=objc_getAssociatedObject(entry.table,&WXGBubbleTableKey);
     [self renderLocal:entry reference:entry.outgoing?state.outgoing:state.incoming];
     [entry.view tick:CACurrentMediaTime()];
+    [self recordVoiceHost:host event:event];
 }
 - (void)voiceTranscriptTextDidChange:(UIView *)textView {
     static Class voiceClass;
     if(!voiceClass)voiceClass=NSClassFromString(@"VoiceMessageCellView");
-    UIView *owner=nil;
+    UIView *owner=nil;UITableViewCell *cell=nil;
     for(UIView *v=textView.superview;v;v=v.superview) {
         if([v isKindOfClass:voiceClass]){owner=v;break;}
-        if([v isKindOfClass:UITableViewCell.class] || [v isKindOfClass:UITableView.class])break;
+        if([v isKindOfClass:UITableViewCell.class]){cell=(UITableViewCell *)v;break;}
+        if([v isKindOfClass:UITableView.class])break;
     }
     UIView *old=[_voiceTextOwners objectForKey:textView];
-    if(!owner && !old)return;
+    if(!owner && !old) {
+        // Some builds may attach a transcript beside VoiceMessageCellView.
+        // Capture its geometry without taking ownership of an unproven sibling.
+        UIView *voice=cell?[_voiceHostByCell objectForKey:cell]:nil;
+        if(voice && textView.window && [voice isDescendantOfView:cell] && [NSStringFromClass(textView.class) containsString:@"RichText"])
+            [self recordVoiceHost:voice event:@"rendererOutsideVoiceHost" siblingRenderer:textView];
+        return;
+    }
     if(![self wanted])return;
     BOOL hadPending=_pendingVoiceHosts.count>0;
     if(old!=owner) {
@@ -342,7 +379,7 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
                 if(!host.window || ![self wanted])continue;
                 [self->_voiceNodes removeObjectForKey:host];
                 ++self->_voiceAttachmentRefreshes;
-                [self refreshVoiceHost:host];
+                [self refreshVoiceHost:host event:@"rendererAttachmentOrLayout"];
             }
         });
     }
@@ -372,8 +409,8 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
     WXGBubbleKind kind=WXGBubbleKindForHost(host);
     if(kind==WXGBubbleUnsupported){[self retire:entry];return;}
     UITableViewCell *cell=nil;UITableView *table=nil;WXGBubbleLocate(host,&cell,&table);
-    if(!table || !cell){[self retire:entry];return;}
     BOOL voice=kind==WXGBubbleNonText && WXGBubbleIsVoiceHost(host);
+    if(!table || !cell){[self retire:entry];if(voice)[self recordVoiceHost:host event:@"waitingForCell"];return;}
     if(voice && ![_voiceNodes objectForKey:host])[_voiceNodes setObject:WXGVoiceNodes(host) forKey:host];
     id model=WXGBubbleHostModel(host);
     if(entry.table!=table || entry.model!=model)[self retire:entry];
@@ -390,7 +427,8 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
         UIView *rich=kind==WXGBubbleText?WXGBubbleRich(body):nil;
         NSArray *images=body?(kind==WXGBubbleText?WXGBubbleTextBackgrounds(body):WXGBubbleCardBackgrounds(host,body)):nil;
         if(!images.count || !WXGBubbleValidRect(body.bounds) || (kind==WXGBubbleText && !WXGBubbleSafeTextBody(body,host,rich))){
-            [self retire:entry];[self retryUnmeasured:entry];return;
+            [self retire:entry];if(voice)[self recordVoiceHost:host event:@"waitingForNativeSkin"];
+            [self retryUnmeasured:entry];return;
         }
         entry.attempts=0;entry.layoutDirty=YES;
         UIView *plate=nil;
@@ -416,6 +454,7 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
         entry.hasQuote=quotePreview!=nil;entry.quotePreview=quotePreview;entry.quoteDividerY=dividerY;
         entry.extendedText=extended;entry.textEnvelope=textEnvelope;entry.translationPlate=plate;
         entry.model=model;entry.cell=cell;entry.table=table;entry.kind=kind;
+        if(voice)[_voiceHostByCell setObject:host forKey:cell];
         entry.body=body;entry.rich=rich;entry.backgrounds=images;entry.primaryHasContent=primaryHasContent;
         entry.fragment=kind==WXGBubbleText && WXGBubbleHasNativeLongHint(model);
         NSUInteger index=NSNotFound,count=0;
@@ -497,6 +536,7 @@ static void WXGBubblePlaceQuoteDivider(WXGBubbleEntry *entry,WXGBubbleGlass *gla
     WXGBubbleGlass *glass=entry.view;
     if(!glass){glass=[[WXGBubbleGlass alloc] initWithFrame:CGRectZero];entry.view=glass;++_mounts;}
     BOOL card=entry.kind==WXGBubbleNonText;
+    BOOL voiceMounted=card && !entry.view.superview && WXGBubbleIsVoiceHost(entry.host);
     [self paint:entry radius:radius];
     UIView *container=body;
     if(card)container=body.superview;
@@ -510,6 +550,7 @@ static void WXGBubblePlaceQuoteDivider(WXGBubbleEntry *entry,WXGBubbleGlass *gla
     CGRect frame=entry.extendedText?[entry.host convertRect:entry.textEnvelope toView:container]:body.bounds;
     if(card)frame=[entry.host convertRect:WXGBubbleCardGlassFrame(entry.host,body) toView:container];
     WXGBubbleSetFrame(glass,frame);entry.children=WXGBubbleChildren(body);
+    if(voiceMounted)[self recordVoiceHost:entry.host event:@"mounted"];
     WXGBubblePlaceQuoteDivider(entry,glass,WXGBubbleQuoteYInGlass(entry,glass));
 }
 static WXGBubbleBox WXGBubbleBoxFromRect(CGRect r) {
@@ -725,7 +766,7 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
             }
             if(WXGBubbleVoiceChanged(node.state,next)){dirty=YES;node.state=next;}
         }
-        if(dirty){++_voiceStateRefreshes;[self refreshVoiceHost:host];}
+        if(dirty){++_voiceStateRefreshes;[self refreshVoiceHost:host event:@"nativeTreeChanged"];}
     }
     for(UITableView *table in _tables){
         WXGBubbleTable *state=objc_getAssociatedObject(table,&WXGBubbleTableKey);
@@ -758,7 +799,7 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
 }
 - (void)restore {
     [_voiceNodes removeAllObjects];
-    [_voiceTextOwners removeAllObjects];
+    [_voiceTextOwners removeAllObjects];[_voiceHostByCell removeAllObjects];
     [_voiceSkinOwners removeAllObjects];
     [_pendingVoiceHosts removeAllObjects];
     for(UITableView *table in _tables){
@@ -789,7 +830,7 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
         if(!host.window || voiceBindings.count>=6)continue;
         WXGBubbleEntry *entry=objc_getAssociatedObject(host,&WXGBubbleEntryKey);
         UIView *content=WXGBubbleVoiceContent(host), *skin=WXGBubbleVoiceSkin(host);
-        [voiceBindings addObject:@{@"host":NSStringFromClass(host.class),
+        [voiceBindings addObject:@{@"host":NSStringFromClass(host.class),@"transcript":WXGBubbleVoiceEvidence(host,entry.body),
             @"nativeContent":content?NSStringFromClass(content.class):@"",
             @"nativeSkin":skin?NSStringFromClass(skin.class):@"",
             @"boundBody":entry.body?NSStringFromClass(entry.body.class):@"",
@@ -797,7 +838,7 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
             @"glassSize":@[@(entry.view.bounds.size.width),@(entry.view.bounds.size.height)]}];
     }
     return @{@"enabled":@([self wanted]),@"mounts":@(_mounts),@"layouts":@(_layouts),@"restores":@(_restores),
-        @"voiceBindings":voiceBindings,@"voiceWatched":@(_voiceNodes.count),@"voiceNativeRefreshes":@(_voiceAttachmentRefreshes),
+        @"voiceHistory":_voiceHistory.copy?:@[],@"voiceBindings":voiceBindings,@"voiceWatched":@(_voiceNodes.count),@"voiceNativeRefreshes":@(_voiceAttachmentRefreshes),
         @"voiceLayoutRefreshes":@(_voiceStateRefreshes),@"onScreen":@(shown),@"unifiedLongMessages":@(groups),@"nativeFragments":@(nativeFragments),@"samples":samples};
 }
 @end

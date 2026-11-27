@@ -38,6 +38,9 @@ int main(void) {
     // Neither of these native role swaps changes the child count.
     WXGBubbleVoiceState row = {.parent=1,.content=2,.skin=0,.children=3,.visible=true};
     WXGBubbleVoiceState next = row;
+    next.childSignature=91;
+    assert(WXGBubbleVoiceHierarchyChanged(row,next));
+    next=row;
     assert(!WXGBubbleVoiceChanged(row,next));
     next.skin=4;
     assert(WXGBubbleVoiceHierarchyChanged(row,next));

@@ -15,6 +15,12 @@ int main(void) {
     assert(WXGHomeSearchRequiredHeaderHeight(field,44,0,-1)==44);
     assert(WXGHomeSearchRequiredHeaderHeight(field,52,48,-1)==64);
     assert(WXGHomeSearchRequiredHeaderHeight(field,52,0,20)==64);
+    WXGHomeGroupLayout rows=WXGHomeGroupBelowSearch(52,44,44,36,8);
+    assert(rows.groupY==52 && rows.headerHeight==96 && rows.bottomGap==8);
+    rows=WXGHomeGroupBelowSearch(44,44,70,48,0);
+    assert(rows.groupY==70 && rows.headerHeight==118 && rows.bottomGap==0);
+    rows=WXGHomeGroupBelowSearch(52,44,64,48,32);
+    assert(rows.groupY==96 && rows.headerHeight==152 && rows.bottomGap==8);
     puts("HomeSearchLayoutTests: native field readiness and vertical header reservation passed.");
     return 0;
 }

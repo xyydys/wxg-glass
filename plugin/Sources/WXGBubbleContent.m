@@ -170,6 +170,8 @@ NSArray<UIView *> *WXGBubbleCardBackgrounds(UIView *host, UIView *body) {
 @property(nonatomic,strong) NSHashTable<UIView *> *transcriptMaterials;
 @property(nonatomic,weak) WXGStateBag *voiceOwner;
 @property(nonatomic) CGRect voiceFrame;
+@property(nonatomic) NSUInteger lowerTextCount;
+@property(nonatomic,copy) NSString *textClass,*plateClass;
 @end
 @implementation WXGCardTreatment
 @end
@@ -205,7 +207,7 @@ static BOOL WXGVoiceText(UIView *view) {
 
 static void WXGCollectVoiceMaterial(UIView *node, NSHashTable<UIView *> *materials, NSUInteger depth, NSUInteger *budget) {
     if (depth > 8 || !*budget || WXGIsPluginView(node) || WXGVoiceText(node) ||
-        [node isKindOfClass:UIControl.class] || [materials containsObject:node]) return;
+        [node isKindOfClass:UIButton.class] || [materials containsObject:node]) return;
     --*budget;
     if ([node isKindOfClass:UIImageView.class] && !WXGCardStretchable(node)) return;
     [materials addObject:node];
@@ -213,31 +215,36 @@ static void WXGCollectVoiceMaterial(UIView *node, NSHashTable<UIView *> *materia
 }
 
 static void WXGCollectVoiceText(UIView *node, UIView *body, UIView *host, NSHashTable<UIView *> *materials,
-                                CGRect *envelope, NSUInteger depth, NSUInteger *budget) {
-    if (depth>9 || !*budget || node.hidden || node.alpha<=.01 || WXGIsPluginView(node) || [node isKindOfClass:UIControl.class]) return;
+                                CGRect *envelope, WXGCardTreatment *state, NSUInteger depth, NSUInteger *budget) {
+    if (depth>9 || !*budget || node.hidden || node.alpha<=.01 || WXGIsPluginView(node) || [node isKindOfClass:UIButton.class]) return;
     --*budget;
     if (WXGVoiceText(node)) {
         CGRect text = [node convertRect:node.bounds toView:host];
         CGFloat bodyTop = CGRectGetMinY([body convertRect:body.bounds toView:host]);
+        BOOL lower=!CGRectIsEmpty(text) && text.size.width>=16 && text.size.height>=12 && CGRectGetMinY(text)>=bodyTop+22;
+        if(lower){++state.lowerTextCount;state.textClass=NSStringFromClass(node.class);}
         UIView *plate = nil;
         for (UIView *parent=node.superview; parent && parent!=body && parent!=host; parent=parent.superview) {
-            if ([parent isKindOfClass:UIControl.class] || WXGIsPluginView(parent)) break;
+            if ([parent isKindOfClass:UIButton.class] || WXGIsPluginView(parent)) break;
             CGRect rect = [parent convertRect:parent.bounds toView:host];
             if (WXGBubbleVoicePlate(CGRectGetMinY(rect)-bodyTop, CGRectGetWidth(rect), CGRectGetHeight(rect),
                                     CGRectGetWidth(text), CGRectGetHeight(text),
                                     parent==node.superview && parent.superview==body)) plate=parent;
         }
+        if(lower && (plate || node.superview==body || ([node isDescendantOfView:body] && [NSStringFromClass(node.class) containsString:@"RichText"]))) {
+            *envelope=CGRectUnion(*envelope,CGRectInset(text,-10,-10));
+            [materials addObject:node]; // Clear only its background. The transcript still draws and receives taps.
+        }
         if (plate) {
+            state.plateClass=NSStringFromClass(plate.class);
             NSUInteger materialBudget=96;
             WXGCollectVoiceMaterial(plate, materials, 0, &materialBudget);
-            if (!CGRectIsEmpty(text) && CGRectGetMinY(text)>=bodyTop+22)
-                *envelope = CGRectUnion(*envelope, CGRectInset(text, -10, -10));
-            else
+            if (!lower)
                 *envelope = CGRectUnion(*envelope, [plate convertRect:plate.bounds toView:host]);
         }
         return;
     }
-    for (UIView *child in node.subviews) WXGCollectVoiceText(child, body, host, materials, envelope, depth+1, budget);
+    for (UIView *child in node.subviews) WXGCollectVoiceText(child, body, host, materials, envelope, state, depth+1, budget);
 }
 
 void WXGBubbleStyleCardContents(UIView *host, UIView *body, WXGStateBag *bag, CGFloat radius) {
@@ -261,7 +268,8 @@ void WXGBubbleStyleCardContents(UIView *host, UIView *body, WXGStateBag *bag, CG
         CGRect envelope = [body convertRect:body.bounds toView:host];
         NSUInteger budget=128;
         NSHashTable<UIView *> *materials = [NSHashTable weakObjectsHashTable];
-        WXGCollectVoiceText(host, body, host, materials, &envelope, 0, &budget);
+        state.lowerTextCount=0;state.plateClass=nil;state.textClass=nil;
+        WXGCollectVoiceText(host, body, host, materials, &envelope, state, 0, &budget);
         for (UIView *old in state.transcriptMaterials) {
             if ([materials containsObject:old] || [WXGVoiceMaterialOwners objectForKey:old] != bag) continue;
             [bag restoreView:old];
@@ -275,12 +283,24 @@ void WXGBubbleStyleCardContents(UIView *host, UIView *body, WXGStateBag *bag, CG
                 [WXGVoiceMaterialOwners setObject:bag forKey:material];
             }
             if ([material isKindOfClass:UIVisualEffectView.class]) [bag clearEffect:(UIVisualEffectView *)material];
-            if ([material isKindOfClass:UIImageView.class]) [bag conceal:material];
+            if (WXGVoiceText(material)) [bag guardFill:material];
+            else if ([material isKindOfClass:UIImageView.class] && material.subviews.count) [bag clearImagePaint:(UIImageView *)material];
+            else if ([material isKindOfClass:UIImageView.class]) [bag conceal:material];
             else [bag guardFill:material];
         }
         state.transcriptMaterials = materials;
         state.voiceFrame = envelope;
     }
+}
+
+NSDictionary *WXGBubbleVoiceEvidence(UIView *host, UIView *body) {
+    WXGCardTreatment *state=body?objc_getAssociatedObject(body,&WXGCardTreatmentKey):nil;
+    UIView *nativeBody=WXGBubbleVoiceContent(host),*skin=WXGBubbleVoiceSkin(host);
+    return @{@"nativeBody":nativeBody?NSStringFromClass(nativeBody.class):@"",
+        @"nativeSkin":skin?NSStringFromClass(skin.class):@"", @"bodyFrame":NSStringFromCGRect(body.frame),
+        @"skinFrame":NSStringFromCGRect(skin.frame),@"lowerTextCount":@(state.lowerTextCount),
+        @"textClass":state.textClass?:@"",@"plateClass":state.plateClass?:@"",
+        @"materialCount":@(state.transcriptMaterials.count),@"envelope":NSStringFromCGRect(state.voiceFrame)};
 }
 
 CGRect WXGBubbleCardGlassFrame(UIView *host, UIView *body) {

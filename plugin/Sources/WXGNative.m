@@ -153,7 +153,7 @@ BOOL WXGIsPluginView(UIView *view) {
     static Class classes[24];static NSUInteger count;static dispatch_once_t once;
     dispatch_once(&once,^{
         for(NSString *name in @[@"WXGGlassView",@"WXGSurface",@"WXGDemoBar",@"WXGDockSearch",@"WXGOverlay",@"WXGRimView",@"WXGMetalSurface",
-                                @"WXGSyncBackdropView",@"WXGSettingsCard",@"WXGSettingsRow",@"WXGSettingsScrollView",@"WXGEdgeBlurView",@"WXGEdgeCoverView",@"WXGEdgePlateView",
+                                @"WXGSyncBackdropView",@"WXGFloatingSearch",@"WXGSettingsCard",@"WXGSettingsRow",@"WXGSettingsScrollView",@"WXGEdgeBlurView",@"WXGEdgeCoverView",@"WXGEdgePlateView",
                                 @"WXGBubbleGlass",@"WXGPerfHUDView",@"WXGSegmentBar",@"WXGHomePlusTriggerView",@"WXGMenuInkOverlayView",@"WXGMenuMorphView",@"WXGVectorIconView"]) {
             Class cls=NSClassFromString(name);if(cls && count<24)classes[count++]=cls;
         }

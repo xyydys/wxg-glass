@@ -362,6 +362,8 @@ void WXGInstallNativeIconGuard(void);
 - (NSArray<UIView *> *)navButtonAnchors;   // FIX114 T: title-bar buttons with our glass on screen (the trace)
 @end
 // The floating clone owns search paint in this table header until unpinned.
+FOUNDATION_EXPORT UIView *WXGHomeNativeSearchHeader(UIView *header);
+FOUNDATION_EXPORT void WXGReleaseLocalSearchHeaderHeight(UITableView *table);
 FOUNDATION_EXPORT void WXGSetSearchHeaderFloating(UIView *header,BOOL floating);
 // FIX114 V: a WeChat title-bar button's glass as the local glass sizes it (in
 // the button; CGRectNull: nothing to put one behind), and whether it paints

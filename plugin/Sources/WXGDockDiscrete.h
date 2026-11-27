@@ -151,6 +151,13 @@ static inline int WXGDiscreteRuns(const float *x, const float *w, const double *
     return count;
 }
 
+/* Constant for a given run topology throughout a switch. Allow both half-bridges
+   and spring overshoot, and keep the optical sampling margin on both sides. */
+static inline float WXGDiscreteCanvasWidth(WXGDiscreteMetrics m,WXGDiscreteRun run,float padding) {
+    float span=WXGDiscreteTabWidth(m,1.35f)+(run.last-run.first)*(m.cell+m.gap)+m.gap;
+    return ceilf(fmaxf(span,run.w))+2.f*padding;
+}
+
 /* A bridge's target: joined between two tabs neither of which is the
    selection. FIX106 B (user: the joining lagged, the joined capsule only
    formed once the switch was over): from the moment of the switch, so the

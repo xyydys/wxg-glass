@@ -4704,8 +4704,8 @@ static BOOL WXGFinderBadgeView(UIView *v) {
 // plugin is off.
 - (void)updateTopSearchHiding {
     if(!(WXGPreferences.shared.hideTopSearch && [self dockSearchAvailable])){[self restoreTopSearch];return;}
-    // FIX113 N: the segment bar takes the search bar's place: the header stays.
-    if([WXGChatSegments.shared wanted]){[self restoreTopSearch];_topSearchStatus=@"分组栏取代了搜索栏，不再收起表头";return;}
+    // FIX113 N: the search and group rows share the header.
+    if([WXGChatSegments.shared wanted]){[self restoreTopSearch];_topSearchStatus=@"搜索框和分组栏共用表头";return;}
     if(_pendingSearchText)return;
     if(!_route.primary || ![NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"])return;
     UISearchBar *bar=[self homeSearchBar];

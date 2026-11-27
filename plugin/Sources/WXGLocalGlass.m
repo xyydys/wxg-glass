@@ -990,13 +990,14 @@ static BOOL WXGLocalFieldCandidate(UIView *v,UIView *bar,BOOL emptied) {
     return r.size.height>=24 && r.size.height<=(emptied?44:60) && r.size.width>=bar.bounds.size.width*.4 && (!emptied || r.size.width<=bar.bounds.size.width-6);
 }
 static char WXGLocalHomeHeaderHKey,WXGLocalAppliedHeaderHKey;
+static UIViewController *WXGLocalOwner(UIView *view);
 static UITableView *WXGLocalHomeTableFor(UIView *view) {
-    static Class mainTable;static dispatch_once_t once;
-    dispatch_once(&once,^{mainTable=NSClassFromString(@"MainFrameTableView");});
-    if(!mainTable || !view)return nil;
-    for(UIView *v=view.superview;v;v=v.superview)if([v isKindOfClass:mainTable]) {
+    static Class mainTable,home;static dispatch_once_t once;
+    dispatch_once(&once,^{mainTable=NSClassFromString(@"MainFrameTableView");home=NSClassFromString(@"NewMainFrameViewController");});
+    for(UIView *v=view;v;v=v.superview)if([v isKindOfClass:UITableView.class]) {
         UITableView *t=(UITableView *)v;
-        return t.tableHeaderView && [view isDescendantOfView:t.tableHeaderView]?t:nil;
+        if(!t.tableHeaderView || ![view isDescendantOfView:t.tableHeaderView])return nil;
+        return ([v isKindOfClass:mainTable] || [WXGLocalOwner(t) isKindOfClass:home])?t:nil;
     }
     return nil;
 }
@@ -1148,11 +1149,6 @@ static char WXGLocalSearchShiftedKey,WXGLocalSearchAlignCacheKey;
                        @"targets":@(targets.count)};
 }
 - (void)searchBar:(UIView *)bar {
-    // R20: when the home segment bar replaces the home search bar, unmount any
-    // hidden local.search glass so no duplicate CABackdropLayer / display link runs.
-    if(WXGLocalHomeTableFor(bar) && [WXGChatSegments.shared wanted]) {
-        [self skip:bar because:@"首页分组栏已接管搜索框"];return;
-    }
     WXGLocalEntry *known=objc_getAssociatedObject(bar,&WXGLocalHostKey);
     UIView *paint=known.host==bar && [known.anchor isDescendantOfView:bar]?known.anchor:nil;
     BOOL themeFirst=WXGPreferences.shared.localSearchThemeFirst;
@@ -1211,6 +1207,16 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
         }];
     } @finally {_adjustingHomeHeader=NO;}
 }
+void WXGReleaseLocalSearchHeaderHeight(UITableView *table) {
+    UIView *header=table.tableHeaderView;
+    NSNumber *base=objc_getAssociatedObject(header,&WXGLocalHomeHeaderHKey);
+    NSNumber *applied=objc_getAssociatedObject(header,&WXGLocalAppliedHeaderHKey);
+    if(!applied)return;
+    objc_setAssociatedObject(header,&WXGLocalHomeHeaderHKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    objc_setAssociatedObject(header,&WXGLocalAppliedHeaderHKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if(base && fabs(applied.doubleValue-header.frame.size.height)<.5)
+        [WXGLocalGlass.shared resizeSearchHeader:header table:table height:base.doubleValue];
+}
 static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect natural) {
     WXGConfig *config=WXGConfig.shared;
     CGFloat pct=config.homeSearchWidthPct,height=config.homeSearchHeight,top=config.homeSearchTopGap;
@@ -1224,15 +1230,12 @@ static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect n
     for(WXGLocalEntry *other in _entries.allObjects)
         if(other.mounted && other.kind==WXGLocalSearch && other.host==host && other.anchor && other.anchor!=paint)[self unmount:other];
     UITableView *homeTable=WXGLocalHomeTableFor(host);
-    if(homeTable && [WXGChatSegments.shared wanted]) {
-        [self skip:host because:@"首页分组栏已接管搜索框"];return;
-    }
     WXGConfig *cfg=WXGConfig.shared;
     BOOL customHome=homeTable && (cfg.homeSearchWidthPct>.5 || cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
-    UIView *homeHeader=homeTable.tableHeaderView;
+    UIView *homeHeader=WXGHomeNativeSearchHeader(homeTable.tableHeaderView);
     NSNumber *baseHeight=homeHeader?objc_getAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey):nil;
     NSNumber *applied=homeHeader?objc_getAssociatedObject(homeHeader,&WXGLocalAppliedHeaderHKey):nil;
-    BOOL vertical=customHome && (cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
+    BOOL vertical=homeHeader==homeTable.tableHeaderView && customHome && (cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
     if(applied && (!vertical || fabs(applied.doubleValue-homeHeader.frame.size.height)>.5)) {
         if(!vertical && fabs(applied.doubleValue-homeHeader.frame.size.height)<=.5)
             [self resizeSearchHeader:homeHeader table:homeTable height:baseHeight.doubleValue];

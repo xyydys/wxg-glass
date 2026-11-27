@@ -278,12 +278,13 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                  WXGSwitch(@"标题分组显示英文（All / Unread）",@"homeTitleSegmentsEnglish",nil)],
                  @"直接按现有首页标题大小拓展为分组栏（默认 全部 / 未读，支持英文 All / Unread），复用与底栏等比同步的选中胶囊与按压透镜，点击即可筛选聊天列表。"),
         WXGGroup(@"分组栏与搜索框尺寸",nil,@[
-                 WXGSwitch(@"分组栏取代聊天列表搜索框",@"chatSegments",nil),
+                 WXGSwitch(@"在搜索框下显示分组栏",@"chatSegments",nil),
                  WXGSwitch(@"仅在首页悬浮",@"searchFloat",nil),
                  WXGSlider(@"宽度占比（0 = 原生）",@"homeSearchWidthPct",nil,0,98,@"%.0f%%"),
                  WXGSlider(@"高度（0 = 原生）",@"homeSearchHeight",nil,0,64,@"%.1f pt"),
-                 WXGSlider(@"与顶部标题的距离（-1 = 原生）",@"homeSearchTopGap",nil,-1,32,@"%.1f pt")],
-                 @"分组栏与底栏同步样式（按比例缩放 R8 极光透镜与选中胶囊），并已优化下拉上滑性能（transform 零布局追踪 + 跳过隐藏重复玻璃）。宽、高与距顶部标题距离对「分组栏」和「原搜索框」同时生效：增大高度或间距时列表自动向下避让不重叠，原搜索框的放大镜与「搜索」字样始终居中。"),
+                 WXGSlider(@"与顶部标题的距离（-1 = 原生）",@"homeSearchTopGap",nil,-1,32,@"%.1f pt"),
+                 WXGSlider(@"搜索框与分组栏间距",@"homeSearchGroupGap",nil,0,32,@"%.1f pt")],
+                 @"分组栏显示在搜索框下方。列表随分组栏下移，保留微信搜索框原有的底部留白。开启悬浮后，两行按设置的间距一起停在标题下方。"),
         WXGGroup(@"分组列表",nil,@[WXGAction(@"管理分组（新建 / 改名 / 选聊天 / 排序）",@"manageGroups",NO)],
                  @"分组是你自己的：最多 6 个，每个可以是 全部 / 未读 / 单聊 / 群聊，或者“自定义”——自己选里面有哪些聊天。分组栏上从左到右就是这里的顺序。"),
         WXGGroup(@"选中胶囊",nil,@[WXGSlider(@"内边距",@"segmentSelectionInset",nil,2,14,@"%.1f pt"),WXGSwitch(@"用页面的背景色",@"segmentPillAuto",nil),
@@ -346,27 +347,22 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                                  WXGSlider(@"间距",@"dockDiscreteGap",nil,0,24,@"%.1f pt"),
                                  WXGSlider(@"选中项占位",@"dockDiscreteWide",nil,1,3,@"%.2f 格"),
                                  WXGSlider(@"小球直径（相对底栏高度）",@"dockDiscreteBall",nil,.6,1.3,@"%.2f"),
-                                 WXGSlider(@"图标大小",@"dockDiscreteIconSize",nil,20,40,@"%.1f pt"),
-                                 WXGSlider(@"中文标题字号",@"dockDiscreteTitleSize",nil,10,20,@"%.1f pt"),
-                                 WXGSlider(@"英文标题字号",@"dockDiscreteSubtitleSize",nil,8,16,@"%.1f pt"),
                                  WXGSlider(@"宽位内容左移",@"dockDiscreteContentShift",nil,0,30,@"%.1f pt"),
                                  WXGSlider(@"弹簧阻尼",@"dockDiscreteDamping",nil,.45,1,@"%.2f"),
                                  WXGSlider(@"弹簧响应",@"dockDiscreteResponse",nil,.2,1,@"%.2f s"),
                                  WXGSwitch(@"各块用轻量玻璃",@"dockDiscreteLight",nil)],
-                 @"离散底栏：选中的标签是一块宽胶囊（左边图标，右边上中文、下英文），其余标签各是一个只有图标的小球，每块都是独立的底栏玻璃（材质、折射和边框都用“底栏”范围的设置）。切换时所有标签的宽度一起走同一个阻尼弹簧：旧的收成小球、新的展开，整行总宽不变、不会左右漂；回弹时新的会略微超宽、旧的略微被挤窄。未选中的小球连成一体：相邻两个小球之间的间距被玻璃填上，连成一整块（位置不变，只是间隙连上）；切换一开始，旧选中项就一边收窄一边并入两旁，新选中项一边展开一边分出来，约在弹簧响应的 0.35 倍时连成一块（默认约 0.16 s），不等动画结束。相连时图标向中间收拢：连成一块的小球，图标按这个比例往这一块的中间靠（0 = 停在各自小球的中心；默认 0.22，图标间距缩到 0.78 格，两连和三连间距一样），两端圆头处留出更多空间，跟着弹簧滑过去，角标跟着图标走。图标大小、中文 / 英文标题字号只管离散底栏（连续底栏的文字设置在“图标与文字”里），粗细跟随那里的“文字粗细”；文字放不下时自动缩小。宽位内容左移：宽胶囊里图标和标题整体居中后再往左挪这么多（0 = 正中，默认 10 pt），最多挪到图标落在左端圆头正中为止，小球时不偏。未读角标在每块胶囊的右上角，跟着胶囊宽窄移动。选中项加原选中胶囊：在宽胶囊里加上原来底栏的选中胶囊（透镜、底色和边框，颜色和内边距用下面“选中胶囊”的设置），切换时它从中心长出来、在旧的那块里缩没。间距：块与块之间。选中项占位：选中项占几格（2 格 = 两个小球加中间的间距那么宽；1 格时只放大图标不显示文字）。小球直径：相对底栏高度。整行放不下时（FIX113 E）先把选中项收窄（最少 1.6 格），再把间距缩小（最少一半），最后才缩小小球；有搜索按钮时，整行先加宽到能放下这个高度的小球（最宽到搜索框展开时那一行的宽度）。弹簧阻尼越小回弹越明显（0.6 约等于参考效果，1 不回弹）；弹簧响应越小越快。有搜索按钮时整行靠向搜索按钮那一边。打开搜索时变回连续底栏完成变形（两者交叉淡化）；关闭时，底栏快变回原样时就交叉淡回离散样式（FIX113 D），不会先停在完整的连续底栏上。各块用轻量玻璃：每块只用一层背景、不分色散通道，省电但少了色散和边缘环。"),
+                 @"离散底栏：选中的标签是一块宽胶囊（左边图标，右边上中文、下英文），其余标签各是一个只有图标的小球，每块都是独立的底栏玻璃（材质、折射和边框都用“底栏”范围的设置）。切换时所有标签的宽度一起走同一个阻尼弹簧：旧的收成小球、新的展开，整行总宽不变、不会左右漂；回弹时新的会略微超宽、旧的略微被挤窄。未选中的小球连成一体：相邻两个小球之间的间距被玻璃填上，连成一整块（位置不变，只是间隙连上）；切换一开始，旧选中项就一边收窄一边并入两旁，新选中项一边展开一边分出来，约在弹簧响应的 0.35 倍时连成一块（默认约 0.16 s），不等动画结束。相连时图标向中间收拢：连成一块的小球，图标按这个比例往这一块的中间靠（0 = 停在各自小球的中心；默认 0.22，图标间距缩到 0.78 格，两连和三连间距一样），两端圆头处留出更多空间，跟着弹簧滑过去，角标跟着图标走。离散样式的图标和中英文标题也跟随“图标与标题整体缩放”，粗细跟随那里的“文字粗细”；文字放不下时自动缩小。宽位内容左移：宽胶囊里图标和标题整体居中后再往左挪这么多（0 = 正中，默认 10 pt），最多挪到图标落在左端圆头正中为止，小球时不偏。未读角标在每块胶囊的右上角，跟着胶囊宽窄移动。选中项加原选中胶囊：在宽胶囊里加上原来底栏的选中胶囊（透镜、底色和边框，颜色和内边距用下面“选中胶囊”的设置），切换时它从中心长出来、在旧的那块里缩没。间距：块与块之间。选中项占位：选中项占几格（2 格 = 两个小球加中间的间距那么宽；1 格时只放大图标不显示文字）。小球直径：相对底栏高度。整行放不下时（FIX113 E）先把选中项收窄（最少 1.6 格），再把间距缩小（最少一半），最后才缩小小球；有搜索按钮时，整行先加宽到能放下这个高度的小球（最宽到搜索框展开时那一行的宽度）。弹簧阻尼越小回弹越明显（0.6 约等于参考效果，1 不回弹）；弹簧响应越小越快。有搜索按钮时整行靠向搜索按钮那一边。打开搜索时变回连续底栏完成变形（两者交叉淡化）；关闭时，底栏快变回原样时就交叉淡回离散样式（FIX113 D），不会先停在完整的连续底栏上。各块用轻量玻璃：每块只用一层背景、不分色散通道，省电但少了色散和边缘环。"),
         WXGGroup(@"搜索",nil,@[WXGSwitch(@"底栏搜索按钮",@"pref.dockSearch",nil),
                  WXGSwitch(@"搜索按钮放在左边",@"pref.dockSearchLeading",nil),
                  WXGSlider(@"两块玻璃的间距",@"dockSearchGap",nil,2,40,@"%.1f pt")],
                  @"平时底栏宽度比例是整行：标签栏、间距和圆形搜索按钮。点搜索按钮直接打开微信自己的搜索页。需要系统渲染（同步）模式。"),
         WXGGroup(@"选中胶囊",nil,@[WXGColorRow(@"浅色模式底色",@"selectionHex",nil),WXGColorRow(@"深色模式底色",@"darkSelectionHex",nil),
                                  WXGSlider(@"静置底色不透明度",@"selectionOpacity",nil,0,.75,nil),WXGSlider(@"静置内边距",@"selectionInset",nil,2,14,@"%.1f pt")],nil),
-        WXGGroup(@"图标与文字",nil,@[WXGSlider(@"图标高度（0 = 微信原大小）",@"dockIconHeight",nil,0,36,@"%.1f pt"),
-                                   WXGSlider(@"图标整体缩放",@"dockIconScalePercent",nil,60,140,@"%.0f%%"),
+        WXGGroup(@"图标与文字",nil,@[WXGSlider(@"图标与标题整体缩放",@"dockIconScalePercent",nil,60,140,@"%.0f%%"),
                                    WXGSwitch(@"隐藏底栏标题",@"dockHideTitles",nil),
-                                   WXGSlider(@"文字大小",@"dockTitleSize",nil,8,13,@"%.1f pt"),
                                    WXGChoice3(@"文字粗细",@"dockTitleWeight",nil,nil,@[@"细",@"常规",@"中等",@"半粗",@"粗"],NO),
                                    WXGSwitch(@"选中的文字加粗一档",@"dockTitleBolderSelected",nil)],
-                 @"显示标题时，连续底栏采用 iOS 26 实测的图标与文字位置。100% 为图标原始比例，缩放同时作用于普通、选中和透镜内的图标。隐藏标题后图标在底栏内垂直居中，离散底栏也会隐藏中英文标题。"),
+                 @"显示标题时，连续底栏采用 iOS 26 实测的图标与文字位置。100% 为实测尺寸，图标、标题和两者的间距一起围绕中线缩放，选中态和透镜采用相同布局。隐藏标题后图标在底栏内垂直居中，离散底栏也会隐藏中英文标题。"),
         WXGGroup(@"图标与动画",nil,@[WXGSwitch(@"使用微信原生图标",@"useWeChatIcons",nil),
                                   WXGSwitch(@"底栏主题优先（只接管玻璃和位置）",@"dockThemeFirst",nil),
                                   WXGSwitch(@"使用 Telegram 图标（切换时有动画）",@"dockTelegramIcons",nil),
@@ -512,6 +508,8 @@ static id WXGRowTarget(NSString *key,NSString **name) {
 static id WXGRowGet(NSString *key) {NSString *name=nil;id target=key?WXGRowTarget(key,&name):nil;return name?[target valueForKey:name]:nil;}
 static void WXGRowSet(NSString *key,id value) {
     NSString *name=nil;id target=key?WXGRowTarget(key,&name):nil;if(!name)return;
+    if([name isEqual:@"dockTelegramIcons"] && [value boolValue])[target setValue:@NO forKey:@"dockThemeFirst"];
+    if([name isEqual:@"dockThemeFirst"] && [value boolValue])[target setValue:@NO forKey:@"dockTelegramIcons"];
     [target setValue:value forKey:name];[target save];
 }
 
@@ -588,7 +586,7 @@ static void WXGRowSet(NSString *key,id value) {
     _switch.frame=CGRectMake(w-16-size.width,(h-size.height)*.5,size.width,size.height);
     self.titleLabel.frame=CGRectMake(16,0,MAX(20,CGRectGetMinX(_switch.frame)-28),h);
 }
-- (void)refresh {_switch.on=[WXGRowGet(self.key) boolValue];}
+- (void)refresh {_switch.on=[WXGRowGet(self.key) boolValue] && (![self.key isEqual:@"dockTelegramIcons"] || !WXGDockThemeFirst());}
 - (void)toggle:(UISwitch *)sender {WXGRowSet(self.key,@(sender.on));[self refresh];}
 - (void)applyLook {[super applyLook];_switch.onTintColor=WXGSettingsStore.shared.controlTint;}
 @end
@@ -1007,6 +1005,9 @@ static NSString *WXGLastScope=@"dock";
             MAX(0,window.safeAreaInsets.bottom+WXGConfig.shared.lift)];
 }
 - (void)configChanged {
+    if([_module isEqual:@"dock"])for(NSDictionary *group in _groups)
+        for(WXGSettingsRow *row in group[@"rows"])
+            if([row.key isEqual:@"dockTelegramIcons"] || [row.key isEqual:@"dockThemeFirst"])[row refresh];
     for(NSDictionary *group in _groups)if([group[@"footerText"] isEqual:@"lift"]) {
         UILabel *footer=group[@"footer"];NSString *text=[self liftFooter];
         if(![footer.text isEqual:text]){footer.text=text;[self.view setNeedsLayout];}

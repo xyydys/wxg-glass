@@ -32,6 +32,11 @@ static inline float WXGEdgeFadeAlpha(float y,float height,float top,float bottom
     }
     return a;
 }
+/* Complementary foreground cover, expressed in the list viewport's coordinates. */
+static inline float WXGEdgeCoverAlpha(float y,float height,float top,float bottom,int nativeTopBar) {
+    if(y<0.f || y>height)return 0.f;
+    return 1.f-WXGEdgeFadeAlpha(y,height,nativeTopBar?0.f:top,bottom);
+}
 /* Blur strength at u (0 = the screen edge, 1 = the band's inner end): 1 .. 0,
    linear between the table's stops (as the shared project's CGGradient). */
 static inline float WXGEdgeBlurStrength(float u) {

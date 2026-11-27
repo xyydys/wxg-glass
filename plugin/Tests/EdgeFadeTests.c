@@ -24,6 +24,11 @@ int main(void) {
         float y=(float)i,a=WXGEdgeFadeAlpha(y,200.f,150.f,150.f);
         assert(a<=WXGEdgeFadeSmooth(y/150.f)+1e-6f && a<=WXGEdgeFadeSmooth((200.f-y)/150.f)+1e-6f);
     }
+    for(int y=0;y<=(int)h;y++) {
+        assert(near(WXGEdgeCoverAlpha(y,h,top,bottom,0)+WXGEdgeFadeAlpha(y,h,top,bottom),1));
+        assert(near(WXGEdgeCoverAlpha(y,h,top,bottom,1)+WXGEdgeFadeAlpha(y,h,0,bottom),1));
+    }
+    assert(WXGEdgeCoverAlpha(-1,h,top,bottom,0)==0 && WXGEdgeCoverAlpha(h+1,h,top,bottom,0)==0);
     /* Blur strength: 1 at the edge, 0 at the inner end, never rising, the
        table's own values at its stops. */
     assert(WXGEdgeBlurStrength(0.f)==1.f && WXGEdgeBlurStrength(-1.f)==1.f && WXGEdgeBlurStrength(1.f)==0.f);
