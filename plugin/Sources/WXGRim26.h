@@ -37,9 +37,8 @@
    under it.
 
    Here: that alpha as the mask of a colour-matrix copy of what lies under
-   the rim (WXGGlassView.m); no blur. FIX125: the mask is Core Animation
-   borders on the glass' own corner (WXGRim26BandsFor, at the end of this
-   file), not an image of an outline computed here. */
+   the rim (WXGGlassView.m); no blur. WXGRim26Mask.h integrates the vector
+   contour at the depth levels from WXGRim26BandsFor into this mask. */
 typedef struct {
     double height,curve;        /* across the edge: how far in (pt), how much it has fallen there (0..1) */
     double angle,key,fill,spread; /* along the outline: the key light's direction (deg; 45 = lower right, 0 = bottom, 90 = right), the two lights' levels, the lobes' exponent */
@@ -172,9 +171,8 @@ static inline WXGShapeSample WXGRim26Field(double x,double y,WXGRim26Canvas c,do
 /* Fills one byte per pixel (0..255): the part's alpha, the mean of 4 x 4
    samples per pixel. `bleed` (pixels): that far outside the outline counts
    as the outline itself, for a layer that is then clipped by the glass' own
-   continuous corner; 0: the outline anti-aliased here. FIX125: only the
-   optional inner shadow is still an image (soft, and clipped by Core
-   Animation); the rim itself is Core Animation borders (below). */
+   continuous corner; 0: the outline anti-aliased here. Used for the optional
+   inner shadow. The visible rim has its own area-integrated vector mask. */
 #define WXG_RIM26_SAMPLES 4
 static inline void WXGRim26Fill(unsigned char *bytes,int stride,WXGRim26Canvas c,double r,double scale,WXGRim26Part part,WXGRim26Shape s,double bleed) {
     const int n=WXG_RIM26_SAMPLES;
@@ -197,27 +195,11 @@ static inline void WXGRim26Fill(unsigned char *bytes,int stride,WXGRim26Canvas c
     }
 }
 
-/* FIX125 (user, on the phone, with a screenshot: at the four outermost points
-   the rim and the glass "poke out" in a little tip): the rim was an image
-   computed from an outline of this file's own (the analytic field, FIX124
-   corrected by a CPU rendering of the layer), under a clip by the glass'
-   real one. Neither is the outline the render server draws on screen to the
-   fraction of a pixel a 3-pixel rim needs: the rim sat up to half a pixel
-   inside the glass' edge along the shoulders of a round end and reached it
-   only where both touch the bounding box: the tips. No outline of our own
-   any more: the rim is Core Animation borders on the glass' own continuous
-   corner (as the three earlier styles' lines are), one pixel wider each,
-   all starting at the outline, their opacities chosen so that the rings
-   between their inner edges show the profile:
-
-       ring m (m = 0 outermost), one pixel deep: the level L_m, the mean of
-       the profile over that pixel; band j (m + 1 pixels wide) lies over
-       rings 0..j, so ring m shows 1 - prod_{j >= m} (1 - a_j) = L_m, i.e.
-       a_m = 1 - (1 - L_m) / (1 - L_{m+1})   (levels never rise inward).
-
-   Two such sets: the lights' (across the edge, WXGRim26Across; under a mask
-   of the level along the outline, WXGRim26Along) and the faint line's
-   (WXGRim26Ring, no mask), one over the other: exactly WXGRim26Alpha. */
+/* FIX125 introduced one depth level per device pixel. The visible rim now
+   weights each level by the actual area between its two vector contours.
+   alpha[] retains the nested-layer equivalents for regression comparisons:
+   a_m = 1 - (1 - L_m) / (1 - L_{m+1}). They reconstruct level L_m on a
+   fully covered band but overcount when a partially covered edge is shared. */
 #define WXG_RIM26_MAX_BANDS 20
 typedef struct { int count; double width[WXG_RIM26_MAX_BANDS],alpha[WXG_RIM26_MAX_BANDS],level[WXG_RIM26_MAX_BANDS]; } WXGRim26Bands;
 /* which: 0 the lights' profile, 1 the faint line's. */

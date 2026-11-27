@@ -7,14 +7,6 @@
    no straight run has no shoulder: a square round button is a circle. */
 enum { WXGRimMove, WXGRimLine, WXGRimCubic, WXGRimClose };
 typedef void (*WXGRim26Emit)(void *,int,double,double,double,double,double,double);
-// Margin on each side of a rasterized mask. Keep a full physical pixel
-// outside the antialiased path, plus half the rounding to a whole-pixel
-// backing size. Only the backing grows; the material keeps its exact bounds.
-static inline double WXGRim26RasterMargin(double length,double scale) {
-    scale=fmax(1.,scale);
-    double pixels=length*scale;
-    return (1.+.5*(ceil(pixels)-pixels))/scale;
-}
 typedef struct { double x,y; } WXGRim26Point;
 typedef struct {
     WXGRim26Emit emit;

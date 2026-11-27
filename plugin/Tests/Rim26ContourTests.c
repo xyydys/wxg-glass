@@ -69,32 +69,8 @@ static Trace outline(double w,double h,double r) {
     }
     return t;
 }
-// A mask whose raster ends at the material extent can discard an entire
-// partially covered tip pixel. Model the worst inward scissor (ceil on the
-// left, floor on the right) across every subpixel phase. Preserve every
-// pixel cell intersecting the true silhouette even in that case.
-static void guarded_raster(double extent,int scale) {
-    double margin=WXGRim26RasterMargin(extent,scale);
-    double canvas=(extent+2.*margin)*scale;
-    assert(fabs(canvas-round(canvas))<1e-7);
-    assert(margin*scale>=1.-1e-10 && margin*scale<1.5+1e-10);
-    for(int i=0;i<256;i++) {
-        double tip=i/256.,end=tip+extent*scale;
-        double coveredLeft=floor(tip),coveredRight=ceil(end);
-        double rasterLeft=ceil(tip-margin*scale-1e-9);
-        double rasterRight=floor(end+margin*scale+1e-9);
-        assert(rasterLeft<=coveredLeft && rasterRight>=coveredRight);
-        // Canvas placement plus path translation gives the original two tips.
-        assert(fabs((tip-margin*scale)+margin*scale-tip)<1e-9);
-        assert(fabs((tip-margin*scale)+canvas-margin*scale-end)<1e-9);
-    }
-}
 int main(void) {
     double button=41.468988;
-    for(int scale=1;scale<=3;scale++) {
-        guarded_raster(button,scale);guarded_raster(53.,scale);guarded_raster(82.,scale);
-        guarded_raster(41.+2./3.,scale);
-    }
     Trace circle=outline(button,button,button*.5);
     assert(circle.deepest<.0001);
     Trace capsule=outline(120,44,22);
