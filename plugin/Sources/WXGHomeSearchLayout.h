@@ -17,6 +17,31 @@ static inline double WXGHomeSearchRequiredHeaderHeight(WXGRect field,double nati
     return fmax(nativeHeight,y+height+bottomPadding);
 }
 
+// Both rows take their zero setting from the same unmodified native field.
+static inline WXGRect WXGHomeRowRect(WXGRect native,double available,double percent,double height,double top) {
+    WXGRect row=native;
+    if(percent>.5) {
+        double minimum=fmin(120.,available);
+        row.w=WXGBound(available*percent/100.,minimum,fmax(minimum,available-4.));
+        row.x=(available-row.w)*.5;
+    }
+    if(height>.5)row.h=WXGBound(height,24.,64.);
+    if(top>=0)row.y=top;
+    return row;
+}
+
+// Distance between the header at the scroll view's natural top and visible navigation.
+static inline double WXGHomeHeaderLeading(double viewportTop,double inset,double headerY,double chromeBottom) {
+    return fmax(0,chromeBottom-(viewportTop+inset+headerY));
+}
+
+static inline bool WXGHomeShouldReveal(double offset,double rest,double headerHeight,bool touched) {
+    double skipped=offset-rest;
+    // UIKit can still be at absolute zero when it first publishes a top inset.
+    bool initialZero=fabs(offset)<=.5 && rest<0;
+    return !touched && skipped>.5 && (skipped<=headerHeight+1 || initialZero);
+}
+
 typedef struct { double groupY, headerHeight, bottomGap; } WXGHomeGroupLayout;
 static inline WXGHomeGroupLayout WXGHomeGroupBelowSearch(double nativeHeight,double nativeFieldBottom,
                                                           double searchBottom,double groupHeight,double gap) {

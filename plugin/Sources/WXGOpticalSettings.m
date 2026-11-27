@@ -280,9 +280,11 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
         WXGGroup(@"分组栏与搜索框尺寸",nil,@[
                  WXGSwitch(@"在搜索框下显示分组栏",@"chatSegments",nil),
                  WXGSwitch(@"仅在首页悬浮",@"searchFloat",nil),
-                 WXGSlider(@"宽度占比（0 = 原生）",@"homeSearchWidthPct",nil,0,98,@"%.0f%%"),
-                 WXGSlider(@"高度（0 = 原生）",@"homeSearchHeight",nil,0,64,@"%.1f pt"),
+                 WXGSlider(@"搜索框宽度（0 = 原生）",@"homeSearchWidthPct",nil,0,98,@"%.0f%%"),
+                 WXGSlider(@"搜索框高度（0 = 原生）",@"homeSearchHeight",nil,0,64,@"%.1f pt"),
                  WXGSlider(@"与顶部标题的距离（-1 = 原生）",@"homeSearchTopGap",nil,-1,32,@"%.1f pt"),
+                 WXGSlider(@"分组栏宽度（0 = 原生）",@"homeGroupWidthPct",nil,0,98,@"%.0f%%"),
+                 WXGSlider(@"分组栏高度（0 = 原生）",@"homeGroupHeight",nil,0,64,@"%.1f pt"),
                  WXGSlider(@"搜索框与分组栏间距",@"homeSearchGroupGap",nil,0,32,@"%.1f pt")],
                  @"分组栏显示在搜索框下方。列表随分组栏下移，保留微信搜索框原有的底部留白。开启悬浮后，两行按设置的间距一起停在标题下方。"),
         WXGGroup(@"分组列表",nil,@[WXGAction(@"管理分组（新建 / 改名 / 选聊天 / 排序）",@"manageGroups",NO)],

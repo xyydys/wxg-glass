@@ -488,6 +488,7 @@ FOUNDATION_EXPORT NSString *WXGChatNameSummary(void);   // FIX113 Z: where the n
 // Pass CGRectNull to clear the requesting owner's occlusion.
 - (void)updateHomeMenuFloatingToolsForOwner:(id)owner inWindow:(UIWindow *)window occupiedRect:(CGRect)rect;
 - (CGFloat)homePullAlphaFloor;
+- (CGFloat)homeRowBottomForPage:(UIViewController *)page window:(UIWindow *)window;
 // FIX118 A: the user's own photo (HD, from the contact's address; kept on disk); nil while it downloads.
 - (UIImage *)selfAvatarPhoto;
 @end

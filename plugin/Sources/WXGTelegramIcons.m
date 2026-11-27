@@ -1,14 +1,14 @@
 #import "WXGIntegration.h"
 #import "WXGTelegramTabIcons.h"
+#import "WXGTelegramInk.h"
 
 /* FIX113: Telegram's four tab bar icons with their own animations, for the
    dock: 微信 = Chats, 通讯录 = Contacts, 发现 = Calls, 我 = Settings.
    The artwork is Telegram for iOS's (GPLv2, see WXGTelegramTabIcons.h):
    its Lottie files rendered frame by frame (60 fps, as Telegram plays them)
-   and embedded as grey coverage masks. Here each sheet is turned once into
-   white premultiplied frames (template images), tinted when drawn: resting,
-   the first frame (the same as the last); selected, the frames in order.
-   Decoded only when the dock uses them (about 1.5 MB per icon). */
+   and embedded as grey coverage masks. Decode coverage once per sheet.
+   The static renderer uses white templates; animated layers take frames
+   tinted directly at the source resolution. */
 
 typedef struct {const unsigned char *png;unsigned int length,frames;} WXGTelegramSheet;
 static WXGTelegramSheet WXGTelegramSheetFor(NSInteger tab) {
@@ -25,45 +25,74 @@ NSInteger WXGTelegramFrameCount(NSInteger tab) {return (NSInteger)WXGTelegramShe
 // FIX113 F: how wide the resting glyph's ink is, as a share of a frame (the
 // frames leave room for the animation around it: 0.69 Calls .. 0.86 Chats).
 static CGFloat WXGTelegramRestInk[4];
-// Main thread only (the cache); the images it returns may be drawn anywhere.
+// Immutable coverage is shared by the resting art and both colours of the animation.
+static NSData *WXGTelegramCoverage(NSInteger tab) {
+    static NSData *sheets[4];static dispatch_once_t once[4];
+    dispatch_once(&once[tab],^{
+        WXGTelegramSheet sheet=WXGTelegramSheetFor(tab);
+        NSData *data=[NSData dataWithBytesNoCopy:(void *)sheet.png length:sheet.length freeWhenDone:NO];
+        UIImage *png=[UIImage imageWithData:data];
+        size_t side=WXGTelegramFrameSide,height=side*sheet.frames;
+        CGImageRef grey=png.CGImage;
+        if(!grey || CGImageGetWidth(grey)!=side || CGImageGetHeight(grey)!=height)return;
+        NSMutableData *coverage=[NSMutableData dataWithLength:side*height];
+        CGColorSpaceRef gray=CGColorSpaceCreateDeviceGray();
+        CGContextRef ctx=CGBitmapContextCreate(coverage.mutableBytes,side,height,8,side,gray,kCGImageAlphaNone);
+        CGColorSpaceRelease(gray);
+        if(!ctx)return;
+        CGContextDrawImage(ctx,CGRectMake(0,0,side,height),grey);CGContextRelease(ctx);
+        const uint8_t *bytes=coverage.bytes;
+        size_t left=side,right=0;
+        for(size_t y=0;y<side;y++)for(size_t x=0;x<side;x++)if(bytes[y*side+x]>8){left=MIN(left,x);right=MAX(right,x);}
+        WXGTelegramRestInk[tab]=right>=left?(CGFloat)(right-left+1)/side:1;
+        sheets[tab]=coverage;
+    });
+    return sheets[tab];
+}
+NSArray *WXGTelegramInkFrames(NSInteger tab,UIColor *ink) {
+    if(tab<0 || tab>3)return @[];
+    NSData *coverage=WXGTelegramCoverage(tab);
+    if(!coverage.length)return @[];
+    CGFloat r=0,g=0,b=0,a=1;
+    if(![ink getRed:&r green:&g blue:&b alpha:&a]) {
+        if(![ink getWhite:&r alpha:&a])return @[];
+        b=g=r;
+    }
+    WXGTelegramPixel color={lround(WXGClamp(r,0,1)*255),lround(WXGClamp(g,0,1)*255),
+                           lround(WXGClamp(b,0,1)*255),lround(WXGClamp(a,0,1)*255)};
+    WXGTelegramPixel lut[256];
+    for(int i=0;i<256;i++)lut[i]=WXGTelegramCoveredInk(color,(uint8_t)i);
+    NSMutableData *rgba=[NSMutableData dataWithLength:coverage.length*sizeof(WXGTelegramPixel)];
+    const uint8_t *bytes=coverage.bytes;WXGTelegramPixel *pixels=rgba.mutableBytes;
+    for(size_t i=0;i<coverage.length;i++)pixels[i]=lut[bytes[i]];
+    CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)rgba);
+    CGColorSpaceRef rgb=CGColorSpaceCreateWithName(kCGColorSpaceSRGB);
+    size_t side=WXGTelegramFrameSide,count=coverage.length/(side*side);
+    CGImageRef sheet=CGImageCreate(side,side*count,8,32,side*4,rgb,
+        (CGBitmapInfo)kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big,provider,NULL,true,kCGRenderingIntentDefault);
+    CGColorSpaceRelease(rgb);CGDataProviderRelease(provider);
+    if(!sheet)return @[];
+    NSMutableArray *frames=[NSMutableArray arrayWithCapacity:count];
+    for(size_t i=0;i<count;i++) {
+        CGImageRef frame=CGImageCreateWithImageInRect(sheet,CGRectMake(0,i*side,side,side));
+        if(!frame)break;
+        [frames addObject:CFBridgingRelease(frame)];
+    }
+    CGImageRelease(sheet);
+    return frames.count==count?frames.copy:@[];
+}
+// Main thread only. The Metal renderer uses these template images for live patches.
 NSArray<UIImage *> *WXGTelegramFrames(NSInteger tab) {
     static NSArray<UIImage *> *cache[4];
     tab=MAX(0,MIN(3,tab));
-    if(cache[tab])return cache[tab];
-    WXGTelegramSheet sheet=WXGTelegramSheetFor(tab);
-    NSData *data=[NSData dataWithBytesNoCopy:(void *)sheet.png length:sheet.length freeWhenDone:NO];
-    CGImageRef grey=[UIImage imageWithData:data].CGImage;
-    size_t side=WXGTelegramFrameSide,height=side*sheet.frames;
-    if(!grey || CGImageGetWidth(grey)!=side || CGImageGetHeight(grey)!=height){cache[tab]=@[];return cache[tab];}
-    // The coverage, row 0 at the top (as the sheet).
-    uint8_t *coverage=calloc(side*height,1);
-    CGColorSpaceRef greySpace=CGColorSpaceCreateDeviceGray();
-    CGContextRef context=coverage?CGBitmapContextCreate(coverage,side,height,8,side,greySpace,(CGBitmapInfo)kCGImageAlphaNone):NULL;
-    CGColorSpaceRelease(greySpace);
-    if(!context){free(coverage);cache[tab]=@[];return cache[tab];}
-    CGContextDrawImage(context,CGRectMake(0,0,side,height),grey);CGContextRelease(context);
-    // FIX113 F: the first frame's ink, left to right (rows 0 ..< side: the top of the sheet).
-    size_t inkMin=side,inkMax=0;
-    for(size_t y=0;y<side;y++)for(size_t x=0;x<side;x++)if(coverage[y*side+x]>8){if(x<inkMin)inkMin=x;if(x>inkMax)inkMax=x;}
-    WXGTelegramRestInk[tab]=inkMax>=inkMin?(CGFloat)(inkMax-inkMin+1)/(CGFloat)side:1;
-    // White, premultiplied: every channel is the coverage.
-    NSMutableData *rgba=[NSMutableData dataWithLength:side*height*4];uint8_t *out=rgba.mutableBytes;
-    for(size_t i=0;i<side*height;i++)out[4*i]=out[4*i+1]=out[4*i+2]=out[4*i+3]=coverage[i];
-    free(coverage);
-    CGDataProviderRef provider=CGDataProviderCreateWithCFData((__bridge CFDataRef)rgba);
-    CGColorSpaceRef rgb=CGColorSpaceCreateDeviceRGB();
-    CGImageRef all=CGImageCreate(side,height,8,32,side*4,rgb,(CGBitmapInfo)kCGImageAlphaPremultipliedLast|kCGBitmapByteOrder32Big,provider,NULL,NO,kCGRenderingIntentDefault);
-    CGColorSpaceRelease(rgb);CGDataProviderRelease(provider);
-    NSMutableArray<UIImage *> *frames=[NSMutableArray array];
-    for(size_t k=0;all && k<sheet.frames;k++) {
-        CGImageRef frame=CGImageCreateWithImageInRect(all,CGRectMake(0,(CGFloat)(k*side),side,side));
-        if(!frame)continue;
-        // 96 px at 3x: 32 pt, drawn as the dock's 26 pt box (its 28 x 26 fit).
-        [frames addObject:[[UIImage imageWithCGImage:frame scale:3 orientation:UIImageOrientationUp] imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
-        CGImageRelease(frame);
+    if(!cache[tab]) {
+        NSMutableArray *images=[NSMutableArray array];
+        for(id frame in WXGTelegramInkFrames(tab,UIColor.whiteColor)) {
+            UIImage *art=[UIImage imageWithCGImage:(__bridge CGImageRef)frame scale:3 orientation:UIImageOrientationUp];
+            [images addObject:[art imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate]];
+        }
+        cache[tab]=images.copy;
     }
-    if(all)CGImageRelease(all);
-    cache[tab]=frames.count==sheet.frames?frames.copy:@[];
     return cache[tab];
 }
 CGFloat WXGTelegramRestInkWidth(NSInteger tab) {

@@ -12,8 +12,15 @@ static inline WXGInputAction WXGInputRightAction(int editing,int holdingVoice,in
     if(holdingVoice)return canVoice?WXGInputActionKeyboard:WXGInputActionUnavailable;
     if(!editing)return canVoice?WXGInputActionVoiceMode:WXGInputActionUnavailable;
     if(hasText && canSend)return WXGInputActionSend;
-    if(!hasText && canDictate)return WXGInputActionDictation;
+    if(canDictate)return WXGInputActionDictation;
     return canVoice?WXGInputActionVoiceMode:WXGInputActionUnavailable;
+}
+/* WeChat may resize the native icon when deleting the last dictated word.
+   Accept that size while keeping the displayed action in its reserved slot. */
+static inline WXGRect WXGInputFrameAtSlot(WXGRect proposed,double cx,double cy) {
+    proposed.x=cx-proposed.w*.5;
+    proposed.y=cy-proposed.h*.5;
+    return proposed;
 }
 /* GrowTextView owns its editor's frame, content inset, TextKit container and
    height. Reserve action space by sizing that host, not its UITextView child. */

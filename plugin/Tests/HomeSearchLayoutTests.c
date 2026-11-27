@@ -21,6 +21,21 @@ int main(void) {
     assert(rows.groupY==70 && rows.headerHeight==118 && rows.bottomGap==0);
     rows=WXGHomeGroupBelowSearch(52,44,64,48,32);
     assert(rows.groupY==96 && rows.headerHeight==152 && rows.bottomGap==8);
+    WXGRect search=WXGHomeRowRect(field,440,90,48,12);
+    WXGRect group=WXGHomeRowRect(field,440,75,26,-1);
+    assert(search.x==22 && search.w==396 && search.h==48 && search.y==12);
+    assert(group.x==55 && group.w==330 && group.h==26);
+    assert(WXGHomeRowRect(field,440,0,0,-1).w==424);
+    assert(WXGHomeRowRect(field,440,0,0,-1).h==36);
+    assert(WXGHomeHeaderLeading(0,0,0,88)==88);
+    assert(WXGHomeHeaderLeading(0,88,0,88)==0);
+    assert(WXGHomeHeaderLeading(88,0,0,88)==0);
+    assert(WXGHomeShouldReveal(-36,-88,96,false));
+    assert(!WXGHomeShouldReveal(-88,-88,96,false));
+    assert(!WXGHomeShouldReveal(-36,-88,96,true));
+    assert(!WXGHomeShouldReveal(240,-88,96,false));
+    assert(WXGHomeShouldReveal(0,-88,64,false));
+    assert(!WXGHomeShouldReveal(0,-88,64,true));
     puts("HomeSearchLayoutTests: native field readiness and vertical header reservation passed.");
     return 0;
 }

@@ -821,6 +821,9 @@ static CGRect WXGLocalEntryMaterial(WXGLocalEntry *entry) {
         // Off, not authorised, not render-server mode, or this kind switched
         // off: no scan, no glass (FIX105: no trace when not authorised).
         if(![self wants:(WXGLocalKind)kind]){if(own)[self unmount:own];return;}
+        // The floating row exclusively owns this header's paint. Skip native lookups
+        // and conflict scans as well as mounting a second glass underneath it.
+        if(kind==WXGLocalSearch && WXGLocalInsideFloatingHeader(view)){if(own.mounted)[self unmount:own];return;}
         if([self hostResting:view]){if(own)[self unmount:own];return;}   // FIX115 K / L
         if(_wcSearchBar && [view isKindOfClass:_wcSearchBar])[self searchBar:view];
         else if(_webSearchBar && [view isKindOfClass:_webSearchBar])[self searchBar:view];
@@ -1219,12 +1222,10 @@ void WXGReleaseLocalSearchHeaderHeight(UITableView *table) {
 }
 static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect natural) {
     WXGConfig *config=WXGConfig.shared;
-    CGFloat pct=config.homeSearchWidthPct,height=config.homeSearchHeight,top=config.homeSearchTopGap;
-    CGFloat width=pct>.5?WXGClamp(header.bounds.size.width*pct/100.,120.,MAX(120.,header.bounds.size.width-4.)):natural.size.width;
-    CGFloat x=pct>.5?CGRectGetMidX(header.bounds)-width*.5:natural.origin.x;
-    CGFloat y=top>=0?CGRectGetMinY(header.bounds)+top:natural.origin.y;
-    return CGRectMake(paint.bounds.origin.x+x-natural.origin.x,paint.bounds.origin.y+y-natural.origin.y,width,
-                      height>.5?WXGClamp(height,24.,64.):natural.size.height);
+    WXGRect native={natural.origin.x-header.bounds.origin.x,natural.origin.y-header.bounds.origin.y,
+                    natural.size.width,natural.size.height};
+    WXGRect row=WXGHomeRowRect(native,header.bounds.size.width,config.homeSearchWidthPct,config.homeSearchHeight,config.homeSearchTopGap);
+    return CGRectMake(paint.bounds.origin.x+row.x-native.x,paint.bounds.origin.y+row.y-native.y,row.w,row.h);
 }
 - (void)field:(UIView *)paint host:(UIView *)host skins:(NSArray<UIView *> *)skins {
     for(WXGLocalEntry *other in _entries.allObjects)

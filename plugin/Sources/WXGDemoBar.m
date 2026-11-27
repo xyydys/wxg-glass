@@ -346,13 +346,16 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
 // there), the one playing now, its last frame drawn, its clock (FIX113 D:
 // the animation's own time, at most two frames a tick) and its last tick.
 @property(nonatomic) NSInteger telegramSettled,telegramTab,telegramLastFrame;
-@property(nonatomic) CFTimeInterval telegramClock,telegramLastTime,telegramMaskStart;
+@property(nonatomic) CFTimeInterval telegramClock,telegramLastTime,telegramAnimationStart;
 @property(nonatomic,strong) CADisplayLink *telegramLink;
 @property(nonatomic) BOOL previousTelegram;
-// The compositor draws coloured silhouettes from the embedded alpha masks.
+// Precoloured 96 px frames are composited directly, including through the lens.
+@property(nonatomic,copy) NSArray<CAKeyframeAnimation *> *telegramTracks;
+@property(nonatomic,copy) NSArray<UIColor *> *telegramPalette;
+@property(nonatomic) NSUInteger telegramGeneration;
 @property(nonatomic,strong) UIImage *travelNormalTitles,*travelSelectedTitles;
 @property(nonatomic,copy) NSArray<CALayer *> *travelGlyphs,*travelBadges;
-@property(nonatomic) NSUInteger telegramPlays,telegramTravelFrames,telegramDiscreteFrames,telegramMaskPlays;
+@property(nonatomic) NSUInteger telegramPlays,telegramTravelFrames,telegramDiscreteFrames,telegramLayerPlays;
 @property(nonatomic,copy) NSArray<NSNumber *> *atlasCenters;
 // FIX113 G: each tab's badge value ("" none, "•" a dot), and the badges the
 // installed atlases have in them (redrawn over a Telegram frame's patch).
@@ -847,6 +850,7 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
     _iconLayout=[self iconLayoutKey];   // FIX89
     _iconMaterialRect=_materialRect; _iconScale=[self effectiveIconScale];
     WXGIconJob *job=[self iconJob];NSUInteger generation=++_iconGeneration;
+    [self prepareTelegramTracksForJob:job];
     if(!_iconsReady || !job) {
         // First atlas synchronously, so the dock never shows without icons.
         UIImage *selected=WXGRenderDockIcons(job,YES,NO,NO),*normal=WXGRenderDockIcons(job,NO,NO,NO);
@@ -951,52 +955,79 @@ static float WXGGlowShown(CALayer *layer) {CALayer *p=layer.presentationLayer;re
     if(_telegramSettled<0 || _telegramSettled==_selectedIndex){_telegramSettled=_selectedIndex;return;}
     _telegramSettled=_selectedIndex;[self playTelegramTab:_selectedIndex];
 }
-static NSString *const WXGTelegramMaskKey=@"wxg.telegram.frames";
-static CAKeyframeAnimation *WXGTelegramKeyframes(NSInteger tab) {
-    static CAKeyframeAnimation *cache[4]; // immutable templates, main thread
-    if(cache[tab])return cache[tab];
-    NSArray<UIImage *> *images=WXGTelegramFrames(tab);
+static NSString *const WXGTelegramFrameKey=@"wxg.telegram.frames";
+static CAKeyframeAnimation *WXGTelegramInkTrack(NSInteger tab,UIColor *ink) {
+    NSArray *images=WXGTelegramInkFrames(tab,ink);
     if(!images.count)return nil;
-    NSMutableArray *frames=[NSMutableArray arrayWithCapacity:images.count+1];
+    NSMutableArray *frames=[images mutableCopy];
     NSMutableArray *times=[NSMutableArray arrayWithCapacity:images.count+1];
-    for(UIImage *image in images) {
-        [times addObject:@((double)frames.count/images.count)];
-        [frames addObject:(__bridge id)image.CGImage];
-    }
+    for(NSUInteger i=0;i<images.count;i++)[times addObject:@((double)i/images.count)];
     [frames addObject:frames.lastObject];[times addObject:@1];
-    CAKeyframeAnimation *animation=[CAKeyframeAnimation animationWithKeyPath:@"contents"];
-    animation.values=frames;animation.keyTimes=times;animation.calculationMode=kCAAnimationDiscrete;
-    animation.duration=images.count/60.;cache[tab]=animation;
-    return animation;
+    CAKeyframeAnimation *track=[CAKeyframeAnimation animationWithKeyPath:@"contents"];
+    track.values=frames;track.keyTimes=times;track.calculationMode=kCAAnimationDiscrete;
+    track.duration=images.count/60.;
+    return track;
 }
-- (void)updateTelegramMasksForTab:(NSInteger)tab playing:(BOOL)playing {
+- (void)prepareTelegramTracksForJob:(WXGIconJob *)job {
+    NSArray *palette=job.telegram?@[job.normalColors.firstObject,job.selectedColors.firstObject]:nil;
+    if(palette==_telegramPalette || [_telegramPalette isEqualToArray:palette])return;
+    [self updateTelegramLayersForTab:_telegramTab playing:NO];
+    NSUInteger generation=++_telegramGeneration;
+    _telegramPalette=palette;_telegramTracks=nil;
+    if(!palette)return;
+    __weak WXGDemoBar *weakSelf=self;
+    dispatch_async(WXGDockIconQueue(),^{
+        NSMutableArray *tracks=[NSMutableArray arrayWithCapacity:8];
+        for(UIColor *ink in palette)for(NSInteger tab=0;tab<4;tab++) {
+            CAKeyframeAnimation *track=WXGTelegramInkTrack(tab,ink);
+            if(!track)return;
+            [tracks addObject:track];
+        }
+        dispatch_async(dispatch_get_main_queue(),^{
+            WXGDemoBar *bar=weakSelf;
+            if(!bar || generation!=bar.telegramGeneration)return;
+            bar.telegramTracks=tracks;
+            [bar updateTelegramLayersForTab:bar.telegramTab playing:YES];
+        });
+    });
+}
+- (id)telegramInkForTab:(NSInteger)tab selected:(BOOL)selected frame:(NSInteger)frame {
+    if(tab<0 || tab>3)return nil;
+    NSUInteger index=(NSUInteger)tab+(selected?4:0);
+    if(index<_telegramTracks.count) {
+        NSArray *values=_telegramTracks[index].values;
+        if(frame>=0 && (NSUInteger)frame<values.count)return values[(NSUInteger)frame];
+    }
+    return (__bridge id)WXGTelegramTabImage(tab,frame,WXGDockTabColor(selected,_darkInk)).CGImage;
+}
+- (void)updateTelegramLayersForTab:(NSInteger)tab playing:(BOOL)playing {
     if(tab<0 || tab>=4)return;
-    CALayer *masks[4]={nil,nil,nil,nil};
+    CALayer *layers[4]={nil,nil,nil,nil};
     if(_travelGlyphs.count==8 && (!playing || ((_pureTap || _travelling) && !_travelGlyphs[tab].hidden))) {
-        masks[0]=_travelGlyphs[tab].mask;masks[1]=_travelGlyphs[tab+4].mask;
+        layers[0]=_travelGlyphs[tab];layers[1]=_travelGlyphs[tab+4];
     }
     if(_tabIcons.count==4 && (!playing || _discreteShown)) {
-        masks[2]=_tabIcons[tab].layer.mask;masks[3]=_tabSelectedIcons[tab].layer.mask;
+        layers[2]=_tabIcons[tab].layer;layers[3]=_tabSelectedIcons[tab].layer;
     }
-    for(int i=0;i<4;i++) {
-        CALayer *mask=masks[i];if(!mask)continue;
-        if(!playing){[mask removeAnimationForKey:WXGTelegramMaskKey];continue;}
-        if([mask animationForKey:WXGTelegramMaskKey])continue;
-        CAKeyframeAnimation *animation=[WXGTelegramKeyframes(tab) copy];if(!animation)continue;
+    for(NSUInteger i=0;i<4;i++) {
+        CALayer *layer=layers[i];if(!layer)continue;
+        if(!playing){[layer removeAnimationForKey:WXGTelegramFrameKey];continue;}
+        if(_telegramTracks.count!=8 || [layer animationForKey:WXGTelegramFrameKey])continue;
+        CAKeyframeAnimation *animation=[_telegramTracks[(NSUInteger)tab+(i%2)*4] copy];
         CFTimeInterval now=CACurrentMediaTime();
-        if(!_telegramMaskStart)_telegramMaskStart=now-_telegramClock;
-        if(now-_telegramMaskStart>=animation.duration)continue;
-        animation.beginTime=[mask convertTime:_telegramMaskStart fromLayer:nil];
-        [mask addAnimation:animation forKey:WXGTelegramMaskKey];++_telegramMaskPlays;
+        if(!_telegramAnimationStart)_telegramAnimationStart=now-_telegramClock;
+        if(now-_telegramAnimationStart>=animation.duration)continue;
+        animation.beginTime=[layer convertTime:_telegramAnimationStart fromLayer:nil];
+        [layer addAnimation:animation forKey:WXGTelegramFrameKey];++_telegramLayerPlays;
     }
 }
 - (void)playTelegramTab:(NSInteger)tab {
     if(tab<0 || tab>3 || !WXGTelegramFrames(tab).count || UIAccessibilityIsReduceMotionEnabled())return;
     // The one it cuts short back at rest, in both docks (FIX113 D: its image views too).
-    if(_telegramTab>=0){[self updateTelegramMasksForTab:_telegramTab playing:NO];[self drawTelegramFrame:0 tab:_telegramTab];}
+    if(_telegramTab>=0){[self updateTelegramLayersForTab:_telegramTab playing:NO];[self drawTelegramFrame:0 tab:_telegramTab];}
     ++_telegramPlays;
-    _telegramTab=tab;_telegramClock=0;_telegramMaskStart=0;_telegramLastTime=CACurrentMediaTime();_telegramLastFrame=-1;
-    [self updateTelegramMasksForTab:tab playing:YES];
+    _telegramTab=tab;_telegramClock=0;_telegramAnimationStart=0;_telegramLastTime=CACurrentMediaTime();_telegramLastFrame=-1;
+    [self updateTelegramLayersForTab:tab playing:YES];
     if(!_telegramLink) {
         WXGTelegramTickProxy *proxy=[WXGTelegramTickProxy new];proxy.owner=self;
         _telegramLink=[CADisplayLink displayLinkWithTarget:proxy selector:@selector(tick:)];
@@ -1013,7 +1044,7 @@ static CAKeyframeAnimation *WXGTelegramKeyframes(NSInteger tab) {
     // lands) holds the main thread 0.1-0.7 s: wall-clock frames ended the
     // animation there. Its own clock goes on from where it stopped.
     CFTimeInterval now=CACurrentMediaTime();
-    if(_telegramMaskStart)_telegramClock=MAX(0,now-_telegramMaskStart);
+    if(_telegramAnimationStart)_telegramClock=MAX(0,now-_telegramAnimationStart);
     else _telegramClock+=MIN(MAX(0,now-_telegramLastTime),2./60);
     _telegramLastTime=now;
     NSInteger count=WXGTelegramFrameCount(tab),frame=(NSInteger)floor(_telegramClock*60+1e-6);
@@ -1021,8 +1052,8 @@ static CAKeyframeAnimation *WXGTelegramKeyframes(NSInteger tab) {
     if(frame!=_telegramLastFrame){_telegramLastFrame=frame;[self drawTelegramFrame:frame tab:tab];}
 }
 - (void)stopTelegramAnimation {
-    NSInteger tab=_telegramTab;_telegramTab=-1;_telegramMaskStart=0;
-    [self updateTelegramMasksForTab:tab playing:NO];
+    NSInteger tab=_telegramTab;_telegramTab=-1;_telegramAnimationStart=0;
+    [self updateTelegramLayersForTab:tab playing:NO];
     if(tab>=0 && WXGTelegramTabIconsOn())[self drawTelegramFrame:0 tab:tab];
     [_telegramLink invalidate];_telegramLink=nil;
 }
@@ -1031,16 +1062,19 @@ static CAKeyframeAnimation *WXGTelegramKeyframes(NSInteger tab) {
     if(frame<0 || frame>=(NSInteger)frames.count)return;
     UIImage *art=frames[(NSUInteger)frame];
     if(_discreteShown && tab<(NSInteger)_tabIcons.count) {
-        if(!frame || !_telegramMaskStart) {
-            _tabIcons[(NSUInteger)tab].layer.mask.contents=(__bridge id)art.CGImage;
-            _tabSelectedIcons[(NSUInteger)tab].layer.mask.contents=(__bridge id)art.CGImage;
+        if(!frame || ![_tabIcons[(NSUInteger)tab].layer animationForKey:WXGTelegramFrameKey]) {
+            [CATransaction begin];[CATransaction setDisableActions:YES];
+            _tabIcons[(NSUInteger)tab].layer.contents=[self telegramInkForTab:tab selected:NO frame:frame];
+            _tabSelectedIcons[(NSUInteger)tab].layer.contents=[self telegramInkForTab:tab selected:YES frame:frame];
+            [CATransaction commit];
         }
         ++_telegramDiscreteFrames;
         if(!_classicLingers && frame!=0)return;
     }
     if((_pureTap || _travelling) && _travelGlyphs.count==8) {
         [CATransaction begin];[CATransaction setDisableActions:YES];
-        if(!frame || !_telegramMaskStart)for(NSUInteger i=(NSUInteger)tab;i<8;i+=4)_travelGlyphs[i].mask.contents=(__bridge id)art.CGImage;
+        if(!frame || ![_travelGlyphs[tab] animationForKey:WXGTelegramFrameKey])
+            for(NSUInteger i=(NSUInteger)tab;i<8;i+=4)_travelGlyphs[i].contents=[self telegramInkForTab:tab selected:i>=4 frame:frame];
         [CATransaction commit];++_telegramTravelFrames;
         if(frame && _glass.overlayHidden && !_travelGlyphs[tab].hidden)return;
     }
@@ -1619,13 +1653,19 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         layer.bounds=(CGRect){CGPointZero,tile};
         layer.anchorPoint=CGPointMake(.5,CGRectGetMidY(_materialRect)/tile.height);
     }
+    CGFloat screenScale=self.window.screen.scale?:UIScreen.mainScreen.scale;
+    CGFloat inkScale=MAX(screenScale,atlas.scale);
+    for(CALayer *layer in @[_travelLens,_travelIconZoom,_travelIconImage,_travelNormalIcons,_travelHole]) {
+        layer.contentsScale=inkScale;layer.rasterizationScale=inkScale;
+    }
+    _pureGlyphClip.contentsScale=inkScale;_pureGlyphClip.rasterizationScale=inkScale;
     if(!telegram && !_travelGlyphs.count)return;
     if(!_travelGlyphs.count) {
         NSMutableArray *glyphs=[NSMutableArray array],*badges=[NSMutableArray array];
         for(NSInteger i=0;i<8;i++) {
             CALayer *parent=i<4?_travelNormalIcons:_travelTabLayers[(NSUInteger)i-4];
             CALayer *glyph=[CALayer layer],*badge=[CALayer layer];
-            glyph.mask=[CALayer layer];
+            glyph.actions=@{@"contents":NSNull.null,@"bounds":NSNull.null,@"position":NSNull.null};
             [parent addSublayer:glyph];[parent addSublayer:badge];
             [glyphs addObject:glyph];[badges addObject:badge];
         }
@@ -1639,18 +1679,16 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         CGFloat cx=_atlasCenters[(NSUInteger)tab].doubleValue;
         CGFloat x=i<4?cx:tile.width*.5;
         glyph.frame=CGRectMake(x-_atlasTelegramSize*.5,_atlasIconY-_atlasTelegramSize*.5,_atlasTelegramSize,_atlasTelegramSize);
-        glyph.mask.frame=glyph.bounds;
-        NSArray<UIImage *> *frames=WXGTelegramFrames(tab);
+        glyph.contentsScale=atlas.scale;badge.contentsScale=atlas.scale;
         NSInteger frame=tab==_telegramTab?MAX(0,_telegramLastFrame):0;
-        glyph.mask.contents=frame<(NSInteger)frames.count?(__bridge id)frames[(NSUInteger)frame].CGImage:nil;
-        glyph.backgroundColor=WXGDockTabColor(i>=4,_darkInk).CGColor;
+        glyph.contents=[self telegramInkForTab:tab selected:i>=4 frame:frame];
         for(NSDictionary *item in _atlasBadges)if([item[@"tab"] integerValue]==tab) {
             badge.frame=CGRectOffset([item[@"rect"] CGRectValue],x-cx,0);
             badge.contents=(__bridge id)((UIImage *)item[@"image"]).CGImage;
             badge.hidden=NO;break;
         }
     }
-    [self updateTelegramMasksForTab:_telegramTab playing:YES];
+    [self updateTelegramLayersForTab:_telegramTab playing:YES];
 }
 - (CGPoint)travelTabCenter:(NSUInteger)tab barScale:(CGFloat)scale {
     CGFloat mid=CGRectGetMidX(_materialRect),x=tab<_travelTabCenters.count?_travelTabCenters[tab].doubleValue:mid;
@@ -1788,6 +1826,8 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
     CALayer *glyph=[CALayer layer];glyph.anchorPoint=CGPointZero;
     glyph.bounds=(CGRect){CGPointZero,CGSizeMake(size.width+2*_purePadding,size.height+2*_purePadding)};
     glyph.position=CGPointMake(-_purePadding,-_purePadding);
+    glyph.contentsScale=self.window.screen.scale?:UIScreen.mainScreen.scale;
+    glyph.rasterizationScale=glyph.contentsScale;
     if(!WXGApplyPureTravelGlyphRefraction(glyph,size,_purePadding,.90)){_pureCaptures=nil;return NO;}
     _pureGlyphClip=glyph;
     [_pureRim.layer removeFromSuperlayer];
@@ -2140,7 +2180,7 @@ static void WXGKeyframeAt(NSArray<NSNumber *> *times,NSArray<CAMediaTimingFuncti
         @"tapDrop":@(WXGConfig.shared.dockTapDropDuration),@"tapSwitchWhen":@(WXGConfig.shared.dockTapSwitchWhen),@"uncommittedEnds":@(_uncommittedEnds),@"travelVeil":@(_travelVeilOn),@"travelVeilBands":@(_travelVeilCount),@"travelSetupMaxMS":@(round(_travelSetupMS*10)/10),
         @"lastPoint":@[@(_trackingPoint.x),@(_trackingPoint.y)],@"hasTrackingPoint":@(_trackingPoint.valid),
         @"searchMode":@(_searchMode),@"morphing":@(_morphing),@"morphs":@(_morphs),
-        @"telegram":@{@"requested":@([WXGConfig.shared extraNumber:@"dockTelegramIcons"]>.5),@"effective":@(WXGTelegramTabIconsOn()),@"themeFirst":@(WXGDockThemeFirst()),@"reduceMotion":@(UIAccessibilityIsReduceMotionEnabled()),@"plays":@(_telegramPlays),@"maskAnimations":@(_telegramMaskPlays),@"compositedFrames":@(_telegramTravelFrames),@"discreteFrames":@(_telegramDiscreteFrames)},
+        @"telegram":@{@"requested":@([WXGConfig.shared extraNumber:@"dockTelegramIcons"]>.5),@"effective":@(WXGTelegramTabIconsOn()),@"themeFirst":@(WXGDockThemeFirst()),@"reduceMotion":@(UIAccessibilityIsReduceMotionEnabled()),@"plays":@(_telegramPlays),@"inkAnimations":@(_telegramLayerPlays),@"paletteReady":@(_telegramTracks.count==8),@"lensInkScale":@(_pureGlyphClip.contentsScale),@"compositedFrames":@(_telegramTravelFrames),@"discreteFrames":@(_telegramDiscreteFrames)},
         @"discrete":@(_discreteShown),@"discretePieces":@(_pieceCount),@"discreteTiming":@{@"movingFrames":@(_discreteMotionFrames),@"lateFrames":@(_discreteLateFrames),@"maxGapMS":@(_discreteMaxGapMS),@"maxLayoutMS":@(_discreteMaxLayoutMS),@"maxPieceTickMS":@(_discreteMaxDrawMS)},@"discreteSwitches":@(_discreteSwitches),@"discreteShows":@(_discreteShows),
         // FIX127: iOS 26's cells, lift, hang and position spring as set, and the tabs' centres they give.
         @"system26":@{@"cellExtra":@(WXGConfig.shared.dockCellExtra),@"liftWidth":@(WXGConfig.shared.dockLensLiftWidth),@"hang":@(WXGConfig.shared.dockLensHang),
@@ -2568,16 +2608,11 @@ static const CGFloat WXGDiscreteReturnProgress=.15;
         for(int selected=0;selected<=1;selected++) {
             UIImageView *view=selected?_tabSelectedIcons[(NSUInteger)i]:_tabIcons[(NSUInteger)i];
             if(first) {
-                CALayer *mask=view.layer.mask;
-                if(!mask) {
-                    mask=[CALayer layer];mask.actions=@{@"contents":NSNull.null,@"position":NSNull.null,@"bounds":NSNull.null};
-                    view.layer.mask=mask;
-                }
-                mask.contents=(__bridge id)first.CGImage;mask.frame=view.bounds;view.image=nil;
-                UIColor *ink=WXGDockTabColor(selected,_darkInk);view.backgroundColor=ink;
+                UIColor *ink=WXGDockTabColor(selected,_darkInk);
+                view.image=WXGTelegramTabImage(i,0,ink);
                 if(selected)accent=ink;
             }else {
-                view.layer.mask=nil;view.backgroundColor=UIColor.clearColor;
+                [view.layer removeAnimationForKey:WXGTelegramFrameKey];
                 view.image=WXGDockTabArtwork(pair,i,selected,_darkInk,iconSize,selected?&accent:NULL);
             }
         }
@@ -2590,7 +2625,7 @@ static const CGFloat WXGDiscreteReturnProgress=.15;
         if(english.length)w=MAX(w,[english sizeWithAttributes:@{NSFontAttributeName:en}].width);
         _tabTextW[i]=ceil(w)+1;
     }
-    [self updateTelegramMasksForTab:_telegramTab playing:YES];
+    [self updateTelegramLayersForTab:_telegramTab playing:YES];
     _discreteDirty=YES;
 }
 - (BOOL)discreteSettled {
@@ -2858,8 +2893,6 @@ static const CGFloat WXGDiscreteReturnProgress=.15;
         CGPoint centre=CGPointMake(round((cell.origin.x+iconX)*4)/4,round((cell.origin.y+cy)*4)/4);
         normal.bounds=(CGRect){CGPointZero,ns};normal.center=centre;normal.alpha=1-e;
         selected.bounds=(CGRect){CGPointZero,ss};selected.center=centre;selected.alpha=e;
-        if(normal.layer.mask)normal.layer.mask.frame=normal.bounds;
-        if(selected.layer.mask)selected.layer.mask.frame=selected.bounds;
         _tabIconCentre[i]=centre;
         CGFloat reveal=text?WXGDiscreteSmooth(.45f,1.f,(float)e):0;
         UILabel *title=_tabTitles[(NSUInteger)i],*subtitle=_tabSubtitles[(NSUInteger)i];

@@ -210,6 +210,8 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"homeTitleSegmentsEnglish",'b',0,0,1,NULL,NULL},
     {"homeSearchWidthPct",'n',0,0,98,NULL,NULL},
     {"homeSearchHeight",'n',0,0,64,NULL,NULL},
+    {"homeGroupWidthPct",'n',0,0,98,NULL,NULL},
+    {"homeGroupHeight",'n',0,0,64,NULL,NULL},
     {"homeSearchGroupGap",'n',8,0,32,NULL,NULL},
     {"homeSearchTopGap",'n',-1,-1,32,NULL,NULL},
     {"contactsTitleCapsule",'b',1,0,1,NULL,NULL},
@@ -956,6 +958,16 @@ static NSString *WXGScopedKey(WXGGlassScope scope,BOOL dark,NSString *stem) {
    band refraction, veil colours, the two old border styles ...) is not read any more: those ranges start from the
    system's values. */
 NSDictionary *WXGRenamedSettings(NSDictionary *stored) {
+    // Older full exports stored one size for both rows. A partial import that
+    // edits only the search row must leave separately tuned group values alone.
+    if(stored[@"chatSegments"] && (!stored[@"homeGroupWidthPct"] || !stored[@"homeGroupHeight"])) {
+        NSMutableDictionary *rows=[stored mutableCopy];
+        if(!rows[@"homeGroupWidthPct"] && [stored[@"homeSearchWidthPct"] isKindOfClass:NSNumber.class])
+            rows[@"homeGroupWidthPct"]=stored[@"homeSearchWidthPct"];
+        if(!rows[@"homeGroupHeight"] && [stored[@"homeSearchHeight"] isKindOfClass:NSNumber.class])
+            rows[@"homeGroupHeight"]=stored[@"homeSearchHeight"];
+        stored=rows;
+    }
     if(!stored.count || stored[@"glassBand"])return stored;   // nothing stored, or already this build's
     NSMutableDictionary *d=[stored mutableCopy];
     BOOL (^on)(NSString *)=^BOOL(NSString *key){id v=stored[key];return [v isKindOfClass:NSNumber.class] && [v doubleValue]>.5;};

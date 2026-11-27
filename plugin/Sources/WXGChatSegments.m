@@ -1719,8 +1719,56 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
 @interface WXGHomeGroupHeader : UIView
 @property(nonatomic,strong) UIView *nativeHeader;
 @property(nonatomic) UIViewAutoresizing nativeResize;
+@property(nonatomic) CGFloat leading;
+@property(nonatomic,strong) UIView *nativeCanvas;
+@property(nonatomic,strong) NSMapTable<UIView *,NSArray<NSValue *> *> *nativeInkTransforms;
+- (void)restoreNativeInk;
+- (void)placeNativeAtLeading:(CGFloat)leading field:(CGRect)field target:(CGRect)target;
 @end
 @implementation WXGHomeGroupHeader
+- (void)restoreNativeInk {
+    for(UIView *view in _nativeInkTransforms.keyEnumerator) {
+        NSArray<NSValue *> *pair=[_nativeInkTransforms objectForKey:view];
+        if(CGAffineTransformEqualToTransform(view.transform,pair.lastObject.CGAffineTransformValue))
+            view.transform=pair.firstObject.CGAffineTransformValue;
+    }
+    [_nativeInkTransforms removeAllObjects];
+}
+- (void)placeNativeAtLeading:(CGFloat)leading field:(CGRect)field target:(CGRect)target {
+    _leading=leading;
+    // The canvas owns the display geometry of an unstyled WeChat search row.
+    // Its field keeps its native bounds for measurement, editing and hit testing.
+    CGSize size=CGSizeMake(self.bounds.size.width,_nativeHeader.bounds.size.height);
+    CGFloat sx=1,sy=1;
+    CGPoint center=CGPointMake(size.width*.5,leading+size.height*.5);
+    if(!CGRectIsEmpty(field) && !CGRectEqualToRect(field,target)) {
+        sx=target.size.width/field.size.width;sy=target.size.height/field.size.height;
+        center.x=CGRectGetMidX(target)+(size.width*.5-CGRectGetMidX(field))*sx;
+        center.y=leading+CGRectGetMidY(target)+(size.height*.5-CGRectGetMidY(field))*sy;
+    }
+    [self restoreNativeInk];
+    if(sx!=1 || sy!=1) {
+        if(!_nativeInkTransforms)_nativeInkTransforms=[NSMapTable weakToStrongObjectsMapTable];
+        CGPoint fieldCenter=CGPointMake(CGRectGetMidX(field),CGRectGetMidY(field));
+        for(UIView *v in WXGViews(_nativeHeader,160)) {
+            BOOL label=[v isKindOfClass:UILabel.class];
+            BOOL glyph=[v isKindOfClass:UIImageView.class] && v.bounds.size.width<=36 && v.bounds.size.height<=36;
+            if((!label && !glyph) || v.hidden || !v.superview)continue;
+            CGPoint p=[v.superview convertPoint:v.center toView:_nativeHeader];
+            if(!CGRectContainsPoint(field,p))continue;
+            CGPoint local=[_nativeHeader convertPoint:fieldCenter toView:v.superview];
+            CGAffineTransform saved=v.transform;
+            CGAffineTransform t=CGAffineTransformConcat(saved,CGAffineTransformMakeScale(1/sx,1/sy));
+            t.tx+=(v.center.x-local.x)*(1/sx-1);t.ty+=(v.center.y-local.y)*(1/sy-1);
+            [_nativeInkTransforms setObject:@[[NSValue valueWithCGAffineTransform:saved],[NSValue valueWithCGAffineTransform:t]] forKey:v];
+            v.transform=t;
+        }
+    }
+    if(!CGSizeEqualToSize(_nativeCanvas.bounds.size,size))_nativeCanvas.bounds=(CGRect){CGPointZero,size};
+    CGAffineTransform transform=CGAffineTransformMakeScale(sx,sy);
+    if(!CGAffineTransformEqualToTransform(_nativeCanvas.transform,transform))_nativeCanvas.transform=transform;
+    if(!CGPointEqualToPoint(_nativeCanvas.center,center))_nativeCanvas.center=center;
+}
 @end
 UIView *WXGHomeNativeSearchHeader(UIView *header) {
     return [header isKindOfClass:WXGHomeGroupHeader.class]?((WXGHomeGroupHeader *)header).nativeHeader:header;
@@ -1753,13 +1801,24 @@ UIView *WXGHomeNativeSearchHeader(UIView *header) {
     __weak UIView *_floatHost;   // FIX114 B: where hostTick last floated the bar (the before-commit pass places it there too)
     NSUInteger _commitPlacements;   // FIX114 B: diagnostics
     NSUInteger _transformMoves,_frameWrites,_skippedLaidOuts;   // R20: pull-down/scroll stutter diagnostics
-    double _maxPlaceMS;
+    double _maxPlaceMS,_maxScrollFrameMS;
+    CFTimeInterval _lastScrollFrame;NSUInteger _slowScrollFrames;
     CGPoint _floatBaseOrigin;
     CGSize _floatBaseSize;
     CGFloat _lastFloatY;
     BOOL _hasLastFloatY,_adjustingHeader;
     WXGHomeGroupHeader *_groupHeader;
-    CGFloat _nativeHeaderHeight,_lastCustomKey;
+    CGFloat _nativeHeaderHeight,_lastHeaderWidth;
+    CGRect _measuredInNative;
+    __weak UIView *_drawnField;
+    NSUInteger _layoutRevision,_fieldScans,_headerWrites,_startupReveals;
+    UIUserInterfaceStyle _measuredStyle;
+    __weak UITableView *_startupTable;
+    CFTimeInterval _startupUntil;
+    BOOL _startupPending;
+    BOOL _layoutLocalSearch,_layoutFloat;CFTimeInterval _measureFallbackAfter;
+    CGFloat _startupBefore,_startupAfter,_placedInset,_lastPanel;
+    CGRect _placedViewport,_placedHeader;
     CGSize _lastMeasuredBarSize;
     CGRect _naturalFrame;        // FIX113 O: the segment bar's frame in its container (in the list)
     BOOL _segmentCovered;
@@ -1814,7 +1873,13 @@ UIView *WXGHomeNativeSearchHeader(UIView *header) {
     @try {
         if(_bar && _bar.superview) {
             UIView *host=_floatHost;
-            if(_segmentFloating && host && host.window && _table.superview==host){[self placeSegmentIn:host];++_commitPlacements;}
+            if(_segmentFloating && host.window && _table.superview==host &&
+               (!CGRectEqualToRect(_placedViewport,_table.bounds) || !CGRectEqualToRect(_placedHeader,_container.frame) ||
+                _placedInset!=_table.adjustedContentInset.top) && WXGHomeSearchExposed(_page)) {
+                [self floatNativeOn:_page time:0 homePanel:_lastPanel];
+                WXGFloatSlot *slot=[_floats objectForKey:_page];
+                [self placeSegmentIn:slot.pinned?host:nil];++_commitPlacements;
+            }
         }
         for(WXGFloatSlot *slot in _floats.objectEnumerator) {
             if(slot.parked && ![self slotStillInHomeHeader:slot]){[self unpin:slot];continue;}
@@ -1865,9 +1930,9 @@ UIView *WXGHomeNativeSearchHeader(UIView *header) {
         for(UIView *root in slot.clone.surface.glass.backdropExclusions)
             if([field isDescendantOfView:root]){slot.editingField=(UITextField *)field;[self unpin:slot];break;}
     if(!bar || ![field isKindOfClass:UIView.class] || ![field isDescendantOfView:bar])return;
-    _nativeSearching=YES;++_nativeSearches;
+    _nativeSearching=YES;_startupPending=NO;_startupUntil=0;++_nativeSearches;
     _lastMeasuredBarSize=CGSizeZero;
-    if(_groupHeader)[self applyHeaderHeight:_nativeHeaderHeight onHeader:_groupHeader table:_table];
+    if(_groupHeader){[_groupHeader placeNativeAtLeading:0 field:CGRectZero target:CGRectZero];[self applyHeaderHeight:_nativeHeaderHeight onHeader:_groupHeader table:_table];}
     _bar.hidden=YES;_bar.active=NO;_status=@"微信自己的搜索正在用搜索栏，暂时还给它";
 }
 - (void)fieldEnded:(NSNotification *)note {
@@ -1888,6 +1953,7 @@ UIView *WXGHomeNativeSearchHeader(UIView *header) {
     return fallback;
 }
 - (UIView *)searchBarIn:(UIView *)header {
+    header=WXGHomeNativeSearchHeader(header);
     if(!header)return nil;
     static Class wcBar;static dispatch_once_t once;dispatch_once(&once,^{wcBar=NSClassFromString(@"WCSearchBar");});
     if([header isKindOfClass:UISearchBar.class] || (wcBar && [header isKindOfClass:wcBar]))return header;
@@ -1920,7 +1986,7 @@ CGRect WXGSearchFieldBox(UITextField *field) {
 // text field (398×32.7, 11 pt down) is hidden under WeChat's WCSearchBar; what
 // is seen is that bar's box: a filled rounded UIView (r 6, 398×36, 4 pt down)
 // in its stack views. That box, in `bar`; null when there is none.
-static CGRect WXGVisibleSearchBox(UIView *bar) {
+static CGRect WXGFindVisibleSearchBox(UIView *bar,UIView **paint) {
     static Class custom;static dispatch_once_t once;dispatch_once(&once,^{custom=NSClassFromString(@"WCSearchBar");});
     if(!custom || !bar)return CGRectNull;
     UIView *wc=[bar isKindOfClass:custom]?bar:nil;
@@ -1933,13 +1999,16 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
         if(v==wc || v.hidden || WXGIsPluginView(v) || v.class!=UIView.class || v.layer.cornerRadius<2 || ![v.superview isKindOfClass:UIStackView.class])continue;
         CGRect r=[v convertRect:v.bounds toView:bar];
         if(r.size.height<24 || r.size.height>60 || r.size.width<barW*.4 || r.size.width>barW+.5)continue;
-        if(r.size.width>bestW+.5){best=r;bestW=r.size.width;}
+        if(r.size.width>bestW+.5){best=r;bestW=r.size.width;if(paint)*paint=v;}
     }
     return best;
 }
-- (CGRect)fieldRectIn:(UIView *)bar source:(NSString **)source {
+static CGRect WXGVisibleSearchBox(UIView *bar) {return WXGFindVisibleSearchBox(bar,NULL);}
+- (CGRect)fieldRectIn:(UIView *)bar source:(NSString **)source paint:(UIView **)outPaint {
     CGFloat barW=bar.bounds.size.width;CGRect best=CGRectNull;CGFloat bestW=0;NSString *from=nil;
-    CGRect seen=WXGVisibleSearchBox(bar);   // FIX114 F: what is on screen first
+    UIView *paint=nil;
+    CGRect seen=WXGFindVisibleSearchBox(bar,&paint);
+    ++_fieldScans;if(outPaint)*outPaint=paint;   // FIX114 F: what is on screen first
     if(!CGRectIsNull(seen)){if(source)*source=WXGDrawnBoxSource;return seen;}
     if([bar isKindOfClass:UISearchBar.class]) {
         UITextField *field=((UISearchBar *)bar).searchTextField;
@@ -1970,38 +2039,70 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {
     if(source)*source=from;
     return best;
 }
-// R20: custom home search / segment bar width, height, and locked top gap.
-static CGFloat WXGHomeSearchCustomKey(void) {
-    WXGConfig *c=WXGConfig.shared;
-    return c.homeSearchWidthPct*10000.+c.homeSearchHeight*100.+(c.homeSearchTopGap+10.);
+static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
+    WXGConfig *cfg=WXGConfig.shared;
+    WXGRect base={field.origin.x,field.origin.y,field.size.width,field.size.height};
+    return WXGCGRect(WXGHomeRowRect(base,width,
+        group?[cfg extraNumber:@"homeGroupWidthPct"]:cfg.homeSearchWidthPct,
+        group?[cfg extraNumber:@"homeGroupHeight"]:cfg.homeSearchHeight,group?-1:cfg.homeSearchTopGap));
 }
-static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,CGFloat nativeHeaderH,CGFloat *requiredHeaderH) {
-    WXGConfig *c=WXGConfig.shared;
-    CGFloat wPct=c.homeSearchWidthPct,customH=c.homeSearchHeight,topGap=c.homeSearchTopGap;
-    CGFloat w=wPct>.5?WXGClamp(hostWidth*(wPct/100.),120,MAX(120,hostWidth-4)):naturalField.size.width;
-    CGFloat h=customH>.5?WXGClamp(customH,24,64):naturalField.size.height;
-    CGFloat x=wPct>.5?(hostWidth-w)*.5:naturalField.origin.x;
-    CGFloat y=topGap>=0?topGap:naturalField.origin.y;
-    CGFloat bottomPad=MAX(4,nativeHeaderH-CGRectGetMaxY(naturalField));
-    if(requiredHeaderH)*requiredHeaderH=MAX(nativeHeaderH,y+h+bottomPad);
-    return CGRectMake(x,y,w,h);
+// The table can start underneath a transparent navigation bar or already below it.
+// Compute this at the table's resting offset, independently of its current scroll.
+- (CGFloat)homeChromeBottomInWindow:(UIWindow *)window {
+    CGFloat bottom=CGRectGetMinY(window.bounds)+window.safeAreaInsets.top;
+    UINavigationController *nav=_page.navigationController;
+    UINavigationBar *bar=nav.navigationBar;
+    if(!nav.navigationBarHidden && !bar.hidden && bar.window==window && !CGRectIsEmpty(bar.bounds))
+        bottom=MAX(bottom,CGRectGetMaxY([bar convertRect:bar.bounds toView:window]));
+    CGFloat row=[WXGIntegrationHost.shared homeRowBottomForPage:_page window:window];
+    return isfinite(row)?MAX(bottom,row):bottom;
+}
+- (CGFloat)leadingForHeader:(UIView *)header table:(UITableView *)table {
+    UIWindow *window=table.window;
+    if(!window)return 0;
+    if(_container==header && _lastHeaderWidth==header.bounds.size.width &&
+       (table.tracking || table.dragging || table.decelerating || table.contentOffset.y < -table.adjustedContentInset.top-.5))
+        return _groupHeader.leading;
+    CGFloat bottom=[self homeChromeBottomInWindow:window];
+    CGFloat viewport=CGRectGetMinY([table convertRect:table.bounds toView:window]);
+    return WXGHomePixel(WXGHomeHeaderLeading(viewport,table.adjustedContentInset.top,header.frame.origin.y,bottom),window.screen.scale);
+}
+- (void)revealInitialRows:(UITableView *)table {
+    if((!_startupPending && !_startupUntil) || table!=_startupTable || table.tableHeaderView!=_groupHeader || _nativeSearching)return;
+    if(!table.window || _bar.window!=table.window)return;
+    BOOL touched=table.tracking || table.dragging || table.decelerating;
+    if(_startupPending) {
+        // Start settling only after both measured rows have reached the window.
+        _startupPending=NO;
+        _startupUntil=CACurrentMediaTime()+1.2;
+    }
+    CGFloat rest=-table.adjustedContentInset.top;
+    CGFloat offset=table.contentOffset.y;
+    if(touched || _page.navigationItem.searchController.isActive || CACurrentMediaTime()>_startupUntil ||
+       (offset-rest>_groupHeader.bounds.size.height+1 && fabs(offset)>.5) || offset<rest-.5){_startupUntil=0;return;}
+    if(WXGHomeShouldReveal(offset,rest,_groupHeader.bounds.size.height,touched)) {
+        _startupBefore=offset;_startupAfter=rest;++_startupReveals;
+        [UIView performWithoutAnimation:^{[table setContentOffset:CGPointMake(table.contentOffset.x,rest) animated:NO];}];
+    }
 }
 - (void)applyHeaderHeight:(CGFloat)needed onHeader:(UIView *)header table:(UITableView *)table {
     if(!header || !table || needed<20)return;
     if(fabs(header.frame.size.height-needed)<=.5)return;
-    _adjustingHeader=YES;
-    [UIView performWithoutAnimation:^{
-        CGRect f=header.frame;f.size.height=needed;header.frame=f;
-        if(table.tableHeaderView==header)table.tableHeaderView=header;
-    }];
-    _adjustingHeader=NO;
+    _adjustingHeader=YES;++_headerWrites;
+    @try {
+        [UIView performWithoutAnimation:^{
+            CGRect f=header.frame;f.size.height=needed;header.frame=f;
+            if(table.tableHeaderView==header)table.tableHeaderView=header;
+        }];
+    } @finally {_adjustingHeader=NO;}
 }
 - (void)restoreResizedHeader {
     WXGHomeGroupHeader *wrapper=_groupHeader;
     if(!wrapper)return;
     UIView *native=wrapper.nativeHeader;
     for(WXGFloatSlot *slot in _floats.objectEnumerator)if(slot.ownedHeader==wrapper)[self unpin:slot];
-    BOOL ownsNative=native.superview==wrapper;
+    [UIView performWithoutAnimation:^{[wrapper restoreNativeInk];}];
+    BOOL ownsNative=native.superview==wrapper.nativeCanvas;
     _adjustingHeader=YES;
     @try {
         if(ownsNative) {
@@ -2022,6 +2123,11 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
     @try {
         WXGReleaseLocalSearchHeaderHeight(table);
         CGRect frame=native.frame;
+        if(table!=_startupTable) {
+            _startupTable=table;
+            _startupPending=!(table.tracking || table.dragging || table.decelerating);
+            _startupUntil=0;
+        }
         WXGHomeGroupHeader *wrapper=[[WXGHomeGroupHeader alloc] initWithFrame:frame];
         wrapper.nativeResize=native.autoresizingMask;wrapper.nativeHeader=native;
         _groupHeader=wrapper;
@@ -2029,7 +2135,9 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
             table.tableHeaderView=wrapper;
             native.autoresizingMask=UIViewAutoresizingFlexibleWidth;
             native.frame=(CGRect){CGPointZero,frame.size};
-            [wrapper addSubview:native];
+            UIView *canvas=[[UIView alloc] initWithFrame:native.frame];
+            canvas.autoresizingMask=UIViewAutoresizingFlexibleWidth;
+            wrapper.nativeCanvas=canvas;[wrapper addSubview:canvas];[canvas addSubview:native];
         }];
     } @finally {_adjustingHeader=NO;}
     return _groupHeader;
@@ -2074,22 +2182,19 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
     if(!WXGHomeSearchExposed(page))return;
     _page=page;
     UITableView *table=_table && [_table isDescendantOfView:page.view]?_table:[self tableIn:page.view];
-    UIView *header=table.tableHeaderView,*bar=[self searchBarIn:header];
+    UIView *header=table.tableHeaderView;
+    UIView *bar=_searchBar && header==_groupHeader && [_searchBar isDescendantOfView:header]?_searchBar:[self searchBarIn:header];
     if(!table || !header || !bar){_status=!table?@"没有找到聊天列表":!header?@"列表没有表头":@"表头里没有搜索栏";return;}
     if(_table!=table)[self restoreResizedHeader];
     _table=table;
+    if(_searchBar!=bar) {
+        _searchBar=bar;_fieldRechecks=0;_lastMeasuredBarSize=CGSizeZero;_drawnField=nil;
+    }
     [self mountOver:bar header:header table:table];
 }
 - (void)searchBarLaidOut:(UIView *)view {
-    if(_adjustingHeader || view!=_searchBar || !_bar.superview || ![self wanted])return;
-    // R20: during pull-down/scroll, UIKit re-invokes layoutSubviews on the
-    // hidden search bar even when its geometry hasn't changed; skip the
-    // 200-view subview scan when cached size & custom dimensions match.
-    CGFloat customKey=WXGHomeSearchCustomKey();
-    if(!_nativeSearching && _table.tableHeaderView==_groupHeader && _nativeHeaderHeight==_groupHeader.nativeHeader.bounds.size.height && CGSizeEqualToSize(view.bounds.size,_lastMeasuredBarSize) && fabs(customKey-_lastCustomKey)<.01 && fabs(_groupGap-[WXGConfig.shared extraNumber:@"homeSearchGroupGap"])<.01 &&
-       [_fieldSource isEqualToString:WXGDrawnBoxSource]) {
-        ++_skippedLaidOuts;return;
-    }
+    if(_adjustingHeader || !view || view!=_searchBar || ![self wanted])return;
+    if(!_bar.superview && !WXGHomeSearchExposed(_page))return;
     UITableView *table=_table;UIView *header=table.tableHeaderView;
     if(!table || !header || ![view isDescendantOfView:header])return;
     [self mountOver:view header:header table:table];
@@ -2102,11 +2207,26 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
         if(using)return;
         _nativeSearching=NO;
     }
-    NSString *source=nil;CGRect field=[self fieldRectIn:bar source:&source];
+    WXGHomeGroupHeader *current=_groupHeader;
+    UIView *native=current.nativeHeader;
+    UIUserInterfaceStyle style=bar.traitCollection.userInterfaceStyle;
+    BOOL local=WXGPreferences.shared.localSearch,floating=[self floatWanted];
+    if(current && header==current && bar==_searchBar && _bar.superview &&
+       _layoutRevision==WXGConfigRevision() && _layoutLocalSearch==local && _layoutFloat==floating &&
+       _measuredStyle==style && CGSizeEqualToSize(bar.bounds.size,_lastMeasuredBarSize) &&
+       current.bounds.size.width==_lastHeaderWidth && native.bounds.size.height==_nativeHeaderHeight &&
+       current.leading==[self leadingForHeader:current table:table] &&
+       CGRectEqualToRect([bar convertRect:_fieldRect toView:native],_measuredInNative) &&
+       (_drawnField?([_drawnField isDescendantOfView:bar] && !_drawnField.hidden &&
+          CGRectEqualToRect([_drawnField convertRect:_drawnField.bounds toView:bar],_fieldRect)):
+          (![_fieldSource isEqualToString:WXGDrawnBoxSource] && CACurrentMediaTime()<_measureFallbackAfter))) {
+        ++_skippedLaidOuts;[self revealInitialRows:table];return;
+    }
+    NSString *source=nil;UIView *paint=nil;
+    CGRect field=[self fieldRectIn:bar source:&source paint:&paint];
     if(CGRectIsNull(field) || field.size.width<80){_status=@"等待原生搜索框布局";return;}
     WXGHomeGroupHeader *container=[self groupHeaderFor:table];
     if(!container)return;
-    _fieldRect=field;_fieldSource=source;
     if(!_bar) {
         _bar=[[WXGSegmentBar alloc] initWithFrame:CGRectZero];
         [_bar addTarget:self action:@selector(segmentChanged:) forControlEvents:UIControlEventValueChanged];
@@ -2122,22 +2242,28 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
             dispatch_async(dispatch_get_main_queue(),^{WXGChatSegments *me=weakSelf;if(me && me->_bar && [me wanted])[me applyGroup:chosen];});
         }
     }
-    _bar.titles=[self groupNames];
-    UIView *native=container.nativeHeader;
+    native=container.nativeHeader;
     _nativeHeaderHeight=native.bounds.size.height;
     CGRect measured=[bar convertRect:field toView:native];
     WXGRect box={measured.origin.x,measured.origin.y,measured.size.width,measured.size.height};
     if(!WXGHomeSearchFieldReady(box,native.bounds.size.width,_nativeHeaderHeight))return;
-    CGRect group=WXGApplyHomeSearchGeometry(measured,container.bounds.size.width,_nativeHeaderHeight,NULL);
-    CGRect search=([self floatWanted] || WXGPreferences.shared.localSearch)?group:measured;
+    CGRect group=WXGHomeConfiguredRow(measured,container.bounds.size.width,YES);
+    CGRect search=WXGHomeConfiguredRow(measured,container.bounds.size.width,NO);
     _groupGap=[WXGConfig.shared extraNumber:@"homeSearchGroupGap"];
+    CGFloat leading=[self leadingForHeader:container table:table];
+    [UIView performWithoutAnimation:^{
+        [container placeNativeAtLeading:leading field:measured target:(local || floating)?measured:search];
+    }];
     WXGHomeGroupLayout stack=WXGHomeGroupBelowSearch(_nativeHeaderHeight,CGRectGetMaxY(measured),
         CGRectGetMaxY(search),group.size.height,_groupGap);
     _nativeBottomGap=stack.bottomGap;
-    group.origin.y=stack.groupY;
-    [self applyHeaderHeight:stack.headerHeight onHeader:container table:table];
+    group.origin.y=leading+stack.groupY;
+    [self applyHeaderHeight:leading+stack.headerHeight onHeader:container table:table];
     _naturalFrame=CGRectInset(group,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
-    _lastMeasuredBarSize=bar.bounds.size;_lastCustomKey=WXGHomeSearchCustomKey();
+    _fieldRect=field;_fieldSource=source;_drawnField=paint;
+    _measuredInNative=measured;_measureFallbackAfter=CACurrentMediaTime()+.5;
+    _lastMeasuredBarSize=bar.bounds.size;_lastHeaderWidth=container.bounds.size.width;
+    _layoutRevision=WXGConfigRevision();_measuredStyle=style;_layoutLocalSearch=local;_layoutFloat=floating;
     CGRect frame=[self listFrame];
     if(container!=_container)_segmentFloating=NO;
     if(!_segmentFloating)[UIView performWithoutAnimation:^{
@@ -2147,13 +2273,12 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
         if(!CGRectEqualToRect(self->_bar.frame,frame)){self->_bar.frame=frame;++self->_moves;}
     }];
     _container=container;
-    if(bar!=_searchBar)_fieldRechecks=0;
-    _searchBar=bar;
     [self applyColorsFrom:bar];
     WXGInstallFilterHook();
     WXGFilterWatching=YES;
     _bar.hidden=_segmentCovered;_bar.active=!_segmentCovered;
     _status=@"搜索框与分组栏共存";
+    [self revealInitialRows:table];
 }
 - (CGRect)listFrame {return _naturalFrame;}
 - (void)takeProbe {
@@ -2343,6 +2468,7 @@ static CGRect WXGApplyHomeSearchGeometry(CGRect naturalField,CGFloat hostWidth,C
     _titleNavView=nil;_titlePullView=nil;_titleOverlay=nil;_titleAvailableRect=CGRectZero;_titleRestRect=CGRectZero;_titleLastRect=CGRectZero;
 }
 - (void)segmentChanged:(WXGSegmentBar *)bar {
+    _startupPending=NO;_startupUntil=0;
     NSArray<NSDictionary *> *groups=WXGChatGroupList();
     NSInteger previous=_selected;
     _selected=(NSInteger)WXGClamp(bar.selectedIndex,0,(NSInteger)groups.count-1);++_switches;
@@ -2598,7 +2724,7 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
         }];
         _floatBaseOrigin=frame.origin;_floatBaseSize=frame.size;_lastFloatY=frame.origin.y;_hasLastFloatY=YES;++_frameWrites;
     }
-    _segmentFloating=YES;
+    _segmentFloating=YES;_placedViewport=table.bounds;_placedHeader=container.frame;_placedInset=table.adjustedContentInset.top;
     double ms=(CACurrentMediaTime()-t0)*1000.;
     if(ms>_maxPlaceMS)_maxPlaceMS=ms;
 }
@@ -2650,7 +2776,7 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
 // field fieldRectIn: falls back to, counted as a miss. Another size of the
 // box: its icon and text are copied again.
 - (void)measureSlot:(WXGFloatSlot *)slot now:(CFTimeInterval)now {
-    NSString *source=nil;CGRect f=[self fieldRectIn:slot.bar source:&source];slot.measured=now;
+    NSString *source=nil;CGRect f=[self fieldRectIn:slot.bar source:&source paint:NULL];slot.measured=now;
     if(!slot.nativeField || ![slot.nativeField isDescendantOfView:slot.bar]) {
         slot.nativeField=nil;
         if([slot.bar isKindOfClass:UISearchBar.class])slot.nativeField=((UISearchBar *)slot.bar).searchTextField;
@@ -2714,7 +2840,7 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
         if(!bar)slot.field=CGRectNull;
     }
     if(bar) {
-        BOOL due=slot.measured==0 || (slot.exact?now-slot.measured>(slot.pinned?1:.5):(now-slot.since<1 || (now-slot.measured>.5 && slot.misses<80)));
+        BOOL due=slot.measured==0 || (slot.exact?now-slot.measured>(slot.pinned?1:.5):(now-slot.measured>(now-slot.since<1?.12:.5) && slot.misses<80));
         if(due)[self measureSlot:slot now:now];
     }
     UIView *header=table.tableHeaderView,*host=table.superview;
@@ -2723,7 +2849,6 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     for(UIView *v=bar;v && v!=table;v=v.superview)if(v.hidden){[self unpin:slot];return;}
     if(slot.editingField.isFirstResponder || page.navigationItem.searchController.isActive || slot.nativeField.isFirstResponder || slot.nativeField.text.length || (bar.alpha<.01 && !slot.pinned)){[self unpin:slot];return;}
     slot.editingField=nil;
-    if(!slot.pinned && slot.measured!=now)[self measureSlot:slot now:now];
     if(!slot.clone) {
         slot.clone=[[WXGFloatingSearch alloc] initWithFrame:CGRectZero];
         [slot.clone addTarget:self action:@selector(floatingTapped:) forControlEvents:UIControlEventTouchUpInside];
@@ -2732,18 +2857,18 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     UIUserInterfaceStyle style=bar.traitCollection.userInterfaceStyle;
     if(slot.lookCopied && style!=slot.lookStyle){slot.lookCopied=NO;slot.lookTries=0;slot.lookTried=0;slot.lookAgainAt=now+.5;}
     if(slot.lookAgainAt && now>=slot.lookAgainAt){slot.lookAgainAt=0;slot.lookCopied=NO;slot.lookTries=0;slot.lookTried=0;}
-    if(!slot.lookCopied && slot.exact && slot.lookTries<90 && (now-slot.since<1 || now-slot.lookTried>.5)) {
+    if(!slot.lookCopied && slot.exact && slot.lookTries<90 && (now-slot.lookTried>(now-slot.since<1?.12:.5))) {
         slot.lookTried=now;if(now-slot.since>=1)++slot.lookTries;
         if((slot.lookCopied=[clone copyLookOf:bar])){slot.lookStyle=style;slot.lookTries=0;}
     }
-    if(!slot.pinned && !(slot.exact && slot.lookCopied) && now-slot.since<1)return;
+    if(!slot.pinned && !slot.exact && now-slot.since<1)return;
     static Class homeClass;static dispatch_once_t homeOnce;dispatch_once(&homeOnce,^{homeClass=NSClassFromString(@"NewMainFrameViewController");});
     CGRect fieldInBar=slot.field;
     if(homeClass && [page isKindOfClass:homeClass]) {
-        CGFloat needed=header.frame.size.height;
-        CGRect inHeader=[bar convertRect:slot.field toView:header];
-        CGRect custom=WXGApplyHomeSearchGeometry(inHeader,header.bounds.size.width,header.frame.size.height,&needed);
-        fieldInBar=[header convertRect:custom toView:bar];
+        UIView *native=WXGHomeNativeSearchHeader(header);
+        CGRect inNative=[bar convertRect:slot.field toView:native];
+        CGRect custom=WXGHomeConfiguredRow(inNative,native.bounds.size.width,NO);
+        fieldInBar=[native convertRect:custom toView:bar];
     }
     CGRect natural=WXGHomeRect(bar,fieldInBar,host,NO);
     CGRect inHeader=[bar convertRect:fieldInBar toView:header];
@@ -2756,9 +2881,14 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
         ?CGRectGetMaxY([navBar convertRect:navBar.bounds toView:host]):NAN;
     UIWindow *window=host.window;
     CGFloat safeTop=[window convertPoint:CGPointMake(0,CGRectGetMinY(window.bounds)+window.safeAreaInsets.top) toView:host].y;
+    CGFloat rowBottom=[WXGIntegrationHost.shared homeRowBottomForPage:page window:window];
+    if(isfinite(rowBottom)) {
+        CGFloat row=[window convertPoint:CGPointMake(0,rowBottom) toView:host].y;
+        navBottom=isfinite(navBottom)?MAX(navBottom,row):row;expectsNav=YES;
+    }
     bool atNative=false;
     CGRect frame=natural;
-    frame.origin.y=WXGFloatSearchPlacement(natural.origin.y,inHeader.origin.y-header.bounds.origin.y,viewport.origin.y,
+    frame.origin.y=WXGFloatSearchPlacement(natural.origin.y,inHeader.origin.y-header.bounds.origin.y-(header==_groupHeader?_groupHeader.leading:0),viewport.origin.y,
         table.adjustedContentInset.top,expectsNav,navBottom,safeTop,&atNative);
     if(!isfinite(frame.origin.y)){[self unpin:slot];return;}
     CGFloat scale=window.screen.scale;
@@ -2782,19 +2912,22 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     CGRect nativeField=WXGHomeRect(bar,slot.field,host,NO);
     clone.passThrough=atNative && CGRectContainsRect(CGRectInset(nativeField,-.5,-.5),frame);
     WXGRaiseAboveList(clone,host,table);
-    [UIView performWithoutAnimation:^{
-        [CATransaction begin];[CATransaction setDisableActions:YES];
-        if(!slot.pinned || slot.measured==now || slot.ownedHeader!=header)
-            [self claimSearchHeader:header slot:slot refreshRoots:slot.measured==now];
-        if(!CGSizeEqualToSize(clone.bounds.size,frame.size))clone.bounds=(CGRect){CGPointZero,frame.size};
-        CGPoint center=CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame));
-        if(!CGPointEqualToPoint(clone.center,center))clone.center=center;
-        if(!clone.surface.active)clone.surface.active=YES;
-        if(clone.hidden)clone.hidden=NO;
-        [CATransaction commit];
-    }];
+    BOOL claim=!slot.pinned || slot.measured==now || slot.ownedHeader!=header;
+    CGPoint center=CGPointMake(CGRectGetMidX(frame),CGRectGetMidY(frame));
+    BOOL resize=!CGSizeEqualToSize(clone.bounds.size,frame.size),move=!CGPointEqualToPoint(clone.center,center);
+    if(claim || resize || move || !clone.surface.active || clone.hidden) {
+        [UIView performWithoutAnimation:^{
+            [CATransaction begin];[CATransaction setDisableActions:YES];
+            if(claim)[self claimSearchHeader:header slot:slot refreshRoots:slot.measured==now];
+            if(resize)clone.bounds=(CGRect){CGPointZero,frame.size};
+            if(move)clone.center=center;
+            if(!clone.surface.active)clone.surface.active=YES;
+            if(clone.hidden)clone.hidden=NO;
+            [CATransaction commit];
+        }];
+    }
     if(!slot.pinned){slot.pinned=YES;slot.parked=NO;++slot.pins;}
-    [clone.surface tick:time];
+    if(time>0)[clone.surface tick:time];
 }
 // The floating capsule tapped (held below the title row: WeChat's bar has
 // scrolled away). FIX114 M (user: straight to the search page, nothing in
@@ -2823,14 +2956,26 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
 - (void)hostTick:(CFTimeInterval)time page:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome homePanel:(CGFloat)homePanel rowOffset:(CGFloat)rowOffset {
     BOOL floatOn=[self floatWanted];
     UITableView *table=_table;UIView *host=table.superview;
+    if(_bar.window && leaf==_page && !transitioning && (table.dragging || table.decelerating)) {
+        if(_lastScrollFrame>0 && time>_lastScrollFrame) {
+            double interval=(time-_lastScrollFrame)*1000;
+            _maxScrollFrameMS=MAX(_maxScrollFrameMS,interval);
+            if(interval>33.5)++_slowScrollFrames;
+        }
+        _lastScrollFrame=time;
+    }else _lastScrollFrame=0;
     BOOL homeVisible=!transitioning && (floatOn || _segmentCovered) && WXGHomeSearchExposed(leaf);
     BOOL exposed=floatOn && homeVisible;
+    if((_startupPending || _startupUntil) && (table.tracking || table.dragging || table.decelerating ||
+       (_lastTickPage==_page && (leaf!=_page || transitioning)))) {
+        _startupPending=NO;_startupUntil=0;
+    }
     if(_segmentFloating && (!homeVisible || leaf!=_page))[self coverHomeSearchFor:_page];
     if(_segmentCovered && homeVisible && leaf==_page) {
         _segmentCovered=NO;
         _bar.hidden=_nativeSearching;_bar.active=!_nativeSearching;
     }
-    UIView *floatHost=exposed && host.window && leaf==_page?host:nil;_floatHost=floatHost;
+    UIView *floatHost=exposed && host.window && leaf==_page?host:nil;
     // FIX114 E / F: arriving on the home page: where the bar / capsule is drawn, each tick, ~1 s.
     static Class homeClass;static dispatch_once_t homeOnce;dispatch_once(&homeOnce,^{homeClass=NSClassFromString(@"NewMainFrameViewController");});
     BOOL arrived=leaf && _lastTickPage!=leaf;
@@ -2842,10 +2987,19 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     // while the page slides.
     if(_bar.superview && _searchBar && leaf==_page && !transitioning && _fieldRechecks<6 && ![_fieldSource isEqualToString:WXGDrawnBoxSource] && time-_fieldRecheck>.5) {
         _fieldRecheck=time;++_fieldRechecks;
-        if(!CGRectIsNull(WXGVisibleSearchBox(_searchBar)))[self searchBarLaidOut:_searchBar];
+        if(!CGRectIsNull(WXGVisibleSearchBox(_searchBar))){_lastMeasuredBarSize=CGSizeZero;[self searchBarLaidOut:_searchBar];}
     }
+    _lastPanel=homePanel;
     if(exposed)[self floatNativeOn:leaf time:time homePanel:homePanel];
-    if(_bar && _bar.superview)[self placeSegmentIn:floatHost];
+    WXGFloatSlot *activeSlot=exposed?[_floats objectForKey:leaf]:nil;
+    _floatHost=activeSlot.pinned?floatHost:nil;
+    if(_bar && _bar.superview) {
+        if((_startupPending || _startupUntil) && !transitioning && leaf==_page) {
+            if(_groupHeader.leading!=[self leadingForHeader:_groupHeader table:table])[self searchBarLaidOut:_searchBar];
+            [self revealInitialRows:table];
+        }
+        [self placeSegmentIn:_floatHost];
+    }
     [self followTitleBarInOverlay:overlay page:leaf transitioning:transitioning transitionInvolvesHome:transitionInvolvesHome homePanel:homePanel rowOffset:rowOffset];
     if(_bar.window && _returnTrace && time-_returnedAt<1.2 && _returnTrace.count<90) {
         CGRect r=[_bar convertRect:_bar.bounds toView:nil];UIView *field=_searchBar;
@@ -2884,7 +3038,7 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     _selected=0;_selectedGroupID=nil;
     if(![self titleModeWanted]){WXGFilterWatching=NO;WXGFilterSnapshot=nil;}
     [self restoreResizedHeader];
-    _hasLastFloatY=NO;_floatBaseSize=CGSizeZero;_lastMeasuredBarSize=CGSizeZero;
+    _hasLastFloatY=NO;_floatBaseSize=CGSizeZero;_lastMeasuredBarSize=CGSizeZero;_startupPending=NO;_startupUntil=0;
     if(!_bar)return;
     _segmentFloating=NO;_segmentCovered=NO;
     _bar.transform=CGAffineTransformIdentity;
@@ -2912,9 +3066,9 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
              @"searchBar":bar?[NSString stringWithFormat:@"%@ %@ alpha %.2f",NSStringFromClass(bar.class),NSStringFromCGRect(bar.frame),bar.alpha]:@"",
              @"field":NSStringFromCGRect(_fieldRect),@"fieldSource":_fieldSource?:@"",@"colors":_colorSource?:@"",
              @"counts":@{@"mounts":@(_mounts),@"moves":@(_moves),@"switches":@(_switches),@"restores":@(_restores),@"nativeSearches":@(_nativeSearches)},
-             @"stutter":@{@"transformMoves":@(_transformMoves),@"frameWrites":@(_frameWrites),@"skippedLaidOuts":@(_skippedLaidOuts),@"maxPlaceMS":@(round(_maxPlaceMS*100)/100)},
+             @"stutter":@{@"fieldScans":@(_fieldScans),@"headerWrites":@(_headerWrites),@"startupReveals":@(_startupReveals),@"offsetBefore":@(_startupBefore),@"offsetAfter":@(_startupAfter),@"transformMoves":@(_transformMoves),@"frameWrites":@(_frameWrites),@"skippedLaidOuts":@(_skippedLaidOuts),@"maxPlaceMS":@(round(_maxPlaceMS*100)/100),@"maxScrollFrameMS":@(round(_maxScrollFrameMS*10)/10),@"scrollFramesOver33ms":@(_slowScrollFrames)},
              @"customSearch":@{@"widthPct":@(cfg.homeSearchWidthPct),@"height":@(cfg.homeSearchHeight),@"topGap":@(cfg.homeSearchTopGap),
-                               @"nativeHeaderH":@(_nativeHeaderHeight),@"resizedHeaderH":@(_groupHeader.frame.size.height)},
+                               @"groupWidthPct":@([cfg extraNumber:@"homeGroupWidthPct"]),@"groupHeight":@([cfg extraNumber:@"homeGroupHeight"]),@"leading":@(_groupHeader.leading),@"nativeHeaderH":@(_nativeHeaderHeight),@"resizedHeaderH":@(_groupHeader.frame.size.height)},
              @"titleBar":@{@"wanted":@([self titleModeWanted]),@"mounted":@(_titleBar.superview!=nil),@"selected":@(_titleSelected),
                            @"navTitleInWindow":@(_titleNavView.window!=nil),
                            @"pullTitleInWindow":@(_titlePullView.window!=nil),

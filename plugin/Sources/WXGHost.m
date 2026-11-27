@@ -583,7 +583,7 @@ static UIView *WXGFinderLiveContainer(WXGFinderLink *link) {
 @property(nonatomic) CGFloat homePull;
 @property(nonatomic,strong) NSMutableDictionary<NSNumber *,NSArray *> *badgeArtCache;   // FIX108 D
 @property(nonatomic) CGFloat homeFloorHold;            // FIX108 C: the floor while pulled, held a moment after
-@property(nonatomic) CGFloat homePullFloorValue;
+@property(nonatomic) CGFloat homePullFloorValue,homeRowBottom;
 @property(nonatomic) CFTimeInterval homePullSeenAt;
 @property(nonatomic) CFTimeInterval homePullTraceAt,homePullTraceStart;
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *homePullTrace;
@@ -3409,6 +3409,7 @@ static UIView *WXGNativeClone(UIView *control) {
     CGFloat rowDY=WXGFinderFeed(_route.leaf)?0:round(WXGTitleRowOffset(m.scale)*rowPixel)/rowPixel;
     CGFloat edge=WXGFinderPage(_route.leaf)?WXGFinderRowEdge(m.scale):WXGTitleRowEdge(m.scale);   // FIX115 S: 视频号's own margin
     centerY+=rowDY;_rowOffset=rowDY;
+    _homeRowBottom=home?centerY+m.button*.5:NAN;
     self.navCapsuleLeaf=_route.leaf;   // FIX113 Q; FIX114 C: the page the title row's offset is for
     CGFloat left=w.safeAreaInsets.left+edge,right=w.bounds.size.width-w.safeAreaInsets.right-edge;
     NSMutableArray *leftButtons=[NSMutableArray array],*rightButtons=[NSMutableArray array];
@@ -5098,6 +5099,9 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     for(WXGSurface *surface in _departingButtons)surface.alphaFloor=0;
 }
 - (CGFloat)homePullAlphaFloor {return _homePullFloorValue;}
+- (CGFloat)homeRowBottomForPage:(UIViewController *)page window:(UIWindow *)window {
+    return page && _navCapsuleLeaf==page && _window==window?_homeRowBottom:NAN;
+}
 // FIX93: what the title bar does while the home list is pulled (every 0.1 s,
 // the last 60 samples): WeChat's opacity of each button's own view, the
 // glass's, positions, the navigation bar's; where the native views live.

@@ -110,6 +110,8 @@ FOUNDATION_EXPORT BOOL WXGTelegramTabIconsOn(void);
 FOUNDATION_EXPORT BOOL WXGDockThemeFirst(void);
 FOUNDATION_EXPORT NSInteger WXGTelegramFrameCount(NSInteger tab);
 FOUNDATION_EXPORT NSArray<UIImage *> *WXGTelegramFrames(NSInteger tab);
+// Immutable CGImages at the original pixel size. Safe on the icon rendering queue.
+FOUNDATION_EXPORT NSArray *WXGTelegramInkFrames(NSInteger tab,UIColor *ink);
 FOUNDATION_EXPORT UIImage *WXGTelegramTabImage(NSInteger tab,NSInteger frame,UIColor *color);
 // FIX113 F: the resting glyph's ink width as a share of the frame's (main thread).
 FOUNDATION_EXPORT CGFloat WXGTelegramRestInkWidth(NSInteger tab);

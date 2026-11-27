@@ -56,14 +56,8 @@ static double WXGInputPrintDistance(NSData *a,NSData *b) {
    (green 24x24 circle, 32x32 pulse halo, MMLoadingIndicatorView, and the
    green/white mic UIImageViews inside MMTransparentButton). */
 static BOOL WXGInputDictationNativeActive(UIView *icon,UIControl *button) {
-    if(!icon || !icon.window)return NO;
+    if(!icon.window || icon.hidden || icon.alpha<=.01)return NO;
     if(button && button.selected)return YES;
-    NSMutableArray<CALayer *> *queue=[NSMutableArray arrayWithObject:icon.layer];
-    for(NSUInteger i=0;i<queue.count && i<64;i++) {
-        CALayer *layer=queue[i];
-        if(layer.animationKeys.count)return YES;
-        if(layer.sublayers)[queue addObjectsFromArray:layer.sublayers];
-    }
     CGFloat iconW=icon.bounds.size.width;
     for(UIView *sub in icon.subviews) {
         if(sub.hidden || sub.alpha<=.05)continue;
@@ -74,18 +68,17 @@ static BOOL WXGInputDictationNativeActive(UIView *icon,UIControl *button) {
                 for(NSUInteger i=1;i<mics.count;i++)if(!mics[i].hidden && mics[i].alpha>.05)return YES;
                 if(mics[0].hidden || mics[0].alpha<.5)return YES;
             }
-            if(sub!=button)return YES;
             continue;
         }
         // Skip the static wide VoiceBgMask wrapper (52x40 vs 32x40 icon).
         if([NSStringFromClass(sub.class) isEqual:@"UIView"] && sub.bounds.size.width>iconW+6.)continue;
-        if([NSStringFromClass(sub.class) isEqual:@"UIView"] && sub.bounds.size.width>=16. && sub.bounds.size.height>=16.)return YES;
+        if(sub.class==UIView.class && sub.layer.cornerRadius>0 && sub.layer.animationKeys.count)return YES;
         NSString *cls=NSStringFromClass(sub.class);
         if([cls containsString:@"Loading"] || [cls containsString:@"Wave"] || [cls containsString:@"Record"] || [cls containsString:@"Dictation"])return YES;
     }
     for(UIView *v in WXGViews(icon,48)) {
         if(v==icon || v.hidden || v.alpha<=.05)continue;
-        if([v isKindOfClass:UIImageView.class] && (((UIImageView *)v).isAnimating || ((UIImageView *)v).animationImages.count))return YES;
+        if([v isKindOfClass:UIImageView.class] && (((UIImageView *)v).isAnimating || [v.layer animationForKey:@"contents"]))return YES;
         if([v isKindOfClass:UIActivityIndicatorView.class])return YES;
     }
     return NO;
@@ -95,6 +88,59 @@ static BOOL WXGInputDictationNativeActive(UIView *icon,UIControl *button) {
    InputToolViewBar, MMGrowTextView, and MMGrowDictationIconView so touches on
    the repositioned dictation button always reach MMTransparentButton's
    iconClicked action and never get stolen by siblings or clipped by _grow. */
+// Keep the actual native icon and its animated children in the right-hand slot.
+// A grow-view layout on every deletion can otherwise reset its frame after our pass.
+@interface WXGDictationSlot : NSObject
+@property(nonatomic,weak) UIView *parent;
+@property(nonatomic) CGPoint center,nativeCenter;
+@property(nonatomic) BOOL writing;
+@end
+@implementation WXGDictationSlot
+@end
+static char WXGDictationSlotKey;
+static NSUInteger WXGDictationNativeRepositions;
+static void WXGInstallDictationPosition(void) {
+    static dispatch_once_t once;dispatch_once(&once,^{
+        Class cls=NSClassFromString(@"MMGrowDictationIconView");
+        if(!cls)return;
+        Class sup=class_getSuperclass(cls);
+        SEL frame=@selector(setFrame:),center=@selector(setCenter:);
+        IMP ownFrame=WXGCapturedImplementation(cls,frame),ownCenter=WXGCapturedImplementation(cls,center);
+        IMP frameHook=imp_implementationWithBlock(^(UIView *v,CGRect proposed){
+            WXGDictationSlot *slot=objc_getAssociatedObject(v,&WXGDictationSlotKey);
+            IMP original=WXGThrough(ownFrame,sup,frame);
+            if(!slot || slot.writing || slot.parent!=v.superview){((void(*)(id,SEL,CGRect))original)(v,frame,proposed);return;}
+            CGPoint native=CGPointMake(CGRectGetMidX(proposed),CGRectGetMidY(proposed));
+            if(!CGPointEqualToPoint(native,slot.center)) {
+                slot.nativeCenter=native;++WXGDictationNativeRepositions;
+            }
+            proposed=WXGCGRect(WXGInputFrameAtSlot(WXGInputRect(proposed),slot.center.x,slot.center.y));
+            slot.writing=YES;
+            @try {((void(*)(id,SEL,CGRect))original)(v,frame,proposed);}
+            @finally {slot.writing=NO;}
+        });
+        WXGInstallOverride(cls,frame,frameHook,method_getTypeEncoding(class_getInstanceMethod(cls,frame)));
+        IMP centerHook=imp_implementationWithBlock(^(UIView *v,CGPoint proposed){
+            WXGDictationSlot *slot=objc_getAssociatedObject(v,&WXGDictationSlotKey);
+            BOOL pinned=slot && !slot.writing && slot.parent==v.superview;
+            if(pinned && !CGPointEqualToPoint(proposed,slot.center)) {
+                slot.nativeCenter=proposed;++WXGDictationNativeRepositions;
+            }
+            if(pinned)slot.writing=YES;
+            @try {((void(*)(id,SEL,CGPoint))WXGThrough(ownCenter,sup,center))(v,center,pinned?slot.center:proposed);}
+            @finally {if(pinned)slot.writing=NO;}
+        });
+        WXGInstallOverride(cls,center,centerHook,method_getTypeEncoding(class_getInstanceMethod(cls,center)));
+    });
+}
+static void WXGReleaseDictationSlot(UIView *icon) {
+    WXGDictationSlot *slot=icon?objc_getAssociatedObject(icon,&WXGDictationSlotKey):nil;
+    if(!slot)return;
+    objc_setAssociatedObject(icon,&WXGDictationSlotKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+    if(slot.parent==icon.superview && CGPointEqualToPoint(icon.center,slot.center))
+        [UIView performWithoutAnimation:^{icon.center=slot.nativeCenter;}];
+}
+
 static char WXGDictationTouchTargetKey;
 @interface WXGWeakBox : NSObject
 @property(nonatomic,weak) UIView *view;
@@ -108,7 +154,7 @@ static char WXGDictationTouchTargetKey;
 @end
 static void WXGSetDictationTouchTarget(UIView *host,UIView *target,id adapter) {
     if(!host)return;
-    if(!target){objc_setAssociatedObject(host,&WXGDictationTouchTargetKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);return;}
+    if(!target && !adapter){objc_setAssociatedObject(host,&WXGDictationTouchTargetKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);return;}
     WXGWeakBox *box=objc_getAssociatedObject(host,&WXGDictationTouchTargetKey);
     if(!box){box=[WXGWeakBox new];objc_setAssociatedObject(host,&WXGDictationTouchTargetKey,box,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     box.view=target;
@@ -130,6 +176,7 @@ static BOOL WXGInstallDictationTouchHook(UIView *host) {
         BOOL hit=((BOOL (*)(id,SEL,CGPoint,UIEvent *))WXGThrough(piOwn,superclass,piSel))(self,piSel,p,ev);
         WXGWeakBox *box=objc_getAssociatedObject(self,&WXGDictationTouchTargetKey);
         UIView *target=box.view;
+        if(box.adapter && !target)return NO;
         BOOL matched=hit;
         if(!matched && target && !target.hidden && target.alpha>.01 && [target isDescendantOfView:self]) {
             CGRect r=[target convertRect:target.bounds toView:self];
@@ -147,6 +194,7 @@ static BOOL WXGInstallDictationTouchHook(UIView *host) {
             UIView *ownHit=((UIView *(*)(id,SEL,CGPoint,UIEvent *))WXGThrough(htOwn,superclass,htSel))(self,htSel,p,ev);
             WXGWeakBox *box=objc_getAssociatedObject(self,&WXGDictationTouchTargetKey);
             UIView *target=box.view;
+            if(box.adapter && !target)return nil;
             if(target && !target.hidden && target.alpha>.01 && target.window && [target isDescendantOfView:self]) {
                 // Never steal taps destined for sibling WXGSurface buttons (e.g. emoji or plus).
                 if(self!=target && ownHit && [ownHit isKindOfClass:WXGSurface.class])return ownHit;
@@ -202,8 +250,8 @@ static void WXGSetInputForeground(UIView *panel,WXGSurface *mic,WXGSurface *emoj
 @property(nonatomic,strong) NSArray<WXGSurface *> *surfaces;
 @property(nonatomic) CGFloat nativeGrowHeight,nativeTextHeight;
 @property(nonatomic) CGFloat singleLineHeight;
-@property(nonatomic) CGRect lastGrowFrame,lastRecordFrame,lastEmojiFrame,lastDictationFrame,lastMicSlotRect;
-@property(nonatomic) BOOL lastVoiceMode,usingNativeDictation,dictationTouchHooked,pluginHidDictation;
+@property(nonatomic) CGRect lastGrowFrame,lastRecordFrame,lastEmojiFrame,lastMicSlotRect;
+@property(nonatomic) BOOL lastVoiceMode,usingNativeDictation,dictationTouchHooked;
 @property(nonatomic) BOOL lastEditing,lastHasText,lastEditorVisible;
 @property(nonatomic) CFTimeInterval dictationHoldUntil;
 @property(nonatomic,strong) NSMutableArray<NSString *> *dictationTrace;
@@ -257,7 +305,9 @@ static NSData *WXGEmojiFacePrint;
     return fallback;
 }
 - (void)bindOptionalActions {
-    _lastBindingScan=CACurrentMediaTime();_dictation=nil;UIControl *button=nil;
+    _lastBindingScan=CACurrentMediaTime();
+    UIView *previousIcon=_dictation;UIControl *previousSend=_sendButton;
+    _dictation=nil;UIControl *button=nil;
     for(UIView *v in WXGViews(_grow,90)) {
         if([NSStringFromClass(v.class) isEqual:@"MMGrowDictationIconView"]){_dictation=v;break;}
     }
@@ -265,6 +315,11 @@ static NSData *WXGEmojiFacePrint;
         for(UIView *v in WXGViews(_panel,120)) {
             if([NSStringFromClass(v.class) isEqual:@"MMGrowDictationIconView"]){_dictation=v;break;}
         }
+    }
+    if(previousIcon!=_dictation) {
+        UIView *next=_dictation;_dictation=previousIcon;
+        [self clearDictationTouchTargets];WXGReleaseDictationSlot(previousIcon);[_states restoreView:previousIcon];
+        _dictation=next;_dictationHoldUntil=0;
     }
     for(UIView *v in WXGViews(_dictation,32))
         if([v isKindOfClass:UIControl.class] && [WXGActionNames((id)v) containsObject:@"iconClicked"]){button=(id)v;break;}
@@ -281,6 +336,7 @@ static NSData *WXGEmojiFacePrint;
         if(!_voiceButton && [actions containsObject:@"onInputModeChangeButtonClicked:"])_voiceButton=(id)v;
         if([actions containsObject:@"onExpressionButtonClicked:"])_emojiButton=(id)v;
     }
+    if(previousSend!=_sendButton)[_states unconceal:previousSend];
     _lastEditing=_editor.isFirstResponder;_lastHasText=_editor.text.length>0;
     _lastEditorVisible=WXGVisible(_editor,_window);
     _lastPanelChildCount=_panel.subviews.count;_lastGrowChildCount=_grow.subviews.count;
@@ -320,20 +376,22 @@ static NSData *WXGEmojiFacePrint;
 - (void)placeNativeDictation:(CGRect)windowRect {
     UIView *icon=_dictation;UIView *parent=icon.superview;
     if(!icon || !parent || !_window)return;
-    if(_pluginHidDictation) {
-        [_states restoreView:icon];
-        _pluginHidDictation=NO;
+    [_states unconceal:icon];
+    WXGInstallDictationPosition();
+    WXGDictationSlot *slot=objc_getAssociatedObject(icon,&WXGDictationSlotKey);
+    if(!slot || slot.parent!=parent) {
+        slot=[WXGDictationSlot new];slot.parent=parent;slot.nativeCenter=icon.center;
+        objc_setAssociatedObject(icon,&WXGDictationSlotKey,slot,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
     }
-    [self rememberNativeFrame:icon lastApplied:_lastDictationFrame];
     CGRect inParent=[_window convertRect:windowRect toView:parent];
-    CGSize sz=icon.bounds.size;
-    if(sz.width<8 || sz.height<8)sz=inParent.size;
-    CGRect target=CGRectMake(round(CGRectGetMidX(inParent)-sz.width*.5),round(CGRectGetMidY(inParent)-sz.height*.5),sz.width,sz.height);
-    if(!CGRectEqualToRect(icon.frame,target)) {
-        [UIView performWithoutAnimation:^{icon.frame=target;}];
+    CGFloat scale=_window.screen.scale?:1;
+    slot.center=CGPointMake(round(CGRectGetMidX(inParent)*scale)/scale,round(CGRectGetMidY(inParent)*scale)/scale);
+    if(!CGPointEqualToPoint(icon.center,slot.center)) {
+        slot.writing=YES;
+        @try {[UIView performWithoutAnimation:^{icon.center=slot.center;}];}
+        @finally {slot.writing=NO;}
         ++_dictationPlacements;
     }
-    _lastDictationFrame=icon.frame;
     if(WXGInstallDictationTouchHook(icon))_dictationTouchHooked=YES;
     WXGSetDictationTouchTarget(icon,icon,self);
     for(UIView *a=parent;a && a!=_panel;a=a.superview) {
@@ -373,7 +431,7 @@ static NSData *WXGEmojiFacePrint;
     _nativeGrowHeight=MAX(40,grow.bounds.size.height);_nativeTextHeight=MAX(24,editor.bounds.size.height);
     _singleLineHeight=MIN(grow.bounds.size.height,MAX(24,editor.font.lineHeight+editor.textContainerInset.top+
         editor.textContainerInset.bottom+MAX(0,grow.bounds.size.height-editor.bounds.size.height)));
-    _lastGrowFrame=_lastRecordFrame=_lastEmojiFrame=_lastDictationFrame=_lastMicSlotRect=CGRectNull;
+    _lastGrowFrame=_lastRecordFrame=_lastEmojiFrame=_lastMicSlotRect=CGRectNull;
     [self bindOptionalActions];
     _surfaces[0].original=attachment;
     for(WXGSurface *s in _surfaces) {
@@ -466,29 +524,26 @@ static NSData *WXGEmojiFacePrint;
         UIControl *liveDictBtn=_dictation?[self liveDictationControlIn:_dictation window:w]:nil;
         CFTimeInterval nowT=CACurrentMediaTime();
         BOOL inGrace=!holdingVoice && nowT<_dictationHoldUntil;
-        if(_pluginHidDictation && _dictation && (editor.isFirstResponder || inGrace || liveDictBtn!=nil)) {
-            [_states restoreView:_dictation];
-            _pluginHidDictation=NO;
-        }
         BOOL dictationAnimating=_dictation && WXGInputDictationNativeActive(_dictation,liveDictBtn?:_dictationButton);
         if(dictationAnimating)_dictationHoldUntil=MAX(_dictationHoldUntil,nowT+.65);
-        BOOL dictationControlOK=(_dictationButton.window==w && WXGCanForward(_dictationButton)) || (liveDictBtn!=nil);
-        BOOL nativeDictationReady=!holdingVoice && _dictation && _dictation.superview && _dictation.window==w &&
-            !_dictation.hidden && _dictation.alpha>.01 && (dictationControlOK || dictationAnimating || inGrace);
+        BOOL dictationControlOK=(WXGVisible(_dictationButton,w) && WXGCanForward(_dictationButton)) || WXGCanForward(liveDictBtn);
+        BOOL nativeDictationReady=!holdingVoice && WXGVisible(_dictation,w) && (dictationControlOK || dictationAnimating || inGrace);
+        WXGInputAction previousAction=_rightAction;
+        BOOL sendVisible=WXGVisible(_sendButton,w) && WXGCanForward(_sendButton);
         _rightAction=WXGInputRightAction(editor.isFirstResponder,holdingVoice,editor.text.length>0,
             _voiceButton.window==w && WXGCanForward(_voiceButton),nativeDictationReady,
-            _sendButton.window==w && WXGCanForward(_sendButton));
+            sendVisible);
         BOOL keyboard=_rightAction==WXGInputActionKeyboard;
-        if(holdingVoice || keyboard)_dictationHoldUntil=0;
-        else if(nativeDictationReady && ((editor.isFirstResponder && dictationAnimating) || dictationAnimating || inGrace))
+        if(holdingVoice || keyboard || (_rightAction==WXGInputActionSend && !dictationAnimating))_dictationHoldUntil=0;
+        else if(nativeDictationReady && (dictationAnimating || inGrace))
             _rightAction=WXGInputActionDictation;
         BOOL sending=_rightAction==WXGInputActionSend,dictating=_rightAction==WXGInputActionDictation;
         BOOL useNativeDictation=dictating && nativeDictationReady;
-        if(useNativeDictation!=_usingNativeDictation || inGrace || dictationAnimating) {
+        if(useNativeDictation!=_usingNativeDictation || previousAction!=_rightAction) {
             if(!_dictationTrace)_dictationTrace=[NSMutableArray array];
-            NSString *note=[NSString stringWithFormat:@"%.2f use:%d act:%ld resp:%d txt:%d hold:%d anim:%d grace:%d ctrl:%@ hid:%d",
+            NSString *note=[NSString stringWithFormat:@"%.2f use:%d act:%ld resp:%d txt:%d hold:%d anim:%d grace:%d ctrl:%@ hid:%d sendVisible:%d",
                 WXGSecondsSinceLoad(),useNativeDictation,(long)_rightAction,editor.isFirstResponder,editor.text.length>0,
-                holdingVoice,dictationAnimating,inGrace,liveDictBtn?NSStringFromClass(liveDictBtn.class):@"none",_dictation.hidden];
+                holdingVoice,dictationAnimating,inGrace,liveDictBtn?NSStringFromClass(liveDictBtn.class):@"none",_dictation.hidden,sendVisible];
             if(![_dictationTrace.lastObject isEqualToString:note]) {
                 if(_dictationTrace.count>=16)[_dictationTrace removeObjectAtIndex:0];
                 [_dictationTrace addObject:note];
@@ -503,7 +558,11 @@ static NSData *WXGEmojiFacePrint;
             [self placeNativeDictation:micSlot];
         }else {
             [self clearDictationTouchTargets];
-            if(_dictation){[_states hide:_dictation];_pluginHidDictation=YES;}
+            if(_dictation) {
+                [_states conceal:_dictation];
+                if(WXGInstallDictationTouchHook(_dictation))WXGSetDictationTouchTarget(_dictation,nil,self);
+                WXGReleaseDictationSlot(_dictation);
+            }
             mic.original=sending?_sendButton:_rightAction!=WXGInputActionUnavailable?_voiceButton:nil;
             mic.perform=nil;mic.enabled=WXGCanForward(mic.original);mic.hidden=!mic.enabled;
             NSString *role=sending?@"send":keyboard?@"keyboardMode":@"voiceMode";
@@ -514,7 +573,7 @@ static NSData *WXGEmojiFacePrint;
             WXGInputSetActionIcon(mic,sending?@"send":keyboard?@"keyboard":@"voiceMode",iconD,mic.original);
         }
         for(WXGSurface *surface in _surfaces)surface.active=!surface.hidden;
-        if((useNativeDictation || mic.enabled) && WXGCanForward(_sendButton))[_states hide:_sendButton];else [_states restoreView:_sendButton];
+        if(useNativeDictation || mic.enabled)[_states conceal:_sendButton];else [_states unconceal:_sendButton];
         WXGSurface *emoji=_surfaces[3];emoji.original=hasEmoji?_emojiButton:nil;
         emoji.hidden=!hasEmoji;emoji.active=hasEmoji;emoji.enabled=hasEmoji;
         if(hasEmoji) {
@@ -554,7 +613,7 @@ static NSData *WXGEmojiFacePrint;
 - (void)setSuspended:(BOOL)suspended {
     if(_usingNativeLayout){[_nativeAdapter setSuspended:suspended];return;}
     if(_suspended==suspended)return;_suspended=suspended;
-    if(suspended)[self clearDictationTouchTargets];
+    if(suspended){[self clearDictationTouchTargets];WXGReleaseDictationSlot(_dictation);}
     for(WXGSurface *surface in _surfaces)surface.active=!suspended && _installed;
     if(!suspended){[_states reapply];[self layout];}
 }
@@ -562,15 +621,15 @@ static NSData *WXGEmojiFacePrint;
     if(_usingNativeLayout){[_nativeAdapter restore];_usingNativeLayout=NO;}
     if(!_installed)return;
     _installed=NO;
-    [self clearDictationTouchTargets];
+    [self clearDictationTouchTargets];WXGReleaseDictationSlot(_dictation);
     for(WXGSurface *s in _surfaces){s.active=NO;s.original=nil;s.glass.backdropExclusions=@[];s.hidden=YES;[s removeFromSuperview];}
     _surfaces[2].perform=nil;_surfaces[2].iconTint=nil;
     _emojiNativeImage=nil;_emojiNativePrint=nil;_emojiPanel=NO;_restingSince=0;_usingNativeDictation=NO;
-    _pluginHidDictation=NO;_dictationHoldUntil=0;
+    _dictationHoldUntil=0;
     WXGReleaseInputHost(_grow);WXGReleaseInputTool(_tool,self);[_states restore];_states=nil;
     [_grow setNeedsLayout];[_panel setNeedsLayout];[_tool setNeedsLayout];
     _tool=_panel=_grow=_dictation=nil;_editor=nil;_attachment=_dictationButton=_sendButton=_voiceButton=_emojiButton=_recordButton=nil;_controller=nil;
-    _lastGrowFrame=_lastRecordFrame=_lastEmojiFrame=_lastDictationFrame=_lastMicSlotRect=CGRectNull;_rightAction=WXGInputActionUnavailable;WXGInvalidateSharedBackdrop();
+    _lastGrowFrame=_lastRecordFrame=_lastEmojiFrame=_lastMicSlotRect=CGRectNull;_rightAction=WXGInputActionUnavailable;WXGInvalidateSharedBackdrop();
 }
 - (NSDictionary *)evidence {
     if(_usingNativeLayout)return _nativeAdapter.evidence;
@@ -593,7 +652,7 @@ static NSData *WXGEmojiFacePrint;
                             @"dictationClass":_dictation?NSStringFromClass(_dictation.class):@"none",
                             @"dictationFrame":CGRectIsNull(dr)?@"none":NSStringFromCGRect(dr),
                             @"micSlotRect":CGRectIsNull(_lastMicSlotRect)?@"none":NSStringFromCGRect(_lastMicSlotRect),
-                            @"placements":@(_dictationPlacements),@"backingsConcealed":@(_dictationBackings),@"touchHooked":@(_dictationTouchHooked),
+                            @"nativeRepositionAttempts":@(WXGDictationNativeRepositions),@"slotPinned":@(_dictation && objc_getAssociatedObject(_dictation,&WXGDictationSlotKey)),@"sendVisible":@(WXGVisible(_sendButton,_window) && WXGCanForward(_sendButton)),@"placements":@(_dictationPlacements),@"backingsConcealed":@(_dictationBackings),@"touchHooked":@(_dictationTouchHooked),
                             @"subviews":dictSub,@"trace":_dictationTrace?:@[]}};
 }
 @end

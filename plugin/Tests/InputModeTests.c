@@ -13,6 +13,15 @@ static void action_regressions(void) {
     assert(WXGInputRightAction(0,0,0,1,0,1)==WXGInputActionVoiceMode);
     assert(WXGInputRightAction(1,0,0,1,1,1)==WXGInputActionDictation);
     assert(WXGInputRightAction(1,0,1,1,1,1)==WXGInputActionSend);
+    // Dictation finishes before a native Send action becomes visible. Deleting
+    // through the last character keeps the same icon in the right-hand slot.
+    for(int length=4;length>=0;--length) {
+        assert(WXGInputRightAction(1,0,length>0,1,1,0)==WXGInputActionDictation);
+        WXGRect icon=WXGInputFrameAtSlot((WXGRect){120+length,0,32+length,40},300,20);
+        near(icon.x+icon.w*.5,300);near(icon.y+icon.h*.5,20);
+        near(icon.w,32+length);near(icon.h,40);
+    }
+    assert(WXGInputRightAction(1,0,1,1,1,1)==WXGInputActionSend);
     /* A retained draft must not turn the exit-from-voice button into Send. */
     assert(WXGInputRightAction(0,1,1,1,1,1)==WXGInputActionKeyboard);
     assert(WXGInputRightAction(0,1,0,1,1,1)==WXGInputActionKeyboard);
@@ -21,8 +30,8 @@ static void action_regressions(void) {
     assert(WXGInputRightAction(1,0,0,1,0,1)==WXGInputActionVoiceMode);
     assert(WXGInputRightAction(0,0,0,0,1,1)==WXGInputActionUnavailable);
     assert(WXGInputRightAction(0,1,0,0,1,1)==WXGInputActionUnavailable);
-    assert(WXGInputRightAction(1,0,1,0,1,0)==WXGInputActionUnavailable);
-    assert(WXGInputRightAction(1,0,1,1,1,0)==WXGInputActionVoiceMode);
+    assert(WXGInputRightAction(1,0,1,0,1,0)==WXGInputActionDictation);
+    assert(WXGInputRightAction(1,0,1,1,1,0)==WXGInputActionDictation);
     assert(WXGInputRightAction(1,0,0,0,1,0)==WXGInputActionDictation);
     assert(WXGInputRightAction(1,0,1,0,0,1)==WXGInputActionSend);
     assert(WXGInputRightAction(1,0,0,0,0,0)==WXGInputActionUnavailable);
