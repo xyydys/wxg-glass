@@ -136,6 +136,11 @@ static inline bool WXGHomeAtDuplicatedRest(double rest,double raw,double adjuste
 static inline double WXGHomePullTranslation(double offset,double inset,double scale) {
     return WXGHomePixel(fmax(0.,-(offset+inset)),scale);
 }
+// On release the close-area copy can already be parked above the navigation
+// row while its presentation opacity still wins. Its action remains usable.
+static inline double WXGHomePlusPullCenter(double closeAreaCenter,double navCenter,double pull) {
+    return closeAreaCenter<navCenter ? navCenter+pull : closeAreaCenter;
+}
 // WeChat crossfades two native rows. A zero-opacity search icon is normal on
 // an otherwise visible row, so callers measure its container, not that icon.
 static inline bool WXGHomeUsesPullControls(double navAlpha,double listAlpha,bool pulling) {

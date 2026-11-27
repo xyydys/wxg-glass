@@ -2067,6 +2067,16 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
     UINavigationBar *bar=_route.nav.navigationBar;
     BOOL attached=native && native.window==_window;
     CGFloat center=attached?CGRectGetMidY(WXGUnmovedWindowRect(native,bar,_window))+_rowOffset:rest;
+    if(surface.homePlusAnchor && attached && !_nativeTransition && !_pendingController && _homePanel==0 &&
+       bar.window==_window && !CGRectIsEmpty(bar.bounds) && [self homeBranchForHost:native]==1) {
+        CGFloat navCenter=CGRectGetMidY(WXGWindowRect(bar,_window))+_rowOffset;
+        for(UIView *button in _homePlusControls) {
+            if(![button isDescendantOfView:bar] || CGRectIsEmpty(button.bounds))continue;
+            navCenter=CGRectGetMidY(WXGUnmovedWindowRect(button,bar,_window))+_rowOffset;
+            break;
+        }
+        return WXGHomePlusPullCenter(center,navCenter,[self navigationHomePullFor:bar]);
+    }
     // The close-area twin already moves with the list. If only the stationary
     // item exists yet, follow the same rubber-banded displacement as the title.
     return center+[self navigationHomePullFor:attached?native:bar];
@@ -3778,6 +3788,7 @@ static UIView *WXGNativeClone(UIView *control) {
     for(WXGSurface *s in rightButtons.reverseObjectEnumerator) {
         CGFloat width=s.bounds.size.width-2*WXGCanvasPaddingX,height=s.bounds.size.height-2*WXGCanvasPaddingY;right-=width;   // FIX114 V: its own height
         CGFloat y=home?[self homeCenterForSurface:s fallback:centerY]:centerY;
+        if(home && s.homePlusAnchor)y=[w convertPoint:CGPointMake(0,y) toView:_navigationOverlay].y;
         [s placeMaterial:CGRectMake(right,y-height*.5,width,height) inParent:_navigationOverlay];right-=m.gap;
         [_navStates conceal:s.original];
     }

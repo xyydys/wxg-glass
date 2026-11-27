@@ -2320,6 +2320,9 @@ typedef struct {
 - (void)beforeCommit {
     if(WXGBackdropCaptureInProgress())return;
     @try {
+        // WeChat can replace navigationItem.titleView or reset its mask as the
+        // unread count arrives, even while the conversation list is stationary.
+        if(_titleBar.superview && _titleConceal)[self refreshHomeTitleMasks];
         if(_groupHeader && !_adjustingHeader && (_lastTickPage==_page || _returnReady) && _table.window && !WXGHomeListInNativePull(_table)) {
             UIView *published=_table.tableHeaderView;
             if(published==_groupHeader)_unrelatedHeader=nil;
@@ -3247,6 +3250,16 @@ static NSString *WXGLoginPlatform(NSString *text) {
     if(pullTitle && pullTitle!=navTitle)[_titleConceal conceal:pullTitle];
     [_titleConceal reapply];
 }
+- (void)refreshHomeTitleMasks {
+    UIView *navTitle=_page.navigationItem.titleView?:_titleNavView;
+    if(navTitle && (navTitle!=_titleNavView || ![navTitle.layer.mask.name isEqualToString:@"wxg.conceal"])) {
+        [_titleConceal conceal:navTitle];
+        _titleNavView=navTitle;
+    }
+    UIView *pullTitle=_titlePullView;
+    if(pullTitle && pullTitle!=navTitle && ![pullTitle.layer.mask.name isEqualToString:@"wxg.conceal"])
+        [_titleConceal conceal:pullTitle];
+}
 - (void)fitTitleBarInRect:(CGRect)available {
     if(_titleAvailableRect.size.height!=available.size.height)_titleHasRestDelta=NO;
     _titleAvailableRect=available;
@@ -3295,10 +3308,7 @@ static NSString *WXGLoginPlatform(NSString *text) {
     dispatch_once(&homeOnce,^{homeClass=NSClassFromString(@"NewMainFrameViewController");});
     BOOL onHome=homeClass && [leaf isKindOfClass:homeClass];
     BOOL allowShow=overlay && overlay.window && !CGRectIsEmpty(_titleRestRect) && (onHome || (transitioning && transitionInvolvesHome));
-    if(_titleConceal && (onHome || (transitioning && transitionInvolvesHome))) {
-        if(_titleNavView && ![_titleNavView.layer.mask.name isEqualToString:@"wxg.conceal"])[_titleConceal conceal:_titleNavView];
-        if(_titlePullView && ![_titlePullView.layer.mask.name isEqualToString:@"wxg.conceal"])[_titleConceal conceal:_titlePullView];
-    }
+    if(_titleConceal && (onHome || (transitioning && transitionInvolvesHome)))[self refreshHomeTitleMasks];
     if(!allowShow) {
         [self hideTitleBar];
         return;

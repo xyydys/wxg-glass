@@ -14,6 +14,13 @@ int main(void) {
     assert(!WXGHomeUsesPullControls(.5,.5,false));
     assert(WXGHomeUsesPullControls(0.,0.,true));
     assert(!WXGHomeUsesPullControls(0.,0.,false));
+    // Diagnostic 15: both copies are visible during the last layout of the
+    // bounce. The taskbar parks its 44 pt button at y=22 1/3 for one frame.
+    double navCenter=56.+1./3.+22.,parkedCenter=22.+1./3.+22.;
+    assert(WXGHomePlusPullCenter(navCenter+47.,navCenter,46.)==navCenter+47.);
+    assert(WXGHomePlusPullCenter(parkedCenter,navCenter,1.)==navCenter+1.);
+    assert(WXGHomePlusPullCenter(parkedCenter,navCenter,0.)==navCenter);
+    assert(WXGHomePlusPullCenter(navCenter,navCenter,0.)==navCenter);
     // An empty replacement may lay out behind the existing WCSearchBar.
     // A drawn replacement, genuine UIKit placeholder or active editor takes over.
     assert(WXGHomeWaitsForSearchArtwork(true,false,false,false));
