@@ -15,6 +15,11 @@ static inline WXGInputAction WXGInputRightAction(int editing,int holdingVoice,in
     if(canDictate)return WXGInputActionDictation;
     return canVoice?WXGInputActionVoiceMode:WXGInputActionUnavailable;
 }
+/* The open expression panel owns the return-to-keyboard button even after
+   the system keyboard resigns. A hardware keyboard alone has no screen area. */
+static inline int WXGInputShowsEmoji(int available,int keyboardOnly,int editing,int keyboardVisible,int expressionPanelOpen) {
+    return available && (!keyboardOnly || (editing && keyboardVisible) || expressionPanelOpen);
+}
 /* WeChat may resize the native icon when deleting the last dictated word.
    Accept that size while keeping the displayed action in its reserved slot. */
 static inline WXGRect WXGInputFrameAtSlot(WXGRect proposed,double cx,double cy) {

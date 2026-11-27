@@ -4,6 +4,7 @@
 #import "WXGInputSettledGeometry.h"
 #import "WXGInputRepairPolicy.h"
 #import <objc/runtime.h>
+#import <objc/message.h>
 
 static WXGRect WXGInputRect(CGRect r) {return (WXGRect){r.origin.x,r.origin.y,r.size.width,r.size.height};}
 // The two-ended bar can display configured SF Symbols or native button artwork.
@@ -284,7 +285,8 @@ static void WXGSetInputForeground(UIView *panel,WXGSurface *mic,WXGSurface *emoj
 @property(nonatomic,strong) UIImage *emojiNativeImage;
 @property(nonatomic,strong) NSData *emojiNativePrint;
 @property(nonatomic) CFTimeInterval emojiPrintSince,restingSince;
-@property(nonatomic) BOOL emojiPanel;
+@property(nonatomic) BOOL emojiPanel,emojiSuppressed,hasKeyboardFrame;
+@property(nonatomic) CGRect keyboardScreenFrame;
 @property(nonatomic) double emojiDistance;
 @end
 // FIX87: the shape of WeChat's smiley emoji button, learned once per run.
@@ -327,7 +329,7 @@ static NSData *WXGEmojiFacePrint;
 }
 - (void)bindOptionalActions {
     _lastBindingScan=CACurrentMediaTime();
-    UIView *previousIcon=_dictation;UIControl *previousSend=_sendButton;
+    UIView *previousIcon=_dictation;UIControl *previousSend=_sendButton,*previousEmoji=_emojiButton;
     _dictation=nil;UIControl *button=nil;
     for(UIView *v in WXGViews(_grow,90)) {
         if([NSStringFromClass(v.class) isEqual:@"MMGrowDictationIconView"]){_dictation=v;break;}
@@ -358,6 +360,10 @@ static NSData *WXGEmojiFacePrint;
         if([actions containsObject:@"onExpressionButtonClicked:"])_emojiButton=(id)v;
     }
     if(previousSend!=_sendButton)[_states unconceal:previousSend];
+    if(previousEmoji!=_emojiButton) {
+        if(previousEmoji)[_states restoreView:previousEmoji];
+        _emojiSuppressed=NO;
+    }
     _lastEditing=_editor.isFirstResponder;_lastHasText=_editor.text.length>0;
     _lastEditorVisible=WXGVisible(_editor,_window);
     _lastPanelChildCount=_panel.subviews.count;_lastGrowChildCount=_grow.subviews.count;
@@ -458,6 +464,8 @@ static NSData *WXGEmojiFacePrint;
         _status=@"等待原生编辑器/附件按钮布局完成，将在布局与页面回归时重试";return NO;
     }
     _tool=tool;_panel=panel;_grow=grow;_editor=editor;_attachment=attachment;_window=w;_controller=vc;
+    for(NSString *name in @[UIKeyboardWillChangeFrameNotification,UIKeyboardDidChangeFrameNotification,UIKeyboardDidHideNotification])
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(splitKeyboardChanged:) name:name object:nil];
     _states=[WXGStateBag new];
     [_states remember:grow].restoreGeometry=YES;
     _nativeGrowHeight=MAX(40,grow.bounds.size.height);_nativeTextHeight=MAX(24,editor.bounds.size.height);
@@ -499,6 +507,31 @@ static NSData *WXGEmojiFacePrint;
     if(WXGCanForward(_attachment))[_states hide:_attachment];
     if(WXGCanForward(_voiceButton))[_states hide:_voiceButton];
 }
+- (void)splitKeyboardChanged:(NSNotification *)note {
+    if(!_installed || !_window || _suspended)return;
+    if([note.object isKindOfClass:UIScreen.class] && note.object!=_window.screen)return;
+    NSNumber *local=note.userInfo[UIKeyboardIsLocalUserInfoKey];
+    if(local && !local.boolValue)return;
+    NSValue *end=note.userInfo[UIKeyboardFrameEndUserInfoKey];
+    BOOL hidden=[note.name isEqual:UIKeyboardDidHideNotification];
+    if(!hidden && !end)return;
+    _hasKeyboardFrame=YES;
+    _keyboardScreenFrame=hidden?CGRectZero:end.CGRectValue;
+    if([WXGConfig.shared extraNumber:@"splitEmojiKeyboardOnly"]>.5)[self layout];
+}
+- (BOOL)keyboardVisibleIn:(UIWindow *)window rowRaised:(BOOL)rowRaised {
+    CGRect usable=UIEdgeInsetsInsetRect(window.bounds,window.safeAreaInsets);
+    if(_hasKeyboardFrame) {
+        CGRect keyboard=[window convertRect:_keyboardScreenFrame fromCoordinateSpace:window.screen.coordinateSpace];
+        return !CGRectIsEmpty(CGRectIntersection(usable,keyboard));
+    }
+    SEL selector=@selector(keyboardLayoutGuide);
+    if([window respondsToSelector:selector]) {
+        UILayoutGuide *guide=((UILayoutGuide *(*)(id,SEL))objc_msgSend)(window,selector);
+        return !CGRectIsEmpty(CGRectIntersection(usable,guide.layoutFrame));
+    }
+    return rowRaised;
+}
 - (void)layout {
     if(WXGBackdropCaptureInProgress() || WXGNativeInputLayoutInProgress())return;
     if(_usingNativeLayout){[_nativeAdapter layout];return;}
@@ -525,7 +558,22 @@ static NSData *WXGEmojiFacePrint;
             WXGInputRect(nativeRect),_singleLineHeight,_nativeTextHeight,WXGPreferences.shared.sizeScale,size);
         WXGSurface *plus=_surfaces[0],*pill=_surfaces[1],*mic=_surfaces[2];
         WXGMetrics m=WXGMeasure(w.bounds.size.width-w.safeAreaInsets.left-w.safeAreaInsets.right,WXGPreferences.shared.sizeScale);
-        BOOL hasEmoji=_emojiButton && _emojiButton.window==w && !_emojiButton.hidden && WXGCanForward(_emojiButton);
+        BOOL emojiAvailable=_emojiButton && _emojiButton.window==w && !_emojiButton.hidden && WXGCanForward(_emojiButton);
+        if(emojiAvailable)[self updateEmojiState];
+        BOOL keyboardOnly=[WXGConfig.shared extraNumber:@"splitEmojiKeyboardOnly"]>.5;
+        BOOL keyboardVisible=NO,rowRaised=NO;
+        if(keyboardOnly && emojiAvailable) {
+            UIView *root=_controller.viewIfLoaded;
+            CGFloat restingBottom=CGRectGetMaxY([root convertRect:root.safeAreaLayoutGuide.layoutFrame toView:w]);
+            rowRaised=CGRectGetMaxY(WXGWindowRect(_panel,w))<restingBottom-1.;
+            keyboardVisible=[self keyboardVisibleIn:w rowRaised:rowRaised];
+            // A quick first tap can open the expression board before the normal
+            // idle fingerprint settles. Keep its face while the row is at rest.
+            if(!WXGEmojiFacePrint && !rowRaised && !editor.isFirstResponder && !keyboardVisible)
+                WXGEmojiFacePrint=_emojiNativePrint;
+        }
+        BOOL hasEmoji=WXGInputShowsEmoji(emojiAvailable,keyboardOnly,editor.isFirstResponder,keyboardVisible,
+                                         _emojiPanel && rowRaised);
         CGFloat emojiDiameter=MIN(g.mic.h,MAX(32.*m.scale,m.inputButton*.82));
         CGRect emojiRect=CGRectMake(g.mic.x-emojiDiameter-3.*m.scale,g.mic.y+g.mic.h*.5-emojiDiameter*.5,emojiDiameter,emojiDiameter);
         CGFloat base=g.mic.h/.9;
@@ -613,12 +661,17 @@ static NSData *WXGEmojiFacePrint;
         if(useNativeDictation || mic.enabled)[_states conceal:_sendButton];else [_states unconceal:_sendButton];
         WXGSurface *emoji=_surfaces[3];emoji.original=hasEmoji?_emojiButton:nil;
         emoji.hidden=!hasEmoji;emoji.active=hasEmoji;emoji.enabled=hasEmoji;
+        BOOL suppress=emojiAvailable && !hasEmoji;
+        if(_emojiSuppressed && !suppress)[_states restoreView:_emojiButton];
+        _emojiSuppressed=suppress;
         if(hasEmoji) {
-            [self updateEmojiState];
             WXGInputSetActionIcon(emoji,_emojiPanel?WXGInputSymbolEmojiKeyboard:WXGInputSymbolEmoji,_emojiButton);
             emoji.accessibilityLabel=_emojiPanel?@"切换到键盘":@"微信表情";
             [emoji placeMaterial:[w convertRect:emojiRect toView:_panel] inParent:_panel];
             [_states conceal:_emojiButton];
+        }else if(suppress) {
+            [_states conceal:_emojiButton];
+            [_states hide:_emojiButton]; // alpha zero also removes the native hit target
         }else [_states restoreView:_emojiButton];
         WXGSetInputForeground(_panel,mic,hasEmoji?emoji:nil);
     } @catch(NSException *e) {WXGLog(@"输入栏布局异常：%@",e.reason);[self restore];}
@@ -650,7 +703,7 @@ static NSData *WXGEmojiFacePrint;
 - (void)setSuspended:(BOOL)suspended {
     if(_usingNativeLayout){[_nativeAdapter setSuspended:suspended];return;}
     if(_suspended==suspended)return;_suspended=suspended;
-    if(suspended){[self clearDictationTouchTargets];WXGReleaseDictationSlot(_dictation);}
+    if(suspended){_hasKeyboardFrame=NO;[self clearDictationTouchTargets];WXGReleaseDictationSlot(_dictation);}
     for(WXGSurface *surface in _surfaces)surface.active=!suspended && _installed;
     if(!suspended){[_states reapply];[self layout];}
 }
@@ -658,6 +711,9 @@ static NSData *WXGEmojiFacePrint;
     if(_usingNativeLayout){[_nativeAdapter restore];_usingNativeLayout=NO;}
     if(!_installed)return;
     _installed=NO;
+    for(NSString *name in @[UIKeyboardWillChangeFrameNotification,UIKeyboardDidChangeFrameNotification,UIKeyboardDidHideNotification])
+        [NSNotificationCenter.defaultCenter removeObserver:self name:name object:nil];
+    _hasKeyboardFrame=NO;_emojiSuppressed=NO;
     [self clearDictationTouchTargets];WXGReleaseDictationSlot(_dictation);
     for(WXGSurface *s in _surfaces){s.active=NO;s.original=nil;s.glass.backdropExclusions=@[];s.hidden=YES;[s removeFromSuperview];}
     _surfaces[2].perform=nil;_surfaces[2].iconTint=nil;
@@ -683,7 +739,7 @@ static NSData *WXGEmojiFacePrint;
              @"voiceModeActions":WXGActionNames(_voiceButton),@"rightAction":@(_rightAction),@"voiceRecordingVisible":@(_lastVoiceMode),
              @"recordButtonClass":_recordButton?NSStringFromClass(_recordButton.class):@"none",@"nativeRecordGesturesRetained":@YES,
              @"dictationActions":WXGActionNames(_dictationButton),@"paintAndLayout":_states.evidence?:@[],
-             @"emoji":@{@"panel":@(_emojiPanel),@"distance":@(round(_emojiDistance*1000)/1000),@"faceLearned":@(WXGEmojiFacePrint!=nil),
+             @"emoji":@{@"hiddenAtRest":@(_emojiSuppressed),@"panel":@(_emojiPanel),@"distance":@(round(_emojiDistance*1000)/1000),@"faceLearned":@(WXGEmojiFacePrint!=nil),
                         @"nativeSelected":@(_emojiButton.selected),@"nativeImage":_emojiNativeImage?[NSString stringWithFormat:@"%p %.0fx%.0f",_emojiNativeImage,_emojiNativeImage.size.width,_emojiNativeImage.size.height]:@"none"},
              @"dictation":@{@"nativeMode":@YES,@"active":@(_usingNativeDictation),@"animating":@(WXGInputDictationNativeActive(_dictation,_dictationButton)),
                             @"dictationClass":_dictation?NSStringFromClass(_dictation.class):@"none",

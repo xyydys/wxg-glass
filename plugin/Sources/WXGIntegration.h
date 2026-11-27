@@ -404,6 +404,7 @@ FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我
 - (BOOL)titleModeWanted;   // R20: expand home title capsule into compact All/Unread group bar
 - (void)updateOnPage:(UIViewController *)page;   // the host's refresh on the chat list
 - (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect navTitle:(UIView *)navTitle pullTitle:(UIView *)pullTitle englishHint:(BOOL)englishHint;
+- (void)moveTitleWithHomePage:(UIViewController *)home;
 - (void)finishHomeTitleRowBeforeCommit;
 - (void)hideTitleBar;      // visually hides the title group bar (keeps MFTitleView concealed while titleModeWanted is on)
 - (void)releaseTitleBar;   // hides the title group bar and restores MFTitleView (when titleModeWanted is off or plugin disabled)
@@ -493,7 +494,7 @@ FOUNDATION_EXPORT NSString *WXGChatNameSummary(void);   // FIX113 Z: where the n
 // FIX114 V: a chat's title view while the plugin draws chat titles (the avatar
 // mode): hidden wherever it is (a new one WeChat makes as a swipe back starts
 // too); YES when it is (no capsule of the local glass behind it then).
-- (BOOL)concealsChatTitleView:(UIView *)view;
+- (BOOL)drawsChatTitleForView:(UIView *)view;
 // FIX114 M: WeChat's search page opened at once from `page` (its own search
 // entry, as its search button does); NO when that page has none.
 - (BOOL)openWeChatSearchOn:(UIViewController *)page;

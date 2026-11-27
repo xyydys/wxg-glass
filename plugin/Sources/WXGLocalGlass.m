@@ -1886,9 +1886,9 @@ static BOOL WXGLocalTitleAllowedForView(UIView *view) {
     // FIX114 V (user's screenshot, 23:46: a capsule with the chat's name and no
     // avatar in a swipe back): WeChat's new title view for the chat got a
     // capsule here; a chat title the plugin draws is hidden, never glassed.
-    if([WXGIntegrationHost.shared concealsChatTitleView:view]) {
+    if([WXGIntegrationHost.shared drawsChatTitleForView:view]) {
         WXGLocalEntry *was=WXGLocalEntryOfAnchor(view);if(was.mounted && was.kind==WXGLocalTitle)[self unmount:was];
-        [self skip:view because:@"聊天标题由插件自己画（头像模式）"];return;
+        [self skip:view because:@"聊天标题由导航栏绘制"];return;
     }
     if(view.layer.mask){[self skip:view because:@"标题由插件自己画（聊天页）"];return;}
     BOOL wasMounted=WXGLocalEntryOfAnchor(view).mounted;   // FIX108 F

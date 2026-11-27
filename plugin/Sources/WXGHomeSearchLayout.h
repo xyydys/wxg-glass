@@ -148,6 +148,11 @@ static inline bool WXGHomeAtDuplicatedRest(double rest,double raw,double adjuste
 static inline double WXGHomePullTranslation(double offset,double inset,double scale) {
     return WXGHomePixel(fmax(0.,-(offset+inset)),scale);
 }
+// Ordinary overscroll has just one displacement, already rubber-banded by the
+// list. Only an open mini-program drawer supplies a different physical row.
+static inline double WXGHomeTitleRowCenter(double rest,double offset,double top,double scale,double drawerCenter) {
+    return isfinite(drawerCenter)?drawerCenter:rest+WXGHomePullTranslation(offset,top,scale);
+}
 // On release the close-area copy can already be parked above the navigation
 // row while its presentation opacity still wins. Its action remains usable.
 static inline double WXGHomePlusPullCenter(double closeAreaCenter,double navCenter,double pull) {

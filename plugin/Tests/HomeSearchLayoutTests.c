@@ -96,6 +96,19 @@ int main(void) {
     // ui22 capture 11: the return callback was already at -100 1/3 before
     // restoring the bookmark. Both inset sources then reported the same top.
     const double nav=100.+1./3., panel=956., panelRaw=panel-nav;
+    // Capture 19: during an ordinary release the list reaches -100 1/3.
+    // Its two native title/button copies can still lay out at different Y's.
+    // Finishing the return to Home at the same offset must give the same row.
+    const double rest=78.+1./3., offsets[]={-152.-1./3.,-141.-2./3.,-136.-1./3.,
+        -129.-1./3.,-115.-2./3.,-108.-2./3.,-100.-2./3.,-nav,-nav,-nav,42.};
+    double previous=INFINITY;
+    for(unsigned i=0;i<sizeof(offsets)/sizeof(*offsets);i++) {
+        double y=WXGHomeTitleRowCenter(rest,offsets[i],nav,3.,NAN);
+        assert(fabs(y-(rest+fmax(0.,-offsets[i]-nav)))<1e-8 && y<=previous);
+        previous=y;
+    }
+    assert(previous==rest && WXGHomeTitleRowCenter(rest,0.,0.,3.,NAN)==rest);
+    assert(WXGHomeTitleRowCenter(rest,-panel,nav,3.,900.+2./3.)==900.+2./3.);
     assert(WXGHomeRestInset(nav,0,nav,3)==nav);
     assert(WXGHomeRestInset(nav,nav,2*nav,3)==nav);
     assert(WXGHomeRestInset(nav,nav+24,nav+24,3)==0);

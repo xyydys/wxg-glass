@@ -1596,16 +1596,27 @@ static UIViewController *WXGNavItemOwner(UINavigationController *nav,UIView *con
 - (BOOL)nativeLookFor:(UIViewController *)leaf {
     return [self navButtonsNativeFor:leaf] && [WXGConfig.shared extraNumber:@"navNativeLook"]>.5;
 }
-- (BOOL)concealsChatTitleView:(UIView *)view {
-    if(!view || !WXGPluginEnabled() || !WXGPreferences.shared.nav || !WXGPreferences.shared.avatarTitle)return NO;
-    if(WXGLicenseCurrentState(NO)!=WXGLicenseAuthorized)return NO;
+- (BOOL)drawsChatTitleForView:(UIView *)view {
+    if(!view || !WXGPluginEnabled() || !WXGPreferences.shared.nav)return NO;
     UINavigationBar *bar=nil;NSUInteger depth=0;
     for(UIView *p=view.superview;p && depth<12;p=p.superview,depth++)if([p isKindOfClass:UINavigationBar.class]){bar=(UINavigationBar *)p;break;}
     id delegate=bar.delegate;if(![delegate isKindOfClass:UINavigationController.class])return NO;
     static Class chat;static dispatch_once_t once;dispatch_once(&once,^{chat=NSClassFromString(@"BaseMsgContentViewController");});
-    UINavigationController *nav=delegate;UIViewController *owner=WXGNavItemOwner(nav,view);
+    UINavigationController *nav=delegate;
+    UIViewController *owner=nav.topViewController;
     UIView *titleView=owner.navigationItem.titleView;
-    if(!chat || ![owner isKindOfClass:chat] || !titleView || !(view==titleView || [view isDescendantOfView:titleView]))return NO;
+    if(!titleView || (view!=titleView && ![view isDescendantOfView:titleView])) {
+        owner=WXGNavItemOwner(nav,view);
+        titleView=owner.navigationItem.titleView;
+        if(!titleView || (view!=titleView && ![view isDescendantOfView:titleView]))return NO;
+    }
+    if(![owner isKindOfClass:chat] || [self chatBarNativeFor:owner] || WXGLicenseCurrentState(NO)!=WXGLicenseAuthorized)return NO;
+    if(!WXGPreferences.shared.avatarTitle) {
+        // A plain chat capsule is also drawn by buildNavigation. Suppress the
+        // local material during its first layout, before that method masks the
+        // text. A separately presented chat can still own its native material.
+        return nav==_route.nav && !_route.unsupported && !_suspendedByCover;
+    }
     if(!_navStates)_navStates=[WXGStateBag new];
     [_navStates conceal:titleView];return YES;
 }
@@ -2113,7 +2124,9 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
     CGPoint shift=[_navStates contentOffsetOf:view];
     CGFloat pull=[self navigationHomePullFor:view];
     if(view==_route.leaf.navigationItem.titleView && _homeIconBranch==1 && _homeIconSurface.active &&
-       _homeIconSurface.motionOwner==_route.leaf && _homeIconSurface.window==_window) {
+       _homeIconSurface.motionOwner==_route.leaf && _homeIconSurface.window==_window &&
+       (_homePanel>0. || WXGHomeHasPanelRange(_homeConversationList.adjustedContentInset.top,
+                                             _homeConversationList.bounds.size.height,_window.screen.scale))) {
         CGRect row=[_homeIconSurface convertRect:_homeIconSurface.materialRect toView:_window];
         pull=MAX(0.,CGRectGetMidY(row)-CGRectGetMidY(WXGWindowRect(bar,_window))-_rowOffset);
     }
@@ -3963,9 +3976,7 @@ static UIView *WXGNativeClone(UIView *control) {
             if(surface)[alive addObject:surface];
         }
     }
-    // R23: Home All/Unread title group bar mounted in _navigationOverlay, concealing
-    // native MFTitleView(s) via a dedicated bag (zero flash on return) and tracking
-    // MFTitleView's live presentationLayer 1:1 (zero swizzles, zero freeze).
+    // Measure the home group in the navigation row while native buttons set its width.
     BOOL strictHome=home && _route.primary && !_route.unsupported && !_suspendedByCover;
     if(strictHome && [WXGChatSegments.shared titleModeWanted]) {
         UIView *navTitle=_route.leaf.navigationItem.titleView;
@@ -3996,7 +4007,9 @@ static UIView *WXGNativeClone(UIView *control) {
         CGFloat avail=floor(2.*MAX(0,MIN(midX-leftBound,rightBound-midX)));
         if(avail>=m.button*1.8) {
             // The segment bar fits the actual title glyphs within these nav-button limits.
-            CGRect tr=CGRectMake(midX-avail*.5,round(centerY-m.button*.5),avail,round(m.button));
+            CGFloat titleHeight=round(m.button);
+            CGFloat titleCenter=CGRectGetMidY(nr)+rowDY;
+            CGRect tr=[w convertRect:CGRectMake(midX-avail*.5,titleCenter-titleHeight*.5,avail,titleHeight) toView:_navigationOverlay];
             [WXGChatSegments.shared updateTitleBarOnPage:_route.leaf inOverlay:_navigationOverlay rect:tr navTitle:navTitle pullTitle:pullTitle englishHint:enHint];
         }else [WXGChatSegments.shared hideTitleBar];
     }else if(![WXGChatSegments.shared titleModeWanted]) {
@@ -6597,6 +6610,7 @@ __attribute__((constructor)) static void WXGInitialize(void) {
             IMP original=method?method_getImplementation(method):NULL;
             if(original) {
                 IMP replacement=imp_implementationWithBlock(^(UIViewController *controller,BOOL animated){
+                    [WXGChatSegments.shared moveTitleWithHomePage:controller];
                     [WXGChatSegments.shared coverHomeSearchFor:controller];
                     ((void (*)(id,SEL,BOOL))original)(controller,selector,animated);
                     WXGTransitionPerfAppearance(controller,NO);

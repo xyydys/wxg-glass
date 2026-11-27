@@ -37,6 +37,22 @@ static void action_regressions(void) {
     assert(WXGInputRightAction(1,0,0,0,0,0)==WXGInputActionUnavailable);
 }
 
+static void split_emoji_visibility(void) {
+    assert(WXGInputShowsEmoji(1,0,0,0,0));   // existing default
+    assert(!WXGInputShowsEmoji(1,1,0,0,0));  // composer at rest
+    assert(WXGInputShowsEmoji(1,1,1,1,0));   // software keyboard in this chat
+    assert(!WXGInputShowsEmoji(1,1,1,0,0));  // hardware keyboard only
+    assert(!WXGInputShowsEmoji(1,1,0,1,0));  // another field owns the keyboard
+    assert(WXGInputShowsEmoji(1,1,0,0,1));   // expression board's return key
+    assert(!WXGInputShowsEmoji(0,0,1,1,1));
+    assert(!WXGInputShowsEmoji(0,1,1,1,1));
+
+    WXGRect editor={48,8,278,40},pill={85,8,280,40};
+    WXGRect withEmoji=WXGInputContentHost(editor,pill,285,6);
+    WXGRect withoutEmoji=WXGInputContentHost(editor,pill,321,6);
+    near(withoutEmoji.x,withEmoji.x);near(withoutEmoji.w-withEmoji.w,36);
+}
+
 static void captured_width_regression(void) {
     /* Snapshot 10: editor after the native parent's next layout extends
        77.91 pt under the emoji column, undoing the previous child-frame fix. */
@@ -98,7 +114,7 @@ static void reversible_native_geometry(void) {
 }
 
 int main(void) {
-    action_regressions();captured_width_regression();reversible_native_geometry();
-    printf("PASS: input mode 16 cases, captured overlap regression, %u width/height cases, native geometry restoration\n",geometry_invariants());
+    action_regressions();split_emoji_visibility();captured_width_regression();reversible_native_geometry();
+    printf("PASS: input actions and emoji visibility, captured overlap regression, %u width/height cases, native geometry restoration\n",geometry_invariants());
     return 0;
 }

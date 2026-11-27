@@ -6,7 +6,8 @@
 typedef struct {
     double w,h,r,x,y,firstX,firstY,tx,ty,area;
     double loX,loY,hiX,hiY,deepest;
-    int segments,closed;
+    double firstCurvature,endCurvature;
+    int segments,closed,hasCurvature;
 } Trace;
 
 static void tangent(Trace *t,double dx,double dy) {
@@ -15,6 +16,13 @@ static void tangent(Trace *t,double dx,double dy) {
     dx/=d;dy/=d;
     if(t->r>0. && (t->tx || t->ty))assert(dx*t->tx+dy*t->ty>.9999999);
     t->tx=dx;t->ty=dy;
+}
+// Normalized signed curvature is scale independent. Tangency alone misses
+// an inward bend and a sudden change of curvature at the end of a shoulder.
+static void join(Trace *t,double curvature) {
+    if(t->hasCurvature)assert(fabs(curvature-t->endCurvature)<.002);
+    else {t->firstCurvature=curvature;t->hasCurvature=1;}
+    t->endCurvature=curvature;
 }
 static void point(Trace *t,double x,double y) {
     t->loX=fmin(t->loX,x);t->loY=fmin(t->loY,y);
@@ -28,11 +36,22 @@ static void sample(void *ctx,int op,double x1,double y1,double x2,double y2,doub
     Trace *t=ctx;
     if(op==WXGRimMove){t->firstX=t->x=x;t->firstY=t->y=y;return;}
     if(op==WXGRimClose){x=t->firstX;y=t->firstY;t->closed++;}
-    if(op!=WXGRimCubic){tangent(t,x-t->x,y-t->y);point(t,x,y);return;}
+    if(op!=WXGRimCubic) {
+        if(t->r>0. && hypot(x-t->x,y-t->y)>1e-8)join(t,0.);
+        tangent(t,x-t->x,y-t->y);point(t,x,y);return;
+    }
     tangent(t,x1-t->x,y1-t->y);
     double x0=t->x,y0=t->y;
-    for(int i=1;i<=16;i++) {
+    for(int i=0;i<=16;i++) {
         double u=i/16.,v=1.-u;
+        double dx=3.*(v*v*(x1-x0)+2.*v*u*(x2-x1)+u*u*(x-x2));
+        double dy=3.*(v*v*(y1-y0)+2.*v*u*(y2-y1)+u*u*(y-y2));
+        double ddx=6.*(v*(x2-2.*x1+x0)+u*(x-2.*x2+x1));
+        double ddy=6.*(v*(y2-2.*y1+y0)+u*(y-2.*y2+y1));
+        double curvature=t->r*(dx*ddy-dy*ddx)/pow(hypot(dx,dy),3.);
+        assert(curvature>=-1e-7);
+        if(i==0)join(t,curvature);
+        if(i==16)t->endCurvature=curvature;
         point(t,v*v*v*x0+3*v*v*u*x1+3*v*u*u*x2+u*u*u*x,
                 v*v*v*y0+3*v*v*u*y1+3*v*u*u*y2+u*u*u*y);
     }
@@ -44,7 +63,10 @@ static Trace outline(double w,double h,double r) {
     assert(t.closed==1 && t.area>0);
     assert(fabs(t.loX)<1e-7 && fabs(t.loY)<1e-7);
     assert(fabs(t.hiX-w)<1e-7 && fabs(t.hiY-h)<1e-7);
-    if(r>0.)assert(t.segments>=8);
+    if(r>0.) {
+        assert(t.segments>=8 && t.hasCurvature);
+        assert(fabs(t.firstCurvature-t.endCurvature)<.002);
+    }
     return t;
 }
 int main(void) {
@@ -60,6 +82,18 @@ int main(void) {
     outline(76.197,button,16.33);
     outline(90,44,0.);
     outline(button+.033,button,button*.5);
-    puts("PASS: actual-sized iOS 26 vector contours, tangency through all shoulders, measured dip, inner ring, vertical capsule and fractional circle");
+    // Diagnostic 19's 53 and 82 pt chat titles, the full interval around
+    // them, and several insets of the nested antialiased rim bands.
+    for(int width=42;width<=125;width++) {
+        const double insets[]={0.,1./3.,1.005,4.};
+        double previousArea=INFINITY;
+        for(unsigned i=0;i<sizeof(insets)/sizeof(*insets);i++) {
+            double d=insets[i];
+            Trace band=outline(width-2.*d,button-2.*d,button*.5-d);
+            assert(band.area<previousArea);
+            previousArea=band.area;
+        }
+    }
+    puts("PASS: iOS 26 inner and outer vector contours, convexity and curvature continuity across compact widths, measured dip and fractional circles");
     return 0;
 }

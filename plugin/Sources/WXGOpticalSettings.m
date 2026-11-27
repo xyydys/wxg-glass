@@ -259,6 +259,7 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                  WXGSwitch(@"原生宽度三端输入（测试）",@"pref.nativeInputTest",nil),
                  WXGSwitch(@"双端输入栏用系统图标",@"splitInputSystemSymbols",nil),
                  WXGAction(@"自定义双端输入栏图标",@"open:splitSymbols",NO),
+                 WXGSwitch(@"双端输入栏在键盘收起时隐藏表情键",@"splitEmojiKeyboardOnly",nil),
                  WXGSlider(@"输入框高度",@"inputPillHeight",nil,34,54,@"%.1f pt"),
                  WXGSlider(@"左侧加号大小（0 = 和输入框一样高）",@"inputPlusSize",nil,0,54,@"%.1f pt"),
                  WXGSlider(@"离屏幕两边",@"inputSideMargin",nil,8,60,@"%.1f pt"),

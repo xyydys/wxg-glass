@@ -1714,47 +1714,6 @@ static CGFloat WXGHomeButtonRowAlpha(UIView *row,UIWindow *window) {
     }
     return alpha;
 }
-static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
-    if(!tv)return 0.;
-    BOOL hasLabel=NO;CGFloat maxAlpha=0.;
-    NSUInteger n=0;
-    for(UIView *c in tv.subviews) {
-        if(WXGIsPluginView(c))continue;
-        if(++n>16)break;
-        if([c isKindOfClass:UILabel.class]) {
-            UILabel *lb=(UILabel *)c;
-            if(!lb.text.length && !lb.attributedText.length)continue;
-            hasLabel=YES;
-            if(!lb.hidden) {
-                CALayer *l=lb.layer.presentationLayer?:lb.layer;
-                if(!l.hidden)maxAlpha=MAX(maxAlpha,l.opacity);
-            }
-        }else if([c isKindOfClass:UIActivityIndicatorView.class] && ((UIActivityIndicatorView *)c).isAnimating) {
-            if(!c.hidden) {
-                CALayer *l=c.layer.presentationLayer?:c.layer;
-                if(!l.hidden)maxAlpha=MAX(maxAlpha,l.opacity);
-            }
-        }else {
-            NSUInteger m=0;
-            for(UIView *d in c.subviews) {
-                if(WXGIsPluginView(d))continue;
-                if(++m>8)break;
-                if([d isKindOfClass:UILabel.class]) {
-                    UILabel *lb=(UILabel *)d;
-                    if(!lb.text.length && !lb.attributedText.length)continue;
-                    hasLabel=YES;
-                    if(!c.hidden && !lb.hidden) {
-                        CALayer *cl=c.layer.presentationLayer?:c.layer;
-                        CALayer *dl=lb.layer.presentationLayer?:lb.layer;
-                        if(!cl.hidden && !dl.hidden)maxAlpha=MAX(maxAlpha,cl.opacity*dl.opacity);
-                    }
-                }
-            }
-        }
-    }
-    return hasLabel?WXGClamp(maxAlpha,0.,1.):1.;
-}
-
 // Keep the search view at its native height. Enlarging a UISearchBar or its
 // stack view recentres its contents and feeds that offset back into the next layout.
 @interface WXGHomeGroupHeader : UIView
@@ -2248,18 +2207,17 @@ typedef struct {
     CFTimeInterval _nextDeviceCheck,_nextBadgeSeed;
     BOOL _triedInitialCategory;
     __weak id _categoryManager;
-    WXGSegmentBar *_titleBar;    // R23: overlay All/Unread group bar tracking native MFTitleView presentation 1:1
+    WXGSegmentBar *_titleBar;
+    __weak UIViewController *_titlePage;
     __weak UIView *_titleNavView,*_titlePullView;
     __weak UIView *_titleOverlay;
     WXGStateBag *_titleConceal;  // dedicated conceal bag: never wiped on push to chat -> zero flash on return
-    CGRect _titleAvailableRect,_titleRestRect,_titleLastRect;
-    BOOL _titleEnglishHint,_titleFollowsButtonRow;
+    CGRect _titleAvailableRect,_titleRestRect,_titlePageFrame;
+    BOOL _titleEnglishHint,_titleOnHomeRow;
     NSMutableArray<NSString *> *_titleTrace;
     NSInteger _titleSelected;
     CFTimeInterval _nextPullTitleLookup;
     CGFloat _traceTitleY,_traceTitleAlpha;
-    CGRect _titleSampledBounds;
-    BOOL _traceTitleHome,_traceTitleTransition;
     __weak UIView *_searchBar,*_container;__weak UITableView *_table;__weak UIViewController *_page;
     NSString *_status,*_fieldSource,*_colorSource;
     NSUInteger _mounts,_moves,_switches,_restores,_nativeSearches;
@@ -2372,9 +2330,6 @@ typedef struct {
             !CGSizeEqualToSize(_groupHeader.restViewport,_table.bounds.size) || !UIEdgeInsetsEqualToEdgeInsets(_groupHeader.restSafe,_table.window.safeAreaInsets)))
             [self homeTableInsetChanged:_table];
         if(_returnAppearing && _returnReady)[self restoreChatPositionIfReady];
-        if(!_titleFollowsButtonRow && _titleBar.superview && _lastTickPage==_page && _table.window &&
-           !CGRectEqualToRect(_titleSampledBounds,_table.bounds) && WXGHomeSearchExposed(_page))
-            [self followTitleBarInOverlay:_titleOverlay page:_page transitioning:NO transitionInvolvesHome:YES];
         if(_bar && _bar.superview) {
             UIView *host=_floatHost;
             if(_segmentFloating && host.window && _table.superview==host &&
@@ -2678,6 +2633,9 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     }
 }
 - (void)willPushFrom:(UIViewController *)home to:(UIViewController *)next {
+    if(home && home==_titlePage && _titleOnHomeRow && _titleBar.superview==_titleOverlay && home.viewIfLoaded.window && !home.transitionCoordinator)
+        _titlePageFrame=[_titleOverlay convertRect:_titleBar.frame toView:home.viewIfLoaded];
+    [self moveTitleWithHomePage:home];
     static Class chat;static dispatch_once_t once;dispatch_once(&once,^{chat=NSClassFromString(@"BaseMsgContentViewController");});
     if(!home || home!=_page || !chat || ![next isKindOfClass:chat] || (!_bar && !_titleBar) || !_table.window || _nativeSearching || WXGHomeListInNativePull(_table))return;
     [_pager cancel];_bookmarkedHome=home;_returnReady=NO;_returnAppearing=NO;_startupPending=NO;_startupUntil=0;
@@ -2692,6 +2650,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     return _page.navigationController.topViewController==_page || [coordinator viewControllerForKey:UITransitionContextToViewControllerKey]==_page;
 }
 - (void)willShowHome:(UIViewController *)page {
+    if(page.transitionCoordinator)[self moveTitleWithHomePage:page];
     if(!page || page!=_bookmarkedHome)return;
     _returnAppearing=YES;_returnReady=YES;_earlyPositionApplied=NO;_returnWaitUntil=CACurrentMediaTime()+.4;
     id<UIViewControllerTransitionCoordinator> coordinator=page.transitionCoordinator;
@@ -3287,10 +3246,7 @@ static NSString *WXGLoginPlatform(NSString *text) {
     stamped[@"since"]=@(round(WXGSecondsSinceLoad()*10)/10);
     _probe=stamped;_probeAt=CACurrentMediaTime();
 }
-// R23: Home All/Unread title group bar mounted cleanly in _navigationOverlay
-// (zero swizzles, zero KVO, zero subviews inside MFTitleView) while concealing
-// native MFTitleView(s) via a dedicated bag (zero flash on return from chat)
-// using the list offset on Home and the native presentation during navigation.
+// The home navigation item and the pull-down row each contain a native title.
 - (void)concealHomeTitlesNav:(UIView *)navTitle pull:(UIView *)pullTitle {
     if(![self titleModeWanted])return;
     if(!_titleConceal)_titleConceal=[WXGStateBag new];
@@ -3299,7 +3255,7 @@ static NSString *WXGLoginPlatform(NSString *text) {
     [_titleConceal reapply];
 }
 - (void)refreshHomeTitleMasks {
-    UIView *navTitle=_page.navigationItem.titleView?:_titleNavView;
+    UIView *navTitle=_titlePage.navigationItem.titleView?:_titleNavView;
     if(navTitle && (navTitle!=_titleNavView || ![navTitle.layer.mask.name isEqualToString:@"wxg.conceal"])) {
         [_titleConceal conceal:navTitle];
         _titleNavView=navTitle;
@@ -3312,13 +3268,16 @@ static NSString *WXGLoginPlatform(NSString *text) {
     _titleAvailableRect=available;
     CGFloat width=MIN(available.size.width,[_titleBar preferredTitleWidthForHeight:available.size.height]);
     _titleRestRect=CGRectMake(CGRectGetMidX(available)-width*.5,CGRectGetMinY(available),width,available.size.height);
-    if(!CGSizeEqualToSize(_titleLastRect.size,_titleRestRect.size))_titleLastRect=CGRectZero;
 }
 - (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect navTitle:(UIView *)navTitle pullTitle:(UIView *)pullTitle englishHint:(BOOL)englishHint {
     if(!NSThread.isMainThread)return;
     if(![self titleModeWanted]) {[self releaseTitleBar];return;}
     if(!page || !overlay || CGRectIsEmpty(rect) || rect.size.width<40 || rect.size.height<20) {
         [self hideTitleBar];return;
+    }
+    if(_titlePage!=page) {
+        [self releaseTitleBar];
+        _titlePage=page;
     }
     [self observe];
     if(page.isViewLoaded && page.view.window) {
@@ -3345,25 +3304,32 @@ static NSString *WXGLoginPlatform(NSString *text) {
     NSInteger liveIdx=atomic_load(&WXGFilterIndex)==1?1:0;
     if(_titleSelected!=liveIdx){_titleSelected=liveIdx;_titleBar.selectedIndex=liveIdx;}
     [self applyColorsToBar:_titleBar from:overlay];
-    [self followTitleBarInOverlay:overlay page:page transitioning:(page.transitionCoordinator!=nil) transitionInvolvesHome:YES];
+    [self followTitleBarInOverlay:overlay page:page transitioning:NO transitionInvolvesHome:NO];
 }
 - (void)followTitleBarInOverlay:(UIView *)overlay page:(UIViewController *)leaf transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome {
     if(!_titleBar && !_titleConceal)return;
     if(![self titleModeWanted]) {[self releaseTitleBar];return;}
-    static Class homeClass;static dispatch_once_t homeOnce;
-    dispatch_once(&homeOnce,^{homeClass=NSClassFromString(@"NewMainFrameViewController");});
-    BOOL onHome=homeClass && [leaf isKindOfClass:homeClass];
-    BOOL allowShow=overlay && overlay.window && !CGRectIsEmpty(_titleRestRect) && (onHome || (transitioning && transitionInvolvesHome));
-    if(_titleConceal && (onHome || (transitioning && transitionInvolvesHome)))[self refreshHomeTitleMasks];
-    if(!allowShow) {
+    UIViewController *home=_titlePage;
+    id<UIViewControllerTransitionCoordinator> coordinator=home.transitionCoordinator;
+    if(transitioning || coordinator) {
+        BOOL involvesHome=home && (coordinator ?
+            ([coordinator viewControllerForKey:UITransitionContextFromViewControllerKey]==home ||
+             [coordinator viewControllerForKey:UITransitionContextToViewControllerKey]==home) : transitionInvolvesHome);
+        if(involvesHome)[self moveTitleWithHomePage:home];
+        else [self hideTitleBar];
+        return;
+    }
+    if(!home || leaf!=home || !overlay.window || CGRectIsEmpty(_titleRestRect) ||
+       home.viewIfLoaded.window!=overlay.window || !WXGHomeSearchExposed(home) ||
+       home.navigationItem.searchController.isActive || _nativeSearching) {
         [self hideTitleBar];
         return;
     }
-    if(!_titleBar)return;
+    [self refreshHomeTitleMasks];
     UIWindow *w=overlay.window;
     UIView *navTitle=_titleNavView,*pullTitle=_titlePullView;
     // Lazily discover WeChat's secondary pull-down MFTitleView inside MainFrameTableView once if missing.
-    if((!pullTitle || pullTitle.window!=w) && onHome && _table.window==w && !_table.tracking && !_table.decelerating && CACurrentMediaTime()>=_nextPullTitleLookup) {
+    if((!pullTitle || pullTitle.window!=w) && _table.window==w && !_table.tracking && !_table.decelerating && CACurrentMediaTime()>=_nextPullTitleLookup) {
         _nextPullTitleLookup=CACurrentMediaTime()+.25;
         static Class mfTitleCls;static dispatch_once_t mfOnce;
         dispatch_once(&mfOnce,^{mfTitleCls=NSClassFromString(@"MFTitleView");});
@@ -3377,78 +3343,40 @@ static NSString *WXGLoginPlatform(NSString *text) {
             }
         }
     }
-    WXGSurface *row=onHome && !transitioning && !_nativeSearching && !leaf.navigationItem.searchController.isActive?
-        [WXGIntegrationHost.shared homeTitleRowAnchorForPage:leaf]:nil;
-    _titleFollowsButtonRow=row!=nil;
-    CGFloat navAlpha=!row && navTitle?WXGPresentedChainAlpha(navTitle,w)*WXGTitleContentPresentedAlpha(navTitle):0.;
-    CGFloat pullAlpha=!row && pullTitle?WXGPresentedChainAlpha(pullTitle,w)*WXGTitleContentPresentedAlpha(pullTitle):0.;
-    UIView *activeHost=nil;CGFloat shownAlpha=0.;
-    if(row) {
-        shownAlpha=WXGHomeButtonRowAlpha(row,w);
-    }else if(pullTitle && pullAlpha>navAlpha+.02) {
-        activeHost=pullTitle;shownAlpha=pullAlpha;
-    }else if(navTitle && navAlpha>.005) {
-        activeHost=navTitle;shownAlpha=navAlpha;
-    }else if(pullTitle && pullAlpha>.005) {
-        activeHost=pullTitle;shownAlpha=pullAlpha;
-    }else if(!navTitle && !pullTitle && onHome && !transitioning) {
-        shownAlpha=1.;
-    }
-    // R25: bridge WeChat's 1-3 frame navTitle <-> pullTitle handoff gap during
-    // partial pull-down & release using the host's homePullAlphaFloor (same
-    // floor that protects the "+" button), and keep the Metal bar warm while
-    // on Home so it never blinks re-presenting a frame.
-    CGFloat pullFloor=(!row && onHome && !transitioning)?[WXGIntegrationHost.shared homePullAlphaFloor]:0.;
-    if(pullFloor>.01 && shownAlpha<pullFloor)shownAlpha=pullFloor;
-    BOOL visible=shownAlpha>=.01;
-    CGRect rect=_titleRestRect;
-    if(onHome && !transitioning)_titleSampledBounds=_table.bounds;
-    if(row) {
-        CGRect material=[row convertRect:row.materialRect toView:overlay];
-        rect.origin.y=CGRectGetMidY(material)-rect.size.height*.5;
-        _titleLastRect=rect;
-    }else if(activeHost && visible) {
-        CGRect r=WXGHomeRect(activeHost,activeHost.bounds,overlay,transitioning);
-        CGPoint c=CGPointMake(CGRectGetMidX(r),CGRectGetMidY(r));
-        if(isfinite(c.x) && isfinite(c.y) && (fabs(c.x)>1. || fabs(c.y)>1.) && c.y>-rect.size.height && c.y<w.bounds.size.height+rect.size.height) {
-            CGFloat sc=w.screen.scale?:3.;
-            CGFloat rx=round((c.x-rect.size.width*.5)*sc)/sc;
-            if(!transitioning)rx=WXGClamp(rx,CGRectGetMinX(_titleAvailableRect),CGRectGetMaxX(_titleAvailableRect)-rect.size.width);
-            CGFloat ry=round((c.y-rect.size.height*.5)*sc)/sc;
-            rect=CGRectMake(rx,ry,rect.size.width,rect.size.height);
-            _titleLastRect=rect;
-        }
-    }else if(pullFloor>.01 && !CGRectIsEmpty(_titleLastRect)) {
-        rect=_titleLastRect;
-    }
-    BOOL keepWarm=onHome && !transitioning;
-    BOOL mountShown=visible || keepWarm;
-    CGRect target=CGRectInset(rect,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
-    [UIView performWithoutAnimation:^{
-        [CATransaction begin];[CATransaction setDisableActions:YES];
-        if(mountShown && self->_titleBar.superview!=overlay)[overlay addSubview:self->_titleBar];
-        if(mountShown) {
-            CGRect cur=self->_titleBar.frame;
-            if(fabs(cur.origin.x-target.origin.x)>.25 || fabs(cur.origin.y-target.origin.y)>.25 ||
-               fabs(cur.size.width-target.size.width)>.25 || fabs(cur.size.height-target.size.height)>.25) {
-                self->_titleBar.frame=target;
-            }
-        }
-        if(fabs(self->_titleBar.alpha-shownAlpha)>.005)self->_titleBar.alpha=shownAlpha;
-        BOOL hide=!mountShown;
-        if(self->_titleBar.hidden!=hide)self->_titleBar.hidden=hide;
-        [CATransaction commit];
-    }];
+    BOOL mount=_titleBar.superview!=overlay;
+    _titleOverlay=overlay;
+    _titleOnHomeRow=YES;
     _titleBar.acceptsReselection=_categories && _selected>=0;
-    _titleBar.userInteractionEnabled=visible && !transitioning;
-    _titleBar.active=mountShown && overlay.window!=nil;
-    if(!_titleTrace || _traceTitleHome!=onHome || _traceTitleTransition!=transitioning ||
-       fabs(_traceTitleAlpha-shownAlpha)>.01 || _traceTitleY!=rect.origin.y) {
-        if(!_titleTrace)_titleTrace=[NSMutableArray array];
-        _traceTitleHome=onHome;_traceTitleTransition=transitioning;_traceTitleAlpha=shownAlpha;_traceTitleY=rect.origin.y;
-        if(_titleTrace.count>=16)[_titleTrace removeObjectAtIndex:0];
-        [_titleTrace addObject:[NSString stringWithFormat:@"%.2f h:%d t:%d a:%.2f y:%.1f",WXGSecondsSinceLoad(),onHome,transitioning,shownAlpha,rect.origin.y]];
+    if(mount || _titleBar.hidden) {
+        [UIView performWithoutAnimation:^{
+            if(mount)[overlay addSubview:self->_titleBar];
+            [self finishHomeTitleRowBeforeCommit];
+            self->_titleBar.hidden=NO;
+            self->_titleBar.accessibilityElementsHidden=NO;
+        }];
     }
+    _titleBar.active=YES;
+}
+- (void)moveTitleWithHomePage:(UIViewController *)home {
+    if(!home || home!=_titlePage || !_titleBar)return;
+    _titleOnHomeRow=NO;
+    UIView *root=home.viewIfLoaded;
+    if(!root || CGRectIsEmpty(_titlePageFrame) || _nativeSearching || home.navigationItem.searchController.isActive) {
+        [self hideTitleBar];
+        return;
+    }
+    if(_titleBar.superview==root && !_titleBar.hidden &&
+       CGRectEqualToRect(_titleBar.frame,_titlePageFrame) && _titleBar.active==(root.window!=nil))return;
+    // The same glass travels inside its page, below the incoming controller.
+    // Converting from the window mid-swipe would cancel the page translation.
+    [UIView performWithoutAnimation:^{
+        if(self->_titleBar.superview!=root)[root addSubview:self->_titleBar];
+        if(!CGRectEqualToRect(self->_titleBar.frame,self->_titlePageFrame))self->_titleBar.frame=self->_titlePageFrame;
+        self->_titleBar.userInteractionEnabled=NO;
+        self->_titleBar.accessibilityElementsHidden=YES;
+        self->_titleBar.hidden=NO;
+        self->_titleBar.active=root.window!=nil;
+    }];
 }
 - (void)titleSegmentChanged:(WXGSegmentBar *)bar {
     [_pager cancel];[self restoreCategoryFold];
@@ -3475,29 +3403,41 @@ static NSString *WXGLoginPlatform(NSString *text) {
     }
 }
 - (void)finishHomeTitleRowBeforeCommit {
-    // A native row may finish layout after the display link even if the list
-    // bounds did not change. Read only the established anchor; mounting,
-    // measuring titles and discovering controls belong to the ordinary pass.
-    if(!_titleFollowsButtonRow || !_titleBar.superview || !_titleOverlay.window)return;
-    WXGSurface *row=[WXGIntegrationHost.shared homeTitleRowAnchorForPage:_page];
-    if(!row)return;
-    CGFloat y=CGRectGetMidY([row convertRect:row.materialRect toView:_titleOverlay]);
-    CGFloat alpha=WXGHomeButtonRowAlpha(row,_titleOverlay.window);
-    BOOL moved=fabs(_titleBar.center.y-y)>.001,opacityChanged=fabs(_titleBar.alpha-alpha)>.001;
-    if(!moved && !opacityChanged)return;
-    [UIView performWithoutAnimation:^{
-        if(moved) {
-            self->_titleBar.center=CGPointMake(self->_titleBar.center.x,y);
-            self->_titleLastRect.origin.y=y-self->_titleLastRect.size.height*.5;
-        }
-        if(opacityChanged) {
-            self->_titleBar.alpha=alpha;
-            self->_titleBar.userInteractionEnabled=alpha>=.01;
-        }
-    }];
+    if(!_titleOnHomeRow || WXGBackdropCaptureInProgress())return;
+    UIView *overlay=_titleOverlay,*root=_titlePage.viewIfLoaded;
+    UIWindow *window=overlay.window;
+    if(!window || _titleBar.superview!=overlay || root.window!=window)return;
+    UIScrollView *list=_table.window==window?_table:nil;
+    CGFloat scale=window.screen.scale;
+    BOOL drawer=_lastPanel>0. || (list && WXGHomeHasPanelRange(list.adjustedContentInset.top,list.bounds.size.height,scale));
+    WXGSurface *row=drawer?[WXGIntegrationHost.shared homeTitleRowAnchorForPage:_titlePage]:nil;
+    CGFloat drawerCenter=row?CGRectGetMidY([row convertRect:row.materialRect toView:overlay]):NAN;
+    CGFloat center=WXGHomeTitleRowCenter(CGRectGetMidY(_titleRestRect),list.contentOffset.y,
+        list?WXGHomeConversationTop(list):0.,scale,drawerCenter);
+    CGFloat alpha=row?WXGHomeButtonRowAlpha(row,window):1.;
+    CGRect rect=_titleRestRect;rect.origin.y=center-rect.size.height*.5;
+    CGRect target=CGRectInset(rect,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
+    BOOL moved=!CGRectEqualToRect(_titleBar.frame,target),interactive=alpha>=.01;
+    BOOL opacityChanged=fabs(_titleBar.alpha-alpha)>.001;
+    if(moved || opacityChanged || _titleBar.userInteractionEnabled!=interactive) {
+        [UIView performWithoutAnimation:^{
+            if(moved)self->_titleBar.frame=target;
+            if(opacityChanged)self->_titleBar.alpha=alpha;
+            self->_titleBar.userInteractionEnabled=interactive;
+        }];
+    }
+    // Cache only in the settled page's coordinate system, before UIKit can
+    // translate it or snapshot it. A cancelled pop uses the same local frame.
+    if(moved || CGRectIsEmpty(_titlePageFrame))_titlePageFrame=[overlay convertRect:target toView:root];
+    if(!_titleTrace || _traceTitleY!=rect.origin.y || fabs(_traceTitleAlpha-alpha)>.01) {
+        if(!_titleTrace)_titleTrace=[NSMutableArray array];
+        _traceTitleY=rect.origin.y;_traceTitleAlpha=alpha;
+        if(_titleTrace.count>=16)[_titleTrace removeObjectAtIndex:0];
+        [_titleTrace addObject:[NSString stringWithFormat:@"%.2f %@ y:%.2f pull:%.2f a:%.2f",WXGSecondsSinceLoad(),row?@"drawer":@"home",rect.origin.y,center-CGRectGetMidY(_titleRestRect),alpha]];
+    }
 }
 - (void)hideTitleBar {
-    _titleFollowsButtonRow=NO;
+    _titleOnHomeRow=NO;
     if(!_titleBar)return;
     _titleBar.userInteractionEnabled=NO;
     _titleBar.active=NO;_titleBar.hidden=YES;
@@ -3506,8 +3446,8 @@ static NSString *WXGLoginPlatform(NSString *text) {
 - (void)releaseTitleBar {
     [self hideTitleBar];
     [_titleConceal restore];
-    _titleConceal=nil;_titleSampledBounds=CGRectNull;
-    _titleNavView=nil;_titlePullView=nil;_titleOverlay=nil;_titleAvailableRect=CGRectZero;_titleRestRect=CGRectZero;_titleLastRect=CGRectZero;
+    _titleConceal=nil;_titlePage=nil;
+    _titleNavView=nil;_titlePullView=nil;_titleOverlay=nil;_titleAvailableRect=CGRectZero;_titleRestRect=CGRectZero;_titlePageFrame=CGRectZero;
 }
 - (void)segmentChanged:(WXGSegmentBar *)bar {
     _bookmarkedHome=nil;_returnReady=NO;
@@ -4258,6 +4198,7 @@ static float WXGHomeTraceY(UIView *view,CGFloat y,UIWindow *window,BOOL full) {
              @"customSearch":@{@"widthPct":@(cfg.homeSearchWidthPct),@"height":@(cfg.homeSearchHeight),@"topGap":@(cfg.homeSearchTopGap),
                                @"groupWidthPct":@([cfg extraNumber:@"homeGroupWidthPct"]),@"groupHeight":@([cfg extraNumber:@"homeGroupHeight"]),@"leading":@(_groupHeader.leading),@"nativeHeaderH":@(_nativeHeaderHeight),@"resizedHeaderH":@(_groupHeader.frame.size.height)},
              @"titleBar":@{@"wanted":@([self titleModeWanted]),@"mounted":@(_titleBar.superview!=nil),@"selected":@(_titleSelected),
+                           @"owner":!_titleBar.superview?@"none":_titleBar.superview==_titleOverlay?@"homeNavigation":@"homePage",
                            @"navTitleInWindow":@(_titleNavView.window!=nil),
                            @"pullTitleInWindow":@(_titlePullView.window!=nil),
                            @"alpha":@(_titleBar?_titleBar.alpha:0),@"hidden":@(_titleBar?_titleBar.hidden:YES),

@@ -178,6 +178,7 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // The old inputSystemIcons key selected the hand-drawn set. Old profiles
     // leave the SF Symbols preference at its new default.
     {"splitInputSystemSymbols",'b',1,0,1,NULL,NULL},
+    {"splitEmojiKeyboardOnly",'b',0,0,1,NULL,NULL},
 #define WXG_INPUT_SPEC(key,title,symbol,points,light) \
     {"split" #key "SymbolName",'s',0,0,0,NULL,symbol}, \
     {"split" #key "Weight",'n',2,0,4,NULL,NULL}, \
