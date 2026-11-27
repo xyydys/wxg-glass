@@ -1236,7 +1236,7 @@ static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect n
     UIView *homeHeader=WXGHomeNativeSearchHeader(homeTable.tableHeaderView);
     NSNumber *baseHeight=homeHeader?objc_getAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey):nil;
     NSNumber *applied=homeHeader?objc_getAssociatedObject(homeHeader,&WXGLocalAppliedHeaderHKey):nil;
-    BOOL vertical=homeHeader==homeTable.tableHeaderView && customHome && (cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
+    BOOL vertical=customHome && ![WXGChatSegments.shared wanted] && homeHeader==homeTable.tableHeaderView && (cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
     if(applied && (!vertical || fabs(applied.doubleValue-homeHeader.frame.size.height)>.5)) {
         if(!vertical && fabs(applied.doubleValue-homeHeader.frame.size.height)<=.5)
             [self resizeSearchHeader:homeHeader table:homeTable height:baseHeight.doubleValue];

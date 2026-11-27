@@ -5,6 +5,7 @@
 #import <Metal/Metal.h>
 #import <MetalKit/MTKTextureLoader.h>
 #import <objc/runtime.h>
+#import <dlfcn.h>
 typedef float WXGFloat4 __attribute__((ext_vector_type(4)));
 _Static_assert(sizeof(WXGFloat4)==16,"Float4 ABI");
 // FIX103: the glass shader (WXGGlass.metal) is not compiled into the plugin;
@@ -1427,7 +1428,8 @@ static BOOL WXGShadowRelativeHoleChanged(WXGShadowFootprint oldCaster,WXGShadowF
 @implementation WXGGlassView {
     WXGShadowFootprint _oldFootprint,_footprint;
     CALayer *_dropShadow;NSString *_dropShadowKey;   // FIX114 K
-    CAShapeLayer *_singleShadowHole;
+    CAShapeLayer *_shadowCutoutShape;
+    __weak UIViewController *_cutoutPage;
     CALayer *_dropShadowMask;NSString *_dropShadowMaskKey;   // R20/R24: boolean alpha mask punching out overlapping sibling glasses so shadows never paint over nearby glass
     NSHashTable<UIView *> *_shadowClips;              // FIX114 L: ancestors opened for the shadow
     CGRect _shadowNeed;BOOL _shadowNeedValid;         // FIX114 M: what of the shadow shows (this view's coordinates)
@@ -1822,7 +1824,7 @@ static NSHashTable<WXGGlassView *> *WXGAllLiveGlasses;            // R20: all mo
 static NSUInteger WXGShadowClipsOpened,WXGShadowReclips,WXGShadowRechecks;
 static BOOL WXGShadowRecheckWanted,WXGShadowWriting,WXGShadowFootprintsCurrent;
 static NSMapTable<UIScrollView *,NSValue *> *WXGShadowScrollBounds;
-static NSUInteger WXGShadowScrollUpdates,WXGShadowVectorMasks,WXGShadowBitmapMasks;
+static NSUInteger WXGShadowScrollUpdates,WXGShadowVectorMasks,WXGShadowCompoundMasks,WXGShadowBitmapMasks;
 static CFTimeInterval WXGShadowLastRecheck;
 static void WXGShadowObserve(void);
 static void (*WXGShadowSetMasksOriginal)(id,SEL,BOOL);
@@ -2050,8 +2052,46 @@ static BOOL WXGShadowScrollMoved(void) {
 }
 // R20/R24: keep every glass's drop shadow strictly below any nearby/lower glass in
 // visual priority by punching out overlapping visible glass silhouettes via a true
-// union of cutouts. A single complete hole can use an even-odd path; multiple
-// holes use kCGBlendModeClear so their intersection also stays transparent.
+// union of cutouts. Disjoint silhouettes can use an even-odd path directly.
+// Intersect clipped outlines first, then subtract their union, including overlaps.
+typedef struct {CGRect rect,clip;CGFloat radius;} WXGShadowHole;
+
+static CGPathRef WXGCreateShadowCutout(CGRect bounds,const WXGShadowHole *holes,NSUInteger count) CF_RETURNS_RETAINED {
+    BOOL separate=YES;
+    for(NSUInteger i=0;i<count && separate;i++) {
+        separate=CGRectContainsRect(holes[i].clip,holes[i].rect);
+        for(NSUInteger j=0;j<i && separate;j++)separate=!CGRectIntersectsRect(holes[i].rect,holes[j].rect);
+    }
+    if(separate) {
+        CGMutablePathRef shape=CGPathCreateMutable();
+        CGPathAddRect(shape,NULL,bounds);
+        for(NSUInteger i=0;i<count;i++)CGPathAddRoundedRect(shape,NULL,holes[i].rect,holes[i].radius,holes[i].radius);
+        return shape;
+    }
+    typedef CGPathRef (*PathOperation)(CGPathRef,CGPathRef,bool);
+    static PathOperation intersect,subtract;
+    static dispatch_once_t once;
+    dispatch_once(&once,^{
+        intersect=(PathOperation)dlsym(RTLD_DEFAULT,"CGPathCreateCopyByIntersectingPath");
+        subtract=(PathOperation)dlsym(RTLD_DEFAULT,"CGPathCreateCopyBySubtractingPath");
+    });
+    if(intersect && subtract) {
+        CGPathRef result=CGPathCreateWithRect(bounds,NULL);
+        for(NSUInteger i=0;i<count && result;i++) {
+            CGPathRef hole=CGPathCreateWithRoundedRect(holes[i].rect,holes[i].radius,holes[i].radius,NULL);
+            if(!CGRectContainsRect(holes[i].clip,holes[i].rect)) {
+                CGPathRef clip=CGPathCreateWithRect(holes[i].clip,NULL);
+                CGPathRef clipped=intersect(hole,clip,false);
+                CGPathRelease(clip);CGPathRelease(hole);hole=clipped;
+            }
+            CGPathRef remainder=hole?subtract(result,hole,false):NULL;
+            if(hole)CGPathRelease(hole);
+            CGPathRelease(result);result=remainder;
+        }
+        return result;
+    }
+    return NULL;
+}
 - (void)updateShadowCutout {
     UIWindow *w=self.window;
     if(_dropShadow.hidden || !w || !WXGAllLiveGlasses.count || CGRectIsEmpty(_dropShadow.bounds)) {
@@ -2059,9 +2099,8 @@ static BOOL WXGShadowScrollMoved(void) {
         return;
     }
     CGRect shadowWin=[self.layer convertRect:_dropShadow.frame toLayer:w.layer];
-    UIViewController *pageRoot=WXGShadowPageRoot(self);
+    UIViewController *pageRoot=WXGShadowFootprintsCurrent?_cutoutPage:WXGShadowPageRoot(self);
     if(CGRectIsEmpty(shadowWin) || !pageRoot){if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}return;}
-    typedef struct { CGRect rect, clip; CGFloat radius; } WXGShadowHole;
     WXGShadowHole holes[16];NSUInteger holeCount=0;
     NSMutableString *key=nil;
     for(WXGGlassView *other in WXGAllLiveGlasses.allObjects) {
@@ -2071,7 +2110,7 @@ static BOOL WXGShadowScrollMoved(void) {
         if(otherLocal.size.width<2 || otherLocal.size.height<2)continue;
         WXGShadowFootprint footprint=WXGShadowFootprintsCurrent?other->_footprint:[other shadowFootprintTrackingScrolls:NO];
         if(CGRectIsEmpty(footprint.visible) || !CGRectIntersectsRect(shadowWin,footprint.visible))continue;
-        if(WXGShadowPageRoot(other)!=pageRoot)continue;
+        if((WXGShadowFootprintsCurrent?other->_cutoutPage:WXGShadowPageRoot(other))!=pageRoot)continue;
         CGRect hole=[w.layer convertRect:footprint.body toLayer:_dropShadow];
         CGRect clip=[w.layer convertRect:footprint.visible toLayer:_dropShadow];
         if(CGRectIsEmpty(hole))continue;
@@ -2085,23 +2124,18 @@ static BOOL WXGShadowScrollMoved(void) {
         if(_dropShadow.mask){_dropShadow.mask=nil;_dropShadowMaskKey=nil;}
         return;
     }
-    // One uncut rounded hole is common while the rows pass the navigation
-    // bar. Submit its contour instead of redrawing a screen-wide bitmap on
-    // the UI thread at every scroll offset. Intersecting holes keep union semantics below.
-    if(holeCount==1 && CGRectEqualToRect(holes[0].rect,holes[0].clip)) {
-        if(!_singleShadowHole) {
-            _singleShadowHole=[CAShapeLayer layer];_singleShadowHole.fillRule=kCAFillRuleEvenOdd;
-            _singleShadowHole.masksToBounds=YES;
-            _singleShadowHole.actions=@{@"path":NSNull.null,@"bounds":NSNull.null,@"position":NSNull.null};
+    if(_dropShadow.mask && [key isEqualToString:_dropShadowMaskKey])return;
+    CGPathRef path=WXGCreateShadowCutout(_dropShadow.bounds,holes,holeCount);
+    if(path) {
+        if(!_shadowCutoutShape) {
+            _shadowCutoutShape=[CAShapeLayer layer];_shadowCutoutShape.fillRule=kCAFillRuleEvenOdd;
+            _shadowCutoutShape.masksToBounds=YES;
+            _shadowCutoutShape.actions=@{@"path":NSNull.null,@"bounds":NSNull.null,@"position":NSNull.null};
         }
-        if(_dropShadow.mask!=_singleShadowHole || ![key isEqualToString:_dropShadowMaskKey]) {
-            _singleShadowHole.contentsScale=w.screen.scale;_singleShadowHole.frame=_dropShadow.bounds;
-            CGMutablePathRef path=CGPathCreateMutable();
-            CGPathAddRect(path,NULL,_singleShadowHole.bounds);
-            CGPathAddRoundedRect(path,NULL,holes[0].rect,holes[0].radius,holes[0].radius);
-            _singleShadowHole.path=path;CGPathRelease(path);
-            _dropShadow.mask=_singleShadowHole;_dropShadowMaskKey=key;++WXGShadowVectorMasks;
-        }
+        _shadowCutoutShape.contentsScale=w.screen.scale;_shadowCutoutShape.frame=_dropShadow.bounds;
+        _shadowCutoutShape.path=path;CGPathRelease(path);
+        _dropShadow.mask=_shadowCutoutShape;_dropShadowMaskKey=key;
+        if(holeCount==1)++WXGShadowVectorMasks;else ++WXGShadowCompoundMasks;
         return;
     }
     if(!_dropShadowMask) {
@@ -2167,6 +2201,8 @@ static void WXGShadowObserve(void) {
                 for(WXGGlassView *glass in peers) {
                     glass->_oldFootprint=glass->_footprint;
                     glass->_footprint=[glass shadowFootprintTrackingScrolls:full];
+                    BOOL visible=!CGRectIsEmpty(glass->_footprint.visible) || !CGRectIsEmpty(glass->_footprint.caster);
+                    glass->_cutoutPage=visible?WXGShadowPageRoot(glass):nil;
                 }
                 WXGShadowFootprintsCurrent=YES;
                 @try {
@@ -2198,7 +2234,7 @@ NSDictionary *WXGDropShadowEvidence(void) {
     NSUInteger shown=0,inWindow=0;
     for(WXGGlassView *g in WXGShadowGlasses.allObjects){++shown;if(g.window)++inWindow;}
     return @{@"held":held,@"glassesWithShadow":@(shown),@"inWindow":@(inWindow),@"openedEver":@(WXGShadowClipsOpened),
-             @"reclipsKeptOpen":@(WXGShadowReclips),@"rechecks":@(WXGShadowRechecks),@"scrollMaskUpdates":@(WXGShadowScrollUpdates),@"singleHolePaths":@(WXGShadowVectorMasks),@"bitmapCutouts":@(WXGShadowBitmapMasks),@"trackedScrollViews":@(WXGShadowScrollBounds.count),@"setterHooked":@(WXGShadowSetMasksOriginal!=NULL)};
+             @"reclipsKeptOpen":@(WXGShadowReclips),@"rechecks":@(WXGShadowRechecks),@"scrollMaskUpdates":@(WXGShadowScrollUpdates),@"singleHolePaths":@(WXGShadowVectorMasks),@"compoundPaths":@(WXGShadowCompoundMasks),@"bitmapCutouts":@(WXGShadowBitmapMasks),@"trackedScrollViews":@(WXGShadowScrollBounds.count),@"setterHooked":@(WXGShadowSetMasksOriginal!=NULL)};
 }
 - (void)didMoveToWindow {
     [super didMoveToWindow];

@@ -5,6 +5,10 @@
 
 #define WXG_SEGMENTS_MAX 6
 
+static inline double WXGSegmentGlideDuration(double steps) {
+    return .28*(.85+.05*fmin(fabs(steps),3.));
+}
+
 typedef struct {
     int count;
     float edges[WXG_SEGMENTS_MAX+1];

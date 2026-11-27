@@ -278,7 +278,8 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                  WXGSwitch(@"标题分组显示英文（All / Unread）",@"homeTitleSegmentsEnglish",nil)],
                  @"直接按现有首页标题大小拓展为分组栏（默认 全部 / 未读，支持英文 All / Unread），复用与底栏等比同步的选中胶囊与按压透镜，点击即可筛选聊天列表。"),
         WXGGroup(@"分组栏与搜索框尺寸",nil,@[
-                 WXGSwitch(@"在搜索框下显示分组栏",@"chatSegments",nil),
+                 WXGSwitch(@"显示列表分组栏",@"chatSegments",nil),
+                 WXGChoice3(@"显示方式",@"homeGroupCoexists",nil,nil,@[@"替换搜索框",@"搜索与分组共存"],YES),
                  WXGSwitch(@"仅在首页悬浮",@"searchFloat",nil),
                  WXGSlider(@"搜索框宽度（0 = 原生）",@"homeSearchWidthPct",nil,0,98,@"%.0f%%"),
                  WXGSlider(@"搜索框高度（0 = 原生）",@"homeSearchHeight",nil,0,64,@"%.1f pt"),
@@ -286,7 +287,9 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
                  WXGSlider(@"分组栏宽度（0 = 原生）",@"homeGroupWidthPct",nil,0,98,@"%.0f%%"),
                  WXGSlider(@"分组栏高度（0 = 原生）",@"homeGroupHeight",nil,0,64,@"%.1f pt"),
                  WXGSlider(@"搜索框与分组栏间距",@"homeSearchGroupGap",nil,0,32,@"%.1f pt")],
-                 @"分组栏显示在搜索框下方。列表随分组栏下移，保留微信搜索框原有的底部留白。开启悬浮后，两行按设置的间距一起停在标题下方。"),
+                 @"两行共存时，搜索在上，分组在下。替换搜索框时，分组单独占一行。两种方式都保留列表原有的底部留白。"),
+        WXGGroup(@"首页滚动诊断",nil,@[WXGSwitch(@"记录首页逐帧轨迹",@"homeMotionTrace",nil)],
+                 @"记录列表偏移、顶部各行位置和分组透镜进度。导出诊断会包含最近 14400 帧，可用于排查回弹和返回位置。"),
         WXGGroup(@"分组列表",nil,@[WXGAction(@"管理分组（新建 / 改名 / 选聊天 / 排序）",@"manageGroups",NO)],
                  @"分组是你自己的：最多 6 个，每个可以是 全部 / 未读 / 单聊 / 群聊，或者“自定义”——自己选里面有哪些聊天。分组栏上从左到右就是这里的顺序。"),
         WXGGroup(@"选中胶囊",nil,@[WXGSlider(@"内边距",@"segmentSelectionInset",nil,2,14,@"%.1f pt"),WXGSwitch(@"用页面的背景色",@"segmentPillAuto",nil),
@@ -830,6 +833,7 @@ static NSString *WXGLastScope=@"dock";
     NSMutableArray<NSDictionary *> *_groups;   // label, card, rows, separators, footer (as present)
     WXGRimStyle _builtStyle;                   // FIX85: the rim style the groups were built for (FIX86: the range's)
     WXGHomeMenuStyle _builtHomeMenuStyle;
+    BOOL _builtHomeCoexists;
     // FIX113 O: opened from the settings search: scroll to this group (spec
     // index) and flash the row (or the group's card).
     NSInteger _focusGroup,_focusRow;
@@ -952,7 +956,10 @@ static NSString *WXGLastScope=@"dock";
     _groups=[NSMutableArray array];
     __weak WXGSettingsModule *weakSelf=self;
     _builtStyle=[self scopeRimStyle];NSNumber *style=@(_builtStyle);
-    if([_module isEqual:@"home"])_builtHomeMenuStyle=WXGConfig.shared.homeMenuStyle;
+    if([_module isEqual:@"home"]) {
+        _builtHomeMenuStyle=WXGConfig.shared.homeMenuStyle;
+        _builtHomeCoexists=[WXGConfig.shared extraNumber:@"homeGroupCoexists"]>.5;
+    }
     NSArray *specGroups=_spec[@"groups"];
     for(NSUInteger groupIndex=0;groupIndex<specGroups.count;groupIndex++) {
         NSDictionary *group=specGroups[groupIndex];
@@ -971,6 +978,7 @@ static NSString *WXGLastScope=@"dock";
         for(NSUInteger rowIndex=0;rowIndex<specRows.count;rowIndex++) {
             NSDictionary *spec=specRows[rowIndex];
             NSString *key=self.scoped?WXGRowKeyForScope(spec,_scope):spec[@"key"];
+            if(!_builtHomeCoexists && [key isEqual:@"homeSearchGroupGap"])continue;
             if(key && !key.length)continue;   // FIX113 O: not in this range
             NSString *type=spec[@"type"];WXGSettingsRow *row=nil;
             if([type isEqual:@"slider"])row=[[WXGSliderRow alloc]initWithSpec:spec key:key page:self];
@@ -1016,11 +1024,15 @@ static NSString *WXGLastScope=@"dock";
     }
 }
 - (void)viewWillAppear:(BOOL)animated {[super viewWillAppear:animated];[self refreshRows];}
+- (BOOL)homeChoicesChanged {
+    return [_module isEqual:@"home"] && (_builtHomeMenuStyle!=WXGConfig.shared.homeMenuStyle ||
+        _builtHomeCoexists!=([WXGConfig.shared extraNumber:@"homeGroupCoexists"]>.5));
+}
 - (void)refreshRows {
     // FIX85: the style changed elsewhere (恢复本页默认, an import): other groups.
     BOOL styled=NO;for(NSDictionary *group in _spec[@"groups"])if(group[@"styles"]){styled=YES;break;}
     if((styled && _builtStyle!=[self scopeRimStyle]) ||
-       ([_module isEqual:@"home"] && _builtHomeMenuStyle!=WXGConfig.shared.homeMenuStyle)){[self choiceChanged:@{}];return;}
+       [self homeChoicesChanged]){[self choiceChanged:@{}];return;}
     for(NSDictionary *group in _groups)for(WXGSettingsRow *row in group[@"rows"])[row refresh];
     [self configChanged];
 }
@@ -1118,7 +1130,7 @@ static NSString *WXGLastScope=@"dock";
 }
 - (void)choiceChanged:(NSDictionary *)spec {
     if(spec.count && _builtStyle==[self scopeRimStyle] &&
-       (![_module isEqual:@"home"] || _builtHomeMenuStyle==WXGConfig.shared.homeMenuStyle))return;
+       ![self homeChoicesChanged])return;
     [UIView performWithoutAnimation:^{[self buildGroups];[self.view setNeedsLayout];[self.view layoutIfNeeded];}];
     UIScrollView *scroll=self.scrollView;
     CGFloat maximum=MAX(0,scroll.contentSize.height-scroll.bounds.size.height);

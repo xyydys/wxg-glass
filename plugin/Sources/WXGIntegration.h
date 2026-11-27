@@ -399,6 +399,9 @@ FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我
 // home / 通讯录 search bars) and home title group bar in the navigation overlay.
 - (void)hostTick:(CFTimeInterval)time page:(UIViewController *)leaf overlay:(UIView *)overlay transitioning:(BOOL)transitioning transitionInvolvesHome:(BOOL)transitionInvolvesHome homePanel:(CGFloat)homePanel rowOffset:(CGFloat)rowOffset;
 - (void)coverHomeSearchFor:(UIViewController *)controller;
+- (void)willPushFrom:(UIViewController *)home to:(UIViewController *)next;
+- (void)didShowHome:(UIViewController *)page;
+- (NSDictionary *)homeMotionEvidence;
 - (void)suspendFloating;   // a page this host leaves native: nothing left floating, WeChat's bars back
 - (void)restore;           // the segment bar (WeChat's search bar back)
 - (void)restoreAll;        // the segment bar and the floating capsules (the plugin off)

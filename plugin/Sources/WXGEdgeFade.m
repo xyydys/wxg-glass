@@ -244,7 +244,12 @@ static BOOL WXGEdgeListLeads(UIScrollView *list) {
 @property(nonatomic) CGFloat maskTop,maskBottom,blurTopExtent,blurBottomExtent,fadeTop,fadeBottom;
 @property(nonatomic) CGFloat coverListY,coverListHeight,coverTop,coverBottom;
 @property(nonatomic) CGRect syncedBounds;
-@property(nonatomic) CFTimeInterval lastResolve;
+@property(nonatomic) CFTimeInterval lastResolve,lastPaintInspection;
+@property(nonatomic,weak) UIView *paintParent,*paintBackground;
+@property(nonatomic,strong) UIColor *inspectedListColor;
+@property(nonatomic) UIUserInterfaceStyle paintStyle;
+@property(nonatomic) NSUInteger paintRevision,paintPasses,geometryOnly;
+@property(nonatomic) BOOL inspectingPaint;
 @property(nonatomic) NSUInteger resolves,attaches,maskBuilds,maskSyncs;
 @property(nonatomic,copy) NSString *blurNote;
 - (void)refresh:(BOOL)force;
@@ -437,12 +442,15 @@ static UIColor *WXGEdgeListPaint(UIScrollView *list,NSString **source) {
 /* FIX70: the paint of the list's visible full-width cells (their colour, their
    content view's or their background view's), nil when they paint nothing. */
 static UIColor *WXGEdgeCellPaint(UIScrollView *list) {
-    NSArray<UIView *> *cells=nil;
-    if([list isKindOfClass:UITableView.class])cells=((UITableView *)list).visibleCells;
-    else if([list isKindOfClass:UICollectionView.class])cells=((UICollectionView *)list).visibleCells;
+    // visibleCells can synchronously lay out WeChat rows while their controller is
+    // already laying out. Inspect only cells UIKit has actually attached.
+    NSArray<UIView *> *cells=list.subviews;
+    static Class wrapper;static dispatch_once_t once;dispatch_once(&once,^{wrapper=NSClassFromString(@"UITableViewWrapperView");});
+    for(UIView *view in cells)if(wrapper && [view isKindOfClass:wrapper]){cells=view.subviews;break;}
     CGFloat width=list.bounds.size.width;
     for(UIView *cell in cells) {
-        if(cell.hidden || cell.bounds.size.width<width*.9)continue;
+        if(![cell isKindOfClass:UITableViewCell.class] && ![cell isKindOfClass:UICollectionViewCell.class])continue;
+        if(cell.hidden || cell.bounds.size.width<width*.9 || !CGRectIntersectsRect([cell convertRect:cell.bounds toView:list],list.bounds))continue;
         UIView *content=[cell isKindOfClass:UITableViewCell.class]?((UITableViewCell *)cell).contentView:
                         [cell isKindOfClass:UICollectionViewCell.class]?((UICollectionViewCell *)cell).contentView:nil;
         UIView *backing=[cell isKindOfClass:UITableViewCell.class]?((UITableViewCell *)cell).backgroundView:
@@ -556,6 +564,7 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
     [_plate removeFromSuperview];[_cover removeFromSuperview];[_topBlur removeFromSuperview];[_bottomBlur removeFromSuperview];
     _plate=nil;_plateFallback=nil;_cover=nil;_topBlur=_bottomBlur=nil;
     _resolvedWallpaper=nil;_fadeSource=nil;
+    _paintParent=nil;_paintBackground=nil;_lastPaintInspection=0;
     _scrollView=nil;_mask=nil;_maskSolid=nil;_maskTopSolid=nil;_originalMask=nil;_panel=0;_topBarInList=NO;
     _maskSize=_appliedSize=_coverSize=CGSizeMake(-1,-1);_maskTop=_maskBottom=-1;_syncedBounds=CGRectNull;
     _coverListY=_coverListHeight=_coverTop=_coverBottom=-1;
@@ -574,12 +583,14 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
 - (void)refresh:(BOOL)force {
     UIViewController *controller=_controller;
     if(!controller.isViewLoaded || !WXGEdgeFadeWanted()){[self detachList];return;}
+    if(_inspectingPaint)return;
     UIScrollView *list=_scrollView;UIView *root=controller.view;
     BOOL stale=!list || WXGEdgeListOwner(list)!=controller || ![list isDescendantOfView:root] || list.hidden || (root.window && !list.window);
     CFTimeInterval now=CACurrentMediaTime();
     // Appearing, a lost list, or (while laying out) at most once a second:
     // WeChat builds some lists late.
-    if(force || stale || now-_lastResolve>1.0) {
+    BOOL moving=list.tracking || list.dragging || list.decelerating;
+    if(force || stale || ((!_homePanel || !moving) && now-_lastResolve>1.0)) {
         _lastResolve=now;++_resolves;
         UIScrollView *found=nil;UIImageView *wallpaper=nil;
         if([controller isKindOfClass:WXGSettingsPage.class]) {
@@ -596,6 +607,14 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
     if(WXGEdgePageForList(list)!=self) {
         WXGEdgeListRegister(list,self);++WXGEdgeRelinks;
         if(WXGEdgeRelinks<=8)WXGLog(@"渐隐：%@ 的列表重新关联",NSStringFromClass(controller.class));
+    }
+    UIView *background=[list isKindOfClass:UITableView.class]?((UITableView *)list).backgroundView:nil;
+    UIColor *color=list.backgroundColor;
+    if(_homePanel && !force && _lastPaintInspection && CGSizeEqualToSize(_appliedSize,list.bounds.size) &&
+       _paintParent==list.superview && _paintBackground==background && _paintStyle==list.traitCollection.userInterfaceStyle &&
+       (color==_inspectedListColor || [color isEqual:_inspectedListColor]) && _paintRevision==WXGConfigRevision() &&
+       (!_mask || _cover || list.layer.mask==_mask) && (moving || now-_lastPaintInspection<.75)) {
+        ++_geometryOnly;[self syncGeometry];return;
     }
     [self applyValues:force];
 }
@@ -641,10 +660,19 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
     return parent?[parent convertRect:list.bounds fromView:list]:CGRectZero;
 }
 - (void)applyValues:(BOOL)force {
+    if(_inspectingPaint)return;
+    _inspectingPaint=YES;
+    @try {[self applyPaintValues:force];}
+    @finally {_inspectingPaint=NO;}
+}
+- (void)applyPaintValues:(BOOL)force {
     UIScrollView *list=_scrollView;if(!list)return;
     CGSize size=list.bounds.size;
     if(size.width<1 || size.height<1)return;
-    _appliedSize=size;
+    _appliedSize=size;_lastPaintInspection=CACurrentMediaTime();++_paintPasses;
+    _paintRevision=WXGConfigRevision();_paintParent=list.superview;_paintStyle=list.traitCollection.userInterfaceStyle;
+    _paintBackground=[list isKindOfClass:UITableView.class]?((UITableView *)list).backgroundView:nil;
+    _inspectedListColor=list.backgroundColor;
     WXGEdgeValues v=WXGEdgeValuesForScope(_scope);
     CGFloat top=WXGEdgeBand(v.fadeTop,size.height),bottom=WXGEdgeBand(v.fadeBottom,size.height);
     _fadeTop=top;_fadeBottom=bottom;
@@ -841,7 +869,7 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
        (_topBlur && _topBlur.superview!=parent) || (_bottomBlur && _bottomBlur.superview!=parent)) {
         // Moved to another container: placed again on the next refresh.
         [_plate removeFromSuperview];[_cover removeFromSuperview];[_topBlur removeFromSuperview];[_bottomBlur removeFromSuperview];
-        _plate=nil;_cover=nil;_topBlur=_bottomBlur=nil;
+        _plate=nil;_cover=nil;_topBlur=_bottomBlur=nil;_lastPaintInspection=0;
         return;
     }
     // Inside WeChat's own animation (the keyboard moving the list) the
@@ -890,7 +918,7 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
     UIScrollView *list=_scrollView;UIViewController *controller=_controller;
     WXGEdgeValues v=WXGEdgeValuesForScope(_scope);
     NSMutableDictionary *d=[@{@"page":controller?NSStringFromClass(controller.class):@"none",@"scope":_scope==WXGEdgeScopeChat?@"chat":@"other",
-        @"list":list?NSStringFromClass(list.class):@"none",@"resolves":@(_resolves),@"attaches":@(_attaches),@"maskBuilds":@(_maskBuilds),
+        @"list":list?NSStringFromClass(list.class):@"none",@"resolves":@(_resolves),@"paintInspections":@(_paintPasses),@"geometryOnly":@(_geometryOnly),@"attaches":@(_attaches),@"maskBuilds":@(_maskBuilds),
         @"settings":@{@"fadeTop":@(v.fadeTop),@"fadeBottom":@(v.fadeBottom),@"blurTop":@(v.blurTop),@"blurBottom":@(v.blurBottom),
                       @"blurTopRadius":@(v.blurTopRadius),@"blurBottomRadius":@(v.blurBottomRadius)},
         @"blur":_blurNote?:@"none",@"fade":_fadeSource?:@"off",@"miniProgramPanel":@(_panel),@"topBarInList":@(_topBarInList)} mutableCopy];

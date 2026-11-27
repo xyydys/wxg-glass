@@ -50,6 +50,28 @@ static inline WXGHomeGroupLayout WXGHomeGroupBelowSearch(double nativeHeight,dou
     return (WXGHomeGroupLayout){groupY,groupY+groupHeight+bottomGap,bottomGap};
 }
 
+// A replacement occupies exactly one row and uses the same bottom margin.
+static inline WXGHomeGroupLayout WXGHomeRows(bool coexist,WXGRect native,double nativeHeight,
+                                             WXGRect search,double groupHeight,double gap) {
+    if(coexist)return WXGHomeGroupBelowSearch(nativeHeight,native.y+native.h,search.y+search.h,groupHeight,gap);
+    double bottom=fmax(0.,nativeHeight-native.y-native.h);
+    return (WXGHomeGroupLayout){search.y,search.y+groupHeight+bottom,bottom};
+}
+
+// Keep the same point in the conversation list when its header changes height.
+// Inside the header, keep the user's depth from the natural top.
+static inline double WXGHomeDepthAfterResize(double depth,double oldHeight,double newHeight) {
+    if(oldHeight<=0)return depth;
+    if(depth>=oldHeight)return depth+newHeight-oldHeight;
+    return fmin(depth,newHeight);
+}
+
+static inline double WXGHomeOffsetAtDepth(double depth,double oldHeight,double newHeight,
+                                         double topInset,double bottomInset,double content,double viewport) {
+    double wanted=WXGHomeDepthAfterResize(depth,oldHeight,newHeight)-topInset;
+    return WXGBound(wanted,-topInset,fmax(-topInset,content+bottomInset-viewport));
+}
+
 static inline double WXGHomePixel(double value,double scale) {
     return scale>0 ? round(value*scale)/scale : value;
 }
@@ -60,6 +82,13 @@ static inline double WXGHomePixel(double value,double scale) {
 static inline double WXGHomePulledSearchY(double naturalY,double titleY,double gap,double panel) {
     double attached=titleY+gap;
     return attached+(naturalY-attached)*WXGBound(panel,0.,1.);
+}
+
+// On the last few points of the bounce, return smoothly to the natural rest position.
+static inline double WXGHomeReboundSearchY(double naturalY,double titleY,double gap,double panel,double overscroll) {
+    double followed=WXGHomePulledSearchY(naturalY,titleY,gap,panel);
+    double weight=WXGBound(overscroll/4.,0.,1.);
+    return naturalY+(followed-naturalY)*weight;
 }
 
 // The header's natural position follows contentOffset. The pin line only

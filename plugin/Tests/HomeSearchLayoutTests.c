@@ -27,6 +27,31 @@ int main(void) {
     assert(group.x==55 && group.w==330 && group.h==26);
     assert(WXGHomeRowRect(field,440,0,0,-1).w==424);
     assert(WXGHomeRowRect(field,440,0,0,-1).h==36);
+    WXGHomeGroupLayout both=WXGHomeRows(true,field,52,search,group.h,8);
+    WXGHomeGroupLayout single=WXGHomeRows(false,field,52,search,group.h,8);
+    assert(both.groupY==68 && both.headerHeight==102 && both.bottomGap==8);
+    assert(single.groupY==12 && single.headerHeight==46 && single.bottomGap==8);
+    search.h=64;
+    assert(WXGHomeRows(false,field,52,search,group.h,32).headerHeight==single.headerHeight);
+    assert(WXGHomeRows(true,field,52,search,group.h,0).groupY==76);
+
+    // Exact fractional row sizes in the 3x diagnostic, including the measured 3 pt leading.
+    search=WXGHomeRowRect(field,440,88.47332,45.76948547,-1);
+    both=WXGHomeRows(true,field,52,search,45.76948547,8);
+    assert(fabs(both.headerHeight+3-118.53897094)<1e-7);
+    assert(fabs(WXGHomePixel(both.headerHeight+3,3)-(118.+2./3.))<1e-9);
+    assert(WXGHomeOffsetAtDepth(560,118,118,88,34,3000,844)==472);
+    assert(WXGHomeOffsetAtDepth(560,118,142,88,34,3000,844)==496);
+    assert(WXGHomeOffsetAtDepth(40,118,142,88,34,3000,844)==-48);
+    assert(WXGHomeOffsetAtDepth(90,118,64,88,34,3000,844)==-24);
+    assert(WXGHomeOffsetAtDepth(560,118,118,96,34,3000,844)==464);
+    assert(WXGHomeOffsetAtDepth(0,118,142,88,34,3000,844)==-88);
+    assert(WXGHomeOffsetAtDepth(1000,118,118,88,34,1000,844)==190);
+    assert(WXGHomeOffsetAtDepth(1000,118,118,88,34,600,844)==-88);
+    assert(WXGHomeReboundSearchY(111,90,20,0,0)==111);
+    assert(fabs(WXGHomeReboundSearchY(111,90,20,0,1./3.)-111)<1./6.);
+    assert(WXGHomeReboundSearchY(118,90,20,0,8)==110);
+    assert(WXGHomeReboundSearchY(118,90,20,1,8)==118);
     assert(WXGHomeHeaderLeading(0,0,0,88)==88);
     assert(WXGHomeHeaderLeading(0,88,0,88)==0);
     assert(WXGHomeHeaderLeading(88,0,0,88)==0);

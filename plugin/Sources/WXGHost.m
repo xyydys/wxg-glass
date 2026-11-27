@@ -5793,7 +5793,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
 }
 - (NSString *)diagnostics {
     NSDictionary *payload=@{@"currentOrLastScene":_settings.presentingViewController?(_lastSceneEvidence?:@{}):self.evidence,@"history":_sceneHistory.copy?:@[],@"actionDispatches":_actionHistory.copy?:@[],@"log":WXGLogText(),
-        @"liveSamplingAtExport":self.samplingMetrics,
+        @"homeMotion":WXGChatSegments.shared.homeMotionEvidence,@"liveSamplingAtExport":self.samplingMetrics,
         // FIX84: every setting (importable as is) and the frame-rate log's summary.
         @"settingsShare":WXGSharePayload(),@"frameRate":WXGPerfEvidence(),
         @"pageSwitches":WXGTransitionPerfEvidence(),   // FIX113 Z
@@ -6089,6 +6089,7 @@ static void WXGObserveNavigationPop(void) {
     selector=@selector(pushViewController:animated:);method=class_getInstanceMethod(UINavigationController.class,selector);
     IMP pushOriginal=method_getImplementation(method);SEL pushSelector=selector;
     replacement=imp_implementationWithBlock(^(UINavigationController *nav,UIViewController *destination,BOOL animated){
+        [WXGChatSegments.shared willPushFrom:nav.topViewController to:destination];
         [WXGChatSegments.shared coverHomeSearchFor:nav.topViewController];
         WXGRecordNativePop(nav,pushSelector,animated);
         if(!WXGNavigationCallDepth)WXGTransitionPerfNavigationCall(@"push",YES);   // FIX113 Z
@@ -6270,7 +6271,7 @@ __attribute__((constructor)) static void WXGInitialize(void) {
                 // FIX113 Z: timed (the page-switch log's "appear"; also the hooks' total).
                 WXGPerfTimePluginWorkAs(will?"appear":"didAppear",^{
                     WXGEdgeFadeNoteController(controller,YES);   // FIX64 (FIX65: our own settings pages too)
-                    if(!will)WXGNotePageAppeared(controller);   // FIX106 I: 聊天信息 / 设置 rest at their top
+                    if(!will){[WXGChatSegments.shared didShowHome:controller];WXGNotePageAppeared(controller);}   // FIX106 I: 聊天信息 / 设置 rest at their top
                     if([NSStringFromClass(controller.class) hasPrefix:@"WXG"])return;
                     WXGIntegrationHost *host=WXGIntegrationHost.shared;[host start];
                     if(will)[host prepareController:controller];

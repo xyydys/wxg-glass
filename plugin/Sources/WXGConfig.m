@@ -212,6 +212,8 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     {"homeSearchHeight",'n',0,0,64,NULL,NULL},
     {"homeGroupWidthPct",'n',0,0,98,NULL,NULL},
     {"homeGroupHeight",'n',0,0,64,NULL,NULL},
+    {"homeGroupCoexists",'b',1,0,1,NULL,NULL},
+    {"homeMotionTrace",'b',0,0,1,NULL,NULL},
     {"homeSearchGroupGap",'n',8,0,32,NULL,NULL},
     {"homeSearchTopGap",'n',-1,-1,32,NULL,NULL},
     {"contactsTitleCapsule",'b',1,0,1,NULL,NULL},
@@ -960,8 +962,10 @@ static NSString *WXGScopedKey(WXGGlassScope scope,BOOL dark,NSString *stem) {
 NSDictionary *WXGRenamedSettings(NSDictionary *stored) {
     // Older full exports stored one size for both rows. A partial import that
     // edits only the search row must leave separately tuned group values alone.
-    if(stored[@"chatSegments"] && (!stored[@"homeGroupWidthPct"] || !stored[@"homeGroupHeight"])) {
+    if(stored[@"chatSegments"] && (!stored[@"homeGroupWidthPct"] || !stored[@"homeGroupHeight"] || !stored[@"homeGroupCoexists"])) {
         NSMutableDictionary *rows=[stored mutableCopy];
+        if(!rows[@"homeGroupCoexists"] && stored[@"homeSearchWidthPct"])
+            rows[@"homeGroupCoexists"]=@(stored[@"homeSearchGroupGap"]!=nil);
         if(!rows[@"homeGroupWidthPct"] && [stored[@"homeSearchWidthPct"] isKindOfClass:NSNumber.class])
             rows[@"homeGroupWidthPct"]=stored[@"homeSearchWidthPct"];
         if(!rows[@"homeGroupHeight"] && [stored[@"homeSearchHeight"] isKindOfClass:NSNumber.class])

@@ -44,6 +44,11 @@ static void checkTitlePair(float limit,float height,float gap,float shortTitle,f
 }
 
 int main(void) {
+    assert(near(WXGSegmentGlideDuration(1),.252f));
+    assert(near(WXGSegmentGlideDuration(-1),.252f));
+    assert(near(WXGSegmentGlideDuration(2),.266f));
+    assert(near(WXGSegmentGlideDuration(3),.28f));
+    assert(near(WXGSegmentGlideDuration(5),.28f));
     // SF text-like advances for All/Unread, Chinese, reversed labels and an oversized name.
     const float titles[][2]={{16,47},{30,30},{68,16},{191,9}};
     for(int w=64;w<=320;w+=8)
