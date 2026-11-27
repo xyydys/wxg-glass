@@ -1,3 +1,4 @@
+#import "WXGInputSymbols.h"
 #import "WXGCommon.h"
 #include "WXGDockScript.h"
 #include <stdarg.h>
@@ -174,9 +175,17 @@ static const WXGExtraSpec WXGExtraSpecs[]={
     // FIX113 M (user: take away the slanted line joining the inner and outer
     // outline, cut it off from the magnified outside, small and flat inside):
     // the bar seen through the lens unbent and inset in full (WXG_LENS_FLAT).
-    // FIX113: the two-ended input bar's icons: the plugin's set (SF Symbols,
-    // the emoji key as Face ID) or WeChat's own artwork.
-    {"inputSystemIcons",'b',1,0,1,NULL,NULL},
+    // The old inputSystemIcons key selected the hand-drawn set. Old profiles
+    // leave the SF Symbols preference at its new default.
+    {"splitInputSystemSymbols",'b',1,0,1,NULL,NULL},
+#define WXG_INPUT_SPEC(key,title,symbol,points,light) \
+    {"split" #key "SymbolName",'s',0,0,0,NULL,symbol}, \
+    {"split" #key "Weight",'n',2,0,4,NULL,NULL}, \
+    {"split" #key "Size",'n',points,10,32,NULL,NULL}, \
+    {"split" #key "LightHex",'h',0,0,0,NULL,light}, \
+    {"split" #key "DarkHex",'h',0,0,0,NULL,"#FFFFFFFF"},
+    WXG_INPUT_SYMBOLS(WXG_INPUT_SPEC)
+#undef WXG_INPUT_SPEC
     // FIX115 J (user: the two-ended bar's text capsule "大一点短一点", the plus
     // as big): pt at the reference width (scaled like the rest): the capsule's
     // single-line height (TEST9: 40), the plus' size (0 = the capsule's
@@ -1104,7 +1113,7 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     if(spec->inherit) {
         @try {value=[self valueForKey:@(spec->inherit)];} @catch(__unused NSException *error) {value=nil;}
     }
-    if(spec->kind=='h'){if(![value isKindOfClass:NSString.class])value=@(spec->hex?:"#FFFFFFFF");}
+    if(spec->kind=='h' || spec->kind=='s'){if(![value isKindOfClass:NSString.class])value=@(spec->hex?:"#FFFFFFFF");}
     else if(![value isKindOfClass:NSNumber.class])value=@(spec->def);
     _extra[key]=value;
 }
@@ -1131,7 +1140,7 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     NSNumber *index=WXGExtraIndex()[key];
     if(!index){[super setValue:value forUndefinedKey:key];return;}
     char kind=WXGExtraSpecs[index.unsignedIntegerValue].kind;
-    if(kind=='h'?[value isKindOfClass:NSString.class]:[value isKindOfClass:NSNumber.class])_extra[key]=value;
+    if((kind=='h' || kind=='s')?[value isKindOfClass:NSString.class]:[value isKindOfClass:NSNumber.class])_extra[key]=value;
 }
 - (double)extraNumber:(NSString *)key {id v=_extra[key];return [v isKindOfClass:NSNumber.class]?[v doubleValue]:0;}
 - (NSString *)extraHex:(NSString *)key {id v=_extra[key];return [v isKindOfClass:NSString.class]?v:@"#FFFFFFFF";}
@@ -1140,9 +1149,9 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
 - (void)applyBuildDefaults {
     NSDictionary *defaults=_defaultsOverride?:WXGBuildDefaultOptics();
     for(NSString *key in self.keys) {
-        id value=defaults[key];BOOL color=[key hasSuffix:@"Hex"];
+        id value=defaults[key];BOOL stringKey=[key hasSuffix:@"Hex"] || [key hasSuffix:@"SymbolName"];
         if([key isEqual:@"enabled"])continue;
-        if(color?[value isKindOfClass:NSString.class]:([value isKindOfClass:NSNumber.class] && isfinite([value doubleValue])))[self setValue:value forKey:key];
+        if(stringKey?[value isKindOfClass:NSString.class]:([value isKindOfClass:NSNumber.class] && isfinite([value doubleValue])))[self setValue:value forKey:key];
     }
     if(defaults.count)[self reinheritExtrasMissingFrom:defaults];   // FIX85
     [self nativeDockTitleWeight];   // FIX114 B (review): a build's defaults made with the old default (medium) too
@@ -1171,13 +1180,13 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
         // What the settings pages stored (a build before FIX130: under this build's names, WXGRenamedSettings).
         NSDictionary *local=WXGRenamedSettings([[[NSUserDefaults alloc] initWithSuiteName:@"com.runyu.WeChatLiquidGlass"] dictionaryForKey:@"optics.test4"]);
         for(NSString *key in self.keys) {
-            id value=local[key];BOOL color=[key hasSuffix:@"Hex"];
-            if(color?[value isKindOfClass:NSString.class]:[value isKindOfClass:NSNumber.class])[self setValue:value forKey:key];
+            id value=local[key];BOOL stringKey=[key hasSuffix:@"Hex"] || [key hasSuffix:@"SymbolName"];
+            if(stringKey?[value isKindOfClass:NSString.class]:[value isKindOfClass:NSNumber.class])[self setValue:value forKey:key];
         }
         // FIX85: a table key never stored starts from its source's value as loaded above (the user's own).
         for(size_t i=0;i<WXGExtraCount;i++) {
             id stored=local[@(WXGExtraSpecs[i].key)];
-            BOOL valid=WXGExtraSpecs[i].kind=='h'?[stored isKindOfClass:NSString.class]:[stored isKindOfClass:NSNumber.class];
+            BOOL valid=(WXGExtraSpecs[i].kind=='h' || WXGExtraSpecs[i].kind=='s')?[stored isKindOfClass:NSString.class]:[stored isKindOfClass:NSNumber.class];
             if(!valid)[self inheritExtra:i];
         }
         // FIX114 B (user: the dock's titles do not look like WeChat's): WeChat's
@@ -1309,6 +1318,11 @@ static BOOL WXGRimGroupTouched(NSString *style,NSSet<NSString *> *custom) {
     // FIX85: the table's keys.
     for(size_t i=0;i<WXGExtraCount;i++) {
         const WXGExtraSpec *spec=&WXGExtraSpecs[i];NSString *key=@(spec->key);id value=_extra[key];
+        if(spec->kind=='s') {
+            NSString *name=[value isKindOfClass:NSString.class]?[value stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet]:nil;
+            _extra[key]=name.length && name.length<=128 ? name : @(spec->hex);
+            continue;
+        }
         if(spec->kind=='h'){_extra[key]=WXGNormalizeHex(value)?:@(spec->hex?:"#FFFFFFFF");continue;}
         double v=[value isKindOfClass:NSNumber.class]?[value doubleValue]:spec->def;
         if(!isfinite(v))v=spec->def;

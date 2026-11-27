@@ -23,6 +23,10 @@ static void testProportionsAndEqualDotGaps(void) {
     CHECK(r >= 14.0 && r <= 16.0, "ring radius %.2f should match screenshot (~15pt at 44pt)", r);
     CHECK(arm >= 4.5 && arm <= 5.5, "symbol arm %.2f should match screenshot (~5pt at 44pt)", arm);
 
+    CHECK(fabs(WXGMenuArcAngle(0.)-3*kPi4)<1e-9,"arc start changed");
+    CHECK(fabs(WXGMenuArcAngle(1.)-9*kPi4)<1e-9,"full arc sweep changed");
+    CHECK(fabs(WXGMenuArcAngle(.5)-1.5*kPi)<1e-9,"half-sweep tip should point up");
+
     // Clear edge-to-edge gap between arc round cap and outer dots MUST equal clear gap between adjacent dots for 4, 5, and 6 dots!
     double capHalf = (lw * 0.5) / r;
     double dotHalf = (dd * 0.5) / r;

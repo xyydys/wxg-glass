@@ -248,9 +248,11 @@ static NSUInteger WXGPlaceMorphBands(CALayer *holder,WXGRim26Bands recipe,CGPath
     BOOL ios26=[c rimStyleForScope:WXGGlassScopeOther]!=WXGRimStyleGlow;
     WXGRim26Settings s=[c rim26ForScope:WXGGlassScopeOther dark:dark];
     _usesLivePaint=ios26 && [_livePaint live] && WXGFilterFactoryAvailable();
+    CGFloat scale=self.window.screen.scale?:UIScreen.mainScreen.scale;
+    CGFloat pad=1./(MAX(1.,scale)*MAX(.1,s.captureScale));
     if(_usesLivePaint) {
         WXGRimMatrix matrix;WXGRim26Matrix(s.gain,s.chroma,s.lift,matrix.m);
-        _livePaint.frame=local;
+        _livePaint.frame=CGRectInset(local,-pad,-pad);
         [_livePaint configureGroup:_rimGroup matrix:matrix captureScale:s.captureScale solid:nil];
         _usesLivePaint=_livePaint.layer.filters.count>0;
     }
@@ -262,9 +264,8 @@ static NSUInteger WXGPlaceMorphBands(CALayer *holder,WXGRim26Bands recipe,CGPath
         return;
     }
     _rimLayer.hidden=YES;
-    _edgeMask.frame=local;_edgeMask.opacity=s.opacity;
+    _edgeMask.frame=CGRectOffset(local,pad,pad);_edgeMask.opacity=s.opacity;
     _plainBands.frame=local;_directional.frame=local;
-    CGFloat scale=self.window.screen.scale?:UIScreen.mainScreen.scale;
     WXGRim26Shape shape={s.height,s.curve,s.angle,s.key,s.fill,s.spread,s.ring,0,s.floor};
     CGAffineTransform shift=CGAffineTransformMakeTranslation(-b.origin.x,-b.origin.y);
     CGPathRef path=CGPathCreateCopyByTransformingPath(outline.CGPath,&shift);

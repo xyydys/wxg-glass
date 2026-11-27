@@ -138,7 +138,7 @@ int main(void) {
     // Title, search and groups follow the same pull across the change of
     // range. At full height the Home controls have moved below the screen.
     assert(fabs(WXGHomePullTranslation(-panel,nav,3)-(panel-nav))<1e-7);
-    assert(WXGHomeFloatingRowY(0,nav,0,3,-panel,3)==panel+3);
+    assert(3.+WXGHomePinnedContentShift(-panel,nav)+panel==panel+3);
     // The storage shim only removes a navigation inset duplicated on a
     // zero request. Preserve real native opens, refresh and app-owned insets.
     assert(WXGHomeDuplicatesZeroRequest(0,nav,nav,nav,3));
@@ -157,6 +157,17 @@ int main(void) {
     assert(WXGHomeInitialConversationTop(24,nav+24,panel,3)==nav+24);
     assert(!WXGHomeNativePull(nav+24,24,nav+24,-nav-24,panel,3));
     assert(WXGHomeInitialConversationTop(0,0,panel,3)==0);
+    // Diagnostics 16/17: the taskbar briefly supplies all 956 pt as raw inset;
+    // closing it at -100 1/3 must keep the search at its original header row.
+    assert(WXGHomeRememberedConversationTop(nav,panel,panel,panel,3)==nav);
+    assert(WXGHomeRememberedConversationTop(0.,panel,panel,panel,3)==0.);
+    assert(fabs(WXGHomeRememberedConversationTop(NAN,panel-nav,panel,panel,3)-nav)<1.e-8);
+    assert(WXGHomeRememberedConversationTop(nav,0.,nav+10,panel,3)==nav+10);
+    assert(WXGHomePinnedContentShift(-panel,nav)==0.);
+    assert(WXGHomePinnedContentShift(-nav-.2,nav)==0.);
+    assert(WXGHomePinnedContentShift(-nav,nav)==0.);
+    assert(WXGHomePinnedContentShift(40.,nav)==nav+40.);
+
     assert(WXGHomeNativePull(0,0,0,-12,panel,3));
     assert(!WXGHomeNativePull(0,0,0,0,panel,3));
     puts("HomeSearchLayoutTests: native row handoff, field readiness and header reservation passed.");

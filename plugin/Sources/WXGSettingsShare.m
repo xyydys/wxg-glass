@@ -66,6 +66,7 @@ static NSDictionary *WXGShareFilter(NSDictionary *source,NSArray<NSString *> *ke
         if([skipped containsObject:key])continue;
         id value=source[key];
         if([key hasSuffix:@"Hex"]){if([value isKindOfClass:NSString.class] && WXGNormalizeHex(value))out[key]=WXGNormalizeHex(value);}
+        else if([key hasSuffix:@"SymbolName"]) {if([value isKindOfClass:NSString.class] && [value length]<=128)out[key]=value;}
         else if(WXGShareNumber(value))out[key]=value;
     }
     return out;

@@ -33,6 +33,12 @@ static inline int WXGBubbleCompactVoiceSkin(WXGCardImageFit fit, double top, dou
         top >= -8 && top <= 8 && height >= 20 && height <= 64;
 }
 
+// A compact standby may be offset during the transition. Compare its upper
+// strip and occupied area against the actual primary rather than exact frames.
+static inline int WXGBubbleAlternateVoiceSkin(WXGCardImageFit fit,double primaryArea,double top,double height) {
+    return primaryArea>0 && fit.area>=.88*primaryArea && WXGBubbleCompactVoiceSkin(fit,top,height);
+}
+
 static inline int WXGBubbleVoicePlate(double top, double width, double height,
                                       double textWidth, double textHeight, int directLoadingPlate) {
     if (top < 22) return 0;

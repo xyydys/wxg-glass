@@ -1,5 +1,6 @@
 #import "WXGIntegration.h"
 #import "WXGPresentationMath.h"
+#import "WXGIconAlignment.h"
 #import "WXGButtonPress.h"
 #import "WXGPressStretch.h"
 #import "WXGMenuCascade.h"
@@ -123,6 +124,7 @@ static NSInteger WXGLoadMenuDotCount(void) {
     CGSize _builtSize;
     double _progress;
     BOOL _dotsHidden;
+    double _drawnArcStroke;
 }
 - (instancetype)initWithFrame:(CGRect)frame {
     if((self=[super initWithFrame:frame])) {
@@ -130,11 +132,10 @@ static NSInteger WXGLoadMenuDotCount(void) {
         _dotCount=WXGLoadMenuDotCount();
         _progress=0.;
         _arcLayer=[CAShapeLayer layer];
-        _arcLayer.fillColor=UIColor.clearColor.CGColor;
-        _arcLayer.lineCap=kCALineCapRound;
-        _arcLayer.lineWidth=1.8;
-        _arcLayer.strokeStart=0;
-        _arcLayer.strokeEnd=1;
+        _drawnArcStroke=-1.;
+        _arcLayer.strokeColor=NULL;
+        _arcLayer.allowsEdgeAntialiasing=YES;
+        _arcLayer.edgeAntialiasingMask=kCALayerLeftEdge|kCALayerRightEdge|kCALayerTopEdge|kCALayerBottomEdge;
         [self.layer addSublayer:_arcLayer];
         for(int i=0;i<WXGMenuMaxParticles;i++) {
             CAShapeLayer *dot=[CAShapeLayer layer];
@@ -159,7 +160,7 @@ static NSInteger WXGLoadMenuDotCount(void) {
     UIColor *ink=[UIColor.labelColor resolvedColorWithTraitCollection:self.traitCollection];
     CGColorRef cg=ink.CGColor;
     [CATransaction begin];[CATransaction setDisableActions:YES];
-    _arcLayer.strokeColor=cg;
+    _arcLayer.fillColor=cg;
     _symbolLayer.strokeColor=cg;
     for(int i=0;i<WXGMenuMaxParticles;i++)_dots[i].fillColor=cg;
     [CATransaction commit];
@@ -176,12 +177,31 @@ static NSInteger WXGLoadMenuDotCount(void) {
     [self setNeedsLayout];
     [self layoutIfNeeded];
 }
+// Outline the band and both caps as one fill, so the moving tip remains
+// tangent to both circular edges for the entire sweep.
+- (void)drawArcStroke:(double)stroke {
+    if(stroke==_drawnArcStroke || CGSizeEqualToSize(_builtSize,CGSizeZero))return;
+    _drawnArcStroke=stroke;
+    if(stroke==0.){_arcLayer.path=NULL;return;}
+    CGFloat side=MIN(_builtSize.width,_builtSize.height);
+    CGFloat radius=WXGMenuRingRadius(side),half=WXGMenuRingLineWidth(side)*.5;
+    CGFloat cx=_builtSize.width*.5,cy=_builtSize.height*.5;
+    CGFloat start=WXGMenuArcAngle(0.),end=WXGMenuArcAngle(stroke);
+    CGMutablePathRef band=CGPathCreateMutable();
+    CGPathAddArc(band,NULL,cx,cy,radius+half,start,end,false);
+    CGPathAddArc(band,NULL,cx+radius*cos(end),cy+radius*sin(end),half,end,end+M_PI,false);
+    CGPathAddArc(band,NULL,cx,cy,radius-half,end,start,true);
+    CGPathAddArc(band,NULL,cx+radius*cos(start),cy+radius*sin(start),half,start+M_PI,start+2*M_PI,false);
+    CGPathCloseSubpath(band);
+    _arcLayer.path=band;
+    CGPathRelease(band);
+}
 - (void)applyCurrentPose {
     double p=WXGMenuClamp(_progress,0.,1.);
     double stroke=WXGMenuArcStrokeForProgress(p);
     WXGMenuSymbolPose sym=WXGMenuSymbolForProgress(p);
     [CATransaction begin];[CATransaction setDisableActions:YES];
-    _arcLayer.strokeEnd=(CGFloat)stroke;
+    [self drawArcStroke:stroke];
     _symbolRotLayer.transform=CATransform3DMakeRotation((CGFloat)sym.rotationRad,0,0,1);
     _symbolLayer.transform=CATransform3DMakeScale((CGFloat)sym.scale,(CGFloat)sym.scale,1.);
     _symbolLayer.opacity=(float)sym.alpha;
@@ -210,11 +230,7 @@ static NSInteger WXGLoadMenuDotCount(void) {
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _arcLayer.contentsScale=screenScale;
     _arcLayer.frame=self.bounds;
-    // 135 deg (7:30) clockwise to 45 deg (4:30) = 270 deg solid arc.
-    UIBezierPath *arc=[UIBezierPath bezierPathWithArcCenter:center radius:ringR
-        startAngle:(CGFloat)(135.*M_PI/180.) endAngle:(CGFloat)(45.*M_PI/180.) clockwise:YES];
-    _arcLayer.path=arc.CGPath;
-    _arcLayer.lineWidth=(CGFloat)WXGMenuRingLineWidth(side);
+    _drawnArcStroke=-1.;
     CGFloat dotPad=2.;
     CGRect dotBounds=CGRectMake(0,0,dotD+dotPad*2.,dotD+dotPad*2.);
     CGPathRef circlePath=CGPathCreateWithEllipseInRect(CGRectMake(dotPad,dotPad,dotD,dotD),NULL);
@@ -251,7 +267,7 @@ static NSInteger WXGLoadMenuDotCount(void) {
 }
 - (NSDictionary *)diagnostics {
     return @{@"dotCount":@(_dotCount),@"progress":@(round(_progress*1000.)/1000.),@"dotsHidden":@(_dotsHidden),
-             @"arcStroke":@(_arcLayer.strokeEnd),@"symOpacity":@(_symbolLayer.opacity)};
+             @"arcStroke":@(WXGMenuArcStrokeForProgress(_progress)),@"symOpacity":@(_symbolLayer.opacity)};
 }
 @end
 
@@ -414,6 +430,7 @@ static NSInteger WXGLoadMenuDotCount(void) {
     UIColor *_resolvedTint;
     NSString *_resolvedRole;
     BOOL _resolvedPreserve;
+    CGFloat _iconTextureGutter;
     UIImageView *_trailingView;           // FIX114 M: trailingSymbol
     WXGHomePlusTriggerView *_plusTriggerView;
     WXGVectorIconView *_vectorIconView;
@@ -699,7 +716,7 @@ static BOOL WXGSameArtwork(UIImage *a,UIImage *b) {
     return a.imageAsset && a.imageAsset==b.imageAsset && CGSizeEqualToSize(a.size,b.size) && a.scale==b.scale && a.renderingMode==b.renderingMode;
 }
 - (void)setImage:(UIImage *)image title:(NSString *)title count:(NSString *)count {
-    if(image && _sourceImage && image!=_sourceImage && WXGSameArtwork(_sourceImage,image))image=_sourceImage;
+    if(!_splitInputSymbol && image && _sourceImage && image!=_sourceImage && WXGSameArtwork(_sourceImage,image))image=_sourceImage;
     BOOL imageChanged=_sourceImage!=image || _sourceStyle!=self.traitCollection.userInterfaceStyle;
     if(imageChanged){_sourceImage=image;[self resolveSourceImage];}
     BOOL hideIcon=_homePlusTrigger || _vectorIconName.length>0 || !image;
@@ -714,6 +731,13 @@ static BOOL WXGSameArtwork(UIImage *a,UIImage *b) {
 static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [role isEqual:@"chatAvatarButton"];}
 - (void)resolveSourceImage {
     _sourceStyle=self.traitCollection.userInterfaceStyle;
+    if(_splitInputSymbol && _sourceImage.isSymbolImage) {
+        _iconTextureGutter=0;
+        _iconView.image=_sourceImage;
+        _iconView.tintColor=_iconTint?:UIColor.labelColor;
+        _resolvedFrom=nil;
+        return;
+    }
     UITraitCollection *traits=_preservesNativeIconColors && _nativeIconSource?_nativeIconSource.traitCollection:self.traitCollection;
     UIImage *image=_sourceImage.imageAsset?[_sourceImage.imageAsset imageWithTraitCollection:traits]:_sourceImage;
     UIColor *tint=_preservesNativeIconColors?(_nativeIconSource.tintColor?:UIColor.labelColor):UIColor.labelColor;
@@ -728,6 +752,9 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
         _resolvedFrom=_sourceImage;_resolvedTraits=traits;_resolvedTint=tint;_resolvedPreserve=_preservesNativeIconColors;_resolvedRole=[_role copy];
         [traits performAsCurrentTraitCollection:^{
             UIImage *cropped=image && !WXGPhotoRole(self.role)?WXGCropInk(image,tint):image;
+            UIEdgeInsets margins=cropped.alignmentRectInsets;
+            self->_iconTextureGutter=!WXGPhotoRole(self.role) && margins.left>0 &&
+                UIEdgeInsetsEqualToEdgeInsets(margins,UIEdgeInsetsMake(margins.left,margins.left,margins.left,margins.left))?margins.left:0;
             // Video uses native original artwork or its actual template tint;
             // a white glyph is not evidence that it should become labelColor.
             BOOL adaptive=!self.preservesNativeIconColors && !WXGPhotoRole(self.role) && WXGImageIsMonochrome(image);
@@ -820,12 +847,14 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
         [self styleAvatarRing];
     } else if(_iconView.image) {
         _iconView.contentMode=UIViewContentModeScaleAspectFit;_iconView.layer.borderWidth=0;
-        WXGRect r=WXGCenteredInk(w,h,_iconView.image.size.width,_iconView.image.size.height,iconMax);
+        CGFloat iw=_iconView.image.size.width-2*_iconTextureGutter,ih=_iconView.image.size.height-2*_iconTextureGutter;
+        WXGRect r=WXGCenteredInk(w,h,iw,ih,iconMax);
         if(_naturalIconSize) {   // FIX113: the glyph's own size (cropped to its ink: WeChat's own size on screen)
-            CGFloat iw=_iconView.image.size.width,ih=_iconView.image.size.height,fit=MIN(1,MIN(w*.92/MAX(iw,.01),h*.92/MAX(ih,.01)));
+            CGFloat fit=MIN(1,MIN(w*.92/MAX(iw,.01),h*.92/MAX(ih,.01)));
             r=(WXGRect){(w-iw*fit)*.5,(h-ih*fit)*.5,iw*fit,ih*fit};
         }
         if(_countLabel.text.length)r.x=(h-r.w)*.5;
+        r=WXGIconTextureFrame(r,iw,_iconTextureGutter);
         CGRect iconFrame=CGRectOffset(WXGCGRect(r),_materialRect.origin.x,_materialRect.origin.y);
         if(_naturalIconSize) {   // FIX113 C: at its own size, on whole device pixels (not resampled between them)
             CGFloat px=self.traitCollection.displayScale>0?self.traitCollection.displayScale:UIScreen.mainScreen.scale;

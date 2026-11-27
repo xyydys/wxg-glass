@@ -165,6 +165,13 @@ static inline double WXGMenuArcStrokeForProgress(double p) {
     return 1.-WXGMenuEaseInOut(p/h);
 }
 
+// Clockwise in the button's Y-down coordinates, leaving the 90-degree
+// opening centered under the plus for the flying dots.
+static inline double WXGMenuArcAngle(double stroke) {
+    const double pi=3.14159265358979323846;
+    return pi*(.75+1.5*WXGMenuClamp(stroke,0.,1.));
+}
+
 /* Track 2: center glyph (+ <-> x) as a function of p in [0, 1] (zero bounce). */
 typedef struct { double scale,alpha,rotationRad; int isClose; } WXGMenuSymbolPose;
 static inline WXGMenuSymbolPose WXGMenuSymbolForProgress(double p) {

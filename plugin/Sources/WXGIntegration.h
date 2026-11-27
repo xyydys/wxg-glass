@@ -309,6 +309,7 @@ void WXGInstallNativeIconGuard(void);
 @property(nonatomic) BOOL pressFixed;
 // FIX113: the icon at its own size (WeChat's artwork as WeChat draws it: the
 // glyph's points, not fitted to the plugin's icon box); smaller only to fit.
+@property(nonatomic) BOOL splitInputSymbol;   // Use the configured SF symbol and its native artwork and metrics.
 @property(nonatomic) BOOL naturalIconSize;
 // FIX87: the icon's colour instead of the label colour (nil = as before).
 @property(nonatomic,strong) UIColor *iconTint;
@@ -403,6 +404,7 @@ FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我
 - (BOOL)titleModeWanted;   // R20: expand home title capsule into compact All/Unread group bar
 - (void)updateOnPage:(UIViewController *)page;   // the host's refresh on the chat list
 - (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect navTitle:(UIView *)navTitle pullTitle:(UIView *)pullTitle englishHint:(BOOL)englishHint;
+- (void)finishHomeTitleRowBeforeCommit;
 - (void)hideTitleBar;      // visually hides the title group bar (keeps MFTitleView concealed while titleModeWanted is on)
 - (void)releaseTitleBar;   // hides the title group bar and restores MFTitleView (when titleModeWanted is off or plugin disabled)
 - (void)searchBarLaidOut:(UIView *)view;         // a search bar laid out (follows the field)
@@ -437,7 +439,7 @@ FOUNDATION_EXPORT NSString *WXGChatNameSummary(void);   // FIX113 Z: where the n
 - (void)messageCellLaidOut:(UIView *)cell;
 - (void)messageCellWillReuse:(UIView *)cell;
 - (void)nativeQuoteLaidOut:(UIView *)preview;
-- (void)voiceTranscriptTextDidChange:(UIView *)textView;
+- (void)nativeBubbleChildDidChange:(UIView *)textView;
 - (void)tick:(CFTimeInterval)time;
 - (void)applyConfiguration;
 - (void)restore;
@@ -502,6 +504,7 @@ FOUNDATION_EXPORT NSString *WXGChatNameSummary(void);   // FIX113 Z: where the n
 // The animated home menu temporarily covers floating plugin tools in its window.
 // Pass CGRectNull to clear the requesting owner's occlusion.
 - (void)updateHomeMenuFloatingToolsForOwner:(id)owner inWindow:(UIWindow *)window occupiedRect:(CGRect)rect;
+- (WXGSurface *)homeTitleRowAnchorForPage:(UIViewController *)page;
 - (CGFloat)homePullAlphaFloor;
 - (CGFloat)homeRowBottomForPage:(UIViewController *)page window:(UIWindow *)window;
 // FIX118 A: the user's own photo (HD, from the contact's address; kept on disk); nil while it downloads.

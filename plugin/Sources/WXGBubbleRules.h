@@ -45,6 +45,9 @@ static inline int WXGBubbleAdjacentBoxes(WXGBubbleBox a,WXGBubbleBox b,int prove
 /* Long messages can be many screens high. Both temporary corners stay well
    outside the viewport. Reuse the current window while its margins still hold. */
 typedef struct {double min,max;} WXGBubbleSpan;
+static inline WXGBubbleSpan WXGBubbleLocalSlice(double top,double bottom,double radius,int above,int below) {
+    return (WXGBubbleSpan){top-(above?radius:0),bottom+(below?radius:0)};
+}
 // Flat chat tables do not expose a section per message. A verified missing
 // end may extend offscreen only if its visible physical slice reaches that
 // edge; otherwise the missing row could leave a visible gap.

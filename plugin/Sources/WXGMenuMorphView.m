@@ -252,7 +252,12 @@ static UIImage *WXGMenuLightDisc(BOOL gaussian) {
             WXGMenuMorphFieldBoxFromRect(CGRectOffset(source,-x,-y),radius),smoothing,step,WXGMorphFieldGeometry);
         WXGMenuMorphFieldTranslate(&field,x,y);
     }
-    _currentOutline=WXGMenuMorphMaskPath(&field);
+    // At rest the union is exactly the trigger circle. Use its analytic
+    // outline for both face and rim instead of a smoothed sampling grid.
+    CGFloat half=menu.size.width*.5;
+    BOOL circle=smoothing==0 && CGRectEqualToRect(menu,source) && menu.size.height==menu.size.width &&
+                radius==half && rx==half && ry==half;
+    _currentOutline=circle?[UIBezierPath bezierPathWithOvalInRect:menu]:WXGMenuMorphMaskPath(&field);
     CGRect material=CGPathGetPathBoundingBox(_currentOutline.CGPath);
     if(CGRectIsEmpty(material))return;
     [UIView performWithoutAnimation:^{

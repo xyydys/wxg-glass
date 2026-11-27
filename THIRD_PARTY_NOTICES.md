@@ -77,3 +77,7 @@ reference, translated content geometry, voice transcription layout updates,
 quote background and divider behavior,
 and long-message identity rules in
 [xyydys/MixBubble 2.9.4.6](https://github.com/xyydys/mixbubble/tree/6c4a4152536e8a383654deee2c04f81ea27dfd20).
+
+The adapter also uses the parent model and shared message wrapper to identify
+rows belonging to the same message, following
+[MixChat 1.0.9](https://github.com/xyydys/mixbubble/tree/9a8bd7387f2e172e8bb2d2d47a841813b677f991).

@@ -1813,7 +1813,9 @@ static CGRect WXGLocalTitleFrame(UIView *view,UIColor **ink,CGFloat *visibility)
 // together on the exact handoff frame.
 - (void)watchTitle:(UIView *)view {
     for(UIView *c in WXGLocalViews(view,40)) {
-        if(c==view || WXGIsPluginView(c) || objc_getAssociatedObject(c,&WXGTitleWatchKey))continue;
+        if(c==view || WXGIsPluginView(c))continue;
+        WXGTitleWatch *existing=objc_getAssociatedObject(c,&WXGTitleWatchKey);
+        if(existing){existing.title=view;continue;}
         if(![c isKindOfClass:UILabel.class] && ![c isKindOfClass:UIImageView.class] && ![c isKindOfClass:UIActivityIndicatorView.class] && c.class!=UIView.class)continue;
         WXGTitleWatch *watch=[WXGTitleWatch new];watch.title=view;
         objc_setAssociatedObject(c,&WXGTitleWatchKey,watch,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -1824,7 +1826,18 @@ static CGRect WXGLocalTitleFrame(UIView *view,UIColor **ink,CGFloat *visibility)
 }
 - (void)titleContentChanged:(UIView *)view {
     WXGLocalEntry *entry=WXGLocalEntryOfAnchor(view);
-    if(!entry.mounted || entry.kind!=WXGLocalTitle || entry.applying || !view.window || entry.surface.superview!=view)return;
+    if(!view.window || entry.applying)return;
+    BOOL homeTitle=_homeTitle && [view isKindOfClass:_homeTitle];
+    if(homeTitle) {
+        // The ordinary Home title and the taskbar title may reuse a label
+        // nested deeper than the cheap layout key. Re-read native ink now.
+        objc_setAssociatedObject(view,&WXGLocalTitleCacheKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        if(!entry.mounted) {
+            if([self wants:WXGLocalTitle] && ![WXGChatSegments.shared titleModeWanted])[view setNeedsLayout];
+            return;
+        }
+    }
+    if(!entry.mounted || entry.kind!=WXGLocalTitle || entry.surface.superview!=view)return;
     ++_titleWatchFollows;
     @try {
         [self followShown:entry immediately:NO];
@@ -1880,7 +1893,12 @@ static BOOL WXGLocalTitleAllowedForView(UIView *view) {
     if(view.layer.mask){[self skip:view because:@"标题由插件自己画（聊天页）"];return;}
     BOOL wasMounted=WXGLocalEntryOfAnchor(view).mounted;   // FIX108 F
     // A glass already there stays through a one-pass collapse (mount keeps it).
-    if(CGRectIsNull(WXGLocalTitleFrame(view,NULL,NULL)) && !WXGLocalEntryOfAnchor(view).mounted){[self skip:view because:@"没有标题文字，或标题太长 / 两行" retry:YES];return;}
+    if(CGRectIsNull(WXGLocalTitleFrame(view,NULL,NULL)) && !wasMounted) {
+        // The close-area twin may be laid out hidden. Observe it before its
+        // first mount so showing its text can install the glass in that pass.
+        if(_homeTitle && [view isKindOfClass:_homeTitle])[self watchTitle:view];
+        [self skip:view because:@"没有标题文字，或标题太长 / 两行" retry:YES];return;
+    }
     __weak UIView *weakView=view;
     [self mount:WXGLocalTitle host:view anchor:view paint:nil below:nil measure:nil frame:^CGRect{UIView *v=weakView;return v?WXGLocalInsideBar(v,WXGLocalTitleFrame(v,NULL,NULL)):CGRectNull;}
          radius:0 button:nil prepare:^(WXGStateBag *states){[states allowOverflow:view];}];
@@ -2604,26 +2622,10 @@ static BOOL WXGLocalCovering(CGRect r,CGRect b) {
 - (void)follow:(WXGLocalEntry *)entry shown:(CGFloat)alpha immediately:(BOOL)now {
     WXGSurface *surface=entry.surface;BOOL nothing=alpha<.01;
     BOOL homeTitle=entry.kind==WXGLocalTitle && _homeTitle && [entry.anchor isKindOfClass:_homeTitle];
-    if(alpha<0) {
-        alpha=0;
-        // R25: during a partial home pull-down (not into mini-program panel),
-        // WeChat briefly hides navTitle/pullTitle for 1-2 frames before the
-        // sibling MFTitleView shows. Bridge that handoff if no sibling is visible yet.
-        BOOL bridgeGap=NO;
-        if(homeTitle && surface.alpha>.05 && [WXGIntegrationHost.shared homePullAlphaFloor]>.01 && entry.anchor.window) {
-            BOOL siblingShown=NO;
-            for(WXGLocalEntry *other in _entries.allObjects) {
-                if(other==entry || !other.mounted || other.kind!=WXGLocalTitle)continue;
-                if(other.anchor.window==entry.anchor.window && [other.anchor isKindOfClass:_homeTitle]) {
-                    CGFloat sAlpha=0;if(other.titleMeasure)other.titleMeasure(NULL,&sAlpha);
-                    BOOL drawn=other.surface.plain || other.surface.glass.hasPresentedFrame;
-                    if(sAlpha>.05 && drawn){siblingShown=YES;break;}
-                }
-            }
-            if(!siblingShown)bridgeGap=YES;
-        }
-        if(!bridgeGap)now=YES;   // FIX108 F: WeChat hid the text: no debounce
-    }
+    // A Home title glass is a child of the native title that actually draws
+    // its text. Show and hide its material in the same commit as that text.
+    if(homeTitle)now=YES;
+    if(alpha<0){alpha=0;now=YES;}
     entry.unseenTurns=nothing?entry.unseenTurns+1:0;
     if(nothing && !now && entry.unseenTurns<2) {
         // FIX114 A (user: pulling the home list down sometimes left an empty

@@ -158,8 +158,10 @@ NSArray<UIView *> *WXGBubbleCardBackgrounds(UIView *host, UIView *body) {
     for (UIView *candidate in body.subviews) {
         if (candidate == primary) continue;
         WXGCardImageFit fit = WXGCardFit(candidate, body);
-        BOOL compactAlternate = (traits & WXGCardVoice) && CGRectEqualToRect(candidate.frame, primary.frame) &&
-            WXGBubbleCompactVoiceSkin(fit, CGRectGetMinY(candidate.frame) - CGRectGetMinY(body.bounds), CGRectGetHeight(candidate.bounds));
+        // The standby voice skin can have a different origin or height while
+        // the compact bar changes into the wider transcription body.
+        BOOL compactAlternate = (traits & WXGCardVoice) && WXGBubbleAlternateVoiceSkin(fit,primaryArea,
+            CGRectGetMinY(candidate.frame)-CGRectGetMinY(body.bounds),CGRectGetHeight(candidate.bounds));
         if (WXGBubbleCardStandbyFit(fit, traits & WXGCardInset, primaryArea) || compactAlternate) [skins addObject:candidate];
     }
     return skins;
@@ -247,7 +249,7 @@ static void WXGCollectVoiceText(UIView *node, UIView *body, UIView *host, NSHash
     for (UIView *child in node.subviews) WXGCollectVoiceText(child, body, host, materials, envelope, state, depth+1, budget);
 }
 
-void WXGBubbleStyleCardContents(UIView *host, UIView *body, WXGStateBag *bag, CGFloat radius) {
+void WXGBubbleStyleCardContents(UIView *host, UIView *body, WXGStateBag *bag, CGFloat radius, UIView *siblingText) {
     WXGCardTraits traits = WXGCardTraitsForHost(host);
     if (!(traits & WXGCardSupported) || !body || ![body isDescendantOfView:host]) return;
     // Glass is a sibling underneath; keep all native content and hit targets in place.
@@ -270,6 +272,21 @@ void WXGBubbleStyleCardContents(UIView *host, UIView *body, WXGStateBag *bag, CG
         NSHashTable<UIView *> *materials = [NSHashTable weakObjectsHashTable];
         state.lowerTextCount=0;state.plateClass=nil;state.textClass=nil;
         WXGCollectVoiceText(host, body, host, materials, &envelope, state, 0, &budget);
+        if(siblingText) {
+            // The owner has resolved this renderer to the same physical row.
+            // Touch only its immediate lower plate, never the cell container.
+            UIView *plate=siblingText.superview;
+            CGRect text=[siblingText convertRect:siblingText.bounds toView:host];
+            CGRect rect=[plate convertRect:plate.bounds toView:host];
+            CGFloat top=CGRectGetMinY([body convertRect:body.bounds toView:host]);
+            if(WXGBubbleVoicePlate(CGRectGetMinY(rect)-top,rect.size.width,rect.size.height,text.size.width,text.size.height,NO)) {
+                NSUInteger remaining=96;
+                WXGCollectVoiceMaterial(plate,materials,0,&remaining);
+                [materials addObject:siblingText];++state.lowerTextCount;
+                state.plateClass=NSStringFromClass(plate.class);state.textClass=NSStringFromClass(siblingText.class);
+                envelope=CGRectUnion(envelope,CGRectInset(text,-10,-10));
+            }
+        }
         for (UIView *old in state.transcriptMaterials) {
             if ([materials containsObject:old] || [WXGVoiceMaterialOwners objectForKey:old] != bag) continue;
             [bag restoreView:old];

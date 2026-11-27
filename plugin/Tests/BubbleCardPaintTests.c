@@ -22,6 +22,10 @@ int main(void) {
     WXGCardImageFit compact = WXGBubbleCardImageFit(.35,.24,80*40,0,0);
     assert(!WXGBubbleCardAcceptFit(compact,0));
     assert(WXGBubbleCompactVoiceSkin(compact,0,40));
+    assert(WXGBubbleAlternateVoiceSkin(compact,82*40,3,40));
+    assert(!WXGBubbleAlternateVoiceSkin(compact,180*40,3,40));
+    assert(!WXGBubbleAlternateVoiceSkin(compact,0,3,40));
+    assert(!WXGBubbleAlternateVoiceSkin(compact,82*40,38,40));
     assert(!WXGBubbleCompactVoiceSkin(compact,45,40));
     assert(!WXGBubbleCompactVoiceSkin(compact,0,120));
     assert(!WXGBubbleCompactVoiceSkin(WXGBubbleCardImageFit(0,0,0,0,0),0,40));

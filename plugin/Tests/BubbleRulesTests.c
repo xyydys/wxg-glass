@@ -28,6 +28,13 @@ static void testQuoteDivider(void) {
 
 int main(void) {
     testQuoteDivider();
+    for(int index=0;index<4;index++) {
+        WXGBubbleSpan piece=WXGBubbleLocalSlice(0,62,20,index>0,index<3);
+        assert(near(piece.min,index==0?0:-20));
+        assert(near(piece.max,index==3?62:82));
+    }
+    WXGBubbleSpan single=WXGBubbleLocalSlice(0,102,20,0,0);
+    assert(near(single.min,0) && near(single.max,102));
     /* One line at the standard size: a capsule; taller bubbles keep the same radius. */
     assert(near(WXGBubbleRadius(120,40,40),20));
     assert(near(WXGBubbleRadius(240,84,40),20) && near(WXGBubbleRadius(240,300,40),20));

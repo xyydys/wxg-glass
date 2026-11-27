@@ -1,14 +1,13 @@
 #import "WXGIntegration.h"
 #import "WXGInputPolicy.h"
+#import "WXGInputSymbols.h"
 #import "WXGInputSettledGeometry.h"
 #import "WXGInputRepairPolicy.h"
 #import <objc/runtime.h>
 
 static WXGRect WXGInputRect(CGRect r) {return (WXGRect){r.origin.x,r.origin.y,r.size.width,r.size.height};}
-/* FIX113 / R25: the two-ended bar's icons: crisp unclipped vector glyphs
-   matching exact optical diameter across emoji/send/keyboard/voice/plus, or,
-   when switched off, WeChat's own native button artwork. */
-static BOOL WXGInputSystemIcons(void) {return [WXGConfig.shared extraNumber:@"inputSystemIcons"]>.5;}
+// The two-ended bar can display configured SF Symbols or native button artwork.
+static BOOL WXGInputSystemIcons(void) {return [WXGConfig.shared extraNumber:@"splitInputSystemSymbols"]>.5;}
 // FIX115 J: the capsule's height, the plus' size, the side margin and the gap (基本设置).
 static WXGInputSize WXGInputConfiguredSize(void) {
     WXGConfig *c=WXGConfig.shared;
@@ -19,18 +18,38 @@ static WXGInputSize WXGInputConfiguredSize(void) {
 static UIImage *WXGInputNativeArtwork(UIControl *native) {
     return [native isKindOfClass:UIButton.class]?((UIButton *)native).currentImage:nil;
 }
-static void WXGInputSetActionIcon(WXGSurface *surface,NSString *vectorName,CGFloat diameter,UIControl *native) {
+// The layout runs while typing and scrolling. Resolve each role's symbol and
+// adaptive tint once per configuration revision, shared with the settings preview.
+static UIImage *WXGInputImages[WXGInputSymbolCount];
+static UIColor *WXGInputColors[WXGInputSymbolCount];
+static void WXGResolveInputSymbol(WXGInputSymbolRole role) {
+    static NSUInteger revisions[WXGInputSymbolCount];
+    NSUInteger revision=WXGConfigRevision();
+    if(revisions[role]==revision && WXGInputImages[role])return;
+    WXGInputSymbolInfo info=WXGInputRoleInfo(role);
+    NSString *stem=@(info.stem);
+    WXGConfig *config=WXGConfig.shared;
+    NSString *name=[config valueForKey:[stem stringByAppendingString:@"SymbolName"]];
+    NSInteger index=lround([config extraNumber:[stem stringByAppendingString:@"Weight"]]);
+    static const UIImageSymbolWeight weights[]={UIImageSymbolWeightThin,UIImageSymbolWeightLight,UIImageSymbolWeightRegular,UIImageSymbolWeightSemibold,UIImageSymbolWeightBold};
+    CGFloat size=[config extraNumber:[stem stringByAppendingString:@"Size"]];
+    UIImageSymbolConfiguration *cfg=[UIImageSymbolConfiguration configurationWithPointSize:size weight:weights[MAX(0,MIN(4,index))]];
+    UIImage *image=[UIImage systemImageNamed:name withConfiguration:cfg]?:[UIImage systemImageNamed:@(info.fallback) withConfiguration:cfg];
+    WXGInputImages[role]=[image imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    UIColor *light=WXGColor([config extraHex:[stem stringByAppendingString:@"LightHex"]]);
+    UIColor *dark=WXGColor([config extraHex:[stem stringByAppendingString:@"DarkHex"]]);
+    WXGInputColors[role]=[UIColor colorWithDynamicProvider:^UIColor *(UITraitCollection *traits) {
+        return (traits.userInterfaceStyle==UIUserInterfaceStyleDark?dark:light)?:UIColor.labelColor;
+    }];
+    revisions[role]=revision;
+}
+UIImage *WXGInputSymbolImage(WXGInputSymbolRole role) {WXGResolveInputSymbol(role);return WXGInputImages[role];}
+UIColor *WXGInputSymbolColor(WXGInputSymbolRole role) {WXGResolveInputSymbol(role);return WXGInputColors[role];}
+static void WXGInputSetActionIcon(WXGSurface *surface,WXGInputSymbolRole role,UIControl *native) {
     UIImage *own=WXGInputSystemIcons()?nil:WXGInputNativeArtwork(native);
-    if(own) {
-        surface.vectorIconName=nil;
-        if(!surface.naturalIconSize){surface.naturalIconSize=YES;[surface setNeedsLayout];}
-        [surface setImage:own title:nil count:nil];
-    }else {
-        if(surface.naturalIconSize){surface.naturalIconSize=NO;[surface setNeedsLayout];}
-        surface.vectorIconDiameter=diameter;
-        surface.vectorIconName=vectorName;
-        [surface setImage:nil title:nil count:nil];
-    }
+    surface.splitInputSymbol=own==nil;
+    surface.iconTint=own?nil:WXGInputSymbolColor(role);
+    [surface setImage:own?:WXGInputSymbolImage(role) title:nil count:nil];
 }
 
 /* FIX87: the emoji button's shape, to tell WeChat's two images apart (a
@@ -241,6 +260,8 @@ static void WXGSetInputForeground(UIView *panel,WXGSurface *mic,WXGSurface *emoj
 @property(nonatomic) BOOL installed,layingOut,suspended,usingNativeLayout;
 @property(nonatomic,strong) WXGNativeInputAdapter *nativeAdapter;
 @property(nonatomic,weak) UIView *tool,*panel,*grow,*dictation;
+@property(nonatomic,weak) UIControl *dictationInkButton;
+@property(nonatomic,strong) WXGStateBag *dictationInk;
 @property(nonatomic,weak) UITextView *editor;
 @property(nonatomic,weak) UIControl *attachment,*dictationButton,*sendButton,*voiceButton,*emojiButton;
 @property(nonatomic,weak) UIControl *recordButton;
@@ -276,11 +297,11 @@ static NSData *WXGEmojiFacePrint;
 - (instancetype)init {
     if((self=[super init])) {
         WXGSurface *plus=[WXGSurface new],*pill=[WXGSurface new],*mic=[WXGSurface new],*emoji=[WXGSurface new];
-        plus.role=@"attachment";plus.vectorIconName=@"plus";plus.vectorIconDiameter=23.;
+        plus.role=@"attachment";plus.naturalIconSize=YES;
         plus.accessibilityLabel=@"微信附件菜单";
         pill.role=@"input";pill.materialOnly=YES;pill.userInteractionEnabled=NO;pill.isAccessibilityElement=NO;pill.pressFixed=YES;   // FIX87 / R25
-        mic.role=@"dictation";mic.plain=YES;mic.pressProxy=pill;
-        emoji.role=@"emoji";emoji.plain=YES;emoji.pressProxy=pill;emoji.accessibilityLabel=@"微信表情";
+        mic.role=@"dictation";mic.naturalIconSize=YES;mic.plain=YES;mic.pressProxy=pill;
+        emoji.role=@"emoji";emoji.naturalIconSize=YES;emoji.plain=YES;emoji.pressProxy=pill;emoji.accessibilityLabel=@"微信表情";
         _surfaces=@[plus,pill,mic,emoji];
     }return self;
 }
@@ -365,7 +386,18 @@ static NSData *WXGEmojiFacePrint;
         }
     }
 }
+// Hide just the native microphone images. The real button continues to
+// receive its original touches and its recording halo/loading view stays live.
+- (void)replaceDictationInkOn:(UIControl *)button {
+    if(!button || _dictationInkButton!=button) {
+        [_dictationInk restore];_dictationInk=nil;_dictationInkButton=button;
+    }
+    if(!button)return;
+    if(!_dictationInk)_dictationInk=[WXGStateBag new];
+    for(UIView *view in button.subviews)if([view isKindOfClass:UIImageView.class])[_dictationInk conceal:view];
+}
 - (void)clearDictationTouchTargets {
+    [self replaceDictationInkOn:nil];
     if(_dictation) {
         WXGSetDictationTouchTarget(_dictation,nil,nil);
         for(UIView *a=_dictation.superview;a && a!=_panel;a=a.superview)WXGSetDictationTouchTarget(a,nil,nil);
@@ -496,7 +528,6 @@ static NSData *WXGEmojiFacePrint;
         BOOL hasEmoji=_emojiButton && _emojiButton.window==w && !_emojiButton.hidden && WXGCanForward(_emojiButton);
         CGFloat emojiDiameter=MIN(g.mic.h,MAX(32.*m.scale,m.inputButton*.82));
         CGRect emojiRect=CGRectMake(g.mic.x-emojiDiameter-3.*m.scale,g.mic.y+g.mic.h*.5-emojiDiameter*.5,emojiDiameter,emojiDiameter);
-        CGFloat iconD=round(WXGClamp(g.mic.h*.64,21.,25.)*2.)/2.;
         CGFloat base=g.mic.h/.9;
         pill.maximumCornerRadius=MIN(g.pill.h*.5,MAX(24*m.scale,base*.5));
         [pill placeMaterial:[w convertRect:WXGCGRect(g.pill) toView:_panel] inParent:_panel];
@@ -551,11 +582,19 @@ static NSData *WXGEmojiFacePrint;
         }
         _usingNativeDictation=useNativeDictation;
         plus.original=_attachment;
-        WXGInputSetActionIcon(plus,@"plus",iconD,_attachment);
+        WXGInputSetActionIcon(plus,WXGInputSymbolPlus,_attachment);
+        plus.accessibilityLabel=@"微信附件菜单";
         plus.enabled=WXGCanForward(_attachment);plus.hidden=!plus.enabled;pill.hidden=NO;
+        mic.materialOnly=useNativeDictation; // WXGSurface.hitTest also respects this for passive artwork.
+        mic.userInteractionEnabled=!useNativeDictation;
+        mic.isAccessibilityElement=!useNativeDictation;
         if(useNativeDictation) {
-            mic.original=nil;mic.perform=nil;mic.enabled=NO;mic.hidden=YES;
+            UIControl *button=liveDictBtn?:_dictationButton;
+            BOOL symbol=WXGInputSystemIcons() && button!=nil;
+            mic.original=nil;mic.perform=nil;mic.enabled=YES;mic.hidden=!symbol;
             [self placeNativeDictation:micSlot];
+            [self replaceDictationInkOn:symbol?button:nil];
+            if(symbol)WXGInputSetActionIcon(mic,dictationAnimating?WXGInputSymbolListening:WXGInputSymbolDictation,nil);
         }else {
             [self clearDictationTouchTargets];
             if(_dictation) {
@@ -566,11 +605,9 @@ static NSData *WXGEmojiFacePrint;
             mic.original=sending?_sendButton:_rightAction!=WXGInputActionUnavailable?_voiceButton:nil;
             mic.perform=nil;mic.enabled=WXGCanForward(mic.original);mic.hidden=!mic.enabled;
             NSString *role=sending?@"send":keyboard?@"keyboardMode":@"voiceMode";
-            if(![mic.role isEqual:role]) {
-                mic.role=role;
-                mic.accessibilityLabel=sending?@"微信发送消息":keyboard?@"切换到文字输入":@"切换到按住说话";
-            }
-            WXGInputSetActionIcon(mic,sending?@"send":keyboard?@"keyboard":@"voiceMode",iconD,mic.original);
+            if(![mic.role isEqual:role])mic.role=role;
+            WXGInputSetActionIcon(mic,sending?WXGInputSymbolSend:keyboard?WXGInputSymbolVoiceKeyboard:WXGInputSymbolVoice,mic.original);
+            mic.accessibilityLabel=sending?@"微信发送消息":keyboard?@"切换到文字输入":@"切换到按住说话";
         }
         for(WXGSurface *surface in _surfaces)surface.active=!surface.hidden;
         if(useNativeDictation || mic.enabled)[_states conceal:_sendButton];else [_states unconceal:_sendButton];
@@ -578,7 +615,7 @@ static NSData *WXGEmojiFacePrint;
         emoji.hidden=!hasEmoji;emoji.active=hasEmoji;emoji.enabled=hasEmoji;
         if(hasEmoji) {
             [self updateEmojiState];
-            WXGInputSetActionIcon(emoji,_emojiPanel?@"keyboard":@"emoji",iconD,_emojiButton);
+            WXGInputSetActionIcon(emoji,_emojiPanel?WXGInputSymbolEmojiKeyboard:WXGInputSymbolEmoji,_emojiButton);
             emoji.accessibilityLabel=_emojiPanel?@"切换到键盘":@"微信表情";
             [emoji placeMaterial:[w convertRect:emojiRect toView:_panel] inParent:_panel];
             [_states conceal:_emojiButton];
@@ -608,7 +645,7 @@ static NSData *WXGEmojiFacePrint;
 }
 - (void)reapplyPaint {
     if(_usingNativeLayout){[_nativeAdapter reapplyPaint];return;}
-    if(_installed && _tool.window){[_states reapply];if(_usingNativeDictation)[self concealDictationBacking];}
+    if(_installed && _tool.window){[_states reapply];if(_usingNativeDictation){[self concealDictationBacking];[_dictationInk reapply];}}
 }
 - (void)setSuspended:(BOOL)suspended {
     if(_usingNativeLayout){[_nativeAdapter setSuspended:suspended];return;}

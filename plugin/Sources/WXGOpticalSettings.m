@@ -1,5 +1,6 @@
 #import "WXGSettingsKit.h"
 #import "WXGBannerLibraryController.h"
+#import "WXGInputSymbols.h"
 
 // FIX58: the module pages behind the home cards. Every setting of the FIX57
 // pages is here (tools/check_settings_coverage.py lists them). Four modules
@@ -105,6 +106,26 @@ static BOOL WXGShowsHomeMenuGroup(NSDictionary *group) {
     return !required || required.integerValue==WXGConfig.shared.homeMenuStyle;
 }
 static NSDictionary *WXGModuleSpec(NSString *module) {
+    if([module hasPrefix:@"split"]) {
+        NSMutableArray *links=[NSMutableArray array];
+        for(WXGInputSymbolRole role=0;role<WXGInputSymbolCount;role++) {
+            WXGInputSymbolInfo info=WXGInputRoleInfo(role);
+            NSString *stem=@(info.stem),*label=@(info.label);
+            if([module isEqual:stem]) {
+                NSMutableDictionary *name=[WXGRow(@"symbol",@"符号名称",[stem stringByAppendingString:@"SymbolName"],nil) mutableCopy];
+                name[@"role"]=@(role);
+                return @{@"title":label,@"groups":@[
+                    WXGGroup(nil,nil,@[name,
+                        WXGChoice3(@"粗细",[stem stringByAppendingString:@"Weight"],nil,nil,@[@"纤细",@"细",@"常规",@"半粗",@"粗"],NO),
+                        WXGSlider(@"大小",[stem stringByAppendingString:@"Size"],nil,10,32,@"%.1f pt"),
+                        WXGColorRow(@"浅色模式",[stem stringByAppendingString:@"LightHex"],nil),
+                        WXGColorRow(@"深色模式",[stem stringByAppendingString:@"DarkHex"],nil)],nil),
+                    WXGGroup(nil,nil,@[WXGAction(@"恢复这个图标的默认设置",@"resetPage",YES)],nil)]};
+            }
+            [links addObject:WXGAction(label,[@"open:" stringByAppendingString:stem],NO)];
+        }
+        if([module isEqual:@"splitSymbols"])return @{@"title":@"双端输入栏图标",@"groups":@[WXGGroup(nil,nil,links,nil)]};
+    }
     if([module isEqual:@"pureDock"])return @{@"title":@"底栏透镜与形变",@"scoped":@NO,@"groups":@[
         WXGGroup(@"R8 极光透镜引擎",nil,@[WXGSwitch(@"启用 R8 极光透镜与形变",@"dockPureGlassMode",nil)],
                  @"底栏与首页分组栏（含标题分组栏）统一使用本页的 R8 连续极光透镜与自适应形变，并直接兼容离散底栏、Telegram 图标、底栏搜索与 iOS 27 边框。"),
@@ -236,12 +257,13 @@ static NSDictionary *WXGModuleSpec(NSString *module) {
     if([module isEqual:@"chat"])return @{@"title":@"聊天页",@"groups":@[
         WXGGroup(@"输入栏",nil,@[WXGSwitch(@"聊天悬浮输入栏",@"pref.input",nil),
                  WXGSwitch(@"原生宽度三端输入（测试）",@"pref.nativeInputTest",nil),
-                 WXGSwitch(@"双端输入栏用系统图标",@"inputSystemIcons",nil),
+                 WXGSwitch(@"双端输入栏用系统图标",@"splitInputSystemSymbols",nil),
+                 WXGAction(@"自定义双端输入栏图标",@"open:splitSymbols",NO),
                  WXGSlider(@"输入框高度",@"inputPillHeight",nil,34,54,@"%.1f pt"),
                  WXGSlider(@"左侧加号大小（0 = 和输入框一样高）",@"inputPlusSize",nil,0,54,@"%.1f pt"),
                  WXGSlider(@"离屏幕两边",@"inputSideMargin",nil,8,60,@"%.1f pt"),
                  WXGSlider(@"加号和输入框的间距",@"inputPlusGap",nil,4,24,@"%.1f pt")],
-                 @"聊天悬浮输入栏：默认是双端输入栏；“原生宽度三端输入（测试）”开启后保留原生输入宽度和动作，单行三段等高，多行只增高中间。双端输入栏用系统图标：开着用插件这一套 SF Symbols 图标，关掉换回微信自己的图标。尺寸四项只管双端输入栏：输入框高度；左侧加号大小（0 = 和输入框一样高）；离屏幕两边的距离；加号和输入框的间距。"),
+                 @"聊天悬浮输入栏：默认是双端输入栏；“原生宽度三端输入（测试）”开启后保留原生输入宽度和动作，单行三段等高，多行只增高中间。双端输入栏用系统图标可逐项设置 SF Symbols，关闭后使用微信原图。尺寸四项只管双端输入栏：输入框高度；左侧加号大小（0 = 和输入框一样高）；离屏幕两边的距离；加号和输入框的间距。"),
         WXGGroup(@"标题与头像",nil,@[WXGSwitch(@"聊天标题使用头像 + 小胶囊",@"pref.avatarTitle",nil),
                  WXGSwitch(@"不用头像标题时，聊天页顶部保持微信原生",@"chatNativeBar",nil),
                  WXGSwitch(@"聊天右上角按钮显示头像",@"pref.chatAvatarButton",nil),
@@ -552,6 +574,68 @@ static void WXGRowSet(NSString *key,id value) {
 - (CGFloat)rowHeight {return 52;}
 - (void)refresh {}
 - (void)applyLook {_titleLabel.textColor=WXGSettingsStore.shared.accentColor;}
+@end
+
+@interface WXGInputSymbolRow : WXGSettingsRow
+@end
+@implementation WXGInputSymbolRow {
+    UILabel *_name;
+    UIImageView *_preview;
+    __weak UIAlertAction *_saveAction;
+}
+- (instancetype)initWithSpec:(NSDictionary *)spec key:(NSString *)key page:(WXGSettingsPage *)page {
+    if((self=[super initWithSpec:spec key:key page:page])) {
+        _name=[UILabel new];_name.font=[UIFont systemFontOfSize:13];
+        _name.textColor=UIColor.secondaryLabelColor;[self addSubview:_name];
+        _preview=[UIImageView new];_preview.contentMode=UIViewContentModeScaleAspectFit;[self addSubview:_preview];
+        self.isAccessibilityElement=YES;self.accessibilityTraits=UIAccessibilityTraitButton;
+        [self addGestureRecognizer:[[UITapGestureRecognizer alloc] initWithTarget:self action:@selector(editName)]];
+        [NSNotificationCenter.defaultCenter addObserver:self selector:@selector(configChanged:) name:WXGSettingsChanged object:nil];
+        [self refresh];
+    }
+    return self;
+}
+- (void)configChanged:(NSNotification *)note {(void)note;[self refresh];}
+- (CGFloat)rowHeight {return 64;}
+- (void)layoutSubviews {
+    [super layoutSubviews];
+    CGFloat width=self.bounds.size.width;
+    self.titleLabel.frame=CGRectMake(16,9,MAX(0,width-84),23);
+    _name.frame=CGRectMake(16,33,MAX(0,width-84),19);
+    CGSize size=_preview.image.size;
+    CGFloat fit=MIN(1.,MIN(48./MAX(1.,size.width),40./MAX(1.,size.height)));
+    _preview.bounds=CGRectMake(0,0,size.width*fit,size.height*fit);
+    _preview.center=CGPointMake(width-38,self.bounds.size.height*.5);
+}
+- (void)refresh {
+    WXGInputSymbolRole role=[self.spec[@"role"] unsignedIntegerValue];
+    _preview.image=WXGInputSymbolImage(role);_preview.tintColor=WXGInputSymbolColor(role);
+    _name.text=WXGRowGet(self.key);self.accessibilityValue=_name.text;[self setNeedsLayout];
+}
+- (void)validateName:(UITextField *)field {
+    NSString *name=[field.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+    _saveAction.enabled=!name.length || (name.length<=128 && [UIImage systemImageNamed:name]!=nil);
+}
+- (void)editName {
+    WXGInputSymbolInfo info=WXGInputRoleInfo([self.spec[@"role"] unsignedIntegerValue]);
+    NSString *fallback=@(info.fallback);
+    UIAlertController *alert=[UIAlertController alertControllerWithTitle:@"SF Symbols 名称" message:@"输入本机支持的符号名称，留空可恢复默认。" preferredStyle:UIAlertControllerStyleAlert];
+    [alert addTextFieldWithConfigurationHandler:^(UITextField *field) {
+        field.text=WXGRowGet(self.key);field.placeholder=fallback;
+        field.autocapitalizationType=UITextAutocapitalizationTypeNone;field.autocorrectionType=UITextAutocorrectionTypeNo;
+        field.keyboardType=UIKeyboardTypeASCIICapable;
+        [field addTarget:self action:@selector(validateName:) forControlEvents:UIControlEventEditingChanged];
+    }];
+    [alert addAction:[UIAlertAction actionWithTitle:@"取消" style:UIAlertActionStyleCancel handler:nil]];
+    __weak UITextField *field=alert.textFields.firstObject;
+    UIAlertAction *save=[UIAlertAction actionWithTitle:@"保存" style:UIAlertActionStyleDefault handler:^(__unused UIAlertAction *action) {
+        NSString *name=[field.text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+        WXGRowSet(self.key,name.length?name:fallback);
+    }];
+    [alert addAction:save];_saveAction=save;[self validateName:field];
+    [self.page presentViewController:alert animated:YES completion:nil];
+}
+- (BOOL)accessibilityActivate {[self editName];return YES;}
 @end
 
 @interface WXGSliderRow : WXGSettingsRow
@@ -992,7 +1076,8 @@ static NSString *WXGLastScope=@"dock";
             if(!_builtHomeCoexists && [key isEqual:@"homeSearchGroupGap"])continue;
             if(key && !key.length)continue;   // FIX113 O: not in this range
             NSString *type=spec[@"type"];WXGSettingsRow *row=nil;
-            if([type isEqual:@"slider"])row=[[WXGSliderRow alloc]initWithSpec:spec key:key page:self];
+            if([type isEqual:@"symbol"])row=[[WXGInputSymbolRow alloc]initWithSpec:spec key:key page:self];
+            else if([type isEqual:@"slider"])row=[[WXGSliderRow alloc]initWithSpec:spec key:key page:self];
             else if([type isEqual:@"switch"])row=[[WXGSwitchRow alloc]initWithSpec:spec key:key page:self];
             else if([type isEqual:@"color"])row=[[WXGColorRowView alloc]initWithSpec:spec key:key page:self];
             else if([type isEqual:@"wallpaper"])row=[[WXGWallpaperRowView alloc]initWithSpec:spec key:key page:self];

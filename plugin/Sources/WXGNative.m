@@ -199,15 +199,12 @@ NSDictionary *WXGRenderedInkEvidence(UIView *view) {
     size_t w=CGImageGetWidth(cg),h=CGImageGetHeight(cg),stride=CGImageGetBytesPerRow(cg),ai=first?0:3;
     if((CGImageGetBitmapInfo(cg)&kCGBitmapByteOrderMask)==kCGBitmapByteOrder32Little)ai=3-ai;
     CFDataRef data=CGDataProviderCopyData(CGImageGetDataProvider(cg));if(!data)return @{@"available":@NO};
-    const uint8_t *p=CFDataGetBytePtr(data);size_t x0=w,y0=h,x1=0,y1=0;BOOL found=NO;
-    for(size_t y=0;y<h;y++)for(size_t x=0;x<w;x++)if(p[y*stride+x*4+ai]>=16) {
-        x0=MIN(x0,x);y0=MIN(y0,y);x1=MAX(x1,x);y1=MAX(y1,y);found=YES;
-    }
-    CFRelease(data);if(!found)return @{@"available":@NO};
-    CGFloat scale=format.scale;CGRect local=CGRectMake(view.bounds.origin.x+x0/scale,view.bounds.origin.y+y0/scale,(x1-x0+1)/scale,(y1-y0+1)/scale);
+    WXGRect ink=WXGIconInkBounds(CFDataGetBytePtr(data)+ai,w,h,stride,16);
+    CFRelease(data);if(ink.w==0)return @{@"available":@NO};
+    CGFloat scale=format.scale;CGRect local=CGRectMake(view.bounds.origin.x+ink.x/scale,view.bounds.origin.y+ink.y/scale,ink.w/scale,ink.h/scale);
     CGRect window=[view convertRect:local toView:view.window];
     return @{@"available":@YES,@"method":@"UIView_layer_ROI_alpha16_projection",@"threshold":@16,@"scale":@(scale),
-        @"bounds_px":@[@(x0),@(y0),@(x1-x0+1),@(y1-y0+1)],@"windowRect":@[@(window.origin.x),@(window.origin.y),@(window.size.width),@(window.size.height)]};
+        @"bounds_px":@[@(ink.x),@(ink.y),@(ink.w),@(ink.h)],@"windowRect":@[@(window.origin.x),@(window.origin.y),@(window.size.width),@(window.size.height)]};
 }
 NSArray<NSString *> *WXGActionNames(UIControl *control) {
     NSMutableArray *names=[NSMutableArray array];
@@ -250,16 +247,23 @@ UIImage *WXGCropInk(UIImage *image,UIColor *tint) {
     if(!image || image.size.width<=0 || image.size.height<=0) return nil;
     static NSMapTable<UIImage *,NSMutableDictionary<NSString *,UIImage *> *> *cache;static dispatch_once_t once;
     dispatch_once(&once,^{cache=[NSMapTable weakToStrongObjectsMapTable];});
-    NSString *key=[NSString stringWithFormat:@"%@-%ld-%ld",tint,(long)image.renderingMode,(long)UITraitCollection.currentTraitCollection.userInterfaceStyle];
+    CGFloat scale=MAX(1.,image.scale);
+    if(image.isSymbolImage || !image.CGImage)
+        scale=MAX(scale,UITraitCollection.currentTraitCollection.displayScale?:UIScreen.mainScreen.scale);
+    NSString *key=[NSString stringWithFormat:@"%@-%ld-%ld-%g",tint,(long)image.renderingMode,(long)UITraitCollection.currentTraitCollection.userInterfaceStyle,scale];
     NSMutableDictionary *variants=[cache objectForKey:image];UIImage *cached=variants[key];if(cached)return cached;
     UIImage *src=image.renderingMode==UIImageRenderingModeAlwaysTemplate?[image imageWithTintColor:tint?:UIColor.labelColor renderingMode:UIImageRenderingModeAlwaysOriginal]:image;
-    UIGraphicsImageRendererFormat *f=[UIGraphicsImageRendererFormat defaultFormat]; f.scale=MAX(1,MIN(3,image.scale));f.opaque=NO;
+    UIGraphicsImageRendererFormat *f=[UIGraphicsImageRendererFormat defaultFormat]; f.scale=scale;f.opaque=NO;
     f.preferredRange=UIGraphicsImageRendererFormatRangeStandard;
     // SF Symbols may draw optical/baseline ink outside their nominal rect.
     // Rasterize into padding before finding the alpha bounds, so filled send
     // circles do not lose their top/bottom pixels.
-    CGFloat padding=image.isSymbolImage?4:0;
+    // Leave transparent samples on every side even when the bitmap itself
+    // touches an image edge. Draw on the source pixel grid.
+    const CGFloat gutter=2./f.scale;
+    CGFloat padding=image.isSymbolImage?ceil(4*f.scale)/f.scale+gutter:gutter;
     CGSize canvas=CGSizeMake(src.size.width+2*padding,src.size.height+2*padding);
+    if(ceil(canvas.width*scale)*ceil(canvas.height*scale)>1024*1024)return src;
     UIImage *raster=[[[UIGraphicsImageRenderer alloc] initWithSize:canvas format:f] imageWithActions:^(UIGraphicsImageRendererContext *c){
         (void)c;[src drawInRect:CGRectMake(padding,padding,src.size.width,src.size.height)];
     }];
@@ -272,21 +276,18 @@ UIImage *WXGCropInk(UIImage *image,UIColor *tint) {
     size_t ai=first?0:3,stride=CGImageGetBytesPerRow(cg);
     if((CGImageGetBitmapInfo(cg)&kCGBitmapByteOrderMask)==kCGBitmapByteOrder32Little)ai=3-ai;
     CFDataRef data=CGDataProviderCopyData(CGImageGetDataProvider(cg));if(!data)return src;
-    size_t minX=w,minY=h,maxX=0,maxY=0;BOOL found=NO;const uint8_t *p=CFDataGetBytePtr(data);
-    // FIX114 A (user: the top-right "+" looked cut at its edges): the faint
-    // antialiased edge pixels count as ink too (from 16/255 they were cut
-    // off, the glyph's ends lost their soft edge).
-    for(size_t y=0;y<h;y++)for(size_t x=0;x<w;x++)if(p[y*stride+x*4+ai]>=3) {
-        minX=MIN(minX,x);minY=MIN(minY,y);maxX=MAX(maxX,x);maxY=MAX(maxY,y);found=YES;
-    }
+    // Keep every partially covered pixel, including the faintest soft edge.
+    WXGRect ink=WXGIconInkBounds(CFDataGetBytePtr(data)+ai,w,h,stride,1);
     CFRelease(data);
-    if(!found) return nil;
-    /* Crop uses the raster's top-left coordinate system, including oriented
-       source images. Bounding-box centre is now the actual glyph centre. */
-    CGImageRef cropped=CGImageCreateWithImageInRect(raster.CGImage,CGRectMake(minX,minY,maxX-minX+1,maxY-minY+1));
-    UIImage *out=cropped?[UIImage imageWithCGImage:cropped scale:f.scale orientation:UIImageOrientationUp]:src;
-    if(cropped)CGImageRelease(cropped);
+    if(ink.w==0)return nil;
+    CGRect crop=CGRectInset(WXGCGRect(ink),-2,-2);
+    if(!CGRectContainsRect(CGRectMake(0,0,w,h),crop))return src;
+    CGImageRef cropped=CGImageCreateWithImageInRect(cg,crop);
+    if(!cropped)return src;
+    UIImage *out=[UIImage imageWithCGImage:cropped scale:f.scale orientation:UIImageOrientationUp];
+    CGImageRelease(cropped);
     if(image.isSymbolImage || image.renderingMode==UIImageRenderingModeAlwaysTemplate)out=[out imageWithRenderingMode:UIImageRenderingModeAlwaysTemplate];
+    out=[out imageWithAlignmentRectInsets:UIEdgeInsetsMake(gutter,gutter,gutter,gutter)];
     if(out){if(!variants){variants=[NSMutableDictionary dictionary];[cache setObject:variants forKey:image];}variants[key]=out;}return out;
 }
 

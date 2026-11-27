@@ -23,6 +23,7 @@ _Static_assert(sizeof(WXGFloat4)==16,"Float4 ABI");
 #include "WXGEdgeMaskBand.h"
 #include "WXGRimGlow.h"
 #include "WXGRim26.h"
+#include "WXGRim26Contour.h"
 #include "WXGRimDetail.h"
 #include "WXGCapsule26.h"
 #include "WXGDropShadow.h"
@@ -815,6 +816,7 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
 // field by direction) is WXGRimFieldLayer, shared with the iOS 27-like rim's
 // level along the outline (WXGRimLevelLayer).
 @interface WXGRimFieldLayer : CALayer
+- (instancetype)initWithSingleField;
 - (void)layoutForBounds:(CGRect)bounds radius:(CGFloat)r;
 @end
 @implementation WXGRimFieldLayer {
@@ -823,6 +825,12 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
     CALayer *_topMask,*_bottomMask,*_leftMask,*_rightMask;
     NSArray<CALayer *> *_cornerMasks,*_cornerFields;
     UIImage *_fieldImage;
+    BOOL _singleField;
+    NSString *_singleFieldKey;
+}
+- (instancetype)initWithSingleField {
+    if((self=[super init]))_singleField=YES;
+    return self;
 }
 - (instancetype)init {
     if((self=[super init])) {
@@ -844,16 +852,19 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
 // direction from the corner's centre (unit x right, y down), cached by `key`.
 - (void)applyTop:(CGFloat)top bottom:(CGFloat)bottom left:(CGFloat)left right:(CGFloat)right
         fieldKey:(NSString *)key level:(float (^)(float nx,float ny))level {
+    if(_singleField && [_singleFieldKey isEqual:key])return;
     [CATransaction begin];[CATransaction setDisableActions:YES];
-    _topMask.backgroundColor=[UIColor colorWithWhite:1 alpha:WXGClamp(top,0,1)].CGColor;
-    _bottomMask.backgroundColor=[UIColor colorWithWhite:1 alpha:WXGClamp(bottom,0,1)].CGColor;
-    _leftMask.backgroundColor=[UIColor colorWithWhite:1 alpha:WXGClamp(left,0,1)].CGColor;
-    _rightMask.backgroundColor=[UIColor colorWithWhite:1 alpha:WXGClamp(right,0,1)].CGColor;
+    if(!_singleField) {
+        _topMask.backgroundColor=[UIColor colorWithWhite:1 alpha:WXGClamp(top,0,1)].CGColor;
+        _bottomMask.backgroundColor=[UIColor colorWithWhite:1 alpha:WXGClamp(bottom,0,1)].CGColor;
+        _leftMask.backgroundColor=[UIColor colorWithWhite:1 alpha:WXGClamp(left,0,1)].CGColor;
+        _rightMask.backgroundColor=[UIColor colorWithWhite:1 alpha:WXGClamp(right,0,1)].CGColor;
+    }
     static NSCache<NSString *,UIImage *> *fields;static dispatch_once_t once;
     dispatch_once(&once,^{fields=[NSCache new];fields.countLimit=16;});
     _fieldImage=[fields objectForKey:key];
     if(!_fieldImage) {
-        const size_t side=256;
+        const size_t side=_singleField?257:256;
         NSMutableData *pixels=[NSMutableData dataWithLength:side*side*4]; uint8_t *bytes=pixels.mutableBytes;
         for(size_t y=0;y<side;y++) for(size_t x=0;x<side;x++) {
             float nx=(float)x+.5f-side*.5f,ny=(float)y+.5f-side*.5f,length=MAX(hypotf(nx,ny),.01f);
@@ -868,12 +879,22 @@ NSArray<UIView *> *WXGMakeTravelLensBackdrops(CGSize size,CGFloat press,NSString
         [fields setObject:_fieldImage forKey:key];
         CGImageRelease(cg); CGColorSpaceRelease(space); CGDataProviderRelease(provider);
     }
-    for(CALayer *field in _cornerFields) field.contents=(__bridge id)_fieldImage.CGImage;
+    if(_singleField) {
+        _singleFieldKey=[key copy];self.contents=(__bridge id)_fieldImage.CGImage;
+        // The centre texel extends the straight runs. A single texture
+        // avoids four separately antialiased quadrant clips meeting on the
+        // cardinal axes of a subpixel-positioned button.
+        self.contentsCenter=CGRectMake(128./257.,128./257.,1./257.,1./257.);
+    }else for(CALayer *field in _cornerFields)field.contents=(__bridge id)_fieldImage.CGImage;
     [CATransaction commit];
 }
 - (void)layoutForBounds:(CGRect)bounds radius:(CGFloat)r {
     CGFloat w=bounds.size.width,h=bounds.size.height;
     self.frame=bounds;
+    if(_singleField) {
+        if(r>0.)self.contentsScale=257./(2.*r);
+        return;
+    }
     CGFloat straightW=MAX(0,w-2*r),straightH=MAX(0,h-2*r);
     _topMask.frame=CGRectMake(r,0,straightW,h*.5);_bottomMask.frame=CGRectMake(r,h*.5,straightW,h*.5);
     _leftMask.frame=CGRectMake(0,r,w*.5,straightH);_rightMask.frame=CGRectMake(w*.5,r,w*.5,straightH);
@@ -939,6 +960,31 @@ static CGPathRef WXGCapsule26Band(CGSize size,CGFloat width) {
     [cache setObject:kept forKey:key];
     return kept.CGPath;
 }
+typedef struct { CGMutablePathRef path; CGAffineTransform offset; } WXGRimPathWriter;
+static void WXGAppendRimCommand(void *ctx,int op,double x1,double y1,double x2,double y2,double x,double y) {
+    WXGRimPathWriter *w=ctx;
+    switch(op) {
+        case WXGRimMove: CGPathMoveToPoint(w->path,&w->offset,x,y);break;
+        case WXGRimLine: CGPathAddLineToPoint(w->path,&w->offset,x,y);break;
+        case WXGRimCubic: CGPathAddCurveToPoint(w->path,&w->offset,x1,y1,x2,y2,x,y);break;
+        case WXGRimClose: CGPathCloseSubpath(w->path);break;
+    }
+}
+static UIBezierPath *WXGRim26BandPath(CGSize size,CGFloat r,CGFloat width) {
+    static NSCache<NSData *,UIBezierPath *> *cache;static dispatch_once_t once;
+    dispatch_once(&once,^{cache=[NSCache new];cache.countLimit=192;});
+    CGFloat dimensions[]={size.width,size.height,r,width};
+    NSData *key=[NSData dataWithBytes:dimensions length:sizeof dimensions];
+    UIBezierPath *band=[cache objectForKey:key];
+    if(band)return band;
+    CGMutablePathRef path=CGPathCreateMutable();
+    WXGRimPathWriter writer={path,CGAffineTransformIdentity};
+    WXGRim26Contour(size.width,size.height,r,&writer,WXGAppendRimCommand);
+    writer.offset=CGAffineTransformMakeTranslation(width,width);
+    WXGRim26Contour(size.width-2*width,size.height-2*width,MAX(0,r-width),&writer,WXGAppendRimCommand);
+    band=[UIBezierPath bezierPathWithCGPath:path];CGPathRelease(path);
+    [cache setObject:band forKey:key];return band;
+}
 // One border per band: the outline inset by the band's inset, with the corner
 // radius inset with it, the band's width and opacity. Layers are pooled in z
 // order (placed first = lowest); returns how many are in use.
@@ -946,7 +992,7 @@ static CGPathRef WXGCapsule26Band(CGSize size,CGFloat width) {
 // outline (WXGCapsule26Band) instead of Core Animation borders, whose
 // capsule stays straight almost up to its round ends.
 static NSUInteger WXGRimPlaceBands(CALayer *holder,NSMutableArray<CALayer *> *pool,NSUInteger used,const WXGRimBands *bands,
-                                   CGSize size,CGFloat radius,CGFloat red,CGFloat green,CGFloat blue,CGFloat scale) {
+                                   CGSize size,CGFloat radius,CGFloat red,CGFloat green,CGFloat blue,CGFloat scale,BOOL vector26) {
     BOOL capsule=WXGCapsule26Applies(size.width,size.height,radius);
     for(int k=0;k<bands->count;k++) {
         CGFloat inset=(CGFloat)bands->inset[k],width=(CGFloat)bands->width[k],alpha=(CGFloat)bands->alpha[k];
@@ -961,9 +1007,10 @@ static NSUInteger WXGRimPlaceBands(CALayer *holder,NSMutableArray<CALayer *> *po
         ++used;
         band.hidden=NO;band.frame=frame;band.contentsScale=scale;
         UIColor *colour=[UIColor colorWithRed:red green:green blue:blue alpha:WXGClamp(alpha,0,1)];   // (kept while its CGColor is handed over)
-        if(capsule) {
+        if(vector26 || capsule) {
             band.cornerRadius=0;band.borderWidth=0;
-            band.path=WXGCapsule26Band(frame.size,width);band.fillColor=colour.CGColor;
+            band.path=vector26?WXGRim26BandPath(frame.size,MAX(0,radius-inset),width).CGPath:WXGCapsule26Band(frame.size,width);
+            band.fillColor=colour.CGColor;
         }else {
             band.path=nil;band.fillColor=nil;
             band.cornerRadius=MAX(0,radius-inset);band.borderWidth=width;band.borderColor=colour.CGColor;
@@ -1010,7 +1057,7 @@ _Static_assert(WXG_RIM_GLOW_MAX_BANDS<=2*WXG_RIM_MAX_STEPS+1,"the glow's steps f
     [_level layoutForBounds:(CGRect){CGPointZero,size} radius:MAX(r,(CGFloat)MIN(width,MIN(size.width,size.height)*.5))];
     WXGRimBands bands;
     bands.count=WXGRimGlowBands(width,shape.falloff,scale,WXG_RIM_GLOW_MAX_BANDS,bands.inset,bands.width,bands.alpha);
-    NSUInteger used=WXGRimPlaceBands(self,_bands,0,&bands,size,r,shape.red,shape.green,shape.blue,scale);
+    NSUInteger used=WXGRimPlaceBands(self,_bands,0,&bands,size,r,shape.red,shape.green,shape.blue,scale,NO);
     WXGRimHideBands(_bands,used);_bandsShown=used;
 }
 @end
@@ -1075,16 +1122,10 @@ static NSHashTable *WXGRimViews;            // every iOS 27 rim, for the export
 @end
 // FIX123 iOS 26 边框 (WXGRim26.h): the system's own recipe, read from the
 // structure dump and the 8x captures of probe/ on iOS 26.6.
-// The rim itself is WXGRim26RingLayer below (Core Animation borders: no image).
 static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBytes:&m objCType:"{CAColorMatrix=ffffffffffffffffffff}"];}
-// FIX125: the rim's alpha as Core Animation's own shapes on the glass' own
-// continuous corner (WXGRim26.h, WXGRim26BandsFor): white borders one pixel
-// wider each from the outline (WXGRimPlaceBands, as the earlier styles'
-// lines), the lights' set under the level along the outline (a
-// WXGRimFieldLayer, as the iOS 27-like rim's), the faint line's set plain;
-// one over the other they show WXGRim26Alpha. The render server draws every
-// edge of it on the same curve as the glass' clip: no outline of our own,
-// nothing to clip, no tips. Its opacity is the rim's strength.
+// Nested vector bands on the measured contour carry WXGRim26Alpha. Only
+// the directional level varies around the edge; its single texture stretches
+// across the long straight runs independently of the band width.
 @interface WXGRim26RingLayer : CALayer
 - (void)applyShape:(WXGRim26Shape)shape bounds:(CGRect)bounds radius:(CGFloat)r scale:(CGFloat)scale;
 @property(nonatomic,readonly) NSUInteger bandsShown;
@@ -1097,7 +1138,7 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
 - (instancetype)init {
     if((self=[super init])) {
         _plain=[CALayer layer];[self addSublayer:_plain];
-        _lights=[CALayer layer];_level=[WXGRimFieldLayer layer];_lights.mask=_level;[self addSublayer:_lights];
+        _lights=[CALayer layer];_level=[[WXGRimFieldLayer alloc] initWithSingleField];_lights.mask=_level;[self addSublayer:_lights];
         _lightBands=[NSMutableArray array];_plainBands=[NSMutableArray array];
     }
     return self;
@@ -1111,21 +1152,21 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
 }
 - (void)applyShape:(WXGRim26Shape)shape bounds:(CGRect)bounds radius:(CGFloat)r scale:(CGFloat)scale {
     double key[12]={shape.height,shape.curve,shape.angle,shape.key,shape.fill,shape.spread,shape.ring,
-                    round(bounds.size.width*2.)*.5,round(bounds.size.height*2.)*.5,round(r*2.)*.5,scale,shape.floor};
+                    bounds.size.width,bounds.size.height,r,scale,shape.floor};
     self.frame=bounds;
     if(_applied && !memcmp(key,_key,sizeof key))return;
     memcpy(_key,key,sizeof key);_applied=YES;
     CGRect inner=(CGRect){CGPointZero,bounds.size};
     _lights.frame=inner;_plain.frame=inner;
     WXGRimBands lights=WXGRim26RimBands(WXGRim26BandsFor(0,shape,scale)),plain=WXGRim26RimBands(WXGRim26BandsFor(1,shape,scale));
-    NSUInteger used=WXGRimPlaceBands(_lights,_lightBands,0,&lights,inner.size,r,1,1,1,scale);
+    NSUInteger used=WXGRimPlaceBands(_lights,_lightBands,0,&lights,inner.size,r,1,1,1,scale,YES);
     WXGRimHideBands(_lightBands,used);_bandsShown=used;
-    used=WXGRimPlaceBands(_plain,_plainBands,0,&plain,inner.size,r,1,1,1,scale);
+    used=WXGRimPlaceBands(_plain,_plainBands,0,&plain,inner.size,r,1,1,1,scale,YES);
     WXGRimHideBands(_plainBands,used);_bandsShown+=used;
     [_level applyTop:(CGFloat)WXGRim26Along(0,-1,shape) bottom:(CGFloat)WXGRim26Along(0,1,shape) left:(CGFloat)WXGRim26Along(-1,0,shape) right:(CGFloat)WXGRim26Along(1,0,shape)
             fieldKey:[NSString stringWithFormat:@"rim26|%.2f|%.3f|%.3f|%.3f|%.3f",shape.angle,shape.key,shape.fill,shape.spread,shape.floor]
                level:^float(float nx,float ny){return (float)WXGRim26Along(nx,ny,shape);}];
-    [_level layoutForBounds:inner radius:r];
+    [_level layoutForBounds:inner radius:MAX(r,MIN(shape.height,MIN(inner.size.width,inner.size.height)*.5))];
 }
 @end
 // FIX123: the system draws the rim as a white layer under the filter
@@ -1232,10 +1273,11 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
     CGFloat scale=self.window.screen.scale?:UIScreen.mainScreen.scale;
     WXGRim26Settings s=_settings;
     WXGRim26Shape shape={s.height,s.curve,s.angle,s.key,s.fill,s.spread,s.ring,0,s.floor};
-    _paint.frame=b;
-    // FIX125: the rim on the glass' own corner, drawn by Core Animation (no
-    // image, no clip of this view).
-    [_paint.ring applyShape:shape bounds:b radius:r scale:scale];
+    // Give the low-resolution colour capture a texel beyond the vector
+    // silhouette on each side, including when the diameter is fractional.
+    CGFloat pad=1./(MAX(1.,scale)*MAX(.1,s.captureScale));
+    _paint.frame=CGRectInset(b,-pad,-pad);
+    [_paint.ring applyShape:shape bounds:CGRectOffset(b,pad,pad) radius:r scale:scale];
     [CATransaction commit];
 }
 - (NSDictionary *)rim26Evidence {

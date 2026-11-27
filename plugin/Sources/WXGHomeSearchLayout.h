@@ -108,11 +108,23 @@ static inline double WXGHomeEffectiveTop(double rest,double raw,double adjusted,
 // Before the conversation row has calibrated, keep a legitimate app-supplied
 // top (including zero). Only a duplicated chrome or a full-screen range gives
 // independent evidence that the adjusted top is not the resting position.
+static inline bool WXGHomeHasPanelRange(double adjusted,double viewport,double scale) {
+    return viewport>0. && adjusted>=viewport-1./fmax(1.,scale);
+}
 static inline double WXGHomeInitialConversationTop(double raw,double adjusted,double viewport,double scale) {
     double automatic=adjusted-raw;
-    if((viewport>0 && adjusted>=viewport-1./fmax(1.,scale)) || WXGHomeHasTwoNavigationInsets(automatic,raw,adjusted,scale))
+    if(WXGHomeHasPanelRange(adjusted,viewport,scale) || WXGHomeHasTwoNavigationInsets(automatic,raw,adjusted,scale))
         return fmax(0.,automatic);
     return adjusted;
+}
+static inline double WXGHomeRememberedConversationTop(double previous,double raw,double adjusted,double viewport,double scale) {
+    if(isfinite(previous) && WXGHomeHasPanelRange(adjusted,viewport,scale))return previous;
+    return WXGHomeInitialConversationTop(raw,adjusted,viewport,scale);
+}
+// Below rest the row rides the table in content coordinates. As its content
+// scrolls above the resting line, translate it only enough to keep it pinned.
+static inline double WXGHomePinnedContentShift(double offset,double inset) {
+    return fmax(0.,offset+inset);
 }
 // A native animated scroll does not set tracking, dragging or decelerating.
 // Its enlarged range remains authoritative all the way through the close.
@@ -154,11 +166,6 @@ static inline bool WXGHomeUsesPullControls(double navAlpha,double listAlpha,bool
 static inline bool WXGHomeWaitsForSearchArtwork(bool currentHasBox,bool nextHasBox,bool editing,bool hasPlaceholder) {
     return currentHasBox && !nextHasBox && !editing && !hasPlaceholder;
 }
-static inline double WXGHomeFloatingRowY(double viewportTop,double inset,double headerY,double rowY,
-                                         double offset,double scale) {
-    return WXGHomePixel(viewportTop+inset+headerY+rowY,scale)+WXGHomePullTranslation(offset,inset,scale);
-}
-
 // The header's natural position follows contentOffset. The pin line only
 // depends on the viewport, its adjusted inset, and the visible navigation row.
 static inline double WXGFloatSearchPlacement(double naturalY,double gap,double viewportY,double inset,

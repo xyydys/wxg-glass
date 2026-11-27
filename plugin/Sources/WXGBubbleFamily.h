@@ -42,14 +42,19 @@ static inline id WXGBubbleModelField(id object,NSString *key) {
     return WXGRead(object,key);
 }
 static inline id WXGBubbleParentModel(id model) {
-    for(NSString *key in @[@"parentModel",@"m_parentViewModel",@"_parentViewModel"]) {
+    for(NSString *key in @[@"parentModel",@"m_parentModel",@"m_parentViewModel",@"_parentViewModel"]) {
         id value=WXGBubbleModelField(model,key);
         if(value && value!=model)return value;
     }
     return nil;
 }
+static inline NSArray *WXGBubbleParts(id parent) {
+    id parts=WXGBubbleModelField(parent,@"subViewModels");
+    if(![parts isKindOfClass:NSArray.class] || ![parts count])parts=WXGBubbleModelField(parent,@"m_subViewModels");
+    return [parts isKindOfClass:NSArray.class]?parts:nil;
+}
 static inline id WXGBubbleDirectWrap(id model) {
-    for(NSString *key in @[@"messageWrap",@"m_messageWrap",@"_messageWrap"]) {
+    for(NSString *key in @[@"messageWrap",@"m_messageWrap",@"m_oMessageWrap",@"_messageWrap"]) {
         id wrap=WXGBubbleModelField(model,key);
         if([WXGBubbleModelField(wrap,@"m_uiMessageType") isKindOfClass:NSNumber.class])return wrap;
     }
@@ -111,7 +116,7 @@ static inline id WXGBubbleFamily(id model,NSUInteger *index,NSUInteger *count) {
     id parent=WXGBubbleParentModel(model);
     if(![parent isKindOfClass:NSClassFromString(@"TextMessageViewModel")] &&
        ![parent isKindOfClass:NSClassFromString(@"GroupNoticeMessageViewModel")])return nil;
-    id raw=WXGBubbleModelField(parent,@"subViewModels");
+    id raw=WXGBubbleParts(parent);
     if(![raw isKindOfClass:NSArray.class] || [raw count]<2)return nil;
     NSArray *parts=[raw copy];
     id wrap=WXGBubbleModelWrap(parent);
@@ -139,7 +144,7 @@ static inline id WXGBubbleNativeLongWrap(id model) {
     if(!WXGBubbleHasNativeLongHint(model))return nil;
     id parent=WXGBubbleParentModel(model);
     for(id candidate in parent?@[model,parent]:@[model]) {
-        id parts=WXGBubbleModelField(candidate,@"subViewModels");
+        id parts=WXGBubbleParts(candidate);
         if(parts && (![parts isKindOfClass:NSArray.class] || [parts count]))return nil;
     }
     return WXGBubbleDirectWrap(model);

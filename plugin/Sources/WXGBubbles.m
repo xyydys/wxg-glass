@@ -13,6 +13,7 @@
 @property(nonatomic,strong,readonly) WXGGlassView *glass;
 @property(nonatomic) BOOL outgoing;
 @property(nonatomic) CGFloat radius;
+@property(nonatomic) BOOL joinsAbove,joinsBelow;
 - (void)tick:(CFTimeInterval)time;
 @end
 @implementation WXGBubbleGlass {
@@ -39,6 +40,8 @@
 // FIX83: the tint weakens toward the outline over the bubble page's range.
 - (void)setOutgoing:(BOOL)outgoing {if(_outgoing==outgoing)return;_outgoing=outgoing;_dirty=YES;_glass.veilOverride=[self tint];}
 - (void)setRadius:(CGFloat)radius {if(fabs(_radius-radius)<.01)return;_radius=radius;_dirty=YES;[self setNeedsLayout];}
+- (void)setJoinsAbove:(BOOL)join {if(_joinsAbove!=join){_joinsAbove=join;[self setNeedsLayout];}}
+- (void)setJoinsBelow:(BOOL)join {if(_joinsBelow!=join){_joinsBelow=join;[self setNeedsLayout];}}
 - (void)didMoveToWindow {[super didMoveToWindow];_glass.active=self.window!=nil;_dirty=YES;}
 - (void)traitCollectionDidChange:(UITraitCollection *)previous {[super traitCollectionDidChange:previous];_dirty=YES;_glass.veilOverride=[self tint];}
 - (void)layoutSubviews {
@@ -47,6 +50,11 @@
     [UIView performWithoutAnimation:^{
         [CATransaction begin];[CATransaction setDisableActions:YES];
         CGRect b=self.bounds;
+        // While a family is being assembled, show its attached pieces with
+        // square internal joins. Only the actual first/last ends are rounded.
+        self.clipsToBounds=self.joinsAbove || self.joinsBelow;
+        WXGBubbleSpan span=WXGBubbleLocalSlice(CGRectGetMinY(b),CGRectGetMaxY(b),self.radius,self.joinsAbove,self.joinsBelow);
+        b.origin.y=span.min;b.size.height=span.max-span.min;
         self.glass.frame=CGRectInset(b,-WXGCanvasPaddingX,-WXGCanvasPaddingY);
         self.glass.glassRect=CGRectMake(WXGCanvasPaddingX,WXGCanvasPaddingY,b.size.width,b.size.height);
         // 0 would mean a capsule to the glass; a square corner is 0.5 pt.
@@ -73,18 +81,18 @@
 @end
 
 @interface WXGBubbleEntry : NSObject
-@property(nonatomic,weak) UIView *host,*body,*rich,*translationPlate;
-@property(nonatomic) CGRect textEnvelope;
+@property(nonatomic,weak) UIView *host,*body,*rich,*translationPlate,*voiceSibling;
+@property(nonatomic) CGRect textEnvelope,bodyRectInTable;
 @property(nonatomic) BOOL extendedText,hasQuote,quoteLayoutPending;
 @property(nonatomic,weak) UIView *quotePreview;
 @property(nonatomic,strong) WXGBubbleQuoteBackground *quoteBackground;
 @property(nonatomic,strong) UIView *quoteDivider;
 @property(nonatomic) CGFloat quoteDividerY;
-@property(nonatomic,weak) UITableViewCell *cell;
+@property(nonatomic,weak) UITableViewCell *cell,*waitingCell;
 @property(nonatomic,weak) UITableView *table;
 @property(nonatomic,weak) id model,family,renderKey,probeModel;
-@property(nonatomic) NSUInteger children,index,count,attempts,generation;
-@property(nonatomic) BOOL retryPending,layoutDirty,primaryHasContent;
+@property(nonatomic) NSUInteger children,index,count,attempts,generation,layoutRevision;
+@property(nonatomic) BOOL retryPending,layoutDirty,primaryHasContent,waitingForPath;
 @property(nonatomic) CGFloat appliedReference;
 @property(nonatomic) BOOL outgoing,fragment,painted,applying;
 @property(nonatomic) WXGBubbleKind kind;
@@ -97,7 +105,7 @@
 
 @interface WXGBubbleTable : NSObject
 @property(nonatomic) CGFloat incoming,outgoing;
-@property(nonatomic) BOOL dirty;
+@property(nonatomic) BOOL dirty,hasFamilyRows;
 @property(nonatomic) CGRect viewport;
 @property(nonatomic,strong) NSMapTable<id,WXGBubbleGlass *> *groups;
 @property(nonatomic,strong) NSHashTable<WXGBubbleEntry *> *entries;
@@ -141,16 +149,32 @@ static BOOL WXGBubbleValidRect(CGRect r) {
     return !CGRectIsNull(r) && !CGRectIsInfinite(r) && isfinite(r.origin.x) && isfinite(r.origin.y) &&
         isfinite(r.size.width) && isfinite(r.size.height) && r.size.width>0 && r.size.height>0;
 }
-static BOOL WXGBubbleSafeTextBody(UIView *body,UIView *host,UIView *rich) {
+static BOOL WXGBubbleSafeTextBody(UIView *body,UIView *host,UIView *rich,UITableViewCell *cell) {
     CGRect r=[body convertRect:body.bounds toView:host];
     CGRect b=host.bounds;
     if(!rich || !WXGBubbleValidRect(r) || r.size.width<12 || r.size.height<12)return NO;
     CGFloat allowance=(r.size.height<=96 && b.size.height<=96)?14:3;
-    if(!CGRectContainsRect(CGRectInset(b,-24,-allowance),r))return NO;
+    if(!CGRectContainsRect(CGRectInset(b,-24,-allowance),r)) {
+        // The message root and the physical row can resize in different passes.
+        // Accept a fresh four-line layout if its ink fits its body and the
+        // whole body already fits this exact native row, never an old tall body.
+        if(!cell || ![host isDescendantOfView:cell.contentView])return NO;
+        CGRect row=[cell.contentView convertRect:cell.contentView.bounds toView:host];
+        CGRect ink=[rich convertRect:rich.bounds toView:host];
+        if(!WXGBubbleValidRect(ink) || !CGRectContainsRect(CGRectInset(r,-2,-3),ink) ||
+           !CGRectContainsRect(CGRectInset(row,-24,-3),r))return NO;
+    }
     if(r.size.height>80 && (rich.hidden || rich.alpha<=.01 || (b.size.width>200 && r.size.width<72) ||
         (rich.bounds.size.height>20 && rich.bounds.size.width<12)))return NO;
     return YES;
 }
+static UIView *WXGBubbleOwnedNativeView(UIView *host,const char *name) {
+    Ivar field=class_getInstanceVariable(host.class,name);
+    if(!field || ivar_getTypeEncoding(field)[0]!='@')return nil;
+    id view=object_getIvar(host,field);
+    return [view isKindOfClass:UIView.class] && [view isDescendantOfView:host]?view:nil;
+}
+
 static NSArray<UIView *> *WXGBubbleTextBackgrounds(UIView *body) {
     NSMutableArray *images=[NSMutableArray array];
     for(UIView *child in body.subviews)if(WXGBubbleImageView(child)){
@@ -171,7 +195,7 @@ static id WXGBubbleHostModel(UIView *host) {
 static BOOL WXGBubbleMemberIsCurrent(WXGBubbleEntry *entry) {
     if(!entry.fragment || !entry.count)return YES;
     id parent=WXGBubbleParentModel(entry.model);
-    NSArray *parts=WXGBubbleModelField(parent,@"subViewModels");
+    NSArray *parts=WXGBubbleParts(parent);
     return [parts isKindOfClass:NSArray.class] && parts.count==entry.count &&
         entry.index<parts.count && parts[entry.index]==entry.model;
 }
@@ -236,6 +260,8 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
     UIView *content=WXGBubbleVoiceContent(host), *skin=WXGBubbleVoiceSkin(host);
     if (content) [views addObject:content];
     if (skin) [views addObject:skin];
+    WXGBubbleEntry *entry=objc_getAssociatedObject(host,&WXGBubbleEntryKey);
+    for(UIView *v=entry.voiceSibling;v && v!=entry.cell.contentView;v=v.superview)[views addObject:v];
     NSMutableArray *nodes=[NSMutableArray arrayWithCapacity:views.count];
     for (UIView *view in views) {
         WXGVoiceNode *node=[WXGVoiceNode new];
@@ -248,7 +274,7 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
 @implementation WXGBubbles {
     NSHashTable<UITableView *> *_tables;
     NSHashTable<UIView *> *_observedHosts;
-    NSHashTable<UIView *> *_pendingVoiceHosts;
+    NSHashTable<UIView *> *_pendingVoiceHosts,*_waitingTextHosts,*_pendingTextHosts;
     NSMapTable<UIView *,UIView *> *_voiceTextOwners;
     NSMapTable<UITableViewCell *,UIView *> *_voiceHostByCell;
     NSMapTable<UIView *,WXGStateBag *> *_voiceSkinOwners;
@@ -261,6 +287,7 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
     dispatch_once(&once,^{
         manager=[self new];manager->_tables=[NSHashTable weakObjectsHashTable];manager->_observedHosts=[NSHashTable weakObjectsHashTable];
         manager->_pendingVoiceHosts=[NSHashTable weakObjectsHashTable];
+        manager->_waitingTextHosts=[NSHashTable weakObjectsHashTable];manager->_pendingTextHosts=[NSHashTable weakObjectsHashTable];
         manager->_voiceTextOwners=[NSMapTable weakToWeakObjectsMapTable];
         manager->_voiceHostByCell=[NSMapTable weakToWeakObjectsMapTable];
         manager->_voiceSkinOwners=[NSMapTable weakToWeakObjectsMapTable];
@@ -288,13 +315,17 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
 }
 - (void)retire:(WXGBubbleEntry *)entry {
     if(!entry)return;
+    if([_waitingTextHosts containsObject:entry.host]) {
+        [_waitingTextHosts removeObject:entry.host];[_pendingTextHosts removeObject:entry.host];
+        entry.waitingCell=nil;
+    }
     [self unpaint:entry];
     if(entry.cell && [_voiceHostByCell objectForKey:entry.cell]==entry.host)[_voiceHostByCell removeObjectForKey:entry.cell];
     WXGBubbleTable *state=objc_getAssociatedObject(entry.table,&WXGBubbleTableKey);
     [state.entries removeObject:entry];state.dirty=YES;
     WXGBubbleInvalidateQuoteLookup(entry.host);
     entry.hasQuote=NO;entry.quotePreview=nil;entry.quoteLayoutPending=NO;
-    entry.body=nil;entry.rich=nil;entry.backgrounds=nil;entry.model=nil;entry.family=nil;
+    entry.waitingForPath=NO;entry.body=nil;entry.voiceSibling=nil;entry.rich=nil;entry.backgrounds=nil;entry.model=nil;entry.family=nil;
     entry.table=nil;entry.cell=nil;entry.renderKey=nil;entry.translationPlate=nil;entry.extendedText=NO;
 }
 - (void)messageCellWillReuse:(UIView *)host {
@@ -343,45 +374,98 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
     [entry.view tick:CACurrentMediaTime()];
     [self recordVoiceHost:host event:event];
 }
-- (void)voiceTranscriptTextDidChange:(UIView *)textView {
+static BOOL WXGBubbleAcceptSiblingTranscript(UIView *text,WXGBubbleEntry *entry) {
+    UIView *content=entry.cell.contentView;
+    if(!content || !text.superview || text.superview==content || [text isDescendantOfView:entry.host] ||
+       ![text isDescendantOfView:content] || [entry.host isDescendantOfView:text.superview])return NO;
+    for(UIView *v=text;v && v!=content;v=v.superview) {
+        NSString *name=NSStringFromClass(v.class);
+        if(v.hidden || v.alpha<=.01 || [v isKindOfClass:UIControl.class] || WXGIsPluginView(v) ||
+           [name containsString:@"MessageCellView"] || [name containsString:@"Refer"] || [name containsString:@"Quote"])return NO;
+    }
+    CGRect plate=[text.superview convertRect:text.superview.bounds toView:content];
+    CGRect ink=[text convertRect:text.bounds toView:content];
+    UIView *skin=WXGBubbleVoiceSkin(entry.host)?:entry.body;
+    CGRect audio=[skin convertRect:skin.bounds toView:content];
+    return WXGBubbleValidRect(audio) && WXGBubbleValidRect(ink) && WXGBubbleValidRect(plate) &&
+        CGRectContainsRect(CGRectInset(content.bounds,-2,-3),plate) &&
+        CGRectGetMinY(plate)>=CGRectGetMinY(audio)+22 &&
+        CGRectGetMaxX(ink)>CGRectGetMinX(audio) && CGRectGetMinX(ink)<CGRectGetMaxX(audio);
+}
+// The transcript can finish its first layout before the voice root has
+// registered its physical row. Catch up once when that root first binds.
+static UIView *WXGBubbleFindSiblingTranscript(UIView *view,WXGBubbleEntry *entry,NSUInteger depth,NSUInteger *budget) {
+    if(!*budget || depth>8 || view==entry.host || view.hidden || view.alpha<=.01 || WXGIsPluginView(view))return nil;
+    --*budget;
+    NSString *name=NSStringFromClass(view.class);
+    if([name containsString:@"MessageCellView"] || [name containsString:@"Quote"] || [name containsString:@"Refer"] ||
+       [view isKindOfClass:UIControl.class])return nil;
+    if([name containsString:@"RichText"])return WXGBubbleAcceptSiblingTranscript(view,entry)?view:nil;
+    for(UIView *child in view.subviews) {
+        UIView *found=WXGBubbleFindSiblingTranscript(child,entry,depth+1,budget);
+        if(found)return found;
+    }
+    return nil;
+}
+- (BOOL)hasPendingContent {
+    return _pendingTextHosts.count || _pendingVoiceHosts.count;
+}
+- (void)flushPendingContent {
+    if(![self hasPendingContent])return;
+    NSArray *textHosts=_pendingTextHosts.allObjects,*voiceHosts=_pendingVoiceHosts.allObjects;
+    [_pendingTextHosts removeAllObjects];[_pendingVoiceHosts removeAllObjects];
+    for(UIView *host in textHosts) {
+        WXGBubbleEntry *entry=objc_getAssociatedObject(host,&WXGBubbleEntryKey);
+        UITableViewCell *cell=nil;UITableView *table=nil;WXGBubbleLocate(host,&cell,&table);
+        if(host.window && table && [_waitingTextHosts containsObject:host] && cell && entry.waitingCell==cell &&
+           (!entry.probeModel || entry.probeModel==WXGBubbleHostModel(host)))[self messageCellLaidOut:host];
+    }
+    for(UIView *host in voiceHosts) {
+        if(!host.window || ![self wanted])continue;
+        ++_voiceAttachmentRefreshes;
+        [self refreshVoiceHost:host event:@"rendererAttachmentOrLayout"];
+    }
+}
+- (void)nativeBubbleChildDidChange:(UIView *)textView {
     static Class voiceClass;
     if(!voiceClass)voiceClass=NSClassFromString(@"VoiceMessageCellView");
-    UIView *owner=nil;UITableViewCell *cell=nil;
+    UIView *owner=nil,*waiting=nil;UITableViewCell *cell=nil;
+    BOOL watch=_waitingTextHosts.count!=0;
     for(UIView *v=textView.superview;v;v=v.superview) {
         if([v isKindOfClass:voiceClass]){owner=v;break;}
+        if(watch && [_waitingTextHosts containsObject:v]){waiting=v;break;}
         if([v isKindOfClass:UITableViewCell.class]){cell=(UITableViewCell *)v;break;}
         if([v isKindOfClass:UITableView.class])break;
     }
     UIView *old=[_voiceTextOwners objectForKey:textView];
-    if(!owner && !old) {
-        // Some builds may attach a transcript beside VoiceMessageCellView.
-        // Capture its geometry without taking ownership of an unproven sibling.
-        UIView *voice=cell?[_voiceHostByCell objectForKey:cell]:nil;
-        if(voice && textView.window && [voice isDescendantOfView:cell] && [NSStringFromClass(textView.class) containsString:@"RichText"])
-            [self recordVoiceHost:voice event:@"rendererOutsideVoiceHost" siblingRenderer:textView];
-        return;
+    if(!owner && cell && textView.window && [NSStringFromClass(textView.class) containsString:@"RichText"]) {
+        UIView *voice=[_voiceHostByCell objectForKey:cell];
+        WXGBubbleEntry *entry=voice?objc_getAssociatedObject(voice,&WXGBubbleEntryKey):nil;
+        if(entry && entry.cell==cell && [voice isDescendantOfView:cell.contentView] &&
+           WXGBubbleAcceptSiblingTranscript(textView,entry)) {
+            owner=voice;entry.voiceSibling=textView;
+        }
     }
+    if(!owner && !old && !waiting)return;
     if(![self wanted])return;
-    BOOL hadPending=_pendingVoiceHosts.count>0;
+    BOOL hadPending=[self hasPendingContent];
+    if(waiting)[_pendingTextHosts addObject:waiting];
     if(old!=owner) {
-        if(old.window)[_pendingVoiceHosts addObject:old];
+        WXGBubbleEntry *previous=old?objc_getAssociatedObject(old,&WXGBubbleEntryKey):nil;
+        if(previous.voiceSibling==textView)previous.voiceSibling=nil;
+        if(old.window) {
+            [_voiceNodes setObject:WXGVoiceNodes(old) forKey:old];
+            [_pendingVoiceHosts addObject:old];
+        }
+        if(owner.window)[_voiceNodes setObject:WXGVoiceNodes(owner) forKey:owner];
         if(owner)[_voiceTextOwners setObject:owner forKey:textView];
         else [_voiceTextOwners removeObjectForKey:textView];
     }
     if(owner.window)[_pendingVoiceHosts addObject:owner];
-    if(!hadPending && _pendingVoiceHosts.count) {
+    if(!hadPending && [self hasPendingContent]) {
         // Core Animation may have laid out this renderer after our run-loop
         // observer. Wake the queue even if this is the last frame in chat.
-        dispatch_async(dispatch_get_main_queue(),^{
-            NSArray *hosts=self->_pendingVoiceHosts.allObjects;
-            [self->_pendingVoiceHosts removeAllObjects];
-            for(UIView *host in hosts) {
-                if(!host.window || ![self wanted])continue;
-                [self->_voiceNodes removeObjectForKey:host];
-                ++self->_voiceAttachmentRefreshes;
-                [self refreshVoiceHost:host event:@"rendererAttachmentOrLayout"];
-            }
-        });
+        dispatch_async(dispatch_get_main_queue(),^{[self flushPendingContent];});
     }
 }
 // Some card classes attach their background below an already-laid-out cell.
@@ -426,11 +510,28 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
             body=kind==WXGBubbleText?WXGBubbleTextBody(host):WXGBubbleCardBody(host);
         UIView *rich=kind==WXGBubbleText?WXGBubbleRich(body):nil;
         NSArray *images=body?(kind==WXGBubbleText?WXGBubbleTextBackgrounds(body):WXGBubbleCardBackgrounds(host,body)):nil;
-        if(!images.count || !WXGBubbleValidRect(body.bounds) || (kind==WXGBubbleText && !WXGBubbleSafeTextBody(body,host,rich))){
-            [self retire:entry];if(voice)[self recordVoiceHost:host event:@"waitingForNativeSkin"];
+        if(kind==WXGBubbleText && (!rich || !images.count)) {
+            // Wrapped text renderers can lose the direct rich/skin sibling
+            // relationship. Resolve all three named roles on the *same* host.
+            UIView *content=WXGBubbleOwnedNativeView(host,"m_contentView");
+            UIView *ink=WXGBubbleOwnedNativeView(host,"m_richTextView");
+            UIView *skin=WXGBubbleOwnedNativeView(host,"m_bgImageView");
+            if(content && content!=host && !content.hidden && content.alpha>.01 &&
+               [skin isKindOfClass:UIImageView.class] && [ink isDescendantOfView:content] &&
+               [skin isDescendantOfView:content] && ink!=skin && WXGBubbleNamed(ink,@"RichText")) {
+                body=content;rich=ink;images=@[skin];
+            }
+        }
+        if(!images.count || !WXGBubbleValidRect(body.bounds) || (kind==WXGBubbleText && !WXGBubbleSafeTextBody(body,host,rich,cell))){
+            [self retire:entry];
+            if(kind==WXGBubbleText){entry.waitingCell=cell;[_waitingTextHosts addObject:host];}
+            if(voice)[self recordVoiceHost:host event:@"waitingForNativeSkin"];
             [self retryUnmeasured:entry];return;
         }
-        entry.attempts=0;entry.layoutDirty=YES;
+        if(entry.waitingCell) {
+            [_waitingTextHosts removeObject:host];[_pendingTextHosts removeObject:host];entry.waitingCell=nil;
+        }
+        entry.attempts=0;
         UIView *plate=nil;
         CGRect textEnvelope=CGRectNull;
         CGFloat dividerY=NAN;
@@ -448,28 +549,64 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
         }
         BOOL extended=!CGRectIsNull(textEnvelope);
         BOOL primaryHasContent=voice && ((UIView *)images.firstObject).subviews.count>0;
-        if(entry.primaryHasContent!=primaryHasContent || entry.body!=body || entry.rich!=rich || entry.translationPlate!=plate || entry.extendedText!=extended ||
-           ![images isEqualToArray:entry.backgrounds])[self unpaint:entry];
+        BOOL bindingChanged=entry.primaryHasContent!=primaryHasContent || entry.body!=body ||
+            entry.rich!=rich || entry.translationPlate!=plate || entry.extendedText!=extended ||
+            ![images isEqualToArray:entry.backgrounds];
+        NSUInteger revision=WXGConfigRevision(),children=WXGBubbleChildren(body);
+        CGRect bodyRect=[body convertRect:body.bounds toView:table];
+        BOOL geometryChanged=kind==WXGBubbleNonText || !entry.painted || bindingChanged ||
+            entry.cell!=cell || entry.children!=children || entry.layoutRevision!=revision || !CGRectEqualToRect(entry.bodyRectInTable,bodyRect) ||
+            entry.quotePreview!=quotePreview || !(entry.quoteDividerY==dividerY || (isnan(entry.quoteDividerY) && isnan(dividerY))) ||
+            !CGRectEqualToRect(entry.textEnvelope,textEnvelope);
+        entry.layoutRevision=revision;entry.bodyRectInTable=bodyRect;
+        if(bindingChanged)[self unpaint:entry];
         if(entry.quotePreview!=quotePreview)[entry.quoteBackground restore];
         entry.hasQuote=quotePreview!=nil;entry.quotePreview=quotePreview;entry.quoteDividerY=dividerY;
         entry.extendedText=extended;entry.textEnvelope=textEnvelope;entry.translationPlate=plate;
         entry.model=model;entry.cell=cell;entry.table=table;entry.kind=kind;
-        if(voice)[_voiceHostByCell setObject:host forKey:cell];
         entry.body=body;entry.rich=rich;entry.backgrounds=images;entry.primaryHasContent=primaryHasContent;
+        if(voice && [_voiceHostByCell objectForKey:cell]!=host) {
+            [_voiceHostByCell setObject:host forKey:cell];
+            NSUInteger budget=96;
+            UIView *sibling=WXGBubbleFindSiblingTranscript(cell.contentView,entry,0,&budget);
+            if(sibling) {
+                entry.voiceSibling=sibling;[_voiceTextOwners setObject:host forKey:sibling];
+                [_voiceNodes setObject:WXGVoiceNodes(host) forKey:host];
+            }
+        }
+        BOOL previousFragment=entry.fragment;
+        id previousFamily=entry.family;
+        NSUInteger previousCount=entry.count,previousIndex=entry.index;
         entry.fragment=kind==WXGBubbleText && WXGBubbleHasNativeLongHint(model);
         NSUInteger index=NSNotFound,count=0;
         entry.family=entry.fragment?WXGBubbleFamily(model,&index,&count):nil;
         if(entry.fragment && !entry.family)entry.family=WXGBubbleNativeLongWrap(model);
         entry.index=index;entry.count=count;
         NSNumber *side=model && [model respondsToSelector:NSSelectorFromString(@"isSender")]?WXGRead(model,@"isSender"):nil;
-        entry.outgoing=[side isKindOfClass:NSNumber.class]?side.boolValue:WXGBubbleOutgoingFromImage(((UIView *)images.firstObject).frame.origin.x);
-        entry.children=WXGBubbleChildren(body);
+        BOOL outgoing=[side isKindOfClass:NSNumber.class]?side.boolValue:WXGBubbleOutgoingFromImage(((UIView *)images.firstObject).frame.origin.x);
+        BOOL changed=geometryChanged || entry.outgoing!=outgoing || previousFragment!=entry.fragment ||
+            previousFamily!=entry.family || previousCount!=count || previousIndex!=index;
+        entry.outgoing=outgoing;entry.children=children;
+        if(changed)entry.layoutDirty=YES;
         WXGBubbleTable *state=objc_getAssociatedObject(table,&WXGBubbleTableKey);
         if(!state) {
             state=[WXGBubbleTable new];objc_setAssociatedObject(table,&WXGBubbleTableKey,state,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
         }
         if(![_tables containsObject:table])[_tables addObject:table];
-        if(![state.entries containsObject:entry])[state.entries addObject:entry];state.dirty=YES;++_layouts;
+        if(![state.entries containsObject:entry])[state.entries addObject:entry];
+        if(changed)state.dirty=YES;
+        ++_layouts;
+        // A newly attached/reused row can reach the render server before the
+        // table's next observer pass. Apply its verified native body immediately.
+        // An already mounted family owns its entering fragments until that
+        // same geometry pass decides whether they still share its surface.
+        if(kind==WXGBubbleText && !entry.painted) {
+            WXGBubbleGlass *familyGlass=entry.family?[state.groups objectForKey:entry.family]:nil;
+            CGRect existing=familyGlass.superview?[familyGlass convertRect:familyGlass.bounds toView:table]:CGRectNull;
+            if(!CGRectIsNull(existing) && CGRectContainsRect(CGRectInset(existing,-1,-1),bodyRect))
+                [self paint:entry radius:familyGlass.radius];
+            else [self renderLocal:entry reference:entry.outgoing?state.outgoing:state.incoming];
+        }
     } @catch(NSException *error){WXGLog(@"液态气泡：%@",error.reason);[self retire:entry];}
     @finally {entry.applying=NO;}
 }
@@ -501,7 +638,10 @@ static NSArray<WXGVoiceNode *> *WXGVoiceNodes(UIView *host) {
     }else if(entry.quoteBackground) {
         [entry.quoteBackground restore];entry.quoteBackground=nil;
     }
-    if(entry.kind==WXGBubbleNonText)WXGBubbleStyleCardContents(entry.host,entry.body,entry.states,radius);
+    if(entry.kind==WXGBubbleNonText) {
+        if(entry.voiceSibling && !WXGBubbleAcceptSiblingTranscript(entry.voiceSibling,entry))entry.voiceSibling=nil;
+        WXGBubbleStyleCardContents(entry.host,entry.body,entry.states,radius,entry.voiceSibling);
+    }
 }
 // Each physical quote owns its line, including when multiple rows share one
 // glass. Only the line is mounted on the glass; native text and gestures stay put.
@@ -529,22 +669,29 @@ static void WXGBubblePlaceQuoteDivider(WXGBubbleEntry *entry,WXGBubbleGlass *gla
     }];
 }
 - (void)renderLocal:(WXGBubbleEntry *)entry reference:(CGFloat)reference {
-    if(entry.painted && !entry.layoutDirty && entry.view.superview && entry.appliedReference==reference)return;
+    BOOL joinsAbove=entry.fragment && entry.count && entry.index>0;
+    BOOL joinsBelow=entry.fragment && entry.count && entry.index+1<entry.count;
+    if(entry.painted && !entry.layoutDirty && entry.view.superview && entry.appliedReference==reference &&
+       entry.view.joinsAbove==joinsAbove && entry.view.joinsBelow==joinsBelow)return;
     entry.layoutDirty=NO;entry.appliedReference=reference;
     UIView *body=entry.body;
     CGFloat radius=WXGBubbleRadius(body.bounds.size.width,body.bounds.size.height,reference);
     WXGBubbleGlass *glass=entry.view;
     if(!glass){glass=[[WXGBubbleGlass alloc] initWithFrame:CGRectZero];entry.view=glass;++_mounts;}
+    glass.joinsAbove=joinsAbove;glass.joinsBelow=joinsBelow;
     BOOL card=entry.kind==WXGBubbleNonText;
     BOOL voiceMounted=card && !entry.view.superview && WXGBubbleIsVoiceHost(entry.host);
     [self paint:entry radius:radius];
     UIView *container=body;
-    if(card)container=body.superview;
+    if(card)container=entry.voiceSibling?entry.cell.contentView:body.superview;
     else if(entry.extendedText)container=WXGBubbleQuotedContainer(entry.host)?:entry.host;
     if(card) {
-        NSArray *siblings=container.subviews;NSUInteger pos=[siblings indexOfObjectIdenticalTo:body];
+        UIView *anchor=body;
+        while(anchor.superview && anchor.superview!=container)anchor=anchor.superview;
+        NSArray *siblings=container.subviews;NSUInteger pos=[siblings indexOfObjectIdenticalTo:anchor];
         if(pos==NSNotFound)return;
-        if(pos==0 || siblings[pos-1]!=glass)[container insertSubview:glass belowSubview:body];
+        if(entry.voiceSibling && container.subviews.firstObject!=glass)[container insertSubview:glass atIndex:0];
+        else if(!entry.voiceSibling && (pos==0 || siblings[pos-1]!=glass))[container insertSubview:glass belowSubview:anchor];
     }else if(container.subviews.firstObject!=glass)[container insertSubview:glass atIndex:0];
     glass.outgoing=entry.outgoing;glass.radius=radius;
     CGRect frame=entry.extendedText?[entry.host convertRect:entry.textEnvelope toView:container]:body.bounds;
@@ -681,7 +828,10 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
     WXGBubbleSetFrame(glass,[table convertRect:aligned toView:container]);
     NSMutableArray<WXGBubbleEntry *> *quotes=nil;
     for(WXGBubbleEntry *entry in ordered){
-        [entry.view removeFromSuperview];[self paint:entry radius:glass.radius];
+        if(entry.view.superview) {
+            [entry.view removeFromSuperview];entry.children=WXGBubbleChildren(entry.body);
+        }
+        [self paint:entry radius:glass.radius];
         if(entry.hasQuote && isfinite(entry.quoteDividerY)) {
             if(!quotes)quotes=[NSMutableArray array];
             [quotes addObject:entry];
@@ -706,17 +856,21 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
     if(!table.window)return;
     // Ordinary scrolling carries the single overlay along with its table.
     // Only refresh its bounded texture when the viewport has moved far enough.
-    BOOL moved=state.groups.count && (fabs(table.bounds.origin.y-state.viewport.origin.y)>=100 ||
+    BOOL moved=state.hasFamilyRows && (fabs(table.bounds.origin.y-state.viewport.origin.y)>=100 ||
         !CGSizeEqualToSize(table.bounds.size,state.viewport.size));
     if(!state.dirty && !moved)return;
-    state.dirty=NO;state.viewport=table.bounds;
+    state.dirty=NO;state.hasFamilyRows=NO;state.viewport=table.bounds;
     CGFloat single[2]={0,0};
     NSMapTable *families=[NSMapTable mapTableWithKeyOptions:NSPointerFunctionsStrongMemory|NSPointerFunctionsObjectPointerPersonality
                                                 valueOptions:NSPointerFunctionsStrongMemory];
     for(WXGBubbleEntry *entry in state.entries) {
         if(!entry.host.window || !entry.body)continue;
         if(entry.fragment){
-            if(!entry.family){[self unpaint:entry];continue;}
+            if(entry.family)state.hasFamilyRows=YES;
+            entry.waitingForPath=entry.family && ![table indexPathForCell:entry.cell];
+            if(!entry.family || entry.waitingForPath){
+                [self renderLocal:entry reference:entry.outgoing?state.outgoing:state.incoming];continue;
+            }
             id key=entry.family;
             if(entry.count && ![families objectForKey:key]) {
                 // A rebuilt indexed parent can publish a cloned wrap. Validate
@@ -744,7 +898,8 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
     for(id family in families){
         NSArray *members=[families objectForKey:family];
         if([self renderFamily:members key:family table:table state:state])[active addObject:family];
-        else for(WXGBubbleEntry *entry in members)[self unpaint:entry];
+        else for(WXGBubbleEntry *entry in members)
+            [self renderLocal:entry reference:entry.outgoing?state.outgoing:state.incoming];
     }
     for(id family in state.groups.keyEnumerator.allObjects)if(![active containsObject:family]){
         [[state.groups objectForKey:family] removeFromSuperview];[state.groups removeObjectForKey:family];
@@ -753,6 +908,7 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
         [self renderLocal:entry reference:entry.outgoing?state.outgoing:state.incoming];
 }
 - (void)reassert {
+    [self flushPendingContent];
     if(!_tables.count && !_voiceNodes.count)return;
     if(![self wanted]){[self restore];return;}
     for(UIView *host in _voiceNodes.keyEnumerator.allObjects) {
@@ -773,6 +929,7 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
         if(!table.window)continue;
         for(WXGBubbleEntry *entry in state.entries.allObjects){
             if(!entry.host.window || entry.applying)continue;
+            if(entry.waitingForPath && [table indexPathForCell:entry.cell])state.dirty=YES;
             BOOL quoteChanged=entry.quoteLayoutPending || (entry.hasQuote && !WXGBubbleQuotePreview(entry.host));
             if(quoteChanged) {
                 entry.quoteLayoutPending=NO;
@@ -789,7 +946,7 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
     for(UITableView *table in _tables)if(table.window){
         WXGBubbleTable *state=objc_getAssociatedObject(table,&WXGBubbleTableKey);
         [self refreshTable:table state:state];
-        for(WXGBubbleEntry *entry in state.entries)if(entry.painted && !entry.fragment)[entry.view tick:time];
+        for(WXGBubbleEntry *entry in state.entries)if(entry.painted && entry.view.superview)[entry.view tick:time];
         for(WXGBubbleGlass *glass in state.groups.objectEnumerator)[glass tick:time];
     }
 }
@@ -798,6 +955,7 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
     for(UIView *host in _observedHosts.allObjects)if(host.window)[self messageCellLaidOut:host];
 }
 - (void)restore {
+    [_waitingTextHosts removeAllObjects];[_pendingTextHosts removeAllObjects];
     [_voiceNodes removeAllObjects];
     [_voiceTextOwners removeAllObjects];[_voiceHostByCell removeAllObjects];
     [_voiceSkinOwners removeAllObjects];
@@ -817,7 +975,7 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
         for(WXGBubbleEntry *entry in state.entries){
             if(!entry.painted){if(entry.fragment)++nativeFragments;continue;}
             if(!entry.host.window)continue;
-            WXGBubbleGlass *glass=entry.fragment?[state.groups objectForKey:entry.renderKey]:entry.view;
+            WXGBubbleGlass *glass=entry.view.superview?entry.view:(entry.renderKey?[state.groups objectForKey:entry.renderKey]:nil);
             ++shown;
             if(samples.count<10)[samples addObject:@{@"cell":NSStringFromClass(entry.host.class),@"outgoing":@(entry.outgoing),
                 @"body":NSStringFromClass(entry.body.class),@"size":@[@(entry.body.bounds.size.width),@(entry.body.bounds.size.height)],
@@ -838,7 +996,7 @@ static BOOL WXGBubbleKnownEnd(UITableView *table,WXGBubbleTable *state,NSIndexPa
             @"glassSize":@[@(entry.view.bounds.size.width),@(entry.view.bounds.size.height)]}];
     }
     return @{@"enabled":@([self wanted]),@"mounts":@(_mounts),@"layouts":@(_layouts),@"restores":@(_restores),
-        @"voiceHistory":_voiceHistory.copy?:@[],@"voiceBindings":voiceBindings,@"voiceWatched":@(_voiceNodes.count),@"voiceNativeRefreshes":@(_voiceAttachmentRefreshes),
+        @"waitingForTextBody":@(_waitingTextHosts.count),@"voiceHistory":_voiceHistory.copy?:@[],@"voiceBindings":voiceBindings,@"voiceWatched":@(_voiceNodes.count),@"voiceNativeRefreshes":@(_voiceAttachmentRefreshes),
         @"voiceLayoutRefreshes":@(_voiceStateRefreshes),@"onScreen":@(shown),@"unifiedLongMessages":@(groups),@"nativeFragments":@(nativeFragments),@"samples":samples};
 }
 @end
