@@ -8,6 +8,7 @@
 #import "WXGDockPresentation.h"
 #import "WXGDockSearchLayout.h"
 #import "WXGDockDiscrete.h"
+#import "WXGHomeSearchLayout.h"
 // FIX30: WeChat Settings entry state (defined with the hooks at the end of the file).
 static BOOL WXGSettingsEntryReady;
 static BOOL WXGSurfaceInNativeView(WXGSurface *surface);   // FIX113 D
@@ -463,6 +464,9 @@ static UIView *WXGFinderLiveContainer(WXGFinderLink *link) {
 @property(nonatomic) NSUInteger bindingRecoveries,samplingLayoutSkips;
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *navigationRequests;
 @property(nonatomic,strong) NSHashTable<UIView *> *homeGestureHosts,*navigationChromeHosts;
+@property(nonatomic,strong) NSHashTable<UIView *> *homeRightRows,*homePlusControls,*homeSearchControls;
+@property(nonatomic,weak) WXGSurface *homePlusSurface,*homeSearchSurface;
+@property(nonatomic) BOOL homeControlsChanged,homeShowingPullControls;
 @property(nonatomic) NSUInteger navigationRepairs,homeReattachments,otherBarLayoutsSkipped;
 @property(nonatomic) NSUInteger homeNavigationLayoutsReused,homeNavigationRevision;
 @property(nonatomic) BOOL homeNavigationNeedsFinalLayout,homeNavigationHidden;
@@ -683,8 +687,8 @@ static UIResponder *WXGFirstResponder(void) {
 // moved there); only bar-sized ones (never a list, a page or the window).
 static NSMutableOrderedSet<NSString *> *WXGRowOpenedClips;
 static WXGStateBag *WXGRowClipBag;
-static void WXGOpenRowClips(UIView *view,UIView *stop,WXGMetrics m) {
-    CGFloat limit=MAX(64,m.button*2);NSUInteger depth=0;
+static void WXGOpenRowClips(UIView *view,UIView *stop,CGFloat diameter) {
+    CGFloat limit=MAX(64,diameter*2);NSUInteger depth=0;
     for(UIView *p=view;p && p!=stop && depth<8;p=p.superview,depth++) {
         if([p isKindOfClass:UIScrollView.class] || [p isKindOfClass:UIWindow.class])break;
         if(!p.clipsToBounds || p.bounds.size.height>limit)continue;
@@ -741,7 +745,7 @@ NSUInteger WXGMoveBarContent(UINavigationBar *bar) {
     WXGMetrics m=WXGMeasure(w.bounds.size.width-w.safeAreaInsets.left-w.safeAreaInsets.right,WXGPreferences.shared.sizeScale);
     for(UIView *v in WXGBarContentViews(bar)) {
         [WXGRowBag shiftContents:v x:0 y:dy];
-        if(dy>.01){WXGOpenRowClips(v,bar.superview,m);++moved;}
+        if(dy>.01){WXGOpenRowClips(v,bar.superview,m.button);++moved;}
         else WXGCloseRowClips(v,bar.superview);
     }
     return moved;
@@ -928,6 +932,7 @@ static BOOL WXGSideChatSheetFrame(CGRect f,UIWindow *w) {
     [n addObserver:self selector:@selector(textFieldBegan:) name:UITextFieldTextDidBeginEditingNotification object:nil];
     [n addObserver:self selector:@selector(textFieldEnded:) name:UITextFieldTextDidEndEditingNotification object:nil];
     _homeGestureHosts=[NSHashTable weakObjectsHashTable];_navigationChromeHosts=[NSHashTable weakObjectsHashTable];
+    _homeRightRows=[NSHashTable weakObjectsHashTable];_homePlusControls=[NSHashTable weakObjectsHashTable];_homeSearchControls=[NSHashTable weakObjectsHashTable];
     _timer=[NSTimer timerWithTimeInterval:.75 target:self selector:@selector(poll:) userInfo:nil repeats:YES];
     [NSRunLoop.mainRunLoop addTimer:_timer forMode:NSRunLoopCommonModes];
     _proxy=[WXGHostTickProxy new];_proxy.owner=self;
@@ -1411,6 +1416,7 @@ static void WXGTraceShapeLine(NSString *key,NSString *line) {
 }
 - (void)resetRoute {
     self.navCapsuleLeaf=nil;   // FIX113 Q: no title row of ours now
+    _homePlusSurface=nil;_homeSearchSurface=nil;_homeControlsChanged=YES;_homeShowingPullControls=NO;
     if(!_nativeTransition)[WXGChatSegments.shared hideTitleBar];
     if(!_routeToken && !_buttons.count && !_inputAdapter.installed && !_dockView.active && !_navStates && !_dockStates)return;
     for(WXGSurface *b in _buttons){b.active=NO;b.original=nil;b.motionHost=nil;b.followsNative=NO;WXGResetOwnedTransform(b);b.alpha=1;b.perform=nil;b.glass.backdropExclusions=@[];b.hidden=YES;}[_buttons removeAllObjects];
@@ -1733,12 +1739,79 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
     }
     return YES;
 }
+// The navigation item and the taskbar close area can both stay in the window.
+// A mask hides replaced ink without changing WeChat's opacity or target/action.
+- (NSInteger)homeBranchForHost:(UIView *)host {
+    if(!host || !_window || host.window!=_window)return -1;
+    if([host isDescendantOfView:_route.nav.navigationBar])return 0;
+    static Class closeArea;static dispatch_once_t once;
+    dispatch_once(&once,^{closeArea=NSClassFromString(@"WAMainFrameTaskBarCloseArea");});
+    for(UIView *v=host.superview;v;v=v.superview) {
+        if([v isKindOfClass:closeArea])return [v isDescendantOfView:_route.leaf.viewIfLoaded]?1:-1;
+        if([v isKindOfClass:UIScrollView.class])break;
+    }
+    return -1;
+}
+- (UIView *)homeHostFrom:(NSHashTable<UIView *> *)hosts current:(UIView *)current pulling:(BOOL)pulling {
+    UIView *bars[2]={nil,nil};
+    CGFloat opacity[2]={-1.,-1.};
+    for(UIView *candidate in hosts) {
+        NSInteger branch=[self homeBranchForHost:candidate];
+        if(branch<0 || CGRectIsEmpty(candidate.bounds))continue;
+        if([candidate isKindOfClass:UIControl.class] && hosts!=_homeGestureHosts && !WXGCanForward((UIControl *)candidate))continue;
+        // Search itself deliberately fades out while the list's search is visible.
+        UIView *row=hosts==_homeSearchControls?candidate.superview:candidate;
+        CGFloat alpha=1.;
+        for(UIView *v=row;v && v!=_window;v=v.superview) {
+            CALayer *layer=v.layer.presentationLayer?:v.layer;
+            if(layer.hidden){alpha=0;break;}
+            alpha*=layer.opacity;
+        }
+        if(alpha>opacity[branch] || (alpha==opacity[branch] && candidate==current)) {
+            bars[branch]=candidate;opacity[branch]=alpha;
+        }
+    }
+    return bars[WXGHomeUsesPullControls(opacity[0],opacity[1],pulling)?1:0];
+}
+- (NSHashTable<UIView *> *)rememberHomeAction:(UIControl *)control verify:(BOOL)verify {
+    if(![control isKindOfClass:UIControl.class] || [self homeBranchForHost:control]<0)return nil;
+    NSHashTable *known=[_homePlusControls containsObject:control]?_homePlusControls:
+        [_homeSearchControls containsObject:control]?_homeSearchControls:nil;
+    if(known && !verify)return known;
+    NSArray *actions=WXGActionNames(control);
+    NSHashTable *hosts=[actions containsObject:@"showRightTopMenuBtn"]?_homePlusControls:
+        [actions containsObject:@"onSearchButtonTapped"]?_homeSearchControls:nil;
+    if(hosts!=known) {
+        if(known){[known removeObject:control];[_navStates unconceal:control];}
+        if(hosts)[hosts addObject:control];
+        _homeControlsChanged=YES;
+    }
+    return hosts;
+}
+- (void)concealHomeTwins:(NSHashTable<UIView *> *)hosts except:(UIView *)visible {
+    for(UIView *v in hosts)if(v!=visible && [self homeBranchForHost:v]>=0)[_navStates conceal:v];
+    if(visible)[_navStates unconceal:visible];
+}
 - (void)navigationControlLaidOut:(UIView *)view {
     if(WXGBackdropCaptureInProgress()){++_samplingLayoutSkips;return;}
     if(WXGNavigationCallDepth){[_navStates reapply];_navigationBindingPending=YES;return;}
     if(!WXGPluginEnabled() || !WXGPreferences.shared.nav)return;
     if(!_window && view.window){[self refresh];}
     if(view.window!=_window || !_window)return;
+    if(_route.primary && !_nativeTransition && !_suspendedByCover && !_pendingController &&
+       [NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"]) {
+        NSHashTable *hosts=[self rememberHomeAction:(UIControl *)view verify:NO];
+        if(hosts==_homeSearchControls && _navStates && [self dockSearchAvailable]){[_navStates conceal:view];return;}
+        WXGSurface *cover=hosts==_homePlusControls?_homePlusSurface:hosts==_homeSearchControls?_homeSearchSurface:nil;
+        if(hosts && cover.active && cover.window==_window && cover.motionOwner==_route.leaf) {
+            [_navStates conceal:view];
+            if(cover.original==view && cover.motionHost!=view && ![cover.motionHost isDescendantOfView:view])_navigationBindingPending=YES;
+            return;
+        }
+        if(hosts && !_refreshing && ![view isDescendantOfView:_route.nav.navigationBar]) {
+            _navigationBindingPending=YES;return;
+        }
+    }
     for(WXGSurface *surface in _buttons)if(surface.original==view && !WXGSurfaceOnlyOpens(surface)){[_navStates reapply];return;}   // FIX114 N
     BOOL navigation=[view isDescendantOfView:_route.nav.navigationBar];
     for(UIView *parent=view.superview;!navigation && parent;parent=parent.superview)
@@ -1749,6 +1822,21 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
     _navigationBindingPending=YES;
     if(_refreshing)return;
     _navigationBindingPending=NO;[self nativeNavigationLaidOut];
+}
+- (void)homeRightRowDidLayout:(UIView *)row {
+    if(WXGBackdropCaptureInProgress())return;
+    if(row.window && ![_homeRightRows containsObject:row])[_homeRightRows addObject:row];
+    if(_suspendedByCover || _pendingController || _nativeTransition || !_route.primary || !_navStates ||
+       !WXGPluginEnabled() || !WXGPreferences.shared.nav ||
+       ![NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"] || [self homeBranchForHost:row]<0)return;
+    for(UIView *v in WXGViews(row,20)) {
+        if(![v isKindOfClass:UIControl.class] || !WXGCanForward((UIControl *)v) || CGRectIsEmpty(v.bounds))continue;
+        NSHashTable *hosts=[self rememberHomeAction:(UIControl *)v verify:NO];
+        if(!hosts)continue;
+        WXGSurface *surface=hosts==_homePlusControls?_homePlusSurface:_homeSearchSurface;
+        if(surface.active && surface.window==_window && surface.motionOwner==_route.leaf)[_navStates conceal:v];
+        else if(hosts==_homePlusControls || ![self dockSearchAvailable])_navigationBindingPending=YES;
+    }
 }
 - (void)repairDetachedNavigationBindings {
     if(_refreshing || _nativeTransition || !_route.leaf || _suspendedByCover ||
@@ -1801,14 +1889,8 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
 // glass was moved into WeChat's button view again and again inside one
 // layout pass. Each move took it out of the window and back in, and each
 // time its colours were resolved again (UIKit's appearance setters, slow).
-// Two of WeChat's left views both on screen (the background snapshots lay
-// the page out again) take the one glass from each other, and each move
-// lays the other one out again. Now the glass stays in the view it is in
-// while that view is still shown, a move keeps it in the window, and no
-// more than 4 moves or reorders happen in one turn of the run loop.
-- (BOOL)homeHostUsable:(UIView *)host {
-    return host && host.superview && _window && host.window==_window && WXGVisible(host,_window) && [host isDescendantOfView:_route.nav.view];
-}
+// Decide between the two hosts before reparenting. A move keeps the glass
+// in the window and the existing per-turn budget also covers reorders.
 - (BOOL)homeMoveAllowed {
     if(_homeMovesThisTurn==0)dispatch_async(dispatch_get_main_queue(),^{WXGIntegrationHost.shared.homeMovesThisTurn=0;});
     if(++_homeMovesThisTurn>4){++_homeMoveLoopBreaks;_navigationBindingPending=YES;return NO;}
@@ -1816,29 +1898,24 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
 }
 - (void)homeGestureLaidOut:(UIView *)host {
     if(WXGBackdropCaptureInProgress()){++_samplingLayoutSkips;return;}
-    if(host.window)[_homeGestureHosts addObject:host];
+    if(host.window && ![_homeGestureHosts containsObject:host]){[_homeGestureHosts addObject:host];_homeControlsChanged=YES;}
     if(!_window && host.window && !_refreshing)[self refresh];
-    if(_refreshing || ![NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"] ||
+    if(_refreshing || !_route.primary || _pendingController || _nativeTransition || _suspendedByCover ||
+       ![NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"] ||
        !WXGPluginEnabled() || !WXGPreferences.shared.nav)return;
     WXGSurface *bound=_surfacePool[@"nativeLeft0"];
-    if(host.window!=_window || !WXGVisible(host,_window) ||
-       ![host isDescendantOfView:_route.nav.view]) {
-        // Hidden/off-window duplicate hosts must not steal the single glass
-        // slot. A detached active host gets one native-layout repair request.
-        ++_ignoredHomeHosts;
-        if(bound.motionHost==host){_navigationBindingPending=YES;[self schedule];}
-        return;
-    }
-    // FIX114 M: another of WeChat's left views holds the glass and is still shown.
-    UIView *holder=bound.motionHost;
-    if(holder && holder!=host && bound.superview==holder && [self homeHostUsable:holder]){++_homeHostConflicts;return;}
+    if([self homeBranchForHost:host]<0){++_ignoredHomeHosts;if(bound.motionHost==host)_homeControlsChanged=YES;return;}
+    UIView *wanted=[self homeHostFrom:_homeGestureHosts current:bound.motionHost pulling:[self currentHomePull]>.5];
+    if(!wanted)return;
+    if(bound.active && bound.superview==wanted && wanted!=host){++_homeHostConflicts;[_navStates conceal:host];return;}
     _refreshing=YES;
     @try {
         if(!_navStates)_navStates=[WXGStateBag new];
         WXGMetrics m=WXGMeasure(_window.bounds.size.width-_window.safeAreaInsets.left-_window.safeAreaInsets.right,WXGPreferences.shared.sizeScale);
         CGFloat h=_route.nav.navigationBar.bounds.size.height;
         if(m.button>MAX(36,h))m=WXGMeasure(440*MAX(36,h)/44,1);
-        [self bindHomeGesture:host diameter:m.button slot:@"nativeLeft0"];
+        WXGSurface *surface=[self bindHomeGesture:wanted diameter:m.button slot:@"nativeLeft0"];
+        if(surface.superview)[self concealHomeTwins:_homeGestureHosts except:surface.superview];
     } @catch(NSException *error){WXGLog(@"首页手势挂载：%@",error.reason);_navigationDirty=YES;}
     @finally {_refreshing=NO;}
 }
@@ -1872,7 +1949,7 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
         // FIX114 C: the margin and the row's move down are settings.
         CGFloat dx=round((w.safeAreaInsets.left+WXGTitleRowEdge(m.scale)+diameter*.5-centre)*scale)/scale;
         // (In a title bar, the bar's content is moved down already.)
-        CGFloat dy=[host isDescendantOfView:_route.nav.navigationBar]?0:round(WXGTitleRowOffset(m.scale)*scale)/scale;
+        CGFloat dy=[host isDescendantOfView:_route.nav.navigationBar]?[self navigationHomePullFor:host]:round(WXGTitleRowOffset(m.scale)*scale)/scale;
         [_navStates shiftContents:host x:fabs(dx)>=.5 && fabs(dx)<=32?dx:0 y:dy];
         if(dy>.01)[self openRowClipsFrom:host upTo:nil metrics:m];else WXGCloseRowClips(host,nil);
         _homeIconHost=host;_homeIconSurface=surface;   // (review) measured when the diagnostics are exported
@@ -1912,7 +1989,7 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
     if(dy>.01 && !inBar)[self openRowClipsFrom:title upTo:nil metrics:m];else WXGCloseRowClips(title,nil);
 }
 - (void)openRowClipsFrom:(UIView *)view upTo:(UIView *)stop metrics:(WXGMetrics)m {
-    WXGOpenRowClips(view,stop,m);
+    WXGOpenRowClips(view,stop,m.button);
 }
 // FIX114 C: where the home page's left icon is drawn against its glass (the
 // user saw the glass move to the margin and the star stay): their centres on
@@ -1974,19 +2051,76 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
     _sideChat=nil;[side stop:reason];
     WXGSideChatNote(@{@"time":@(round(WXGSecondsSinceLoad()*10)/10),@"ended":reason?:@"",@"installs":@(side.installs),@"layouts":@(side.layouts)});
 }
+- (CGFloat)navigationHomePullFor:(UIView *)native {
+    UIScrollView *list=_homeConversationList;
+    if(_nativeTransition || _pendingController || !list || list.window!=_window ||
+       ![native isDescendantOfView:_route.nav.navigationBar] ||
+       ![list isDescendantOfView:_route.leaf.viewIfLoaded])return 0.;
+    return WXGHomePullTranslation(list.contentOffset.y,WXGHomeConversationTop(list),_window.screen.scale);
+}
+- (CGFloat)homeCenterForSurface:(WXGSurface *)surface fallback:(CGFloat)rest {
+    UIView *native=surface.original?:surface.motionHost;
+    UINavigationBar *bar=_route.nav.navigationBar;
+    BOOL attached=native && native.window==_window;
+    CGFloat center=attached?CGRectGetMidY(WXGUnmovedWindowRect(native,bar,_window))+_rowOffset:rest;
+    // The close-area twin already moves with the list. If only the stationary
+    // item exists yet, follow the same rubber-banded displacement as the title.
+    return center+[self navigationHomePullFor:attached?native:bar];
+}
+- (void)followHomeAction:(WXGSurface *)surface hosts:(NSHashTable<UIView *> *)hosts pulling:(BOOL)pulling {
+    if(!surface.active || surface.motionOwner!=_route.leaf)return;
+    UIControl *button=(UIControl *)[self homeHostFrom:hosts current:surface.original pulling:pulling];
+    if(!button || button==surface.original)return;
+    if(!surface.original && surface.perform){_navigationBindingPending=YES;return;}
+    UIView *ink=[self motionInkForControl:button];
+    surface.original=button;surface.enabled=button.enabled;
+    [surface setNativeIconSource:ink preservingColors:NO];
+    [surface bindMotionHost:ink owner:_route.leaf];
+    [_navStates conceal:button];
+}
+- (void)syncHomeControls {
+    if(_refreshing || !_route.primary || _nativeTransition || _pendingController || WXGNavigationCallDepth ||
+       _navCapsuleLeaf!=_route.leaf || !WXGPreferences.shared.nav)return;
+    BOOL pulling=[self currentHomePull]>.5;
+    if(!_homeControlsChanged && !pulling && !_homeShowingPullControls && CACurrentMediaTime()-_homePullSeenAt>.65)return;
+    _homeControlsChanged=NO;_homeShowingPullControls=pulling;
+    [self followHomeAction:_homePlusSurface hosts:_homePlusControls pulling:pulling];
+    [self followHomeAction:_homeSearchSurface hosts:_homeSearchControls pulling:pulling];
+    WXGSurface *left=_surfacePool[@"nativeLeft0"];
+    UIView *wanted=[self homeHostFrom:_homeGestureHosts current:left.motionHost pulling:pulling];
+    if(wanted && left.active && (left.superview!=wanted || left.motionHost!=wanted)) {
+        _refreshing=YES;
+        @try {
+            [self bindHomeGesture:wanted diameter:left.materialRect.size.height slot:@"nativeLeft0"];
+            if(left.superview)[self concealHomeTwins:_homeGestureHosts except:left.superview];
+        } @finally {_refreshing=NO;}
+    }
+    if(left.active && [left.superview isDescendantOfView:_route.nav.navigationBar]) {
+        CGPoint shift=[_navStates contentOffsetOf:left.superview];
+        CGFloat pull=[self navigationHomePullFor:left.superview];
+        if(shift.y!=pull) {
+            if((shift.y==0.)!=(pull==0.)) {
+                if(pull>0.)WXGOpenRowClips(left.superview,_route.nav.navigationBar.superview,left.materialRect.size.height);
+                else WXGCloseRowClips(left.superview,_route.nav.navigationBar.superview);
+            }
+            [_navStates shiftContents:left.superview x:shift.x y:pull];
+        }
+    }
+}
 - (void)followHomeSurfaces {
     if(![NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"])return;
+    [self syncHomeControls];
     for(WXGSurface *surface in _buttons) {
-        UIView *native=[surface.role isEqual:@"nativeGesture"]?surface.motionHost:surface.original;
+        UIView *native=surface.original?:surface.motionHost;
         if(!native || native.window!=_window)continue;
         if([surface.role isEqual:@"nativeGesture"]) {
             // Geometry and alpha now inherit from the actual native host. Only
             // a genuine rehome requires reattachment, not every display frame.
             if(surface.superview!=native)[self bindHomeGesture:native diameter:surface.materialRect.size.height slot:@"nativeLeft0"];
-        }else if(surface.original && surface.superview.window==_window) {
+        }else if((surface.original || surface.homePlusAnchor) && surface.superview.window==_window) {
             // Preserve TEST4's corrected x grid and raster-centered icon, follow native y.
-            CGRect r=WXGUnmovedWindowRect(native,_route.nav.navigationBar,_window);   // FIX114 C (review): without the row's own move
-            CGPoint center=[_window convertPoint:CGPointMake(0,CGRectGetMidY(r)+_rowOffset) toView:surface.superview];
+            CGFloat y=[self homeCenterForSurface:surface fallback:CGRectGetMidY(surface.restingFrame)];
+            CGPoint center=[_window convertPoint:CGPointMake(0,y) toView:surface.superview];
             CGRect frame=surface.followsNative?surface.restingFrame:surface.frame;
             frame.origin.y=center.y-frame.size.height*.5;
             [CATransaction begin];[CATransaction setDisableActions:YES];
@@ -2336,8 +2470,20 @@ static BOOL WXGInListContent(UIView *v,UIView *stop) {
     UINavigationItem *item=_route.leaf.navigationItem;
     for(UIBarButtonItem *b in [item.leftBarButtonItems?:@[] arrayByAddingObjectsFromArray:item.rightBarButtonItems?:@[]])
         if(b.customView)[candidates addObjectsFromArray:WXGViews(b.customView,40)];
+    BOOL home=_route.primary && [NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"];
+    UIView *plus=nil,*search=nil;
+    if(home) {
+        for(UIView *row in _homeRightRows)if([self homeBranchForHost:row]>=0)[candidates addObjectsFromArray:WXGViews(row,20)];
+        for(UIView *v in candidates)if([v isKindOfClass:UIControl.class] && WXGCanForward((UIControl *)v))[self rememberHomeAction:(UIControl *)v verify:YES];
+        BOOL pulling=[self currentHomePull]>.5;
+        plus=[self homeHostFrom:_homePlusControls current:_homePlusSurface.original pulling:pulling];
+        search=[self homeHostFrom:_homeSearchControls current:_homeSearchSurface.original pulling:pulling];
+        if(plus)[candidates addObject:plus];
+        if(search)[candidates addObject:search];
+    }
     for(UIView *v in candidates) {
         if(![v isKindOfClass:UIControl.class] || !WXGCanForward((id)v))continue;
+        if(home && v!=plus && v!=search)continue;
         if(_nativeTransition && _departingButtons.count) {
             BOOL outgoing=NO;for(WXGSurface *surface in _departingButtons)if(surface.original==v){outgoing=YES;break;}
             BOOL incoming=NO;
@@ -2350,10 +2496,9 @@ static BOOL WXGInListContent(UIView *v,UIView *stop) {
                 if(!rebound)continue;
             }
         }
-        if(v.hidden)continue;
-        if(!WXGVisible(v.superview,_window))continue;
+        if(v.hidden && (!home || v!=_homeSearchHidden))continue;
+        if(!home && !WXGVisible(v.superview,_window))continue;
         BOOL existing=NO;for(WXGSurface *s in _buttons)if(s.original==v){existing=YES;break;}
-        BOOL home=[NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"];
         // FIX107: the search button WeChat (8.0.78) puts next to the title bar's
         // right button (通讯录, and the home page in a grey test): one bar item
         // holds both, the search one at alpha 0 while the list's search bar is
@@ -2377,7 +2522,7 @@ static BOOL WXGInListContent(UIView *v,UIView *stop) {
             }
         }
         if(home && !fadingSearch && ![WXGActionNames((id)v) containsObject:@"showRightTopMenuBtn"])continue;
-        if(!existing && !fadingSearch && !WXGVisible(v,_window))continue;
+        if(!home && !existing && !fadingSearch && !WXGVisible(v,_window))continue;
         CGRect r=WXGWindowRect(v,_window),nr=WXGWindowRect(bar,_window);
         if(r.size.height<16 || r.size.height>80 || r.size.width<4 || r.size.width>180 || (!home && fabs(CGRectGetMidY(r)-CGRectGetMidY(nr))>24))continue;
         // Only extra corner actions qualify outside the actual navigation bar.
@@ -2388,7 +2533,9 @@ static BOOL WXGInListContent(UIView *v,UIView *stop) {
         if(!home && ![v isDescendantOfView:bar] && WXGInListContent(v,_window))continue;
         if(![out containsObject:v])[out addObject:v];
     }
-    [out sortUsingComparator:^NSComparisonResult(UIView *a,UIView *b){NSInteger ai=[self navigationOrder:(id)a],bi=[self navigationOrder:(id)b];
+    [out sortUsingComparator:^NSComparisonResult(UIView *a,UIView *b){
+        if(home && a!=b)return a==search?NSOrderedAscending:NSOrderedDescending;
+        NSInteger ai=[self navigationOrder:(id)a],bi=[self navigationOrder:(id)b];
         CGFloat width=self.window.bounds.size.width;
         CGFloat x=ai==NSNotFound?CGRectGetMidX(WXGWindowRect(a,self.window)):(ai>=900?width-1-(1000-ai)*44:1+ai*44);
         CGFloat y=bi==NSNotFound?CGRectGetMidX(WXGWindowRect(b,self.window)):(bi>=900?width-1-(1000-bi)*44:1+bi*44);
@@ -3425,6 +3572,7 @@ static UIView *WXGNativeClone(UIView *control) {
     if(!home && (bar.hidden || bar.alpha<.01)){if(!_nativeTransition)[WXGChatSegments.shared hideTitleBar];[_navStates reapply];return;}
     if(!_navStates)_navStates=[WXGStateBag new];
     NSArray<UIControl *> *controls=[self navigationControls];
+    if(home){_homePlusSurface=nil;_homeSearchSurface=nil;}
     if(CACurrentMediaTime()-WXGLoadTime<30) {
         NSMutableArray *names=[NSMutableArray array];for(UIControl *c in controls)[names addObject:NSStringFromClass(c.class)];
         NSString *line=[NSString stringWithFormat:@"导航构建 %@：原生按钮 %lu [%@]",NSStringFromClass(_route.leaf.class),(unsigned long)controls.count,[names componentsJoinedByString:@","]];
@@ -3532,6 +3680,7 @@ static UIView *WXGNativeClone(UIView *control) {
         if(nativeButtons && !look && !avatarSlot && !systemItem)continue;
         BOOL onLeft=[self controlOnLeft:b];
         NSString *slot=[NSString stringWithFormat:@"%@%lu",onLeft?@"left":@"right",(unsigned long)(onLeft?leftSlot++:rightSlot++)];
+        if(home)slot=[_homePlusControls containsObject:b]?@"right1":@"right0";
         WXGSurface *s=[self pooledSurface:slot];s.original=b;s.motionHost=[self motionInkForControl:b];WXGResetOwnedTransform(s);[alive addObject:s];
         BOOL back=[self isBack:b];NSString *count=back?[self backCount:b]:nil;
         UIImage *image=WXGButtonImage(b);NSString *title=image?nil:[self titleForControl:b];
@@ -3564,6 +3713,8 @@ static UIView *WXGNativeClone(UIView *control) {
         }else if(s.nativeContent){s.nativeContent=nil;s.nativeContentSource=nil;s.nativeContentSignature=0;}
         s.homePlusAnchor=homePlusBtn;
         s.homePlusTrigger=homePlusBtn && homeMenuStyle==WXGHomeMenuStyleCapsules;
+        if(homePlusBtn)_homePlusSurface=s;
+        else if(home && [s.role isEqual:@"navigationSearch"])_homeSearchSurface=s;
         s.accessibilityLabel=b.accessibilityLabel.length?b.accessibilityLabel:back?@"返回":title.length?title:WXGActionNames(b).firstObject;
         s.enabled=b.enabled;s.glass.sourceView=_route.leaf.view;s.glass.backdropExclusions=_inputAdapter.tool?@[_inputAdapter.tool,bar]:@[bar];
         CGFloat width=m.button,height=m.button;
@@ -3585,9 +3736,10 @@ static UIView *WXGNativeClone(UIView *control) {
         if([NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"] && ![(item.action?NSStringFromSelector(item.action):@"") isEqual:@"showRightTopMenuBtn"])continue;
         id raw=WXGRead(item,@"view");UIView *native=item.customView?:([raw isKindOfClass:UIView.class]?raw:nil);
         BOOL bound=NO;for(UIControl *control in controls)if(control==native || [control isDescendantOfView:native] || [native isDescendantOfView:control]){bound=YES;break;}
-        if(bound || ![self canForwardItem:item])continue;
+        if(bound || (home && _homePlusSurface) || ![self canForwardItem:item])continue;
         NSString *slot=[NSString stringWithFormat:@"%@%lu",side?@"right":@"left",(unsigned long)(side?rightSlot++:leftSlot++)];
         BOOL homePlusItem=home && item.action==@selector(showRightTopMenuBtn);
+        if(homePlusItem)slot=@"right1";
         WXGSurface *surface=[self pooledSurface:slot];surface.role=@"barItemAction";WXGResetOwnedTransform(surface);
         if(surface.nativeContent){surface.nativeContent=nil;surface.nativeContentSource=nil;surface.nativeContentSignature=0;}   // FIX114 V
         surface.overrideUserInterfaceStyle=WXGFinderFeed(_route.leaf)?w.traitCollection.userInterfaceStyle:UIUserInterfaceStyleUnspecified;
@@ -3601,6 +3753,7 @@ static UIView *WXGNativeClone(UIView *control) {
         [surface setNativeIconSource:native preservingColors:WXGFinderFeed(_route.leaf)];
         [surface setImage:icon title:icon?nil:item.title count:nil];
         surface.homePlusAnchor=homePlusItem;
+        if(homePlusItem)_homePlusSurface=surface;
         surface.homePlusTrigger=homePlusItem && homeMenuStyle==WXGHomeMenuStyleCapsules;
         CGFloat width=icon?m.button:WXGCapsuleWidth([item.title sizeWithAttributes:@{NSFontAttributeName:surface.label.font}].width,0,m.button,14*m.scale,w.bounds.size.width*.32);
         CGRect bounds=CGRectMake(0,0,width+2*WXGCanvasPaddingX,m.button+2*WXGCanvasPaddingY);
@@ -3615,9 +3768,7 @@ static UIView *WXGNativeClone(UIView *control) {
     }
     for(WXGSurface *s in rightButtons.reverseObjectEnumerator) {
         CGFloat width=s.bounds.size.width-2*WXGCanvasPaddingX,height=s.bounds.size.height-2*WXGCanvasPaddingY;right-=width;   // FIX114 V: its own height
-        CGFloat y=centerY;
-        if([NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"] && s.original)
-            y=CGRectGetMidY(WXGUnmovedWindowRect(s.original,bar,w))+rowDY;   // (review) without the bar content's own move
+        CGFloat y=home?[self homeCenterForSurface:s fallback:centerY]:centerY;
         [s placeMaterial:CGRectMake(right,y-height*.5,width,height) inParent:_navigationOverlay];right-=m.gap;
         [_navStates conceal:s.original];
     }
@@ -3742,29 +3893,26 @@ static UIView *WXGNativeClone(UIView *control) {
     // module's page sliding away) keeps the module where it is (B put it back
     // at once and it overlapped the title again while the page left).
     if(_route.chat){_pinnedShift=pinnedShift;[self alignPinnedModule];}
-    if(_route.primary) {
+    if(home && _route.primary) {
+        Class cls=NSClassFromString(@"MainFrameLeftBarView");
+        for(UIView *v in WXGViews(bar,200))if([v isKindOfClass:cls])[_homeGestureHosts addObject:v];
+        for(UIView *v in _pageViews)if([v isKindOfClass:cls])[_homeGestureHosts addObject:v];
+        UIView *leftHost=[self homeHostFrom:_homeGestureHosts current:_surfacePool[@"nativeLeft0"].motionHost pulling:[self currentHomePull]>.5];
+        if(leftHost) {
+            WXGSurface *surface=[self bindHomeGesture:leftHost diameter:m.button slot:@"nativeLeft0"];
+            if(surface){[alive addObject:surface];[self concealHomeTwins:_homeGestureHosts except:surface.superview];}
+        }
+    }else if(_route.primary) {
         NSUInteger slot=0;
         NSMutableArray *candidates=[WXGViews(bar,200) mutableCopy];[candidates addObjectsFromArray:_pageViews?:@[]];
-        if(home)for(UIView *v in _homeGestureHosts)if(![candidates containsObject:v] && [v isDescendantOfView:_route.nav.view])[candidates addObject:v];
-        // FIX114 M (crash): the view that holds the home glass now is tried first.
-        UIView *holder=((WXGSurface *)_surfacePool[@"nativeLeft0"]).motionHost;
-        if(home && holder && [candidates containsObject:holder] && [self homeHostUsable:holder]){[candidates removeObject:holder];[candidates insertObject:holder atIndex:0];}
         NSMutableSet *visited=[NSMutableSet set];
-        // FIX60: compared by class (no class name per candidate view).
-        static Class leftBarClass;static dispatch_once_t leftBarOnce;
-        dispatch_once(&leftBarOnce,^{leftBarClass=NSClassFromString(@"MainFrameLeftBarView");});
-        BOOL homePage=[NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"];
         for(UIView *v in candidates) {
-            BOOL home=homePage;
-            if(home && (!leftBarClass || v.class!=leftBarClass))continue;
             if([visited containsObject:v])continue;[visited addObject:v];
-            // MainFrameLeftBarView is an observed native host. During pull-down
-            // WeChat can move its recognizer to a child without replacing the icon.
-            if((!home && !v.gestureRecognizers.count) || !WXGVisible(v,w) || ([v isKindOfClass:UIControl.class] && WXGCanForward((id)v)))continue;
+            if(!v.gestureRecognizers.count || !WXGVisible(v,w) || ([v isKindOfClass:UIControl.class] && WXGCanForward((id)v)))continue;
             CGRect r=WXGWindowRect(v,w);
-            if(r.size.width<12 || r.size.width>65 || r.size.height<12 || r.size.height>65 || CGRectGetMidX(r)>w.bounds.size.width*.28 || (!home && fabs(CGRectGetMidY(r)-centerY)>24))continue;
+            if(r.size.width<12 || r.size.width>65 || r.size.height<12 || r.size.height>65 || CGRectGetMidX(r)>w.bounds.size.width*.28 || fabs(CGRectGetMidY(r)-centerY)>24)continue;
             WXGSurface *surface=[self bindHomeGesture:v diameter:m.button slot:[NSString stringWithFormat:@"nativeLeft%lu",(unsigned long)slot++]];
-            if(surface)[alive addObject:surface];if(home)break;
+            if(surface)[alive addObject:surface];
         }
     }
     // R23: Home All/Unread title group bar mounted in _navigationOverlay, concealing
@@ -3855,6 +4003,8 @@ static UIView *WXGNativeClone(UIView *control) {
         _departingButtons=outgoing;
     }
     [self clearNavigationPaint];[_overlay bringSubviewToFront:_launcher];
+    if(home && _homePlusSurface)[self concealHomeTwins:_homePlusControls except:nil];
+    if(home && (_homeSearchSurface || [self dockSearchAvailable]))[self concealHomeTwins:_homeSearchControls except:nil];
     _navigationBindingKey=[self currentNavigationBindingKey];
     if(home) {
         UIView *title=_route.leaf.navigationItem.titleView;
@@ -4783,7 +4933,8 @@ static BOOL WXGFinderBadgeView(UIView *v) {
     UISearchBar *bar=[self homeSearchBar];
     // WeChat's own search still using its bar (focused or holding text): wait.
     if(_nativeSearchEditing) {
-        if(bar.searchTextField.isFirstResponder || bar.searchTextField.text.length)return;
+        UITextField *installed=WXGInstalledSearchField(bar);
+        if(installed.isFirstResponder || installed.text.length)return;
         _nativeSearchEditing=NO;
     }
     if(!bar){_topSearchStatus=@"没有找到聊天列表的搜索栏";return;}
@@ -5191,6 +5342,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         for(UIView *v=host;v && v!=_window;v=v.superview){CALayer *l=v.layer.presentationLayer?:v.layer;chain*=l.opacity;if(l.hidden){hidden=YES;break;}}
         CGRect r=[s convertRect:s.bounds toView:nil];
         [items addObject:@{@"role":s.role?:@"?",@"alpha":@(round(s.alpha*100)/100),@"native":@(round(chain*100)/100),@"nativeHidden":@(hidden),
+                           @"branch":@([self homeBranchForHost:host]),@"nativeInkMasked":@([s.original.layer.mask.name isEqual:@"wxg.conceal"]),
                            @"y":@(round(CGRectGetMidY(r))),@"hostY":@(round(CGRectGetMidY([host convertRect:host.bounds toView:nil])))}];
         if(chain<.95 && ![s.role isEqual:@"nativeGesture"] && ++_homePullFades<=6)
             WXGLog(@"顶栏：首页下拉 %.0f pt 时微信把 %@ 淡到 %.2f%@（面板 %.2f），玻璃保持 %.2f",_homePull,s.role?:@"?",chain,hidden?@"（隐藏）":@"",_homePanel,s.alpha);
@@ -6431,6 +6583,8 @@ __attribute__((constructor)) static void WXGInitialize(void) {
             WXGHookVoid(NSClassFromString(@"MainFrameLeftBarView"),NSSelectorFromString(selectorName),^(UIView *view){[WXGIntegrationHost.shared homeGestureLaidOut:view];});
         for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToSuperview",@"didMoveToWindow"])
             WXGHookVoid(NSClassFromString(@"MMBarButton"),NSSelectorFromString(selectorName),^(UIView *view){WXGPerfTimePluginWorkAs("navButtons",^{[WXGIntegrationHost.shared navigationControlLaidOut:view];});});
+        for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToWindow"])
+            WXGHookVoid(NSClassFromString(@"NewMainFrameRightTopMenuBtn"),NSSelectorFromString(selectorName),^(UIView *row){[WXGIntegrationHost.shared homeRightRowDidLayout:row];});
         for(NSString *name in @[@"MMMsgCommonTipsView",@"MMMsgTipsMixedListExpandView",@"MainFrameActionFloatView",@"MMMenuContentView",@"WCOperateFloatView"])
             for(NSString *selectorName in @[@"layoutSubviews",@"didMoveToWindow"])
                 WXGHookVoid(NSClassFromString(name),NSSelectorFromString(selectorName),^(UIView *view){WXGPerfTimePluginWorkAs("decorations.host",^{[WXGDecorations.shared nativeHostLaidOut:view];});});

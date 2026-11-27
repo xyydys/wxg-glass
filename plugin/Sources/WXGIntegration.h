@@ -50,6 +50,8 @@ FOUNDATION_EXPORT UIImage *WXGCropInk(UIImage *image,UIColor *tint);
 FOUNDATION_EXPORT UIImage *WXGButtonImage(UIControl *button);
 FOUNDATION_EXPORT NSDictionary *WXGRenderedInkEvidence(UIView *view);
 FOUNDATION_EXPORT CGRect WXGSearchFieldBox(UITextField *field);   // FIX114 E: the box a UISearchBar's field draws (null: its bounds)
+FOUNDATION_EXPORT UITextField *WXGInstalledSearchField(UIView *bar);
+FOUNDATION_EXPORT BOOL WXGHomeSearchIsStaged(UIView *view);
 // FIX114 C: a title bar's content drawn lower by the title row's offset (顶部按钮往下移), and back.
 FOUNDATION_EXPORT NSUInteger WXGMoveBarContent(UINavigationBar *bar);   // the content views moved
 FOUNDATION_EXPORT void WXGRestoreBarContent(void);

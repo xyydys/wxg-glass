@@ -136,6 +136,18 @@ static inline bool WXGHomeAtDuplicatedRest(double rest,double raw,double adjuste
 static inline double WXGHomePullTranslation(double offset,double inset,double scale) {
     return WXGHomePixel(fmax(0.,-(offset+inset)),scale);
 }
+// WeChat crossfades two native rows. A zero-opacity search icon is normal on
+// an otherwise visible row, so callers measure its container, not that icon.
+static inline bool WXGHomeUsesPullControls(double navAlpha,double listAlpha,bool pulling) {
+    if(listAlpha<0.)return false;
+    if(navAlpha<0.)return true;
+    if(listAlpha<=.01 && navAlpha>.01)return false;
+    if(navAlpha<=.01 && listAlpha>.01)return true;
+    return pulling;
+}
+static inline bool WXGHomeWaitsForSearchArtwork(bool currentHasBox,bool nextHasBox,bool editing,bool hasPlaceholder) {
+    return currentHasBox && !nextHasBox && !editing && !hasPlaceholder;
+}
 static inline double WXGHomeFloatingRowY(double viewportTop,double inset,double headerY,double rowY,
                                          double offset,double scale) {
     return WXGHomePixel(viewportTop+inset+headerY+rowY,scale)+WXGHomePullTranslation(offset,inset,scale);

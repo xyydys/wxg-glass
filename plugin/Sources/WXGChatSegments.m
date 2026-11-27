@@ -1745,6 +1745,8 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
 // stack view recentres its contents and feeds that offset back into the next layout.
 @interface WXGHomeGroupHeader : UIView
 @property(nonatomic,strong) UIView *nativeHeader,*pendingNativeHeader;
+@property(nonatomic,strong) WXGStateBag *pendingPaint;
+@property(nonatomic) UIViewAutoresizing pendingResize;
 @property(nonatomic,weak) UITableView *owner;
 @property(nonatomic) UIViewAutoresizing nativeResize;
 @property(nonatomic) CGFloat leading,reservedHeight;
@@ -1758,12 +1760,23 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
 @property(nonatomic) BOOL holdingForSpacer;
 @property(nonatomic,strong) UIView *nativeSpacer;
 - (void)replaceSearch:(BOOL)replace;
+- (void)finishPendingSearchKeeping:(UIView *)next;
 @property(nonatomic,strong) UIView *nativeCanvas;
 @property(nonatomic,strong) NSMapTable<UIView *,NSArray<NSValue *> *> *nativeInkTransforms;
 - (void)restoreNativeInk;
 - (void)placeNativeAtLeading:(CGFloat)leading field:(CGRect)field target:(CGRect)target;
 @end
 @implementation WXGHomeGroupHeader
+- (void)finishPendingSearchKeeping:(UIView *)next {
+    UIView *pending=_pendingNativeHeader;
+    if(!pending)return;
+    _pendingNativeHeader=nil;
+    if(pending.superview==_nativeCanvas) {
+        if(pending!=next)[pending removeFromSuperview];
+        pending.autoresizingMask=_pendingResize;
+    }
+    [_pendingPaint restore];_pendingPaint=nil;
+}
 // Native callers may size their search field by assigning the frame of tableHeaderView.
 // The table must continue to see the height of both rows, including during a pan.
 - (void)setFrame:(CGRect)frame {
@@ -1826,6 +1839,17 @@ static CGFloat WXGTitleContentPresentedAlpha(UIView *tv) {
 UIView *WXGHomeNativeSearchHeader(UIView *header) {
     return [header isKindOfClass:WXGHomeGroupHeader.class]?((WXGHomeGroupHeader *)header).nativeHeader:header;
 }
+// Reading UISearchBar.searchTextField can create UIKit's otherwise unused
+// text field while WeChat is installing its own WCSearchBar.
+UITextField *WXGInstalledSearchField(UIView *bar) {
+    UITextField *first=nil;
+    for(UIView *v in WXGViews(bar,100))if([v isKindOfClass:UITextField.class]) {
+        UITextField *field=(UITextField *)v;
+        if(field.isFirstResponder)return field;
+        if(!first || [field isKindOfClass:UISearchTextField.class])first=field;
+    }
+    return first;
+}
 
 @interface WXGChatSegments (HomeHeaderAssignment)
 - (BOOL)reuseRowsForTable:(UITableView *)table nativeHeader:(UIView *)native;
@@ -1847,6 +1871,10 @@ BOOL WXGHomeTaskbarContains(UIView *view) {
         if([v isKindOfClass:UITableView.class] && v==WXGGroupedTable)break;
     }
     return NO;
+}
+BOOL WXGHomeSearchIsStaged(UIView *view) {
+    UIView *pending=WXGGroupedRows.pendingNativeHeader;
+    return pending && (view==pending || [view isDescendantOfView:pending]);
 }
 static BOOL WXGHomeSameViewport(WXGHomeGroupHeader *rows,UIScrollView *list) {
     return rows && rows.owner==list && list.window && CGSizeEqualToSize(rows.restViewport,list.bounds.size) &&
@@ -2380,6 +2408,11 @@ typedef struct {
 // handing a text over): its bar is given back while it is used.
 - (void)fieldBegan:(NSNotification *)note {
     UIView *field=note.object,*bar=_searchBar;
+    UIView *pending=_groupHeader.pendingNativeHeader;
+    if(pending && [field isKindOfClass:UITextField.class] && [field isDescendantOfView:pending] &&
+       _table.tableHeaderView==_groupHeader) {
+        [self reuseRowsForTable:_table nativeHeader:pending];bar=_searchBar;
+    }
     // FIX114 F (review): WeChat's own search in a bar a floating capsule
     // covers (it can start while that page is covered or sliding back): its bar back now.
     if([field isKindOfClass:UITextField.class])for(WXGFloatSlot *slot in _floats.objectEnumerator.allObjects)
@@ -2413,13 +2446,15 @@ typedef struct {
     if(!header || WXGHomeTaskbarContains(header))return nil;
     static Class wcBar;static dispatch_once_t once;dispatch_once(&once,^{wcBar=NSClassFromString(@"WCSearchBar");});
     if([header isKindOfClass:UISearchBar.class] || (wcBar && [header isKindOfClass:wcBar]))return header;
-    UIView *found=nil;
+    UIView *system=nil,*display=nil;
     for(UIView *v in WXGViews(header,160)) {
-        if(WXGIsPluginView(v))continue;
-        if([v isKindOfClass:UISearchBar.class] && !WXGHomeTaskbarContains(v))return v;
-        if(!found && wcBar && [v isKindOfClass:wcBar] && !WXGHomeTaskbarContains(v))found=v;
+        BOOL ui=[v isKindOfClass:UISearchBar.class],wc=[v isKindOfClass:wcBar];
+        if((!ui && !wc) || WXGIsPluginView(v) || WXGHomeTaskbarContains(v))continue;
+        if(!system && ui)system=v;
+        if(!display && wc && !v.hidden)display=v;
     }
-    return found;
+    if(display && system && ![display isDescendantOfView:system])return display;
+    return system?:display;
 }
 // The search field's rectangle in the bar: its rounded field (WeChat's white
 // capsule, the text field), never the bar's margins.
@@ -2442,11 +2477,15 @@ CGRect WXGSearchFieldBox(UITextField *field) {
 // text field (398×32.7, 11 pt down) is hidden under WeChat's WCSearchBar; what
 // is seen is that bar's box: a filled rounded UIView (r 6, 398×36, 4 pt down)
 // in its stack views. That box, in `bar`; null when there is none.
-static CGRect WXGFindVisibleSearchBox(UIView *bar,UIView **paint) {
+static UIView *WXGSearchDisplayIn(UIView *bar) {
     static Class custom;static dispatch_once_t once;dispatch_once(&once,^{custom=NSClassFromString(@"WCSearchBar");});
-    if(!custom || !bar)return CGRectNull;
-    UIView *wc=[bar isKindOfClass:custom]?bar:nil;
-    if(!wc)for(UIView *v in WXGViews(bar,80))if([v isKindOfClass:custom] && !v.hidden){wc=v;break;}
+    if(!custom || !bar)return nil;
+    if([bar isKindOfClass:custom])return bar;
+    for(UIView *v in WXGViews(bar,80))if([v isKindOfClass:custom] && !v.hidden)return v;
+    return nil;
+}
+static CGRect WXGFindVisibleSearchBox(UIView *bar,UIView **paint) {
+    UIView *wc=WXGSearchDisplayIn(bar);
     if(!wc)return CGRectNull;
     CGFloat barW=bar.bounds.size.width,bestW=0;CGRect best=CGRectNull;
     for(UIView *v in WXGViews(wc,120)) {
@@ -2467,7 +2506,7 @@ static CGRect WXGVisibleSearchBox(UIView *bar) {return WXGFindVisibleSearchBox(b
     ++_fieldScans;if(outPaint)*outPaint=paint;   // FIX114 F: what is on screen first
     if(!CGRectIsNull(seen)){if(source)*source=WXGDrawnBoxSource;return seen;}
     if([bar isKindOfClass:UISearchBar.class]) {
-        UITextField *field=((UISearchBar *)bar).searchTextField;
+        UITextField *field=WXGInstalledSearchField(bar);
         if(field && !field.hidden && field.alpha>.01 && field.bounds.size.height>=24 && field.bounds.size.height<=60) {
             best=[field convertRect:field.bounds toView:bar];bestW=best.size.width;from=@"searchTextField";
             // FIX114 E (user: the bar is not the size of WeChat's own field): the
@@ -2684,32 +2723,38 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
 - (void)restoreResizedHeader {
     WXGHomeGroupHeader *wrapper=_groupHeader;
     if(!wrapper)return;
-    UIView *native=wrapper.nativeHeader;wrapper.reservedHeight=0;
+    UIView *native=wrapper.nativeHeader,*requested=wrapper.pendingNativeHeader;wrapper.reservedHeight=0;
     if(WXGGroupedTable==wrapper.owner){WXGGroupedTable=nil;WXGGroupedRows=nil;}
     for(WXGFloatSlot *slot in _floats.objectEnumerator)if(slot.ownedHeader==wrapper)[self unpin:slot];
     [UIView performWithoutAnimation:^{[wrapper replaceSearch:NO];[wrapper restoreNativeInk];}];
     BOOL ownsNative=native.superview==wrapper.nativeCanvas;
     _adjustingHeader=YES;
     @try {
+        [wrapper finishPendingSearchKeeping:nil];
         if(ownsNative) {
             [native removeFromSuperview];
             native.autoresizingMask=wrapper.nativeResize;
         }
         if(wrapper.owner.tableHeaderView==wrapper)
-            wrapper.owner.tableHeaderView=wrapper.pendingNativeHeader?:(wrapper.holdingForSpacer?wrapper.nativeSpacer:(ownsNative?native:nil));
+            wrapper.owner.tableHeaderView=requested?:(wrapper.holdingForSpacer?wrapper.nativeSpacer:(ownsNative?native:nil));
     } @finally {_adjustingHeader=NO;}
     _groupHeader=nil;_nativeHeaderHeight=0;
 }
 // Normalize the native assignment before UITableView ever lays out a shorter header.
 - (BOOL)reuseRowsForTable:(UITableView *)table nativeHeader:(UIView *)native {
     WXGHomeGroupHeader *rows=_groupHeader;
-    if(!rows || rows.owner!=table || _adjustingHeader || _nativeSearching || _page.navigationItem.searchController.isActive || ![self wanted])return NO;
+    if(!rows || rows.owner!=table || _adjustingHeader)return NO;
+    BOOL pendingEditor=native && native==rows.pendingNativeHeader && WXGInstalledSearchField(native).isFirstResponder;
+    if(![self wanted] || (!pendingEditor && (_nativeSearching || _page.navigationItem.searchController.isActive))) {
+        [rows finishPendingSearchKeeping:nil];return NO;
+    }
     if([native isKindOfClass:WXGHomeGroupHeader.class] || (native && [rows isDescendantOfView:native]))return NO;
-    if(WXGHomeListInNativePull(table) || WXGHomeTaskbarContains(native)) {
-        rows.pendingNativeHeader=nil;_remountAfterScroll=YES;
+    if((!pendingEditor && WXGHomeListInNativePull(table)) || WXGHomeTaskbarContains(native)) {
+        [rows finishPendingSearchKeeping:nil];_remountAfterScroll=YES;
         return NO;
     }
-    UIView *pending=rows.pendingNativeHeader;rows.pendingNativeHeader=nil;
+    UIView *pending=rows.pendingNativeHeader;
+    if(pending!=native)[rows finishPendingSearchKeeping:nil];
     UIView *old=rows.nativeHeader;
     BOOL same=native==old;
     UIView *search=same && _searchBar && [_searchBar isDescendantOfView:native]?_searchBar:[self searchBarIn:native];
@@ -2722,13 +2767,28 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     if(!same && search && native!=search && native.bounds.size.height>MAX(_nativeHeaderHeight,search.bounds.size.height)+12)return NO;
     if(!WXGHomeKeepsReservation(native!=nil,same,search!=nil,plainSpacer,keepEmpty,native.bounds.size.height,_nativeHeaderHeight))return NO;
     ++WXGHomeHeaderReuses;
-    if(!same && search && table.tableHeaderView==rows && old.superview==rows.nativeCanvas &&
-       [_searchBar isDescendantOfView:old] && (table.tracking || table.dragging || table.decelerating)) {
-        // WeChat has registered its new field. Keep the live, measured field on
-        // screen for this pan. Reparenting here wakes layout and glass capture.
-        rows.pendingNativeHeader=native;_remountAfterScroll=YES;
-        if(pending!=native)++rows.deferredSearchAssignments;
-        return YES;
+    if(!same && [search isKindOfClass:UISearchBar.class] && table.tableHeaderView==rows &&
+       !rows.nativeCanvas.hidden && (!native.superview || native.superview==rows.nativeCanvas) &&
+       old.superview==rows.nativeCanvas) {
+        UITextField *field=WXGInstalledSearchField(search);
+        if(WXGHomeWaitsForSearchArtwork(!CGRectIsNull(WXGVisibleSearchBox(old)),!CGRectIsNull(WXGVisibleSearchBox(native)),
+                                        field.isFirstResponder || field.text.length,field.placeholder.length || [(UISearchBar *)search placeholder].length)) {
+            // The new UIKit shell is empty. Give it normal in-window layout
+            // underneath the still-live WCSearchBar until its own artwork arrives.
+            if(pending!=native) {
+                _adjustingHeader=YES;
+                @try {
+                    rows.pendingNativeHeader=native;rows.pendingResize=native.autoresizingMask;
+                    rows.pendingPaint=[WXGStateBag new];[rows.pendingPaint conceal:native];
+                    native.autoresizingMask=UIViewAutoresizingFlexibleWidth;
+                    native.frame=(CGRect){CGPointZero,{rows.nativeCanvas.bounds.size.width,native.bounds.size.height}};
+                    [rows.nativeCanvas insertSubview:native atIndex:0];[native setNeedsLayout];
+                    ++rows.deferredSearchAssignments;
+                    [self traceHomeEvent:@"waitingForSearchArtwork" before:table.contentOffset.y after:table.contentOffset.y];
+                } @finally {_adjustingHeader=NO;}
+            }
+            return YES;
+        }
     }
     // A transient spacer carries no input or ink of its own. Keep the actual
     // field while we own it, and hand back the requested spacer on teardown.
@@ -2740,6 +2800,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     @try {
         [UIView performWithoutAnimation:^{
             WXGFloatSlot *slot=[self->_floats objectForKey:self->_page];
+            [rows finishPendingSearchKeeping:native];
             if(!same) {
                 [rows restoreNativeInk];
                 if(old.superview==rows.nativeCanvas) {
@@ -2750,7 +2811,6 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
             }
             if(!same || search!=self->_searchBar) {
                 self->_lastMeasuredBarSize=CGSizeZero;self->_drawnField=nil;self->_fieldRechecks=0;
-                if(search)[search setNeedsLayout];
             }
             if(table.tableHeaderView!=rows)WXGPublishHomeRows(table,rows);
             if(native && native.superview!=rows.nativeCanvas) {
@@ -2759,7 +2819,13 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
                 native.frame=(CGRect){CGPointZero,size};
                 [rows.nativeCanvas addSubview:native];
             }
+            if(native.superview==rows.nativeCanvas)native.autoresizingMask=UIViewAutoresizingFlexibleWidth;
             self->_searchBar=search;
+            if(search) {
+                [search setNeedsLayout];
+                if(WXGPreferences.shared.localSearch && !rows.nativeCanvas.hidden)
+                    [WXGLocalGlass.shared hostLaidOut:WXGSearchDisplayIn(native)?:search];
+            }
             if(slot.ownedHeader==rows && slot.bar!=search) {
                 [slot.states restore];slot.states=nil;slot.bar=search;slot.nativeField=nil;slot.measured=0;slot.exact=NO;slot.field=CGRectNull;
                 slot.lookTries=0;slot.lookTried=0;slot.lookCopied=NO;
@@ -2869,7 +2935,12 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     [self mountOver:bar header:header table:table];
 }
 - (void)searchBarLaidOut:(UIView *)view {
-    if(_adjustingHeader || !view || view!=_searchBar || ![self wanted])return;
+    if(_adjustingHeader || !view)return;
+    UIView *pending=_groupHeader.pendingNativeHeader;
+    if(pending && pending.superview!=_groupHeader.nativeCanvas){[_groupHeader finishPendingSearchKeeping:nil];pending=nil;}
+    if(pending && (view==pending || [view isDescendantOfView:pending] || view==_searchBar) && _table.tableHeaderView==_groupHeader &&
+       !WXGHomeListInNativePull(_table))[self reuseRowsForTable:_table nativeHeader:pending];
+    if(view!=_searchBar || ![self wanted])return;
     if(!_bar.superview && !WXGHomeSearchExposed(_page))return;
     UITableView *table=_table;UIView *header=table.tableHeaderView;
     if(!table || !header || ![view isDescendantOfView:header])return;
@@ -2885,7 +2956,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
     // A departing or covered home page may temporarily lose its native title and safe-area calibration.
     if(_groupHeader && table.tableHeaderView==_groupHeader && (_bookmarkedHome && !_returnReady) && !WXGHomeSearchExposed(_page))return;
     if(_nativeSearching) {
-        UITextField *field=[bar isKindOfClass:UISearchBar.class]?((UISearchBar *)bar).searchTextField:nil;
+        UITextField *field=WXGInstalledSearchField(bar);
         BOOL using=(field && (field.isFirstResponder || field.text.length)) || _page.presentedViewController!=nil;
         if(!using)for(UIView *v in WXGViews(bar,160))if(v.isFirstResponder || ([v isKindOfClass:UITextField.class] && ((UITextField *)v).text.length)){using=YES;break;}
         if(using)return;
@@ -2904,7 +2975,7 @@ static CGRect WXGHomeConfiguredRow(CGRect field,CGFloat width,BOOL group) {
         _remountAfterScroll=YES;
         return;
     }
-    _remountAfterScroll=current.pendingNativeHeader!=nil;
+    _remountAfterScroll=NO;
     UIView *native=current.nativeHeader;
     UIUserInterfaceStyle style=bar.traitCollection.userInterfaceStyle;
     BOOL local=WXGPreferences.shared.localSearch,floating=[self floatWanted];
@@ -3674,9 +3745,7 @@ static void WXGRaiseAboveList(UIView *view,UIView *host,UITableView *table) {
 - (void)measureSlot:(WXGFloatSlot *)slot now:(CFTimeInterval)now {
     NSString *source=nil;CGRect f=[self fieldRectIn:slot.bar source:&source paint:NULL];slot.measured=now;
     if(!slot.nativeField || ![slot.nativeField isDescendantOfView:slot.bar]) {
-        slot.nativeField=nil;
-        if([slot.bar isKindOfClass:UISearchBar.class])slot.nativeField=((UISearchBar *)slot.bar).searchTextField;
-        else for(UIView *v in WXGViews(slot.bar,160))if([v isKindOfClass:UITextField.class]){slot.nativeField=(UITextField *)v;break;}
+        slot.nativeField=WXGInstalledSearchField(slot.bar);
     }
     BOOL fits=!CGRectIsEmpty(f) && CGRectContainsRect(CGRectInset(slot.bar.bounds,-1.,-1.),f);
     if(fits && [source isEqualToString:WXGDrawnBoxSource]) {
@@ -3693,7 +3762,8 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
     if(!wc)return @[bar];
     CGRect material=[bar convertRect:field toView:header];
     for(UIView *view in WXGViews(header,100)) {
-        if(![view isKindOfClass:wc] || view.hidden || [view isDescendantOfView:bar])continue;
+        if((![view isKindOfClass:wc] && ![view isKindOfClass:UISearchBar.class]) || view.hidden ||
+           WXGHomeSearchIsStaged(view) || [view isDescendantOfView:bar])continue;
         if([bar isDescendantOfView:view])return @[view];
         CGRect other=[view convertRect:view.bounds toView:header];
         CGRect intersection=CGRectIntersection(material,other);
@@ -3870,7 +3940,7 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
         _segmentCovered=NO;
         _bar.hidden=_nativeSearching;_bar.active=!_nativeSearching;
     }
-    if((_remountAfterScroll || _groupHeader.pendingNativeHeader) && !nativePull && !_nativeSearching && leaf==_page && !transitioning && !table.tracking && !table.dragging && !table.decelerating) {
+    if(_remountAfterScroll && !nativePull && !_nativeSearching && leaf==_page && !transitioning && !table.tracking && !table.dragging && !table.decelerating) {
         _remountAfterScroll=NO;
         UIView *pending=_groupHeader.pendingNativeHeader;
         if(pending && table.tableHeaderView==_groupHeader)[self reuseRowsForTable:table nativeHeader:pending];
@@ -3944,11 +4014,18 @@ static NSArray<UIView *> *WXGFloatPaintRoots(UIView *bar,UIView *header,CGRect f
 - (void)traceHomeEvent:(NSString *)event before:(CGFloat)before after:(CGFloat)after {
     if(!_motionEvents)_motionEvents=[NSMutableArray array];
     if(_motionEvents.count==128)[_motionEvents removeObjectAtIndex:0];
-    [_motionEvents addObject:@{@"s":@(WXGSecondsSinceLoad()),@"event":event,@"before":@(before),@"after":@(after),
+    NSMutableDictionary *sample=[@{@"s":@(WXGSecondsSinceLoad()),@"event":event,@"before":@(before),@"after":@(after),
         @"inset":@(_table.adjustedContentInset.top),@"rawTop":@(_table.contentInset.top),
         @"automaticTop":@(_table.adjustedContentInset.top-_table.contentInset.top),@"header":@(_groupHeader.bounds.size.height),
         @"insetPolicy":@(_table.contentInsetAdjustmentBehavior),
-        @"depthSaved":@(_savedDepth),@"group":@(_selected)}];
+        @"depthSaved":@(_savedDepth),@"group":@(_selected)} mutableCopy];
+    if([event isEqual:@"nativeSearchAssigned"] || [event isEqual:@"waitingForSearchArtwork"]) {
+        UIView *shown=_groupHeader.nativeHeader;
+        sample[@"hasWCSearchBox"]=@(!CGRectIsNull(WXGVisibleSearchBox(shown)));
+        sample[@"systemFieldInstalled"]=@(WXGInstalledSearchField(shown)!=nil);
+        sample[@"replacementWaiting"]=@(_groupHeader.pendingNativeHeader!=nil);
+    }
+    [_motionEvents addObject:sample];
 }
 // Full captures include the presentation tree so navigation alpha and geometry
 // can be distinguished from the model values read on normal, lightweight captures.

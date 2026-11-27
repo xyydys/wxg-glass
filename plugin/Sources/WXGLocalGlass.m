@@ -318,6 +318,9 @@ static BOOL WXGLocalOwnPaint(UIView *v) {
     NSMutableDictionary<NSString *,NSString *> *_lastSkip;
     NSDictionary *_lastSearchBand;   // FIX113 F: the emoji search field's surroundings, last looked at
     NSDictionary *_lastSearchAlign;  // R21: custom home search icon+title centering diagnostics
+    __weak WXGLocalEntry *_homePlaceholder;
+    __weak UITextField *_homeBackingField;
+    WXGStateBag *_homeBackingInk;
     NSDictionary *_emojiQuickJump;   // FIX113 Q: the quick jump's field, its capsule and band, last seen
     NSHashTable<UIViewController *> *_emojiPagesSeen;   // FIX113 N: each 表情搜索 page captured once
     NSMutableArray<NSDictionary *> *_emojiCaptures;
@@ -533,6 +536,7 @@ static NSString *WXGLocalTraceName(WXGLocalEntry *entry,UIView *button) {
 }
 - (void)unmount:(WXGLocalEntry *)entry {
     if(!entry.mounted)return;
+    if(entry==_homePlaceholder)[self releaseHomeBackingField];
     if(entry.kind==WXGLocalNavButton && entry.anchor){CGFloat was=[entry.states contentShiftOf:entry.anchor];if(fabs(was)>.01)[self noteShift:entry from:was to:0];}
     entry.mounted=NO;entry.veiled=NO;++_unmounts;   // FIX114 S: its mask goes with the states' restore
     if(entry.kind==WXGLocalNavButton && WXGNavTraceOn())WXGNavTraceEvent([@"卸下玻璃 " stringByAppendingString:WXGLocalTraceName(entry,nil)]);   // FIX114 R
@@ -823,7 +827,7 @@ static CGRect WXGLocalEntryMaterial(WXGLocalEntry *entry) {
         if(![self wants:(WXGLocalKind)kind]){if(own)[self unmount:own];return;}
         // The floating row exclusively owns this header's paint. Skip native lookups
         // and conflict scans as well as mounting a second glass underneath it.
-        if(kind==WXGLocalSearch && WXGLocalInsideFloatingHeader(view)){if(own.mounted)[self unmount:own];return;}
+        if(kind==WXGLocalSearch && (WXGLocalInsideFloatingHeader(view) || WXGHomeSearchIsStaged(view) || WXGHomeTaskbarContains(view))){if(own.mounted)[self unmount:own];return;}
         if([self hostResting:view]){if(own)[self unmount:own];return;}   // FIX115 K / L
         if(_wcSearchBar && [view isKindOfClass:_wcSearchBar])[self searchBar:view];
         else if(_webSearchBar && [view isKindOfClass:_webSearchBar])[self searchBar:view];
@@ -1177,6 +1181,27 @@ static UIViewController *WXGLocalOwner(UIView *view) {
     for(UIResponder *r=view;r;r=r.nextResponder)if([r isKindOfClass:UIViewController.class])return (UIViewController *)r;
     return nil;
 }
+- (void)releaseHomeBackingField {
+    [_homeBackingInk restore];_homeBackingInk=nil;_homeBackingField=nil;_homePlaceholder=nil;
+}
+- (void)coverBackingFieldOf:(WXGLocalEntry *)entry inHeader:(UIView *)header {
+    if(!header || !entry.mounted || ![entry.host isKindOfClass:_wcSearchBar] ||
+       ![entry.host isDescendantOfView:header])return;
+    UITextField *field=nil;
+    for(UIView *v in WXGViews(header,100)) {
+        if([v isKindOfClass:UISearchTextField.class] && ![v isDescendantOfView:entry.host] && ![entry.host isDescendantOfView:v]){field=(UITextField *)v;break;}
+    }
+    if(!field || field.isFirstResponder || field.text.length || !WXGLocalShownIn(entry.host,header) ||
+       WXGLocalOwner(header).navigationItem.searchController.isActive ||
+       !CGRectContainsPoint([entry.anchor convertRect:entry.anchor.bounds toView:header],
+                            [field convertPoint:CGPointMake(CGRectGetMidX(field.bounds),CGRectGetMidY(field.bounds)) toView:header])) {
+        if(_homePlaceholder==entry)[self releaseHomeBackingField];return;
+    }
+    if(_homePlaceholder!=entry || _homeBackingField!=field) {
+        [self releaseHomeBackingField];_homePlaceholder=entry;_homeBackingField=field;_homeBackingInk=[WXGStateBag new];
+    }
+    [_homeBackingInk conceal:field];
+}
 static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
     UIViewController *x=WXGLocalOwner(a),*y=WXGLocalOwner(b);if(!x || !y)return NO;
     for(UIViewController *c=x;c;c=c.parentViewController)if(c==y)return YES;
@@ -1194,6 +1219,13 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
         if(CGRectIsNull(i))continue;
         CGFloat theirArea=theirs.size.width*theirs.size.height,overlap=i.size.width*i.size.height;
         if(overlap<MIN(myArea,theirArea)*.5)continue;
+        // A UIKit field can finish layout just before WeChat installs the WC
+        // placeholder. Its smaller background must yield to the actual drawn box.
+        if([host isKindOfClass:_wcSearchBar] && [other.host isKindOfClass:UISearchBar.class] &&
+           ![other.host isKindOfClass:_wcSearchBar]) {
+            UITableView *home=WXGLocalHomeTableFor(host);
+            if(home && WXGLocalHomeTableFor(other.host)==home){[self unmount:other];continue;}
+        }
         if(theirArea<=myArea){[self skip:host because:@"和另一块搜索框玻璃重叠（保留输入框大小的那块）"];return YES;}
         [self unmount:other];
     }
@@ -1236,7 +1268,12 @@ static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect n
         return;
     }
     UITableView *homeTable=WXGLocalHomeTableFor(host);
-    if(homeTable && WXGHomeListInNativePull(homeTable))return;
+    BOOL nativePull=homeTable && WXGHomeListInNativePull(homeTable);
+    WXGLocalEntry *known=WXGLocalEntryOfAnchor(paint);
+    // The existing material follows its paint view without per-scroll mounting.
+    // A replaced anchor still needs its first coat in this same layout.
+    if(nativePull && known.mounted && known.host==host && known.surface.superview==paint &&
+       WXGLocalSubviewShape(host)==known.hostShape)return;
     for(WXGLocalEntry *other in _entries.allObjects)
         if(other.mounted && other.kind==WXGLocalSearch && other.host==host && other.anchor && other.anchor!=paint)[self unmount:other];
     WXGConfig *cfg=WXGConfig.shared;
@@ -1245,7 +1282,7 @@ static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect n
     NSNumber *baseHeight=homeHeader?objc_getAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey):nil;
     NSNumber *applied=homeHeader?objc_getAssociatedObject(homeHeader,&WXGLocalAppliedHeaderHKey):nil;
     BOOL vertical=customHome && ![WXGChatSegments.shared wanted] && homeHeader==homeTable.tableHeaderView && (cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
-    if(applied && (!vertical || fabs(applied.doubleValue-homeHeader.frame.size.height)>.5)) {
+    if(!nativePull && applied && (!vertical || fabs(applied.doubleValue-homeHeader.frame.size.height)>.5)) {
         if(!vertical && fabs(applied.doubleValue-homeHeader.frame.size.height)<=.5)
             [self resizeSearchHeader:homeHeader table:homeTable height:baseHeight.doubleValue];
         objc_setAssociatedObject(homeHeader,&WXGLocalHomeHeaderHKey,nil,OBJC_ASSOCIATION_RETAIN_NONATOMIC);
@@ -1255,7 +1292,7 @@ static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect n
     if(customHome && homeHeader) {
         CGRect nat=WXGLocalResolvedHomePaintRect(paint,homeHeader);
         if(CGRectIsNull(nat)){[self skip:host because:@"等待首页搜索框完成原生布局" retry:YES];return;}
-        if(vertical) {
+        if(vertical && !nativePull) {
             CGFloat nativeH=baseHeight?baseHeight.doubleValue:homeHeader.frame.size.height;
             WXGRect field={nat.origin.x,nat.origin.y-homeHeader.bounds.origin.y,nat.size.width,nat.size.height};
             CGFloat needed=WXGHomeSearchRequiredHeaderHeight(field,nativeH,cfg.homeSearchHeight,cfg.homeSearchTopGap);
@@ -1291,6 +1328,7 @@ static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect n
         NSHashTable *table=[NSHashTable weakObjectsHashTable];for(UIView *skin in skins)[table addObject:skin];entry.skinViews=table;
         [self clearSearchBandAround:entry];
         [self syncSearchAlignment:entry material:WXGLocalEntryMaterial(entry) force:YES];
+        if(homeHeader)[self coverBackingFieldOf:entry inHeader:homeHeader];
     }
 }
 // FIX113 F: 表情搜索 opened from the text in the input bar (its quick jump,
@@ -1428,12 +1466,15 @@ static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect n
 // System search bars (新的朋友's MMUISearchBar): the field's background view.
 - (void)systemSearchBar:(UISearchBar *)bar {
     for(UIView *v=bar.superview;v;v=v.superview)if(WXGIsPluginView(v))return;
-    if(_wcSearchBar)for(UIView *v in WXGLocalViews(bar,80))if([v isKindOfClass:_wcSearchBar] && !v.hidden && v.alpha>.01) {
+    UITableView *home=WXGLocalHomeTableFor(bar);
+    UIView *native=WXGHomeNativeSearchHeader(home.tableHeaderView);
+    UIView *root=native && [bar isDescendantOfView:native]?native:bar;
+    if(_wcSearchBar)for(UIView *v in WXGLocalViews(root,80))if([v isKindOfClass:_wcSearchBar] && WXGLocalShownIn(v,root)) {
+        if(home)[self coverBackingFieldOf:objc_getAssociatedObject(v,&WXGLocalHostKey) inHeader:native];
         [self skip:bar because:@"被 WCSearchBar 盖住"];return;   // the WCSearchBar's own field is used
     }
-    UITextField *field=nil;
-    if([bar respondsToSelector:@selector(searchTextField)])field=bar.searchTextField;
-    if(!field){id value=WXGRead(bar,@"searchField");if([value isKindOfClass:UITextField.class])field=value;}
+    UITextField *field=home?WXGInstalledSearchField(bar):bar.searchTextField;
+    if(!home && !field){id value=WXGRead(bar,@"searchField");if([value isKindOfClass:UITextField.class])field=value;}
     if(!field || field.hidden || field.alpha<.01 || field.bounds.size.height<24 || field.bounds.size.height>60){[self skip:bar because:@"没有可用的输入框" retry:YES];return;}
     WXGLocalEntry *known=WXGLocalEntryOfAnchor(field);
     UIView *background=known.paint && known.paint.superview==field?known.paint:nil;
@@ -2727,6 +2768,15 @@ static BOOL WXGLocalCovering(CGRect r,CGRect b) {
 // parent, and the display link woken for a glass back on screen without any
 // layout (a panel slid in, a list header scrolled back).
 - (void)reassert {
+    if(_homeBackingInk) {
+        UIView *wc=_homePlaceholder.host;
+        UIView *header=WXGHomeNativeSearchHeader(WXGLocalHomeTableFor(wc).tableHeaderView);
+        if(!_homePlaceholder.mounted || !header || !_homeBackingField.window || _homeBackingField.isFirstResponder ||
+           _homeBackingField.text.length || ![_homeBackingField isDescendantOfView:header] ||
+           !WXGLocalShownIn(wc,header) || WXGLocalOwner(header).navigationItem.searchController.isActive)
+            [self releaseHomeBackingField];
+        else [_homeBackingInk reapply];
+    }
     ++_turn;   // FIX115 K: a new run-loop turn (the layout guard and the move budget count per turn)
     // FIX108 C: switched on after WeChat's views had laid out (the plugin's
     // licence or render mode settled after launch): look at every host again.
@@ -2889,6 +2939,7 @@ static BOOL WXGLocalCovering(CGRect r,CGRect b) {
     for(WXGLocalEntry *entry in _entries.allObjects)[entry.surface.glass releaseTransientResources];
 }
 - (void)restore {
+    [self releaseHomeBackingField];
     for(WXGLocalEntry *entry in _entries.allObjects)[self unmount:entry];
     _link.paused=YES;
 }
@@ -2920,7 +2971,7 @@ static NSArray<NSString *> *WXGLocalClipChain(UIView *anchor) {
     }
     WXGPreferences *p=WXGPreferences.shared;WXGConfig *cfg=WXGConfig.shared;
     return @{@"switches":@{@"search":@(p.localSearch),@"searchThemeFirst":@(p.localSearchThemeFirst),@"panel":@(p.localPanel),@"emoji":@(p.localEmoji),@"sheet":@(p.localSheet),@"title":@(p.localTitle),@"contactsTitle":@(cfg.contactsTitleCapsule),@"discoverTitle":@(cfg.discoverTitleCapsule),@"navButtons":@(p.localNavButtons),@"colorButtons":@([cfg extraNumber:@"localColorButtons"]>.5)},
-             @"renderMode":@(WXGEffectiveRenderMode()),@"mounted":counts,@"mounts":@(_mounts),@"unmounts":@(_unmounts),@"layouts":@(_layouts),
+             @"homeSystemFieldMasked":@(_homeBackingInk!=nil),@"renderMode":@(WXGEffectiveRenderMode()),@"mounted":counts,@"mounts":@(_mounts),@"unmounts":@(_unmounts),@"layouts":@(_layouts),
              @"remeasures":@(_remeasures),@"tintChanges":@(_tintChanges),@"orderFights":@(_orderFights),@"loopStops":@(_loopStops),@"pressCovers":_pressCovers?:@[],@"titleWatches":@(_titleWatches),@"titleWatchFollows":@(_titleWatchFollows),@"retries":@(_retries),@"wakes":@(_wakes),@"departHides":@(_departHides),@"lastCountPill":WXGLocalLastPill?:@{},
              @"transientKeeps":@(_transientKeeps),@"sideShiftChanges":_shiftLog?:@[],@"adoptions":@(_adoptions),@"poolReuses":@(_poolReuses),@"pooled":@(_navSurfacePool.count),@"transitionVeils":@(_veils),@"transitionReveals":@(_reveals),@"reclaimedGlass":@(_reclaimed),
              @"slotBuilds":@(WXGLocalSlotBuilds),@"nativeMargins":WXGLocalMargins?:@{},   // FIX114 O

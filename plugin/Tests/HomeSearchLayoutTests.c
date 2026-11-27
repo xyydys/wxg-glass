@@ -3,6 +3,22 @@
 #include "../Sources/WXGHomeSearchLayout.h"
 
 int main(void) {
+    // The static nav copy at y=78 survives throughout a Home pull on 26.6.
+    assert(!WXGHomeUsesPullControls(1.,-1.,true));
+    assert(WXGHomeUsesPullControls(-1.,1.,false));
+    assert(!WXGHomeUsesPullControls(1.,0.,true));
+    assert(WXGHomeUsesPullControls(0.,1.,false));
+    assert(WXGHomeUsesPullControls(.5,.5,true));
+    assert(!WXGHomeUsesPullControls(.5,.5,false));
+    assert(WXGHomeUsesPullControls(0.,0.,true));
+    assert(!WXGHomeUsesPullControls(0.,0.,false));
+    // An empty replacement may lay out behind the existing WCSearchBar.
+    // A drawn replacement, genuine UIKit placeholder or active editor takes over.
+    assert(WXGHomeWaitsForSearchArtwork(true,false,false,false));
+    assert(!WXGHomeWaitsForSearchArtwork(true,true,false,false));
+    assert(!WXGHomeWaitsForSearchArtwork(true,false,true,false));
+    assert(!WXGHomeWaitsForSearchArtwork(true,false,false,true));
+    assert(!WXGHomeWaitsForSearchArtwork(false,false,false,false));
     WXGRect field={8,8,424,36}; /* Native field reported on the 440 pt home page. */
     assert(WXGHomeSearchFieldReady(field,440,52));
     assert(!WXGHomeSearchFieldReady((WXGRect){8,-10,424,36},440,52));
@@ -134,6 +150,6 @@ int main(void) {
     assert(WXGHomeInitialConversationTop(0,0,panel,3)==0);
     assert(WXGHomeNativePull(0,0,0,-12,panel,3));
     assert(!WXGHomeNativePull(0,0,0,0,panel,3));
-    puts("HomeSearchLayoutTests: native field readiness and vertical header reservation passed.");
+    puts("HomeSearchLayoutTests: native row handoff, field readiness and header reservation passed.");
     return 0;
 }
