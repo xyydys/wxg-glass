@@ -95,22 +95,37 @@ int main(void) {
         assert(fabs(WXGHomeOffsetAtDepth(300,108,105,top,34,1600,panel)-(297-nav))<1e-7);
         assert(fabs(WXGHomePullTranslation(-nav-18,top,3)-18)<1e-7);
     }
-    // A normal raw top remains valid while dragging. A native search, a real
-    // panel or refresh, a changed viewport or app-owned policy releases it.
-    assert(WXGHomeKeepsNativeInset(nav,nav,3,true,true,true));
-    assert(!WXGHomeKeepsNativeInset(nav,0,3,true,true,true));
-    assert(!WXGHomeKeepsNativeInset(nav,panelRaw,3,true,true,true));
-    assert(!WXGHomeKeepsNativeInset(nav,nav,3,false,true,true));
-    assert(!WXGHomeKeepsNativeInset(nav,nav,3,true,false,true));
-    assert(!WXGHomeKeepsNativeInset(nav,nav,3,true,true,false));
-    // Preserve horizontal and bottom insets across the hand-off. An ignored
-    // write must never create a fictitious credit or subtract a native update.
-    assert(WXGHomeConfirmedExtra(54,54,20,20,0)==34);
-    assert(WXGHomeNativeEdge(54,54,34)==20);
-    assert(WXGHomeNativeEdge(64,54,34)==64);
-    assert(WXGHomeConfirmedExtra(20,54,20,20,0)==0);
-    assert(WXGHomeConfirmedExtra(54,20,20,54,34)==34);
-    assert(WXGHomeConfirmedExtra(20,20,20,54,34)==0);
+    // Capture 13: the native open changed the inset before moving the list.
+    // All three failed animations stopped here with every gesture flag clear.
+    const double stops[]={-304.-2./3.,-206.-1./3.,-259.-1./3.};
+    for(unsigned i=0;i<sizeof(stops)/sizeof(stops[0]);i++) {
+        assert(WXGHomeNativePull(nav,0,nav,stops[i],panel,3));          // drag or closing
+        assert(WXGHomeNativePull(nav,panelRaw,panel,stops[i],panel,3)); // native open
+        assert(WXGHomePullTranslation(stops[i],nav,3)>100);
+    }
+    assert(WXGHomeNativePull(nav,panelRaw,panel,-nav,panel,3));
+    assert(WXGHomeNativePull(nav,panelRaw,panel,-panel,panel,3));
+    assert(WXGHomeNativePull(0,panel,panel,-panel,panel,3));
+    assert(!WXGHomeNativePull(nav,0,nav,-nav,panel,3));
+    assert(!WXGHomeNativePull(nav,0,nav,-nav-.1,panel,3));
+    assert(!WXGHomeNativePull(nav,nav,2*nav,-nav,panel,3));
+    assert(!WXGHomeNativePull(nav,0,nav,400,panel,3));
+    // Title, search and groups follow the same pull across the change of
+    // range. At full height the Home controls have moved below the screen.
+    assert(fabs(WXGHomePullTranslation(-panel,nav,3)-(panel-nav))<1e-7);
+    assert(WXGHomeFloatingRowY(0,nav,0,3,-panel,3)==panel+3);
+    // The storage shim only removes a navigation inset duplicated on a
+    // zero request. Preserve real native opens, refresh and app-owned insets.
+    assert(WXGHomeDuplicatesZeroRequest(0,nav,nav,nav,3));
+    assert(!WXGHomeDuplicatesZeroRequest(panelRaw,panelRaw,nav,nav,3));
+    assert(!WXGHomeDuplicatesZeroRequest(nav,nav,nav,nav,3));
+    assert(!WXGHomeDuplicatesZeroRequest(24,nav,nav,nav,3));
+    assert(!WXGHomeDuplicatesZeroRequest(0,0,nav,nav,3));
+    assert(!WXGHomeDuplicatesZeroRequest(0,nav,0,nav,3));
+    assert(!WXGHomeDuplicatesZeroRequest(0,nav,nav,0,3));
+    assert(WXGHomeAtDuplicatedRest(nav,nav,2*nav,-2*nav,3));
+    assert(!WXGHomeAtDuplicatedRest(nav,nav,2*nav,-2*nav-1,3));
+    assert(!WXGHomeAtDuplicatedRest(nav,panelRaw,panel,-panel,3));
     puts("HomeSearchLayoutTests: native field readiness and vertical header reservation passed.");
     return 0;
 }

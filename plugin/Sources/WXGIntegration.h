@@ -113,6 +113,11 @@ FOUNDATION_EXPORT NSDictionary *WXGEdgeFadeEvidence(void);
 FOUNDATION_EXPORT NSDictionary *WXGRimSummary(void);
 /* FIX67: how far the home page's mini-program panel is open, 0 .. 1. */
 FOUNDATION_EXPORT CGFloat WXGHomePanelProgressForController(UIViewController *home);
+typedef struct {
+    float windowWidth,headerBottom,sectionBoundsWidth,sectionScreenWidth,cellBoundsWidth,cellScreenWidth;
+} WXGHomePanelGeometry;
+FOUNDATION_EXPORT WXGHomePanelGeometry WXGReadHomePanelGeometry(UIViewController *home);
+FOUNDATION_EXPORT void WXGRecordHomeNavigationWork(UINavigationBar *bar,double buildMS,double traceMS);
 /* FIX94: pulling the home list down, WeChat moves its own title bar buttons
    into the list's header (WAMainFrameTaskBarView): YES while one of them is
    inside `list` (the edge fade then leaves the list's top alone). */
@@ -364,6 +369,9 @@ void WXGInstallNativeIconGuard(void);
 // The floating clone owns search paint in this table header until unpinned.
 FOUNDATION_EXPORT UIView *WXGHomeNativeSearchHeader(UIView *header);
 FOUNDATION_EXPORT CGFloat WXGHomeListTop(UIScrollView *list);
+FOUNDATION_EXPORT CGFloat WXGHomeConversationTop(UIScrollView *list);
+FOUNDATION_EXPORT BOOL WXGHomeListInNativePull(UIScrollView *list);
+FOUNDATION_EXPORT BOOL WXGHomeTaskbarContains(UIView *view);
 FOUNDATION_EXPORT void WXGReleaseLocalSearchHeaderHeight(UITableView *table);
 FOUNDATION_EXPORT void WXGSetSearchHeaderFloating(UIView *header,BOOL floating);
 // FIX114 V: a WeChat title-bar button's glass as the local glass sizes it (in

@@ -93,9 +93,6 @@ static inline bool WXGHomeSameInset(double a,double b,double scale) {
 static inline bool WXGHomeHasTwoNavigationInsets(double rest,double raw,double adjusted,double scale) {
     return rest>=20. && WXGHomeSameInset(raw,rest,scale) && WXGHomeSameInset(adjusted-raw,rest,scale);
 }
-static inline bool WXGHomeKeepsNativeInset(double rest,double raw,double scale,bool grouped,bool sameViewport,bool automaticDisabled) {
-    return grouped && sameViewport && automaticDisabled && rest>=20. && WXGHomeSameInset(raw,rest,scale);
-}
 
 static inline double WXGHomeRestInset(double chrome,double raw,double adjusted,double scale) {
     if(!isfinite(chrome) || chrome<20.)return 0.;
@@ -108,14 +105,21 @@ static inline double WXGHomeEffectiveTop(double rest,double raw,double adjusted,
     return WXGHomeHasTwoNavigationInsets(rest,raw,adjusted,scale)?raw:adjusted;
 }
 
-// A new value from the application supersedes our compensation on that edge.
-// When UIKit echoes the last write, recover the application's original value.
-static inline double WXGHomeNativeEdge(double observed,double published,double extra) {
-    return fabs(observed-published)<.001?observed-extra:observed;
+// A native animated scroll does not set tracking, dragging or decelerating.
+// Its enlarged range remains authoritative all the way through the close.
+static inline bool WXGHomeNativePull(double rest,double raw,double adjusted,double offset,double viewport,double scale) {
+    double pixel=1./fmax(1.,scale)+.01;
+    if(rest<20.)return viewport>0. && adjusted>=viewport-pixel;
+    return offset < -rest-pixel || WXGHomeEffectiveTop(rest,raw,adjusted,scale)>rest+pixel;
 }
-static inline double WXGHomeConfirmedExtra(double actual,double target,double native,double oldPublished,double oldExtra) {
-    if(fabs(actual-target)<.001)return actual-native;
-    return actual-WXGHomeNativeEdge(actual,oldPublished,oldExtra);
+
+// The native setter requested zero but forwarded a full chrome height into
+// UIKit, which adds its own automatic contribution. Other requests pass through.
+static inline bool WXGHomeDuplicatesZeroRequest(double requested,double forwarded,double automatic,double rest,double scale) {
+    return requested==0. && WXGHomeHasTwoNavigationInsets(rest,forwarded,forwarded+automatic,scale);
+}
+static inline bool WXGHomeAtDuplicatedRest(double rest,double raw,double adjusted,double offset,double scale) {
+    return WXGHomeHasTwoNavigationInsets(rest,raw,adjusted,scale) && WXGHomeSameInset(-offset,adjusted,scale);
 }
 
 // The list has already rubber-banded contentOffset. Sample it once in this

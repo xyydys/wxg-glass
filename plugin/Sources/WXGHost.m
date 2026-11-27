@@ -464,6 +464,13 @@ static UIView *WXGFinderLiveContainer(WXGFinderLink *link) {
 @property(nonatomic,strong) NSMutableArray<NSDictionary *> *navigationRequests;
 @property(nonatomic,strong) NSHashTable<UIView *> *homeGestureHosts,*navigationChromeHosts;
 @property(nonatomic) NSUInteger navigationRepairs,homeReattachments,otherBarLayoutsSkipped;
+@property(nonatomic) NSUInteger homeNavigationLayoutsReused,homeNavigationRevision;
+@property(nonatomic) BOOL homeNavigationNeedsFinalLayout,homeNavigationHidden;
+@property(nonatomic,weak) UIView *homeNavigationTitle,*homeNavigationTitleParent;
+@property(nonatomic,weak) UIScrollView *homeConversationList;
+@property(nonatomic) CGRect homeNavigationRect,homeNavigationWindowBounds,homeNavigationTitleBounds;
+@property(nonatomic) UIEdgeInsets homeNavigationSafeArea;
+@property(nonatomic) UIUserInterfaceStyle homeNavigationStyle;
 @property(nonatomic) NSUInteger homeMovesThisTurn,homeMoveLoopBreaks,homeHostConflicts;   // FIX114 M (crash)
 @property(nonatomic) NSUInteger directSearchOpens;   // FIX114 M: the search box capsule straight to WeChat's search page
 @property(nonatomic,weak) UIViewController *dockPrimaryOwner;
@@ -1262,15 +1269,23 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
     (void)link;
     if(!WXGTraceRunning || UIApplication.sharedApplication.applicationState!=UIApplicationStateActive)return;
     ++_traceFrames;
+    CFTimeInterval start=CACurrentMediaTime();
     @try {[self traceFrame];} @catch(__unused NSException *error) {}
+    WXGRecordHomeNavigationWork(_route.nav.navigationBar,0,(CACurrentMediaTime()-start)*1000.);
 }
 // One line for `key` when what it shows (`shape`: rounded to half points and
 // 0.05 of opacity) is not what it showed last.
-- (void)traceKey:(NSString *)key line:(NSString *)line shape:(NSString *)shape seen:(NSMutableSet<NSString *> *)seen {
+static BOOL WXGTraceShapeChanged(NSString *key,NSString *shape,NSMutableSet<NSString *> *seen) {
     [seen addObject:key];
-    if([WXGTraceLast[key] isEqualToString:shape])return;
+    if([WXGTraceLast[key] isEqualToString:shape])return NO;
     WXGTraceLast[key]=shape;
+    return YES;
+}
+static void WXGTraceShapeLine(NSString *key,NSString *line) {
     WXGTraceAppend([NSString stringWithFormat:@"%.3f %@ %@",WXGSecondsSinceLoad(),key,line]);
+}
+- (void)traceKey:(NSString *)key line:(NSString *)line shape:(NSString *)shape seen:(NSMutableSet<NSString *> *)seen {
+    if(WXGTraceShapeChanged(key,shape,seen))WXGTraceShapeLine(key,line);
 }
 // A WeChat title-bar view: where it is (钮), how visible (透), its content
 // shift (挪: the plugin's slot move), its first visible child (图: the icon or
@@ -1287,27 +1302,34 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
     }
     if(!glass)for(UIView *c in v.subviews){for(UIView *d in c.subviews)if([d isKindOfClass:WXGSurface.class]){glass=(WXGSurface *)d;break;}if(glass)break;}
     if([v isKindOfClass:UIControl.class] && glass.superview==v)for(UIView *c in v.subviews)if(c!=glass && ![c isKindOfClass:WXGSurface.class] && !c.hidden && c.alpha>.01 && c.bounds.size.width>1){icon=c;break;}
-    NSMutableString *line=[NSMutableString stringWithFormat:@"钮 %.1f+%.1f y%.1f 透%.2f 挪%.1f",r.origin.x,r.size.width,r.origin.y,a,shift];
     NSMutableString *shape=[NSMutableString stringWithFormat:@"%ld %ld %ld %ld %ld",lround(r.origin.x*2),lround(r.size.width*2),lround(r.origin.y*2),lround(a*20),lround(shift*2)];
+    BOOL masked=NO,drawn=NO;
+    CGRect ir=CGRectZero,gr=CGRectZero;double ga=0;
     // FIX114 T: hidden by an empty mask (the plugin's, or WeChat's) — not in the opacity.
-    for(UIView *m=v;m && m!=v.window;m=m.superview)if(m.layer.mask && CGRectIsEmpty(m.layer.mask.bounds)){[line appendString:@" 遮住"];[shape appendString:@" m"];break;}
+    for(UIView *m=v;m && m!=v.window;m=m.superview)if(m.layer.mask && CGRectIsEmpty(m.layer.mask.bounds)){masked=YES;[shape appendString:@" m"];break;}
     if(icon) {
-        CGRect ir=WXGTraceScreenRect(icon,icon.bounds,NULL);
-        [line appendFormat:@" 图 %.1f+%.1f",ir.origin.x,ir.size.width];[shape appendFormat:@" %ld %ld",lround(ir.origin.x*2),lround(ir.size.width*2)];
+        ir=WXGTraceScreenRect(icon,icon.bounds,NULL);
+        [shape appendFormat:@" %ld %ld",lround(ir.origin.x*2),lround(ir.size.width*2)];
     }
     if(glass) {
         CGRect m=glass.materialRect;if(CGRectIsNull(m) || CGRectIsEmpty(m))m=glass.bounds;
-        double ga=0;CGRect gr=WXGTraceScreenRect(glass,m,&ga);
+        gr=WXGTraceScreenRect(glass,m,&ga);
         if(glass.glass.superview)WXGTraceScreenRect(glass.glass,glass.glass.bounds,&ga);else ga=0;   // the glass itself (the surface may show without it)
-        BOOL drawn=glass.glass.hasPresentedFrame;
-        [line appendFormat:@" 玻 %.1f+%.1f 透%.2f%@%@",gr.origin.x,gr.size.width,ga,glass.active?@"":@" 未激活",drawn?@"":@" 未出画"];
+        drawn=glass.glass.hasPresentedFrame;
         [shape appendFormat:@" %ld %ld %ld %d %d",lround(gr.origin.x*2),lround(gr.size.width*2),lround(ga*20),glass.active,drawn];
+    }else [shape appendString:@" -"];
+    if(!WXGTraceShapeChanged(key,shape,seen))return;
+    NSMutableString *line=[NSMutableString stringWithFormat:@"钮 %.1f+%.1f y%.1f 透%.2f 挪%.1f",r.origin.x,r.size.width,r.origin.y,a,shift];
+    if(masked)[line appendString:@" 遮住"];
+    if(icon)[line appendFormat:@" 图 %.1f+%.1f",ir.origin.x,ir.size.width];
+    if(glass) {
+        [line appendFormat:@" 玻 %.1f+%.1f 透%.2f%@%@",gr.origin.x,gr.size.width,ga,glass.active?@"":@" 未激活",drawn?@"":@" 未出画"];
         if(a>.3 && (ga<.05 || !drawn))[line appendString:@" ✗玻璃看不见"];
     }else {
-        [line appendString:@" 玻 无"];[shape appendString:@" -"];
+        [line appendString:@" 玻 无"];
         if(a>.3)[line appendString:@" ✗没有玻璃"];
     }
-    [self traceKey:key line:line shape:shape seen:seen];
+    WXGTraceShapeLine(key,line);
 }
 // One of the plugin's own title-row glasses (its title capsule, its buttons).
 - (void)traceSurface:(WXGSurface *)s seen:(NSMutableSet<NSString *> *)seen {
@@ -1315,9 +1337,9 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
     if(!s.window || s.hidden){NSString *t=s.window?@"隐藏":@"不在窗口";[self traceKey:key line:t shape:t seen:seen];return;}
     CGRect m=s.materialRect;if(CGRectIsNull(m) || CGRectIsEmpty(m))m=s.bounds;
     double a=0;CGRect r=WXGTraceScreenRect(s,m,&a);
-    NSString *line=[NSString stringWithFormat:@"%.1f+%.1f y%.1f 高%.1f 透%.2f%@",r.origin.x,r.size.width,r.origin.y,r.size.height,a,s.active?@"":@" 未激活"];
     NSString *shape=[NSString stringWithFormat:@"%ld %ld %ld %ld %ld %d",lround(r.origin.x*2),lround(r.size.width*2),lround(r.origin.y*2),lround(r.size.height*2),lround(a*20),s.active];
-    [self traceKey:key line:line shape:shape seen:seen];
+    if(WXGTraceShapeChanged(key,shape,seen))
+        WXGTraceShapeLine(key,[NSString stringWithFormat:@"%.1f+%.1f y%.1f 高%.1f 透%.2f%@",r.origin.x,r.size.width,r.origin.y,r.size.height,a,s.active?@"":@" 未激活"]);
 }
 - (void)traceFrame {
     NSMutableSet<NSString *> *seen=[NSMutableSet set];NSMutableArray<UIView *> *traced=[NSMutableArray array];
@@ -1434,16 +1456,34 @@ NSInteger s=(r.tabs?100:0)+(w.isKeyWindow?10:0)+(w==_window?5:0);
         _needsEarlyLayout=NO;[self schedule];
     }
 }
+- (BOOL)homeConversationListMoving {
+    UIScrollView *list=_homeConversationList;
+    return list && list.window==_window && (list.tracking || list.dragging || list.decelerating || WXGHomeListInNativePull(list));
+}
 - (void)navigationBarDidLayout:(UINavigationBar *)bar {
-    // A cached tab can lay out its own bar while the conversation list scrolls.
-    // Its layout has no geometry for the visible Home controls to rebind.
+    if(WXGBackdropCaptureInProgress()){++_samplingLayoutSkips;return;}
     UINavigationController *nav=_route.nav;
-    if(_window && _route.primary && nav.topViewController==_route.leaf &&
-       [_route.leaf isKindOfClass:NSClassFromString(@"NewMainFrameViewController")] &&
-       !_nativeTransition && !_pendingController && !nav.transitionCoordinator &&
-       nav.navigationBar.window==_window && bar!=nav.navigationBar) {
-        ++_otherBarLayoutsSkipped;
-        return;
+    static Class home;static dispatch_once_t once;dispatch_once(&once,^{home=NSClassFromString(@"NewMainFrameViewController");});
+    if(_window && _route.primary && nav.topViewController==_route.leaf && [_route.leaf isKindOfClass:home] &&
+       !_nativeTransition && !_pendingController && !nav.transitionCoordinator && nav.navigationBar.window==_window) {
+        if(bar!=nav.navigationBar){++_otherBarLayoutsSkipped;return;}
+        // The native controls move inside their real hosts on a vertical scroll.
+        // Their presentation is already followed each frame. Rebind on a change
+        // of host/geometry, and do one full validation once the scroll settles.
+        UIView *title=_route.leaf.navigationItem.titleView;
+        if(!_navigationDirty && !_navigationBindingPending && !_suspendedByCover && !WXGNavigationCallDepth &&
+           _navCapsuleLeaf==_route.leaf && _buttons.count && [self homeConversationListMoving] &&
+           _homeNavigationRevision==WXGConfigRevision() && _homeNavigationHidden==(bar.hidden || nav.navigationBarHidden) &&
+           _homeNavigationStyle==bar.traitCollection.userInterfaceStyle &&
+           title==_homeNavigationTitle && title.superview==_homeNavigationTitleParent &&
+           CGRectEqualToRect(title.bounds,_homeNavigationTitleBounds) && CGRectEqualToRect(_window.bounds,_homeNavigationWindowBounds) &&
+           UIEdgeInsetsEqualToEdgeInsets(_window.safeAreaInsets,_homeNavigationSafeArea) &&
+           CGRectEqualToRect(WXGWindowRect(bar,_window),_homeNavigationRect) &&
+           [_navigationBindingKey isEqual:[self currentNavigationBindingKey]]) {
+            ++_homeNavigationLayoutsReused;_homeNavigationNeedsFinalLayout=YES;
+            [_navStates reapply];
+            return;
+        }
     }
     [self nativeNavigationLaidOut];
 }
@@ -1713,6 +1753,12 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
 - (void)repairDetachedNavigationBindings {
     if(_refreshing || _nativeTransition || !_route.leaf || _suspendedByCover ||
        !WXGPluginEnabled() || !WXGPreferences.shared.nav)return;
+    if(_homeNavigationNeedsFinalLayout) {
+        if(_navCapsuleLeaf!=_route.leaf)_homeNavigationNeedsFinalLayout=NO;
+        else if(!_pendingController && !_route.nav.transitionCoordinator && ![self homeConversationListMoving]) {
+            _homeNavigationNeedsFinalLayout=NO;[self nativeNavigationLaidOut];return;
+        }
+    }
     BOOL missing=_navigationBindingPending || ![_navigationBindingKey isEqual:[self currentNavigationBindingKey]];
     for(WXGSurface *surface in _buttons) {
         if(surface.motionOwner!=_route.leaf || WXGSurfaceInNativeView(surface))continue;
@@ -1730,7 +1776,8 @@ static BOOL WXGSurfaceOnlyOpens(WXGSurface *surface) {
     NSMutableString *key=[NSMutableString stringWithFormat:@"%p/%p/%p",_route.leaf,item,bar.topItem];
     if(WXGFinderFeed(_route.leaf) && bar)[key appendFormat:@"/fb:%lu",(unsigned long)bar.subviews.count];
     for(UIBarButtonItem *button in [item.leftBarButtonItems?:@[] arrayByAddingObjectsFromArray:item.rightBarButtonItems?:@[]]) {
-        id value=WXGRead(button,@"view");UIView *host=button.customView?:([value isKindOfClass:UIView.class]?value:nil);
+        UIView *host=button.customView;
+        if(!host){id value=WXGRead(button,@"view");if([value isKindOfClass:UIView.class])host=value;}
         [key appendFormat:@"/%p:%p:%p:%p:%p:%lu",button,host,host.superview,host.window,host.subviews.firstObject,(unsigned long)host.subviews.count];
     }
     return key;
@@ -2084,6 +2131,7 @@ static BOOL WXGColorsDiffer(UIColor *a,UIColor *b,UITraitCollection *traits) {
         BOOL shade=[v isKindOfClass:UIImageView.class] && fabs(CGRectGetMinY(r))<=1 && r.size.height>navBottom+6 &&
             r.size.height<=navBottom+40 && !v.subviews.count;
         if(!hairline && !plate && !shade)continue;
+        if(WXGHomeTaskbarContains(v))continue;
         // Never anything that carries content: buttons, titles, text.
         BOOL content=NO;
         for(UIView *child in WXGViews(v,30))if(child!=v && ([child isKindOfClass:UIControl.class] || [child isKindOfClass:UILabel.class] ||
@@ -3366,9 +3414,11 @@ static UIView *WXGNativeClone(UIView *control) {
 }
 - (void)buildNavigation {
     ++_navigationRepairs;
+    _homeNavigationNeedsFinalLayout=NO;
     UINavigationBar *bar=_route.nav.navigationBar;UIWindow *w=_window;
     BOOL home=[NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"];
     WXGHomeMenuStyle homeMenuStyle=WXGConfig.shared.homeMenuStyle;
+    CFTimeInterval buildStart=home?CACurrentMediaTime():0;
     if(!bar || !_route.leaf.isViewLoaded){if(!home && !_nativeTransition)[WXGChatSegments.shared hideTitleBar];[_navStates reapply];return;}
     // Pull-down rehomes the home gesture while temporarily hiding UINavigationBar.
     // Visibility is not destruction; existing surfaces follow their real hosts.
@@ -3806,6 +3856,14 @@ static UIView *WXGNativeClone(UIView *control) {
     }
     [self clearNavigationPaint];[_overlay bringSubviewToFront:_launcher];
     _navigationBindingKey=[self currentNavigationBindingKey];
+    if(home) {
+        UIView *title=_route.leaf.navigationItem.titleView;
+        _homeNavigationRevision=WXGConfigRevision();_homeNavigationHidden=bar.hidden || _route.nav.navigationBarHidden;
+        _homeNavigationStyle=bar.traitCollection.userInterfaceStyle;
+        _homeNavigationTitle=title;_homeNavigationTitleParent=title.superview;_homeNavigationTitleBounds=title.bounds;
+        _homeNavigationWindowBounds=w.bounds;_homeNavigationSafeArea=w.safeAreaInsets;_homeNavigationRect=WXGWindowRect(bar,w);
+        WXGRecordHomeNavigationWork(bar,(CACurrentMediaTime()-buildStart)*1000.,0);
+    }
 }
 // Glass the plugin put inside WeChat's own views (the home page's left icon,
 // 视频号's capsules): it moves with them, nothing to follow.
@@ -4524,12 +4582,12 @@ static BOOL WXGFinderBadgeView(UIView *v) {
 - (UISearchBar *)homeSearchBar {
     if(![NSStringFromClass(_route.leaf.class) isEqual:@"NewMainFrameViewController"] || !_route.leaf.isViewLoaded)return nil;
     UIView *page=_route.leaf.view;UISearchBar *bar=_homeSearchBarRef;
-    if(bar.window && [bar isDescendantOfView:page])return bar;
+    if(bar.window && [bar isDescendantOfView:page] && !WXGHomeTaskbarContains(bar))return bar;
     // Once per list (cached): the page scan, then a deeper walk.
-    for(UIView *v in _pageViews?:@[])if([v isKindOfClass:UISearchBar.class] && v.window){_homeSearchBarRef=(id)v;return (id)v;}
+    for(UIView *v in _pageViews?:@[])if([v isKindOfClass:UISearchBar.class] && v.window && !WXGHomeTaskbarContains(v)){_homeSearchBarRef=(id)v;return (id)v;}
     if(_homeSearchBarScanPage==page)return nil;
     _homeSearchBarScanPage=page;
-    for(UIView *v in WXGViews(page,1500))if([v isKindOfClass:UISearchBar.class] && v.window){_homeSearchBarRef=(id)v;return (id)v;}
+    for(UIView *v in WXGViews(page,1500))if([v isKindOfClass:UISearchBar.class] && v.window && !WXGHomeTaskbarContains(v)){_homeSearchBarRef=(id)v;return (id)v;}
     return nil;
 }
 - (void)continueSearchHandoff {
@@ -4732,7 +4790,8 @@ static BOOL WXGFinderBadgeView(UIView *v) {
     UITableView *table=nil;UIView *header=nil;
     for(UIView *v=bar;v.superview;v=v.superview)if([v.superview isKindOfClass:UITableView.class]){table=(id)v.superview;header=v;break;}
     if(!table || table.tableHeaderView!=header){_topSearchStatus=@"搜索栏不在列表表头里，未隐藏";return;}
-    if(_topSearchHidden && _topSearchHeader!=header)[self restoreTopSearch];
+    if(WXGHomeListInNativePull(table))return;
+    if(_topSearchHidden && _topSearchHeader!=header){[self restoreTopSearch];if(_topSearchHidden)return;}
     CGFloat height=header.frame.size.height;
     if(_topSearchHidden && height<.5){if(!header.clipsToBounds)header.clipsToBounds=YES;return;}
     if(height<.5){_topSearchStatus=@"表头高度为 0";return;}
@@ -4748,8 +4807,9 @@ static BOOL WXGFinderBadgeView(UIView *v) {
 }
 - (void)restoreTopSearch {
     if(!_topSearchHidden)return;
-    _topSearchHidden=NO;
     UIView *header=_topSearchHeader;UITableView *table=_topSearchTable;
+    if(header && table.tableHeaderView==header && WXGHomeListInNativePull(table) && WXGPluginEnabled())return;
+    _topSearchHidden=NO;
     if(header) {
         CGFloat height=_topSearchHeight;BOOL clipped=_topSearchClipped;
         [UIView performWithoutAnimation:^{
@@ -5080,10 +5140,12 @@ BOOL WXGHomeTopBarInList(UIView *list) {
     static Class home;static dispatch_once_t once;
     dispatch_once(&once,^{home=NSClassFromString(@"NewMainFrameViewController");});
     if(!_route.primary || !home || ![_route.leaf isKindOfClass:home] || !_window)return 0;
+    UIScrollView *list=_homeConversationList;
+    if(list && list.window==_window)return MAX(0.,-(list.contentOffset.y+WXGHomeConversationTop(list)));
     CGFloat pull=0,h=_window.bounds.size.height,w=_window.bounds.size.width;
     for(UIScrollView *scroll in _scrollViews)
         if(scroll.window==_window && scroll.bounds.size.height>h*.5 && scroll.bounds.size.width>w*.8)
-            pull=MAX(pull,-(scroll.contentOffset.y+WXGHomeListTop(scroll)));
+            pull=MAX(pull,-(scroll.contentOffset.y+WXGHomeConversationTop(scroll)));
     return pull;
 }
 // FIX93: pulling the home list down (toward the mini-program panel), WeChat
@@ -5377,8 +5439,13 @@ BOOL WXGHomeTopBarInList(UIView *list) {
                 }
                 hosts=classes;
             });
+            _homeConversationList=nil;
+            Class homeList=NSClassFromString(@"MainFrameTableView");
             for(UIView *v in _pageViews) {
-                if([v isKindOfClass:UIScrollView.class])[_scrollViews addObject:(id)v];
+                if([v isKindOfClass:UIScrollView.class]) {
+                    [_scrollViews addObject:(id)v];
+                    if([v isKindOfClass:homeList] && v.window==w)_homeConversationList=(UIScrollView *)v;
+                }
                 if([hosts containsObject:v.class])[WXGDecorations.shared nativeHostLaidOut:v];
             }
             steps[@"hostsMS"]=@((CACurrentMediaTime()-stepMark)*1000);
@@ -5713,7 +5780,7 @@ BOOL WXGHomeTopBarInList(UIView *list) {
       @"postCommit":@{@"observer":@(_commitObserver!=NULL),@"order":@1999500,@"phase":@"beforeCoreAnimationCommit",@"frames":@(_postCommitFrames),@"inlineFallbacks":@(_postCommitFallbacks),@"dropped":@(_droppedPendingFrames),
         @"delayFromCallbackMS":@(_postCommitDelayMS),@"presentScheduleWaitMS":@(WXGGlassScheduleWaitMS()),@"costMS":@(_postCommitCost),@"maxCostMS":@(_maxPostCommitCost)},
       @"callbackIntervalms":@(_lastTickTime*1000),@"callbackCount":@(_frames),@"refreshCount":@(_refreshes),@"covered":@(_suspendedByCover),
-      @"navigationRepairs":@(_navigationRepairs),@"otherBarLayoutsSkipped":@(_otherBarLayoutsSkipped),@"homeReattachments":@(_homeReattachments),@"homeMoveLoopBreaks":@(_homeMoveLoopBreaks),@"homeHostConflicts":@(_homeHostConflicts),@"decorations":WXGDecorations.shared.evidence,@"meHeader":WXGMeHeader.shared.evidence,@"bubbles":WXGBubbles.shared.evidence,@"localGlass":WXGLocalGlass.shared.evidence,@"chatSegments":WXGChatSegments.shared.evidence,
+      @"navigationRepairs":@(_navigationRepairs),@"otherBarLayoutsSkipped":@(_otherBarLayoutsSkipped),@"homeNavigationLayoutsReused":@(_homeNavigationLayoutsReused),@"homeReattachments":@(_homeReattachments),@"homeMoveLoopBreaks":@(_homeMoveLoopBreaks),@"homeHostConflicts":@(_homeHostConflicts),@"decorations":WXGDecorations.shared.evidence,@"meHeader":WXGMeHeader.shared.evidence,@"bubbles":WXGBubbles.shared.evidence,@"localGlass":WXGLocalGlass.shared.evidence,@"chatSegments":WXGChatSegments.shared.evidence,
       @"bindingRecoveries":@(_bindingRecoveries),@"samplingLayoutSkips":@(_samplingLayoutSkips),@"navigationSetupDeferrals":@(_navigationSetupDeferrals),@"transitionSamplingSkips":@(_transitionSamplingSkips),@"navigationRequests":_navigationRequests?:@[],
       @"transition":@{ @"active":@(_nativeTransition!=nil),@"interactive":@(_nativeTransition.isInteractive),@"percent":@(_nativeTransition.percentComplete),
         @"serial":@(_transitionSerial),@"cancelled":@(_transitionCancellations),@"completed":@(_transitionCompletions),@"events":_transitionLog?:@[]},

@@ -99,6 +99,7 @@
 }
 - (void)restoreDepth:(NSInteger)index {
     UITableView *t=_table;
+    if(WXGHomeListInNativePull(t))return;
     [t layoutIfNeeded];
     NSNumber *saved=_depths[@(index)];
     // First visit keeps a collapsed header collapsed without inheriting the
@@ -106,7 +107,7 @@
     CGFloat depth=saved?saved.doubleValue:MIN([_depths[@(_origin)] doubleValue],t.tableHeaderView.bounds.size.height);
     CGFloat lo=-WXGHomeListTop(t),hi=MAX(lo,t.contentSize.height+t.adjustedContentInset.bottom-t.bounds.size.height);
     CGFloat y=MIN(hi,MAX(lo,lo+depth));
-    if(fabs(t.contentOffset.y-y)>.5/MAX(1.,t.window.screen.scale))
+    if(!WXGHomeListInNativePull(t) && fabs(t.contentOffset.y-y)>.5/MAX(1.,t.window.screen.scale))
         [t setContentOffset:CGPointMake(t.contentOffset.x,y) animated:NO];
 }
 - (BOOL)loadPage:(NSInteger)index {

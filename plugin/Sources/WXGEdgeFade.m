@@ -870,7 +870,7 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
     // Drive the top edge from the same scroll sample as the Home controls.
     CGFloat panel=_homePanel?WXGHomePanelProgressForController(_controller):0;
     _topBarInList=_homePanel && WXGHomeTopBarInList(list);
-    CGFloat relief=_homePanel?WXGHomeEdgeRelief(-(list.contentOffset.y+WXGHomeListTop(list))):0;
+    CGFloat relief=_homePanel?WXGHomeEdgeRelief(-(list.contentOffset.y+WXGHomeConversationTop(list))):0;
     BOOL reliefChanged=relief!=_topRelief;
     _topRelief=relief;
     BOOL panelChanged=fabs(panel-_panel)>.004 || (panel==0)!=(_panel==0) || (panel==1)!=(_panel==1);
@@ -992,24 +992,24 @@ static NSString *WXGEdgeCoverPaint(UIScrollView *list,UIView *root,UIColor *list
    progress (WXGHomePanelProgress). The view is looked up once (again at most
    twice a second while missing) and kept weakly per controller. */
 @interface WXGHomePanelProbe : NSObject
-@property(nonatomic,weak) UIView *header;
-@property(nonatomic) CFTimeInterval lastSearch;
+@property(nonatomic,weak) UIView *header,*grid,*cell;
+@property(nonatomic) CFTimeInterval lastSearch,nextGridSearch;
 @end
 @implementation WXGHomePanelProbe
 @end
 static char WXGHomePanelProbeKey;
-CGFloat WXGHomePanelProgressForController(UIViewController *home) {
+static WXGHomePanelProbe *WXGFindHomePanel(UIViewController *home) {
     static Class panelClass;static dispatch_once_t once;
     dispatch_once(&once,^{panelClass=NSClassFromString(@"WAMainFrameTopHeaderView")?:NSClassFromString(@"WAMainFrameTaskBarView");});
-    if(!panelClass || !home.isViewLoaded)return 0;
+    if(!panelClass || !home.isViewLoaded)return nil;
     UIView *root=home.view;UIWindow *w=root.window;
-    if(!w)return 0;
+    if(!w)return nil;
     WXGHomePanelProbe *probe=objc_getAssociatedObject(home,&WXGHomePanelProbeKey);
     if(!probe){probe=[WXGHomePanelProbe new];objc_setAssociatedObject(home,&WXGHomePanelProbeKey,probe,OBJC_ASSOCIATION_RETAIN_NONATOMIC);}
     UIView *header=probe.header;
     if(!header || header.window!=w || ![header isDescendantOfView:root]) {
         CFTimeInterval now=CACurrentMediaTime();
-        if(now-probe.lastSearch<.5)return 0;
+        if(now-probe.lastSearch<.5)return nil;
         probe.lastSearch=now;header=nil;
         NSMutableArray<UIView *> *queue=[NSMutableArray arrayWithObject:root];
         for(NSUInteger i=0;i<queue.count && i<600 && !header;i++) {
@@ -1018,12 +1018,56 @@ CGFloat WXGHomePanelProgressForController(UIViewController *home) {
             if([v isKindOfClass:UITableViewCell.class] || [v isKindOfClass:UICollectionViewCell.class] || WXGIsPluginView(v))continue;
             [queue addObjectsFromArray:v.subviews];
         }
-        probe.header=header;
-        if(!header)return 0;
+        probe.header=header;probe.grid=nil;probe.cell=nil;probe.nextGridSearch=0;
     }
-    if(header.hidden)return 0;
+    return header && !header.hidden?probe:nil;
+}
+CGFloat WXGHomePanelProgressForController(UIViewController *home) {
+    UIView *header=WXGFindHomePanel(home).header;
+    if(!header)return 0;
+    UIWindow *w=header.window;
     CGRect rect=[header convertRect:header.bounds toView:nil];
     return WXGHomePanelProgress((float)(CGRectGetMaxY(rect)/MAX(w.bounds.size.height,1)));
+}
+static CGRect WXGHomePanelScreenRect(UIView *view,UIWindow *window) {
+    if(!view || view.window!=window || view.hidden)return CGRectNull;
+    CALayer *layer=view.layer.presentationLayer,*screen=window.layer.presentationLayer;
+    return layer && screen?[layer convertRect:layer.bounds toLayer:screen]:[view convertRect:view.bounds toView:window];
+}
+// Read real native grid geometry only for full diagnostic captures. A full
+// scroll range alone cannot distinguish the reduced preview from an open grid.
+WXGHomePanelGeometry WXGReadHomePanelGeometry(UIViewController *home) {
+    UIWindow *w=home.viewIfLoaded.window;
+    WXGHomePanelGeometry sample={w.bounds.size.width,-1,-1,-1,-1,-1};
+    WXGHomePanelProbe *probe=WXGFindHomePanel(home);
+    UIView *header=probe.header;
+    if(!header || !w)return sample;
+    sample.headerBottom=CGRectGetMaxY(WXGHomePanelScreenRect(header,w));
+    UIView *grid=probe.grid,*cell=probe.cell;
+    if(![grid isDescendantOfView:header] || !CGRectIntersectsRect(WXGHomePanelScreenRect(grid,w),w.bounds))grid=nil;
+    if(!grid || ![cell isDescendantOfView:grid] || !CGRectIntersectsRect(WXGHomePanelScreenRect(cell,w),w.bounds))cell=nil;
+    CFTimeInterval now=CACurrentMediaTime();
+    if(!cell && now>=probe.nextGridSearch) {
+        probe.nextGridSearch=now+.25;
+        static Class sectionClass,cellClass;static dispatch_once_t once;
+        dispatch_once(&once,^{sectionClass=NSClassFromString(@"WAMainFrameTaskBarSectionWeAppView");cellClass=NSClassFromString(@"WAMainFrameTaskBarSectionWeAppCell");});
+        NSMutableArray<UIView *> *queue=[NSMutableArray arrayWithObject:header];
+        for(NSUInteger i=0;i<queue.count && i<240;i++) {
+            UIView *v=queue[i];
+            if(v.hidden || v.alpha<=.001 || WXGIsPluginView(v))continue;
+            if([v isKindOfClass:sectionClass] && !grid && CGRectIntersectsRect(WXGHomePanelScreenRect(v,w),w.bounds))grid=v;
+            if([v isKindOfClass:cellClass] && CGRectIntersectsRect(WXGHomePanelScreenRect(v,w),w.bounds)) {
+                UIView *parent=v.superview;
+                while(parent && parent!=header && ![parent isKindOfClass:sectionClass])parent=parent.superview;
+                if([parent isKindOfClass:sectionClass]){grid=parent;cell=v;break;}
+            }
+            if(![v isKindOfClass:UICollectionViewCell.class] || [v isKindOfClass:sectionClass])[queue addObjectsFromArray:v.subviews];
+        }
+        probe.grid=grid;probe.cell=cell;
+    }
+    if(grid){sample.sectionBoundsWidth=grid.bounds.size.width;sample.sectionScreenWidth=WXGHomePanelScreenRect(grid,w).size.width;}
+    if(cell){sample.cellBoundsWidth=cell.bounds.size.width;sample.cellScreenWidth=WXGHomePanelScreenRect(cell,w).size.width;}
+    return sample;
 }
 
 static void WXGEdgeFadeObserve(void) {

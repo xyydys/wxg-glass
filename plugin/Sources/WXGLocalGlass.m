@@ -1153,6 +1153,7 @@ static char WXGLocalSearchShiftedKey,WXGLocalSearchAlignCacheKey;
 }
 - (void)searchBar:(UIView *)bar {
     WXGLocalEntry *known=objc_getAssociatedObject(bar,&WXGLocalHostKey);
+    if(WXGHomeTaskbarContains(bar)){if(known.mounted && known.kind==WXGLocalSearch)[self unmount:known];return;}
     UIView *paint=known.host==bar && [known.anchor isDescendantOfView:bar]?known.anchor:nil;
     BOOL themeFirst=WXGPreferences.shared.localSearchThemeFirst;
     // FIX109: not ours now (restored): a field the theme emptied stays the theme's.
@@ -1201,7 +1202,7 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
 // Only own a table-header height when an explicit vertical customization grows it.
 // Ignore a height that WeChat replaced during its own layout.
 - (void)resizeSearchHeader:(UIView *)header table:(UITableView *)table height:(CGFloat)height {
-    if(table.tableHeaderView!=header || fabs(header.frame.size.height-height)<=.5)return;
+    if(table.tableHeaderView!=header || WXGHomeListInNativePull(table) || WXGHomeTaskbarContains(header) || fabs(header.frame.size.height-height)<=.5)return;
     _adjustingHomeHeader=YES;
     @try {
         [UIView performWithoutAnimation:^{
@@ -1211,6 +1212,7 @@ static BOOL WXGLocalSamePage(UIView *a,UIView *b) {
     } @finally {_adjustingHomeHeader=NO;}
 }
 void WXGReleaseLocalSearchHeaderHeight(UITableView *table) {
+    if(WXGHomeListInNativePull(table))return;
     UIView *header=table.tableHeaderView;
     NSNumber *base=objc_getAssociatedObject(header,&WXGLocalHomeHeaderHKey);
     NSNumber *applied=objc_getAssociatedObject(header,&WXGLocalAppliedHeaderHKey);
@@ -1228,9 +1230,15 @@ static CGRect WXGLocalCustomSearchMaterial(UIView *paint,UIView *header,CGRect n
     return CGRectMake(paint.bounds.origin.x+row.x-native.x,paint.bounds.origin.y+row.y-native.y,row.w,row.h);
 }
 - (void)field:(UIView *)paint host:(UIView *)host skins:(NSArray<UIView *> *)skins {
+    if(WXGHomeTaskbarContains(host)) {
+        WXGLocalEntry *entry=objc_getAssociatedObject(host,&WXGLocalHostKey);
+        if(entry.mounted && entry.kind==WXGLocalSearch)[self unmount:entry];
+        return;
+    }
+    UITableView *homeTable=WXGLocalHomeTableFor(host);
+    if(homeTable && WXGHomeListInNativePull(homeTable))return;
     for(WXGLocalEntry *other in _entries.allObjects)
         if(other.mounted && other.kind==WXGLocalSearch && other.host==host && other.anchor && other.anchor!=paint)[self unmount:other];
-    UITableView *homeTable=WXGLocalHomeTableFor(host);
     WXGConfig *cfg=WXGConfig.shared;
     BOOL customHome=homeTable && (cfg.homeSearchWidthPct>.5 || cfg.homeSearchHeight>.5 || cfg.homeSearchTopGap>=0);
     UIView *homeHeader=WXGHomeNativeSearchHeader(homeTable.tableHeaderView);
