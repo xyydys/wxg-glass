@@ -9,8 +9,6 @@ FOUNDATION_EXPORT void WXGPrewarmMenuMorphRenderer(void);
 // distorts the trigger, row labels, icons and selection during the morph.
 @interface WXGMenuMorphView : UIView
 @property(nonatomic,copy) void (^requestFrame)(void);
-// Main run-loop commit batch. Zero allows independent presentations.
-@property(nonatomic) uint64_t presentationSerial;
 @property(nonatomic,strong) UIView *fallbackForeground;
 @property(nonatomic,copy,readonly) NSDictionary *sourceAtPickup;
 @property(nonatomic,strong,readonly) UIBezierPath *currentOutline;
