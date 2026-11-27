@@ -393,6 +393,7 @@ FOUNDATION_EXPORT CGRect WXGLocalTitleCapsuleRect(UINavigationBar *bar,UIView *t
 /* FIX118 A: the 我 page's header as Telegram's profile (WXGMeHeader.m, WXGMeMetaball.h). */
 @interface WXGMeHeader : NSObject
 + (instancetype)shared;
+- (BOOL)ownsBarButton:(UIControl *)button;
 - (NSDictionary *)evidence;
 @end
 FOUNDATION_EXPORT NSString *WXGSelfAvatarState(void);   // FIX118 B: where the 我 page's photo came from
@@ -405,6 +406,7 @@ FOUNDATION_EXPORT BOOL WXGMeHeaderOwnsView(UIView *view);   // FIX120 G: the 我
 - (void)updateOnPage:(UIViewController *)page;   // the host's refresh on the chat list
 - (void)updateTitleBarOnPage:(UIViewController *)page inOverlay:(UIView *)overlay rect:(CGRect)rect navTitle:(UIView *)navTitle pullTitle:(UIView *)pullTitle englishHint:(BOOL)englishHint;
 - (void)moveTitleWithHomePage:(UIViewController *)home;
+- (void)settleTitleOnPage:(UIViewController *)winner leavingPage:(UIViewController *)loser;
 - (void)finishHomeTitleRowBeforeCommit;
 - (void)hideTitleBar;      // visually hides the title group bar (keeps MFTitleView concealed while titleModeWanted is on)
 - (void)releaseTitleBar;   // hides the title group bar and restores MFTitleView (when titleModeWanted is off or plugin disabled)

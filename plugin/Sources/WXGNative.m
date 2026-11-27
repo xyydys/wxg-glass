@@ -193,17 +193,21 @@ NSDictionary *WXGRenderedInkEvidence(UIView *view) {
     UIImage *roi=[[[UIGraphicsImageRenderer alloc]initWithSize:view.bounds.size format:format] imageWithActions:^(UIGraphicsImageRendererContext *c){
         CGContextTranslateCTM(c.CGContext,-view.bounds.origin.x,-view.bounds.origin.y);[view.layer renderInContext:c.CGContext];
     }];
-    CGImageRef cg=roi.CGImage;CGImageAlphaInfo info=CGImageGetAlphaInfo(cg);
+    CGImageRef cg=roi.CGImage;if(!cg)return @{@"available":@NO};
+    CGImageAlphaInfo info=CGImageGetAlphaInfo(cg);
     BOOL first=info==kCGImageAlphaPremultipliedFirst || info==kCGImageAlphaFirst,last=info==kCGImageAlphaPremultipliedLast || info==kCGImageAlphaLast;
-    if(!cg || CGImageGetBitsPerPixel(cg)!=32 || CGImageGetBitsPerComponent(cg)!=8 || !(first || last))return @{@"available":@NO};
+    if(CGImageGetBitsPerPixel(cg)!=32 || CGImageGetBitsPerComponent(cg)!=8 || !(first || last))return @{@"available":@NO};
     size_t w=CGImageGetWidth(cg),h=CGImageGetHeight(cg),stride=CGImageGetBytesPerRow(cg),ai=first?0:3;
     if((CGImageGetBitmapInfo(cg)&kCGBitmapByteOrderMask)==kCGBitmapByteOrder32Little)ai=3-ai;
     CFDataRef data=CGDataProviderCopyData(CGImageGetDataProvider(cg));if(!data)return @{@"available":@NO};
-    WXGRect ink=WXGIconInkBounds(CFDataGetBytePtr(data)+ai,w,h,stride,16);
+    double centerY=NAN;
+    WXGRect ink=WXGRasterInkBounds(CFDataGetBytePtr(data)+ai,w,h,stride,16,
+                                  [view isKindOfClass:UILabel.class]?&centerY:NULL);
     CFRelease(data);if(ink.w==0)return @{@"available":@NO};
     CGFloat scale=format.scale;CGRect local=CGRectMake(view.bounds.origin.x+ink.x/scale,view.bounds.origin.y+ink.y/scale,ink.w/scale,ink.h/scale);
     CGRect window=[view convertRect:local toView:view.window];
     return @{@"available":@YES,@"method":@"UIView_layer_ROI_alpha16_projection",@"threshold":@16,@"scale":@(scale),
+        @"inkCoverageCenterYPx":isfinite(centerY)?@(centerY):NSNull.null,
         @"bounds_px":@[@(ink.x),@(ink.y),@(ink.w),@(ink.h)],@"windowRect":@[@(window.origin.x),@(window.origin.y),@(window.size.width),@(window.size.height)]};
 }
 NSArray<NSString *> *WXGActionNames(UIControl *control) {

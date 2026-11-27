@@ -3,6 +3,14 @@
 #include <assert.h>
 #include <stdio.h>
 int main(void) {
+    const size_t absent=(size_t)-1;
+    assert(WXGNavigationPopsOwner(1,0,absent));          // chat -> Home
+    assert(WXGNavigationPopsOwner(3,2,absent));          // chat -> another chat
+    assert(WXGNavigationPopsOwner(5,1,absent));          // popTo, including an interactive rollback
+    assert(WXGNavigationPopsOwner(absent,1,absent));     // outgoing item already detached
+    assert(!WXGNavigationPopsOwner(1,2,absent));         // ordinary forward navigation
+    assert(!WXGNavigationPopsOwner(1,1,absent));
+    assert(!WXGNavigationPopsOwner(1,absent,absent));
     const double reference=title_trace[0][0],glass=220;
     unsigned wrong_with_live_model=0;
     for(unsigned i=0;i<sizeof(title_trace)/sizeof(title_trace[0]);i++) {

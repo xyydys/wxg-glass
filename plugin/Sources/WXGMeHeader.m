@@ -708,6 +708,9 @@ static BOOL WXGMePageExposed(UIViewController *page) {
     }
 }
 // The bar: QR on the left, 设置 on the right.
+- (BOOL)ownsBarButton:(UIControl *)button {
+    return button && (button==_leftItem.customView || button==_rightItem.customView);
+}
 - (void)ensureBarItemsOn:(UIViewController *)page {
     UINavigationItem *item=page.navigationItem;
     if(!_leftItem) {

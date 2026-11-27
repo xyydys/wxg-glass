@@ -970,17 +970,18 @@ static void WXGAppendRimCommand(void *ctx,int op,double x1,double y1,double x2,d
         case WXGRimClose: CGPathCloseSubpath(w->path);break;
     }
 }
-static UIBezierPath *WXGRim26BandPath(CGSize size,CGFloat r,CGFloat width) {
+static UIBezierPath *WXGRim26BandPath(CGRect rect,CGFloat r,CGFloat width) {
     static NSCache<NSData *,UIBezierPath *> *cache;static dispatch_once_t once;
     dispatch_once(&once,^{cache=[NSCache new];cache.countLimit=192;});
-    CGFloat dimensions[]={size.width,size.height,r,width};
+    CGSize size=rect.size;
+    CGFloat dimensions[]={size.width,size.height,r,width,rect.origin.x,rect.origin.y};
     NSData *key=[NSData dataWithBytes:dimensions length:sizeof dimensions];
     UIBezierPath *band=[cache objectForKey:key];
     if(band)return band;
     CGMutablePathRef path=CGPathCreateMutable();
-    WXGRimPathWriter writer={path,CGAffineTransformIdentity};
+    WXGRimPathWriter writer={path,CGAffineTransformMakeTranslation(rect.origin.x,rect.origin.y)};
     WXGRim26Contour(size.width,size.height,r,&writer,WXGAppendRimCommand);
-    writer.offset=CGAffineTransformMakeTranslation(width,width);
+    writer.offset=CGAffineTransformTranslate(writer.offset,width,width);
     WXGRim26Contour(size.width-2*width,size.height-2*width,MAX(0,r-width),&writer,WXGAppendRimCommand);
     band=[UIBezierPath bezierPathWithCGPath:path];CGPathRelease(path);
     [cache setObject:band forKey:key];return band;
@@ -992,11 +993,11 @@ static UIBezierPath *WXGRim26BandPath(CGSize size,CGFloat r,CGFloat width) {
 // outline (WXGCapsule26Band) instead of Core Animation borders, whose
 // capsule stays straight almost up to its round ends.
 static NSUInteger WXGRimPlaceBands(CALayer *holder,NSMutableArray<CALayer *> *pool,NSUInteger used,const WXGRimBands *bands,
-                                   CGSize size,CGFloat radius,CGFloat red,CGFloat green,CGFloat blue,CGFloat scale,BOOL vector26) {
-    BOOL capsule=WXGCapsule26Applies(size.width,size.height,radius);
+                                   CGRect material,CGFloat radius,CGFloat red,CGFloat green,CGFloat blue,CGFloat scale,BOOL vector26) {
+    BOOL capsule=WXGCapsule26Applies(material.size.width,material.size.height,radius);
     for(int k=0;k<bands->count;k++) {
         CGFloat inset=(CGFloat)bands->inset[k],width=(CGFloat)bands->width[k],alpha=(CGFloat)bands->alpha[k];
-        CGRect frame=CGRectInset((CGRect){CGPointZero,size},inset,inset);
+        CGRect frame=CGRectInset(material,inset,inset);
         if(width<.001 || alpha<.001 || CGRectIsEmpty(frame))continue;
         CAShapeLayer *band;
         if(used<pool.count)band=(CAShapeLayer *)pool[used];
@@ -1005,11 +1006,11 @@ static NSUInteger WXGRimPlaceBands(CALayer *holder,NSMutableArray<CALayer *> *po
             [holder addSublayer:band];[pool addObject:band];
         }
         ++used;
-        band.hidden=NO;band.frame=frame;band.contentsScale=scale;
+        band.hidden=NO;band.frame=vector26?holder.bounds:frame;band.contentsScale=scale;
         UIColor *colour=[UIColor colorWithRed:red green:green blue:blue alpha:WXGClamp(alpha,0,1)];   // (kept while its CGColor is handed over)
         if(vector26 || capsule) {
             band.cornerRadius=0;band.borderWidth=0;
-            band.path=vector26?WXGRim26BandPath(frame.size,MAX(0,radius-inset),width).CGPath:WXGCapsule26Band(frame.size,width);
+            band.path=vector26?WXGRim26BandPath(frame,MAX(0,radius-inset),width).CGPath:WXGCapsule26Band(frame.size,width);
             band.fillColor=colour.CGColor;
         }else {
             band.path=nil;band.fillColor=nil;
@@ -1057,7 +1058,7 @@ _Static_assert(WXG_RIM_GLOW_MAX_BANDS<=2*WXG_RIM_MAX_STEPS+1,"the glow's steps f
     [_level layoutForBounds:(CGRect){CGPointZero,size} radius:MAX(r,(CGFloat)MIN(width,MIN(size.width,size.height)*.5))];
     WXGRimBands bands;
     bands.count=WXGRimGlowBands(width,shape.falloff,scale,WXG_RIM_GLOW_MAX_BANDS,bands.inset,bands.width,bands.alpha);
-    NSUInteger used=WXGRimPlaceBands(self,_bands,0,&bands,size,r,shape.red,shape.green,shape.blue,scale,NO);
+    NSUInteger used=WXGRimPlaceBands(self,_bands,0,&bands,(CGRect){CGPointZero,size},r,shape.red,shape.green,shape.blue,scale,NO);
     WXGRimHideBands(_bands,used);_bandsShown=used;
 }
 @end
@@ -1153,20 +1154,32 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
 - (void)applyShape:(WXGRim26Shape)shape bounds:(CGRect)bounds radius:(CGFloat)r scale:(CGFloat)scale {
     double key[12]={shape.height,shape.curve,shape.angle,shape.key,shape.fill,shape.spread,shape.ring,
                     bounds.size.width,bounds.size.height,r,scale,shape.floor};
-    self.frame=bounds;
+    // The color capture is already padded. Its alpha passes through two
+    // more offscreen groups and a shape layer for each band. If any backing
+    // ends at the path extremum, a fractional last pixel can be scissored
+    // into a straight chord even for a geometrically perfect circle.
+    CGFloat px=WXGRim26RasterMargin(bounds.size.width,scale);
+    CGFloat py=WXGRim26RasterMargin(bounds.size.height,scale);
+    self.frame=CGRectInset(bounds,-px,-py);
     if(_applied && !memcmp(key,_key,sizeof key))return;
     memcpy(_key,key,sizeof key);_applied=YES;
-    CGRect inner=(CGRect){CGPointZero,bounds.size};
-    _lights.frame=inner;_plain.frame=inner;
+    self.contentsScale=scale;
+    CGRect material=(CGRect){CGPointMake(px,py),bounds.size};
+    _lights.contentsScale=scale;_plain.contentsScale=scale;
+    _lights.frame=self.bounds;_plain.frame=self.bounds;
     WXGRimBands lights=WXGRim26RimBands(WXGRim26BandsFor(0,shape,scale)),plain=WXGRim26RimBands(WXGRim26BandsFor(1,shape,scale));
-    NSUInteger used=WXGRimPlaceBands(_lights,_lightBands,0,&lights,inner.size,r,1,1,1,scale,YES);
+    NSUInteger used=WXGRimPlaceBands(_lights,_lightBands,0,&lights,material,r,1,1,1,scale,YES);
     WXGRimHideBands(_lightBands,used);_bandsShown=used;
-    used=WXGRimPlaceBands(_plain,_plainBands,0,&plain,inner.size,r,1,1,1,scale,YES);
+    used=WXGRimPlaceBands(_plain,_plainBands,0,&plain,material,r,1,1,1,scale,YES);
     WXGRimHideBands(_plainBands,used);_bandsShown+=used;
     [_level applyTop:(CGFloat)WXGRim26Along(0,-1,shape) bottom:(CGFloat)WXGRim26Along(0,1,shape) left:(CGFloat)WXGRim26Along(-1,0,shape) right:(CGFloat)WXGRim26Along(1,0,shape)
             fieldKey:[NSString stringWithFormat:@"rim26|%.2f|%.3f|%.3f|%.3f|%.3f",shape.angle,shape.key,shape.fill,shape.spread,shape.floor]
                level:^float(float nx,float ny){return (float)WXGRim26Along(nx,ny,shape);}];
-    [_level layoutForBounds:inner radius:MAX(r,MIN(shape.height,MIN(inner.size.width,inner.size.height)*.5))];
+    // Extend the direction field uniformly. Increasing its corner radius
+    // by the same margin keeps the four lighting centers over the material.
+    CGFloat fieldMargin=1./MAX(1.,scale);
+    CGFloat fieldRadius=MAX(r,MIN(shape.height,MIN(bounds.size.width,bounds.size.height)*.5));
+    [_level layoutForBounds:CGRectInset(material,-fieldMargin,-fieldMargin) radius:fieldRadius+fieldMargin];
 }
 @end
 // FIX123: the system draws the rim as a white layer under the filter
@@ -1275,7 +1288,9 @@ static WXGRimBands WXGRim26RimBands(WXGRim26Bands b) {
     WXGRim26Shape shape={s.height,s.curve,s.angle,s.key,s.fill,s.spread,s.ring,0,s.floor};
     // Give the low-resolution colour capture a texel beyond the vector
     // silhouette on each side, including when the diameter is fractional.
-    CGFloat pad=1./(MAX(1.,scale)*MAX(.1,s.captureScale));
+    CGFloat pad=MAX(WXGRim26RasterMargin(b.size.width,scale),WXGRim26RasterMargin(b.size.height,scale))
+                +1./(MAX(1.,scale)*MAX(.1,s.captureScale));
+    _paint.layer.mask.contentsScale=scale;
     _paint.frame=CGRectInset(b,-pad,-pad);
     [_paint.ring applyShape:shape bounds:CGRectOffset(b,pad,pad) radius:r scale:scale];
     [CATransaction commit];
@@ -1519,6 +1534,7 @@ static BOOL WXGShadowRelativeHoleChanged(WXGShadowFootprint oldCaster,WXGShadowF
         for(UIView *clip in @[_bodyClip,_lensClip]) {
             clip.userInteractionEnabled=NO; clip.opaque=NO; clip.backgroundColor=UIColor.clearColor;
             clip.clipsToBounds=YES; clip.layer.cornerCurve=kCACornerCurveContinuous;
+            clip.layer.allowsEdgeAntialiasing=YES;
             [self addSubview:clip];
         }
         _metal=[self makeMetalView]; _lensMetal=[self makeMetalView];

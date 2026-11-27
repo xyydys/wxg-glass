@@ -1,7 +1,35 @@
 #include "../Sources/WXGIconAlignment.h"
 #include <assert.h>
 #include <stdio.h>
+static void chatTitleVerticalAlignment(void) {
+    // Screenshot of “xyy”: 124 px capsule, 36 ink rows, equal 44 px
+    // clearances. These are the measured per-row alpha sums rounded to
+    // equivalent opaque pixels. Both y descenders add little weight.
+    const int widths[]={19,35,37,37,36,36,36,35,35,35,33,32,30,30,30,31,32,33,
+                         33,33,33,32,31,30,28,27,16,13,13,14,19,21,19,17,13,2};
+    uint8_t pixels[124][40][4]={0};
+    for(size_t i=0;i<sizeof(widths)/sizeof(*widths);i++)
+        for(int x=0;x<widths[i];x++)pixels[44+i][x][3]=255;
+    double midY=NAN;
+    WXGRect ink=WXGRasterInkBounds(&pixels[0][0][3],40,124,sizeof pixels[0],16,&midY);
+    assert(ink.y==44 && ink.h==36 && ink.y+ink.h*.5==62.);
+    assert(midY>59. && midY<60.);
+    double correction=WXGTitleInkOffsetY(124,ink.y,ink.h,midY);
+    assert(correction==3. && fabs(midY+correction-62.)<=.5);
+    assert(WXGTitleInkOffsetY(124,ink.y,ink.h,124.-midY)==-correction);
+    assert(WXGTitleInkOffsetY(124,ink.y,ink.h,62.)==0.);
+    // Heavy top or bottom with very tall marks: keep every visible row.
+    assert(WXGTitleInkOffsetY(45.,3.,40.,8.)==2.);
+    assert(WXGTitleInkOffsetY(45.,3.,40.,42.)==-3.);
+    uint8_t twoRows[]={0,0,0,255, 0,0,0,85};
+    ink=WXGRasterInkBounds(twoRows+3,1,2,4,1,&midY);
+    assert(ink.h==2. && midY==.75); // antialias coverage, not a count of pixels
+    assert(!WXGRasterInkBounds(twoRows,1,2,4,1,&midY).h && isnan(midY));
+    assert(WXGTitleInkOffsetY(20.,0.,0.,midY)==0.);
+}
+
 int main(void) {
+    chatTitleVerticalAlignment();
     // Supplied probe: native frame=(0,8,24,24) in a 40pt gesture host;
     // alpha box=(6,7,60,57) in the 72px image. Native glyph center x=12, not 20.
     WXGRect original={0,8,24,24},ink={6./72,7./72,60./72,57./72};

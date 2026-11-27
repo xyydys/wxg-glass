@@ -555,6 +555,7 @@ static NSInteger WXGLoadMenuDotCount(void) {
         self.layer.shadowColor=UIColor.blackColor.CGColor;self.layer.shadowOpacity=0;self.layer.shadowRadius=18;self.layer.shadowOffset=CGSizeMake(0,8);
         _fallback=[[UIVisualEffectView alloc]initWithEffect:nil];
         _fallback.userInteractionEnabled=NO;_fallback.clipsToBounds=YES;_fallback.layer.cornerCurve=kCACornerCurveContinuous;
+        _fallback.layer.allowsEdgeAntialiasing=YES;
         [self addSubview:_fallback];
         _glass=[[WXGGlassView alloc]initWithFrame:self.bounds];_glass.buttonPressEffect=YES;[self addSubview:_glass];
         _iconView=[UIImageView new];_iconView.userInteractionEnabled=NO;_iconView.contentMode=UIViewContentModeScaleAspectFit;[self addSubview:_iconView];
@@ -878,6 +879,15 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
                 NSArray *p=pixel[@"windowRect"];CGRect r=CGRectMake([p[0] doubleValue],[p[1] doubleValue],[p[2] doubleValue],[p[3] doubleValue]);
                 CGRect material=[self convertRect:_materialRect toView:self.window];
                 _textCorrection=CGPointMake(CGRectGetMidX(material)-CGRectGetMidX(r),CGRectGetMidY(material)-CGRectGetMidY(r));
+                if([_role isEqualToString:@"chatTitle"]) {
+                    NSArray *ink=pixel[@"bounds_px"];
+                    NSNumber *coverageY=pixel[@"inkCoverageCenterYPx"];
+                    CGFloat scale=[pixel[@"scale"] doubleValue];
+                    if([coverageY isKindOfClass:NSNumber.class] && ink.count==4 && scale>0.) {
+                        _textCorrection.y=WXGTitleInkOffsetY(CGRectGetHeight(_label.bounds)*scale,
+                            [ink[1] doubleValue],[ink[3] doubleValue],coverageY.doubleValue)/scale;
+                    }
+                }
             }
             _textLayoutKey=key;   // FIX115 K (review): once per key, ink or not (a label with no ink rendered on every layout)
         }
@@ -1167,10 +1177,17 @@ static BOOL WXGPhotoRole(NSString *role) {return [role isEqual:@"avatar"] || [ro
     }
     CGPoint expected=CGPointMake(_countLabel.text.length?r.origin.x+r.size.height*.5:CGRectGetMidX(r),CGRectGetMidY(r));
     CGPoint d=CGPointMake(CGRectGetMidX(i)-expected.x,CGRectGetMidY(i)-expected.y);
+    id opticalDeltaY=NSNull.null;
+    NSNumber *coverageY=pixel[@"inkCoverageCenterYPx"];
+    if([_role isEqualToString:@"chatTitle"] && [coverageY isKindOfClass:NSNumber.class]) {
+        CGFloat y=CGRectGetMinY(_label.bounds)+coverageY.doubleValue/[pixel[@"scale"] doubleValue];
+        CGPoint center=[_label convertPoint:CGPointMake(CGRectGetMidX(_label.bounds),y) toView:self.window];
+        opticalDeltaY=@(center.y-expected.y);
+    }
     return @{@"role":_role?:@"unknown",@"surfaceID":[NSString stringWithFormat:@"%p",self],@"materialRect":@[@(r.origin.x),@(r.origin.y),@(r.size.width),@(r.size.height)],
              @"inkRect":@[@(i.origin.x),@(i.origin.y),@(i.size.width),@(i.size.height)],
              @"inkCenterDelta":@[@(d.x),@(d.y)],@"hasIcon":@(_iconView.image!=nil),@"isCountCapsule":@(_countLabel.text.length>0),
-             @"expectedInkCenter":@[@(expected.x),@(expected.y)],
+             @"expectedInkCenter":@[@(expected.x),@(expected.y)],@"chatTitleCoverageDeltaY":opticalDeltaY,
              @"pixelInk":pixel,
              @"iconImageSize":@[@(_iconView.image.size.width),@(_iconView.image.size.height)],@"titleFontSize":@(_label.font.pointSize),
              @"hasText":@(_label.text.length>0),@"textCorrection":@[@(_textCorrection.x),@(_textCorrection.y)],

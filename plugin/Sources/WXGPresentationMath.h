@@ -1,8 +1,14 @@
 #ifndef WXG_PRESENTATION_MATH_H
 #define WXG_PRESENTATION_MATH_H
 #include <math.h>
+#include <stddef.h>
 typedef struct { double x,y; } WXGPoint;
 typedef struct { double a,b,c,d,tx,ty; } WXGAffine;
+/* UIKit may already have removed the outgoing owner when it first exposes
+   its coordinator. A push appends above the old owner. */
+static inline int WXGNavigationPopsOwner(size_t from,size_t to,size_t absent) {
+    return to!=absent && (from==absent || to<from);
+}
 /* Map a corrected glass centre through the native model -> presentation map.
    UIKit still owns the animation clock and interactive cancellation. */
 static inline WXGAffine WXGPresentationDelta(WXGPoint model,WXGPoint mx,WXGPoint my,

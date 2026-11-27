@@ -3378,6 +3378,12 @@ static NSString *WXGLoginPlatform(NSString *text) {
         self->_titleBar.active=root.window!=nil;
     }];
 }
+- (void)settleTitleOnPage:(UIViewController *)winner leavingPage:(UIViewController *)loser {
+    if(!_titlePage)return;
+    if(loser==_titlePage)[self hideTitleBar];
+    else if(winner==_titlePage && _titleBar.superview!=_titleOverlay)
+        [self moveTitleWithHomePage:winner];
+}
 - (void)titleSegmentChanged:(WXGSegmentBar *)bar {
     [_pager cancel];[self restoreCategoryFold];
     _bookmarkedHome=nil;_returnReady=NO;

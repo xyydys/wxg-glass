@@ -6,6 +6,7 @@
 #import "WXGBubbleContent.h"
 #import "WXGDockInteraction.h"
 #import "WXGDockPresentation.h"
+#import "WXGPresentationMath.h"
 #import "WXGDockSearchLayout.h"
 #import "WXGDockDiscrete.h"
 #import "WXGHomeSearchLayout.h"
@@ -240,6 +241,7 @@ static UIImage *WXGHomePlusSymbol(void) {
 static char WXGPageStateKey;
 @interface WXGPageState : NSObject
 @property(nonatomic,strong) NSMutableDictionary<NSString *,WXGSurface *> *pool;
+@property(nonatomic) CGRect titleOnPage,avatarOnPage; // material rectangles in the chat's settled coordinate system
 @property(nonatomic,strong) WXGInputAdapter *input;
 @end
 @implementation WXGPageState
@@ -391,6 +393,8 @@ static UIView *WXGFinderLiveContainer(WXGFinderLink *link) {
 // FIX113 Q / FIX114 C: the page the title row was last laid out for (its offset is for it).
 @property(nonatomic,weak) UIViewController *navCapsuleLeaf;
 @property(nonatomic,strong) NSArray<WXGSurface *> *departingButtons;
+@property(nonatomic,weak) UIViewController *returningChat,*pendingChatTitle;
+- (void)moveChatTitleFrom:(UIViewController *)from returningTo:(UIViewController *)to;
 @property(nonatomic,strong) WXGInputAdapter *departingInput;
 @property(nonatomic,strong) id<UIViewControllerTransitionCoordinator> nativeTransition;
 @property(nonatomic,weak) id<UIViewControllerTransitionCoordinator> completedTransition;
@@ -3143,6 +3147,84 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
         @"navigationCallDepth":@(WXGNavigationCallDepth),@"animationsEnabled":@(UIView.areAnimationsEnabled)};
     [_transitionLog addObject:row];if(_transitionLog.count>48)[_transitionLog removeObjectAtIndex:0];
 }
+// A chat title in the common navigation overlay used to stay at screen centre
+// when UIKit detached its native label during a pop. The same live material
+// must leave with this chat, even if the gesture changes direction.
+- (void)moveChatTitleFrom:(UIViewController *)from returningTo:(UIViewController *)to {
+    if(!from || !to || from==to || from==_returningChat)return;
+    if(_pendingChatTitle==from) {
+        _returningChat=from;_pendingChatTitle=nil;
+        return;
+    }
+    if(from!=_route.leaf || !_route.chat)return;
+    UIView *root=from.viewIfLoaded;
+    if(!root.window || root.window!=_navigationOverlay.window)return;
+    for(WXGSurface *surface in _buttons) {
+        if(!WXGSurfaceOnlyOpens(surface) || !surface.active || surface.hidden ||
+           surface.superview!=_navigationOverlay || surface.motionOwner!=from)continue;
+        BOOL avatar=[surface.role isEqual:@"avatar"];
+        CGRect rect=avatar?_activePage.avatarOnPage:_activePage.titleOnPage;
+        // The normal pop entry is before UIKit mutates either coordinate space.
+        // A coordinator discovered later must use the last settled rectangle.
+        if(!from.transitionCoordinator || CGRectIsEmpty(rect))
+            rect=[surface convertRect:surface.materialRect toView:root];
+        [UIView performWithoutAnimation:^{
+            surface.followsNative=NO;
+            surface.transform=CGAffineTransformIdentity;
+            [surface placeMaterial:rect inParent:root];
+            surface.userInteractionEnabled=NO;
+            surface.accessibilityElementsHidden=YES;
+        }];
+        _returningChat=from;
+    }
+    WXGSurface *avatar=_activePage.pool[@"avatar"];
+    if(avatar.superview==root)[root bringSubviewToFront:avatar];
+}
+// When returning between chats, their live titles travel on their respective
+// pages. Otherwise the destination title would still float over the source.
+- (void)placeChatMiddle:(WXGSurface *)surface material:(CGRect)rect {
+    UIView *root=_route.leaf.viewIfLoaded;
+    if(!_nativeTransition || !_returningChat || _route.leaf!=_transitionTo || !root.window) {
+        [surface placeMaterial:rect inParent:_navigationOverlay];
+        return;
+    }
+    CGRect settled=[surface.role isEqual:@"avatar"]?_activePage.avatarOnPage:_activePage.titleOnPage;
+    CGRect inPage=[_navigationOverlay convertRect:rect toView:root];
+    if(!CGRectIsEmpty(settled)) {
+        inPage=CGRectMake(CGRectGetMidX(settled)-rect.size.width*.5,CGRectGetMidY(settled)-rect.size.height*.5,
+                          rect.size.width,rect.size.height);
+    }
+    [UIView performWithoutAnimation:^{
+        surface.followsNative=NO;surface.motionOwner=self.route.leaf;
+        surface.userInteractionEnabled=NO;surface.accessibilityElementsHidden=YES;
+        [surface placeMaterial:inPage inParent:root];
+    }];
+}
+// Called after the survivor's route/token resets or immediately for a refused
+// pop. Until then the page itself keeps the same glass on screen.
+- (void)restoreChatTitleOnPage:(UIViewController *)chat {
+    if(!chat || !chat.viewIfLoaded.window || !self.navigationOverlay.window ||
+       chat.navigationController.topViewController!=chat)return;
+    WXGPageState *page=objc_getAssociatedObject(chat,&WXGPageStateKey);
+    for(NSString *slot in @[@"chatTitle",@"avatar"]) {
+        WXGSurface *surface=page.pool[slot];
+        if(surface.superview!=chat.viewIfLoaded || !surface.active || surface.hidden)continue;
+        CGRect rect=[surface convertRect:surface.materialRect toView:_navigationOverlay];
+        [UIView performWithoutAnimation:^{
+            [surface placeMaterial:rect inParent:self.navigationOverlay];
+            surface.userInteractionEnabled=YES;surface.accessibilityElementsHidden=NO;
+            surface.nativeTransitionActive=NO;
+            UIView *motion=surface.motionHost.window?surface.motionHost:chat.navigationItem.titleView;
+            [surface bindMotionHost:motion owner:chat];
+        }];
+        if(![_buttons containsObject:surface])[_buttons addObject:surface];
+        if(chat.navigationItem.titleView) {
+            if(!_navStates)_navStates=[WXGStateBag new];
+            [_navStates conceal:chat.navigationItem.titleView];
+        }
+    }
+    _navigationDirty=YES;
+}
 - (void)observeTransition:(id<UIViewControllerTransitionCoordinator>)coordinator {
     if(!coordinator || !coordinator.isAnimated || _nativeTransition==coordinator || _completedTransition==coordinator)return;
     UIViewController *from=[coordinator viewControllerForKey:UITransitionContextFromViewControllerKey];
@@ -3157,6 +3239,10 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
         _departingButtons=nil;_departingInput=nil;
     }
     _nativeTransition=coordinator;_transitionFrom=from;_transitionTo=to;++_transitionSerial;
+    NSArray<UIViewController *> *stack=to.navigationController.viewControllers;
+    NSUInteger toIndex=[stack indexOfObjectIdenticalTo:to],fromIndex=[stack indexOfObjectIdenticalTo:from];
+    if(WXGNavigationPopsOwner(fromIndex,toIndex,NSNotFound))
+        [self moveChatTitleFrom:from returningTo:to];
     // FIX115 O (user, 21:58 with diagnostics: "还是返回一半就切"; the 21:34
     // screenshot: both capsules cut flat at their buttons' ends): for a push /
     // pop UIKit takes the leaving page's button containers out of the window
@@ -3263,8 +3349,15 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     });
 }
 - (void)dropDepartingButtons {
-    for(WXGSurface *surface in _departingButtons){surface.active=NO;surface.hidden=YES;WXGResetOwnedTransform(surface);[self releaseFinderIconsOf:surface];}
-    _departingButtons=nil;
+    NSMutableArray *onPage=nil;
+    for(WXGSurface *surface in _departingButtons) {
+        if(_returningChat && WXGSurfaceOnlyOpens(surface) && surface.superview==_returningChat.viewIfLoaded) {
+            if(!onPage)onPage=[NSMutableArray array];
+            [onPage addObject:surface];continue;
+        }
+        surface.active=NO;surface.hidden=YES;WXGResetOwnedTransform(surface);[self releaseFinderIconsOf:surface];
+    }
+    _departingButtons=onPage;
 }
 // FIX115 T (review): a 视频号 capsule retired: WeChat's buttons it hid shown
 // again (its page off screen by then, or staying: nothing to fade).
@@ -3291,7 +3384,13 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
         for(WXGSurface *surface in [(_buttons?:@[]) arrayByAddingObjectsFromArray:_departingButtons?:@[]])
             if([surface.role isEqual:@"finderCapsule"] && surface.motionOwner==_transitionFrom && ![finderStays containsObject:surface])[finderStays addObject:surface];
     }
+    UIViewController *stayingChat=cancelled && _returningChat==_transitionFrom?_returningChat:nil;
+    if(stayingChat) {
+        for(WXGSurface *surface in _buttons.copy)
+            if(WXGSurfaceOnlyOpens(surface) && surface.superview==stayingChat.viewIfLoaded)[_buttons removeObject:surface];
+    }
     for(WXGSurface *surface in _departingButtons) {
+        if(stayingChat && WXGSurfaceOnlyOpens(surface) && surface.superview==stayingChat.viewIfLoaded)continue;
         BOOL finder=[surface.role isEqual:@"finderCapsule"];
         if(cancelled && (surface.holdsPlace || finder) && !surface.hidden){[kept addObject:surface];if(finder)++_finderKept;continue;}
         surface.active=NO;surface.hidden=YES;WXGResetOwnedTransform(surface);[self releaseFinderIconsOf:surface];
@@ -3319,6 +3418,7 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     }
     for(WXGSurface *surface in _departingInput.surfaces)surface.active=NO;
     _departingButtons=nil;_departingInput=nil;_completedTransition=coordinator;_nativeTransition=nil;
+    _returningChat=nil;
     // FIX113 E (a page whose bar may never be built); FIX115 O: not when 视频号 stays on top (a given-up swipe).
     if(!WXGFinderFeed(_route.leaf) && !WXGFinderFeed(_route.nav.topViewController))[self clearFinderShifts];
     WXGResetOwnedTransform(_dockView);_dockView.layer.mask=nil;_pendingController=nil;_needsEarlyLayout=NO;_navigationDirty=YES;
@@ -3351,6 +3451,29 @@ static BOOL WXGUserNameIsGroup(NSString *userName) {return [userName hasSuffix:@
     }
     BOOL dockAvailable=WXGPluginEnabled() && WXGPreferences.shared.dock && !_suspendedByCover && !_settings.presentingViewController;
     [self applyDockPresentation:WXGDockPresentationAfterTransition(dockAvailable,_dockTransitionFromRoot,_dockTransitionToRoot,cancelled)];
+    UIViewController *winner=cancelled?_transitionFrom:_transitionTo;
+    UIViewController *loser=cancelled?_transitionTo:_transitionFrom;
+    // Completion can precede the next route rebuild, including a cancelled
+    // forward transition. Neither title of the losing page can paint then.
+    WXGPageState *losingPage=objc_getAssociatedObject(loser,&WXGPageStateKey);
+    for(NSString *slot in @[@"chatTitle",@"avatar"]) {
+        WXGSurface *surface=losingPage.pool[slot];
+        if(surface && surface.motionOwner==loser) {
+            surface.hidden=YES;surface.active=NO;
+            [surface removeFromSuperview];
+        }
+    }
+    if(stayingChat || (!cancelled && [NSStringFromClass(winner.class) isEqual:@"BaseMsgContentViewController"])) {
+        WXGPageState *page=objc_getAssociatedObject(winner,&WXGPageStateKey);
+        for(NSString *slot in @[@"chatTitle",@"avatar"]) {
+            WXGSurface *surface=page.pool[slot];
+            if(surface && surface.superview==winner.viewIfLoaded && surface.active && !surface.hidden) {
+                [_buttons removeObject:surface];
+                _pendingChatTitle=winner;
+            }
+        }
+    }
+    [WXGChatSegments.shared settleTitleOnPage:winner leavingPage:loser];
     [_navStates reapply];[self schedule];
 }
 // FIX109 B: the chat's pinned module (置顶; the probe's TEST6 on the XS Max,
@@ -3723,9 +3846,14 @@ static UIView *WXGNativeClone(UIView *control) {
         // stays live in a push / pop to or from a page that is not 视频号's).
         if(WXGFinderTab(b,bar) || (WXGFinderPage(_route.leaf) && WXGInTitleView(_route.nav,b)))continue;
         BOOL avatarSlot=b==avatarControl && chatAvatar;
-        BOOL look=nativeLook && !avatarSlot && !WXGNativeNavButtonFilled(b);
+        // The profile header provides finished QR artwork and a typeset Settings button.
+        BOOL profileArtwork=!nativeButtons && [WXGMeHeader.shared ownsBarButton:b];
+        BOOL look=profileArtwork || (nativeLook && !avatarSlot && !WXGNativeNavButtonFilled(b));
         CGRect lookGlass=look?WXGNativeNavGlassRect(b):CGRectNull;
-        if(look && (CGRectIsNull(lookGlass) || lookGlass.size.width<1 || lookGlass.size.height<1))look=NO;   // nothing to stand in for yet
+        if(look && (CGRectIsNull(lookGlass) || lookGlass.size.width<1 || lookGlass.size.height<1)){
+            if(profileArtwork){[_navStates unconceal:b];_navigationBindingPending=YES;continue;}
+            look=NO;
+        }
         // FIX115 O (user: LoadControl's two top-right buttons lost their glass;
         // diagnostics_5: 顶部按钮保持微信原生 and its look are on, and those are
         // UIKit's own item buttons, no custom view): one of those (not a
@@ -3841,7 +3969,12 @@ static UIView *WXGNativeClone(UIView *control) {
         }
         NSString *title=[self fullTitleFromView:titleView fallback:_route.leaf.navigationItem.title?:_route.leaf.title];
         if(chatNative && titleView){[_navStates restoreView:titleView];title=nil;}   // FIX114 B: WeChat's own title (the local glass's capsule behind it)
-        if(title.length) {
+        if(_returningChat==_route.leaf) {
+            for(WXGSurface *surface in _buttons)if(WXGSurfaceOnlyOpens(surface) && surface.superview==_route.leaf.viewIfLoaded) {
+                [alive addObject:surface];
+                if(titleView)[_navStates conceal:titleView];
+            }
+        }else if(title.length) {
             WXGSurface *t=nil,*a=nil;
             for(WXGSurface *s in _buttons){if([s.role isEqual:@"chatTitle"])t=s;if([s.role isEqual:@"avatar"])a=s;}
             if(!t){t=[self pooledSurface:@"chatTitle"];t.role=@"chatTitle";}
@@ -3911,7 +4044,7 @@ static UIView *WXGNativeClone(UIView *control) {
                 CGFloat nominal=60*m.scale,y=centerY-m.button*.5;
                 CGFloat diameter=WXGClamp(WXGConfig.shared.avatarSize,32,88)*m.scale;
                 CGFloat avatarMid=y+nominal*.5+WXGClamp(WXGConfig.shared.avatarOffsetY,-24,24)*m.scale;
-                if(!frozen)[a placeMaterial:CGRectMake(midX-diameter*.5,avatarMid-diameter*.5,diameter,diameter) inParent:_navigationOverlay];
+                if(!frozen)[self placeChatMiddle:a material:CGRectMake(midX-diameter*.5,avatarMid-diameter*.5,diameter,diameter)];
                 // FIX114 M: room for the chevron (its gap and width) beside the text.
                 CGFloat extra=t.trailingSymbol?t.trailingGap+t.trailingSymbolHeight*t.trailingSymbol.size.width/MAX(.01,t.trailingSymbol.size.height):0;
                 // FIX114 O (user: the two sides out of balance next to iOS 26's):
@@ -3920,7 +4053,7 @@ static UIView *WXGNativeClone(UIView *control) {
                 CGFloat padBefore=14*m.scale,padAfter=t.trailingSymbol?11*m.scale:padBefore;
                 if(!frozen)t.trailingBias=(padBefore-padAfter)*.5;
                 CGFloat th=avatarCapsule*m.scale,tw=WXGCapsuleWidth([title sizeWithAttributes:@{NSFontAttributeName:t.label.font}].width+(padBefore+padAfter)-28*m.scale,extra,th,14*m.scale,w.bounds.size.width*.70);
-                if(!frozen)[t placeMaterial:CGRectMake(midX-tw*.5,y+nominal-5*m.scale,tw,th) inParent:_navigationOverlay];
+                if(!frozen)[self placeChatMiddle:t material:CGRectMake(midX-tw*.5,y+nominal-5*m.scale,tw,th)];
                 // FIX109 B: the pinned module keeps the gap it has under the
                 // default title capsule (bottom centerY + m.button / 2) below
                 // the avatar mode's lowest part (the small capsule, or the
@@ -3931,16 +4064,17 @@ static UIView *WXGNativeClone(UIView *control) {
                 pinnedShift=MAX(0,round((lowest-(centerY0+m.button*.5)+gapAdjust)*scale)/scale);   // FIX114 C: from where WeChat has it
                 // FIX94: the avatar one layer above the title capsule (its lower
                 // edge overlaps the capsule; the capsule must never cut into it).
-                if(a.superview==_navigationOverlay && t.superview==_navigationOverlay &&
-                   [_navigationOverlay.subviews indexOfObjectIdenticalTo:a]<[_navigationOverlay.subviews indexOfObjectIdenticalTo:t])
-                    [_navigationOverlay insertSubview:a aboveSubview:t];
+                UIView *parent=a.superview;
+                if(parent && t.superview==parent &&
+                   [parent.subviews indexOfObjectIdenticalTo:a]<[parent.subviews indexOfObjectIdenticalTo:t])
+                    [parent insertSubview:a aboveSubview:t];
             } else {
                 CGFloat limit=2*MAX(0,MIN(midX-left,right-midX));
                 if(!leftButtons.count)limit=2*MAX(0,MIN(midX-(w.safeAreaInsets.left+edge),right-midX));
                 limit=MAX(0,limit);
                 if(limit>=m.button) {
                     CGFloat tw=WXGCapsuleWidth([title sizeWithAttributes:@{NSFontAttributeName:t.label.font}].width,0,m.button,14*m.scale,limit);
-                    if(!frozen)[t placeMaterial:CGRectMake(midX-tw*.5,centerY-m.button*.5,tw,m.button) inParent:_navigationOverlay];   // FIX114 Y
+                    if(!frozen)[self placeChatMiddle:t material:CGRectMake(midX-tw*.5,centerY-m.button*.5,tw,m.button)];   // FIX114 Y
                 }else{[alive removeObject:t];}
             }
             if([alive containsObject:t] && titleView)[_navStates conceal:titleView];
@@ -4050,15 +4184,27 @@ static UIView *WXGNativeClone(UIView *control) {
     } @catch(__unused NSException *error) {}
     for(WXGSurface *surface in _buttons) {
         surface.nativeTransitionActive=_nativeTransition!=nil;
+        if(WXGSurfaceOnlyOpens(surface)) {
+            if(surface.superview==_route.leaf.viewIfLoaded)continue;
+            surface.userInteractionEnabled=YES;surface.accessibilityElementsHidden=NO;
+            if(!_nativeTransition && !_route.nav.transitionCoordinator && surface.superview==_navigationOverlay) {
+                CGRect rect=[surface convertRect:surface.materialRect toView:_route.leaf.viewIfLoaded];
+                if([surface.role isEqual:@"avatar"])_activePage.avatarOnPage=rect;
+                else _activePage.titleOnPage=rect;
+            }
+        }
         if(!WXGSurfaceInNativeView(surface)){[surface bindMotionHost:surface.motionHost owner:_route.leaf];[surface followNativePresentation];}
     }
     if(_departingButtons.count) {
         NSMutableArray *outgoing=[_departingButtons mutableCopy];
-        for(WXGSurface *old in _departingButtons)for(WXGSurface *current in _buttons) {
-            BOOL sameControl=old.original && old.original==current.original;
-            BOOL sameHost=old.motionHost && old.motionHost==current.motionHost;
-            if(old!=current && (sameControl || sameHost)) {
-                old.active=NO;old.hidden=YES;[outgoing removeObject:old];break;
+        for(WXGSurface *old in _departingButtons) {
+            if(_returningChat && WXGSurfaceOnlyOpens(old) && old.superview==_returningChat.viewIfLoaded)continue;
+            for(WXGSurface *current in _buttons) {
+                BOOL sameControl=old.original && old.original==current.original;
+                BOOL sameHost=old.motionHost && old.motionHost==current.motionHost;
+                if(old!=current && (sameControl || sameHost)) {
+                    old.active=NO;old.hidden=YES;[outgoing removeObject:old];break;
+                }
             }
         }
         _departingButtons=outgoing;
@@ -5575,6 +5721,10 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         if(_suspendedByCover){_suspendedByCover=NO;_lastFrame=0;_navigationDirty=YES;}
 
         [self observeTransition:r.nav.transitionCoordinator];
+        if(_returningChat && !_nativeTransition && !r.nav.transitionCoordinator) {
+            if(r.leaf==_returningChat)_pendingChatTitle=_returningChat;
+            _returningChat=nil;
+        }
         if(_nativeTransition && _transitionTo.isViewLoaded && _transitionTo.view.window==w) {
             r.leaf=_transitionTo;r.chat=[NSStringFromClass(r.leaf.class) isEqual:@"BaseMsgContentViewController"];
             r.primary=r.tabs && r.leaf==r.nav.viewControllers.firstObject;
@@ -5623,6 +5773,16 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         // the page being left froze where they were, on top of the new page's
         // own buttons, until UIKit finished the transition. They go at once;
         // the page being left shows its native buttons while it slides out.
+        if(_pendingChatTitle && (!available || !p.nav || r.leaf!=_pendingChatTitle)) {
+            WXGPageState *page=objc_getAssociatedObject(_pendingChatTitle,&WXGPageStateKey);
+            for(NSString *slot in @[@"chatTitle",@"avatar"]) {
+                WXGSurface *surface=page.pool[slot];
+                if(surface && surface.superview==_pendingChatTitle.viewIfLoaded) {
+                    surface.hidden=YES;surface.active=NO;[surface removeFromSuperview];
+                }
+            }
+            _pendingChatTitle=nil;
+        }
         if(!available)[self dropDepartingButtons];
         if(!available){[self resetRoute];[_inputAdapter restore];[WXGDecorations.shared restore];
             [WXGChatSegments.shared suspendFloating];   // FIX113 O: nothing floats over a web / Flutter page (the display link stops below)
@@ -5649,6 +5809,10 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         NSString *token=[NSString stringWithFormat:@"%p:%ld:%.0fx%.0f:%d%d%d%d%d%d%d%d%d",r.leaf,(long)r.tabs.selectedIndex,w.bounds.size.width,w.bounds.size.height,p.nav,p.dock,p.input,p.avatarTitle,p.homeSearch,
             p.dockSearch,p.dockSearchLeading,p.hideTopSearch,p.chatAvatarButton];
         if(![_routeToken isEqual:token]){if(!_nativeTransition)[self resetRoute];_routeToken=token;_navigationDirty=YES;}
+        if(_pendingChatTitle && !_nativeTransition && r.nav.topViewController==_pendingChatTitle &&
+           _pendingChatTitle.viewIfLoaded.window==w && _navigationOverlay.window==w) {
+            [self restoreChatTitleOnPage:_pendingChatTitle];_pendingChatTitle=nil;
+        }
         steps[@"routeTokenMS"]=@((CACurrentMediaTime()-stepMark)*1000);stepMark=CACurrentMediaTime();
         if(!_pageViews || CACurrentMediaTime()-_lastTreeScan>.75) {
             _lastTreeScan=CACurrentMediaTime();_pageViews=WXGViews(r.leaf.view,900);[_scrollViews removeAllObjects];
@@ -5986,6 +6150,8 @@ BOOL WXGHomeTopBarInList(UIView *list) {
         UIView *host=surface.motionHost;
         [bindings addObject:@{@"role":surface.role?:@"",@"surface":[NSString stringWithFormat:@"%p",surface],
           @"hostClass":host?NSStringFromClass(host.class):@"none",@"host":[NSString stringWithFormat:@"%p",host],
+          @"onOwnerPage":@(surface.superview && surface.superview==surface.motionOwner.viewIfLoaded),
+          @"onNavigationOverlay":@(surface.superview && surface.superview==_navigationOverlay),
           @"ownerID":[NSString stringWithFormat:@"%p",surface.motionOwner],@"glassBounds":NSStringFromCGRect(surface.glass.bounds),@"presentedFrame":@(surface.glass.hasPresentedFrame),
           @"owner":surface.motionOwner?NSStringFromClass(surface.motionOwner.class):@"none",@"frame":NSStringFromCGRect(surface.frame),
           @"material":NSStringFromCGRect(surface.materialRect),@"alpha":@(surface.alpha),@"hidden":@(surface.hidden),@"active":@(surface.active),
@@ -6371,6 +6537,10 @@ static void WXGObserveNavigationPop(void) {
         SEL selector=NSSelectorFromString(name);Method method=class_getInstanceMethod(UINavigationController.class,selector);
         IMP original=method_getImplementation(method);
         IMP replacement=imp_implementationWithBlock(^id(UINavigationController *nav,BOOL animated){
+            NSArray<UIViewController *> *stack=nav.viewControllers;
+            UIViewController *target=[name isEqual:@"popToRootViewControllerAnimated:"]?stack.firstObject:
+                (stack.count>=2?stack[stack.count-2]:nil);
+            if(animated && !WXGNavigationCallDepth)[WXGIntegrationHost.shared moveChatTitleFrom:nav.topViewController returningTo:target];
             WXGRecordNativePop(nav,selector,animated);
             if(!WXGNavigationCallDepth)WXGTransitionPerfNavigationCall(@"pop",YES);   // FIX113 Z
             ++WXGNavigationCallDepth;
@@ -6382,6 +6552,8 @@ static void WXGObserveNavigationPop(void) {
     SEL selector=@selector(popToViewController:animated:);Method method=class_getInstanceMethod(UINavigationController.class,selector);
     IMP original=method_getImplementation(method);
     IMP replacement=imp_implementationWithBlock(^id(UINavigationController *nav,UIViewController *destination,BOOL animated){
+        if(animated && !WXGNavigationCallDepth && [nav.viewControllers containsObject:destination])
+            [WXGIntegrationHost.shared moveChatTitleFrom:nav.topViewController returningTo:destination];
         WXGRecordNativePop(nav,selector,animated);
         if(!WXGNavigationCallDepth)WXGTransitionPerfNavigationCall(@"pop",YES);   // FIX113 Z
         ++WXGNavigationCallDepth;
