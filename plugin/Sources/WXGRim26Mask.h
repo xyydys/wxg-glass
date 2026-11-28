@@ -17,6 +17,15 @@ typedef struct {
     double material,leading,trailing; // points in the cached tile
 } WXGRim26MaskAxis;
 
+// A linearly reconstructed downsample can use a texel one sample away, and
+// that texel covers another half sample on the original backdrop. Both are
+// measured in capture pixels per point. Only the final alignment uses the
+// display density, so widening the capture doesn't shift the native mask.
+static inline double WXGRim26CapturePadding(double capturePixelsPerPoint,double displayPixelsPerPoint) {
+    if(!(capturePixelsPerPoint>0.) || !(displayPixelsPerPoint>0.))return 0.;
+    return ceil(1.5*displayPixelsPerPoint/capturePixelsPerPoint)/displayPixelsPerPoint;
+}
+
 static inline WXGRim26MaskAxis WXGRim26MaskAxisFor(double origin,double length,double radius,double reach,double scale) {
     WXGRim26MaskAxis a={0};
     if(!(length>0. && scale>=1.) || !(length*scale<INT_MAX/4.) || !isfinite(origin))return a;

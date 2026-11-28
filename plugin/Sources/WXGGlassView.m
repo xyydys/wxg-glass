@@ -1131,9 +1131,10 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
 // own: the veil through the matrix, as a solid layer under the same mask.
 @interface WXGRim26Paint : UIView
 @property(nonatomic,readonly) WXGRim26RingLayer *ring;   // its opacity is the rim's strength
+@property(nonatomic,readonly) CGFloat backdropPixelsPerPoint;   // zero for solid paint
 - (void)configureGroup:(NSString *)group matrix:(WXGRimMatrix)m captureScale:(CGFloat)captureScale solid:(UIColor *)solid;
 @end
-@implementation WXGRim26Paint {CALayer *_solid,*_maskRoot;NSString *_appliedGroup;CGFloat _appliedScale;WXGRimMatrix _appliedMatrix;BOOL _matrixApplied,_enabled;}
+@implementation WXGRim26Paint {CALayer *_solid,*_maskRoot;NSString *_appliedGroup;CGFloat _requestedScale,_capturePixelsPerPoint;WXGRimMatrix _appliedMatrix;BOOL _matrixApplied,_enabled;}
 + (Class)layerClass {return WXGBackdropLayerClass()?:CALayer.class;}
 - (instancetype)initWithFrame:(CGRect)frame {
     if((self=[super initWithFrame:frame])) {
@@ -1145,6 +1146,7 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
     return self;
 }
 - (BOOL)live {Class cls=WXGBackdropLayerClass();return cls && [self.layer isKindOfClass:cls];}
+- (CGFloat)backdropPixelsPerPoint {return _solid.hidden?_capturePixelsPerPoint:0.;}
 - (void)layoutSubviews {[super layoutSubviews];_maskRoot.frame=self.bounds;_solid.frame=self.bounds;}
 - (void)configureGroup:(NSString *)group matrix:(WXGRimMatrix)m captureScale:(CGFloat)captureScale solid:(UIColor *)solid {
     BOOL useSolid=solid!=nil || ![self live] || !WXGFilterFactoryAvailable();
@@ -1160,7 +1162,15 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
             if(_enabled==useSolid){[self.layer setValue:@(!useSolid) forKey:@"enabled"];_enabled=!useSolid;}
             if(!useSolid) {
                 if(group && ![_appliedGroup isEqual:group]){[self.layer setValue:group forKey:@"groupName"];_appliedGroup=group;}
-                if(fabs(captureScale-_appliedScale)>.005){[self.layer setValue:@(captureScale) forKey:@"scale"];_appliedScale=captureScale;}
+                if(captureScale!=_requestedScale) {
+                    _requestedScale=captureScale;
+                    _capturePixelsPerPoint=captureScale;
+                    @try {
+                        [self.layer setValue:@(captureScale) forKey:@"scale"];
+                        CGFloat actual=[[self.layer valueForKey:@"scale"] doubleValue];
+                        if(isfinite(actual) && actual>0.)_capturePixelsPerPoint=actual;
+                    } @catch(__unused NSException *error) {}
+                }
                 if(!_matrixApplied || memcmp(&m,&_appliedMatrix,sizeof m)) {
                     id matrix=[(Class<WXGCAFilterFactory>)NSClassFromString(@"CAFilter") filterWithType:@"colorMatrix"];
                     [matrix setValue:WXGRim26MatrixValue(m) forKey:@"inputColorMatrix"];
@@ -1217,10 +1227,11 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
     WXGRimMatrix m;WXGRim26Matrix(settings.gain,settings.chroma,settings.lift,m.m);
     [CATransaction begin];[CATransaction setDisableActions:YES];
     _paint.hidden=NO;
+    CGFloat oldDensity=_paint.backdropPixelsPerPoint;
     [_paint configureGroup:_group matrix:m captureScale:settings.captureScale solid:solid];
     _paint.ring.opacity=(float)(strength*settings.opacity);
     [CATransaction commit];
-    if(changed)[self setNeedsLayout];
+    if(changed || oldDensity!=_paint.backdropPixelsPerPoint)[self setNeedsLayout];
 }
 - (CALayer *)strengthMask {return _paint.layer.mask;}
 - (void)layoutSubviews {
@@ -1243,7 +1254,7 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
     WXGRim26MaskAxis x=WXGRim26MaskAxisFor(origin.x,b.size.width,r,shape.height,scale);
     WXGRim26MaskAxis y=WXGRim26MaskAxisFor(origin.y,b.size.height,r,shape.height,scale);
     CGRect mask=CGRectMake(-x.leading,-y.leading,b.size.width+x.leading+x.trailing,b.size.height+y.leading+y.trailing);
-    CGFloat pad=ceil(1./MAX(.1,s.captureScale))/scale;
+    CGFloat pad=WXGRim26CapturePadding(_paint.backdropPixelsPerPoint,scale);
     _paint.layer.mask.contentsScale=scale;
     _paint.frame=CGRectInset(mask,-pad,-pad);
     _paint.ring.frame=(CGRect){CGPointMake(pad,pad),mask.size};
@@ -1253,12 +1264,19 @@ static NSValue *WXGRim26MatrixValue(WXGRimMatrix m) {return [NSValue valueWithBy
 - (NSDictionary *)rim26Evidence {
     CGImageRef image=(__bridge CGImageRef)_paint.ring.contents;
     CGFloat scale=_paint.ring.contentsScale;
+    NSArray *phase=@[];
+    if(self.window && image) {
+        CGPoint p=[_paint convertPoint:_paint.ring.frame.origin toView:self.window];
+        CGFloat density=self.window.screen.scale;
+        phase=@[@(p.x*density-round(p.x*density)),@(p.y*density-round(p.y*density))];
+    }
     WXGRim26Settings s=_settings;
     WXGRim26Shape shape={s.height,s.curve,s.angle,s.key,s.fill,s.spread,s.ring,0,s.floor};
     WXGRim26Bands light=WXGRim26BandsFor(0,shape,scale),plain=WXGRim26BandsFor(1,shape,scale);
     return @{@"on":@(_on),@"height":@(_settings.height),@"curve":@(_settings.curve),@"angle":@(_settings.angle),@"key":@(_settings.key),@"fill":@(_settings.fill),
              @"spread":@(_settings.spread),@"floor":@(_settings.floor),@"gain":@(_settings.gain),@"chroma":@(_settings.chroma),@"lift":@(_settings.lift),@"ring":@(_settings.ring),
-             @"captureScale":@(_settings.captureScale),@"mask":@"areaIntegratedVector",
+             @"captureScale":@(_settings.captureScale),@"capturePixelsPerPoint":@(_paint.backdropPixelsPerPoint),
+             @"capturePaddingPt":@(CGRectGetMinX(_paint.ring.frame)),@"maskOriginPhasePx":phase,@"mask":@"areaIntegratedVector",
              @"bands":@(image?WXGRim26DepthCount(&light,&plain):0),
              @"maskPixels":image?@[@(CGImageGetWidth(image)),@(CGImageGetHeight(image))]:@[],
              @"strength":@(_strength*_settings.opacity),
